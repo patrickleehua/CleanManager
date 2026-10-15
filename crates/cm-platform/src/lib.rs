@@ -3,6 +3,7 @@
 
 pub mod host;
 pub mod paths;
+pub mod protection;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(windows)]

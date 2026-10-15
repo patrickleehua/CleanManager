@@ -106,19 +106,38 @@ JSON 模式只输出一个终态记录。JSONL 模式输出零个或多个 progr
 
 ## 计划与执行交互
 
+已实现（MVP）的两条正常路径，均可在 Windows 上照抄运行（`--store` 可省略，默认使用用户数据目录）：
+
 ```text
-cleanmanager capabilities --json
-cleanmanager scan --root "C:\Users\Alice" --format jsonl
-cleanmanager analyze --scan s_demo --profile developer --json
-cleanmanager candidates list --scan s_demo --limit 50 --json
-cleanmanager plan create --candidate-set cs_demo --mode trash --json
-cleanmanager plan show p_demo --json
-cleanmanager plan apply p_demo --non-interactive --json
+# 共同前半段：只读扫描 → 分析 → 计划
+cleanmanager scan --root "%LOCALAPPDATA%\Temp" --json
+cleanmanager analyze --scan s_demo --json
+cleanmanager candidates list --set cs_demo --limit 50 --json
+cleanmanager plan create --set cs_demo --mode quarantine --candidates c_demo --json
+
+# 路径一：人工审阅（需真实终端，输入摘要前 8 位）
+cleanmanager plan apply p_demo --json        # 无授权：退出 3，needs_approval，文件未动
+cleanmanager plan review p_demo              # 终端内审阅并批准
+cleanmanager plan apply p_demo --json        # operation_report，退出 0/5/8
+cleanmanager operations show op_demo --json
+
+# 路径二：有限预授权策略（创建即暂停，启用需终端）
+cleanmanager policy create --scope scope_demo --rules microsoft.edge.code-cache@1.0.0 --mode quarantine --json
+cleanmanager policy enable pol_demo          # 终端内输入策略 ID
+cleanmanager plan create --set cs_demo --mode quarantine --all-default-selected --json
+cleanmanager plan apply p_demo --json        # 策略覆盖时直接执行，不再逐次确认
+```
+
+端到端测试 `crates/cm-cli/tests/plan_flow.rs` 覆盖缺授权退出 3、机器调用者不能审阅或启用策略、暂停策略不授权，以及已审阅计划在真实 NTFS 上隔离且重复 apply 只回放原报告；预授权路径（配额预留、超额拒绝、unknown 占用配额）由 `cm-app` 执行测试覆盖。
+
+草案（`add-mole-parity-suite`，尚未实现）：
+
+```text
 cleanmanager clean --scan s_demo --dry-run --non-interactive --json
 cleanmanager apps uninstall app_demo --include bundle caches_logs --non-interactive --json
 ```
 
-后两条命令的机器请求与响应分别对应样例 [request-clean-preview](../examples/contracts/request-clean-preview.json)、[preview-clean](../examples/contracts/preview-clean.json)、[request-apps-uninstall](../examples/contracts/request-apps-uninstall.json) 与 [needs-approval-uninstall](../examples/contracts/needs-approval-uninstall.json)。
+这两条命令的机器请求与响应分别对应样例 [request-clean-preview](../examples/contracts/request-clean-preview.json)、[preview-clean](../examples/contracts/preview-clean.json)、[request-apps-uninstall](../examples/contracts/request-apps-uninstall.json) 与 [needs-approval-uninstall](../examples/contracts/needs-approval-uninstall.json)。
 
 两个平台使用同一参数风格。路径由 shell 按本平台正确传入，内部立即转成原始路径结构；不把模型拼出的字符串当 shell 脚本执行。输出中的条目 ID 是后续选择的主要接口，避免再次拼接路径。
 

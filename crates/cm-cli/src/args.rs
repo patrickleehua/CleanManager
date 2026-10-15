@@ -8,7 +8,7 @@ use std::io::IsTerminal;
 use crate::Format;
 
 /// Options that take no value.
-const FLAGS: &[&str] = &["json", "non-interactive", "dry-run"];
+const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected"];
 
 #[derive(Debug, Clone)]
 pub struct Parsed {

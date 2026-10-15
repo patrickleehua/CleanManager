@@ -11,7 +11,9 @@ publish.workspace = true
 cm-core.workspace = true
 cm-platform.workspace = true
 cm-store = { path = "../cm-store" }
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 cm-fixtures = { path = "../cm-fixtures" }

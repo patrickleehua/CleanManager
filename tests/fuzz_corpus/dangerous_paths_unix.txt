@@ -1,0 +1,142 @@
+# CleanManager dangerous-path regression corpus - Unix/macOS (PRT-05, design D5).
+#
+# Format: UTF-8, one path per line; blank lines and lines starting with '#' are ignored and
+# lines are NOT trimmed. Escapes: <EMPTY> is the empty path; <U+XXXX> (4-6 hex digits) is that
+# code point (UTF-8 encoded); <0xHH> is one raw byte (for invalid UTF-8). "LINK => TARGET"
+# declares that LINK is a symlink to TARGET (visible to every line) and checks LINK;
+# "LINK => !" declares a link whose target cannot be resolved.
+#
+# Every line MUST be denied, either by the textual pre-filter or by the identity check against
+# the fixture volume (user "alice", data volume /Volumes/Data, /var /etc /tmp -> /private/...,
+# case-insensitive like default APFS). The cm-core test `protect::corpus_tests` loads this file
+# and also mutates every line (case, separators, trailing dot/space, \?\ prefix); any Allowed
+# result fails CI.
+
+# --- empty, relative, roots -----------------------------------------------------------------
+<EMPTY>
+/
+//
+relative/path
+./cache
+../../etc
+~/Library
+~
+cache
+<U+0020>/System
+\System
+C:\Windows
+／System
+
+# --- operating system, case variants --------------------------------------------------------
+/System
+/system
+/SYSTEM/Library
+/System/Library/CoreServices
+/System/Library/Extensions/x.kext
+/System/Volumes/Data
+/bin
+/bin/ls
+/sbin/launchd
+/usr
+/usr/bin/sudo
+/usr/lib/libSystem.B.dylib
+/usr/share/zoneinfo
+/usr/libexec
+/usr/local
+/usr/local/bin
+/etc
+/etc/passwd
+/private
+/private/etc/sudoers
+/private/var
+/private/var/db/dslocal
+/private/var/root
+/private/var/vm/sleepimage
+/private/var/folders
+/var
+/var/db/receipts
+/var/folders
+/tmp
+/private/tmp
+/dev
+/dev/disk0
+/Library
+/Library/Caches
+/Library/Application Support
+/Library/Keychains/System.keychain
+/Library/Application Support/com.apple.TCC/TCC.db
+/Library/Apple/System
+/Applications
+/Network/Servers
+/cores
+/opt
+/opt/homebrew
+/.Spotlight-V100
+/.fseventsd
+
+# --- homes, keychains, trash, the tool's own store ------------------------------------------
+/Users
+/users/
+/Users/alice
+/Users/Alice/
+/USERS/ALICE
+/Users/Shared
+/Users/alice/Library
+/Users/alice/Library/Caches
+/Users/alice/Library/Logs
+/Users/alice/Library/Application Support
+/Users/alice/Library/Keychains/login.keychain-db
+/Users/alice/Library/Application Support/com.apple.TCC/TCC.db
+/Users/alice/Library/Application Support/CleanManager/store
+/Users/alice/Library/Application Support/CleanManager/store/audit/0001.log
+/Users/alice/.Trash
+/home/bob
+
+# --- volumes ---------------------------------------------------------------------------------
+/Volumes
+/Volumes/Data
+/Volumes/Data/
+/Volumes/Data/.Spotlight-V100
+/Volumes/Data/.fseventsd/0001
+/Volumes/Data/.Trashes
+/Volumes/Data/.DocumentRevisions-V100/x
+
+# --- traversal and non-canonical forms ------------------------------------------------------
+/Users/alice/Library/Caches/../../../../System
+/Users/alice/Library/Caches/./x
+/Users/alice//Library/Caches/x
+/Users/alice/Library/Caches/x/..
+/var/folders/../db
+/tmp/../etc/passwd
+
+# --- control, invisible and encoding anomalies ----------------------------------------------
+/Users/alice/Library/Caches/a<U+0000>b
+/Users/alice/Library/Caches/a<U+0001>b
+/Users/alice/Library/Caches/esc<U+001B>]0;title<U+0007>
+/Users/alice/Library/Caches/nl<U+000A>x
+/Users/alice/Library/Caches/tab<U+0009>x
+/Users/alice/Library/Caches/del<U+007F>
+/Users/alice/Library/Caches/c1<U+0085>
+/Users/alice/Library/Caches/<U+202E>gnp.exe
+/Sys<U+200B>tem/Library
+/Users/alice/Library/Caches/bom<U+FEFF>
+/Users/alice/Library/Caches/<0xFF>
+/Users/alice/Library/Caches/<0xC0><0xAF>etc
+/Users/alice/Library/Caches/<0xED><0xA0><0x80>
+/Users/alice/Library/Caches/vanished-before-check
+
+# --- links: symlinks into hard-deny locations -----------------------------------------------
+/Users/alice/Library/Caches/lsys => /System
+/Users/alice/Library/Caches/lsys/Library/Frameworks
+/Users/alice/Library/Caches/lroot => /
+/Users/alice/Library/Caches/lkey => /Users/alice/Library/Keychains
+/Users/alice/Library/Caches/lhome => /Users/alice
+/Users/alice/Library/Caches/lusers => /Users
+/Users/alice/Library/Caches/lbroken => !
+/Users/alice/Library/Caches/lbroken/inner
+/Users/alice/Library/Caches/letc => /etc
+/Users/alice/Library/Caches/lstore => /Users/alice/Library/Application Support/CleanManager/store
+/Users/alice/Library/Caches/lvol => /Volumes/Data
+/Users/alice/Library/Caches/lchain => /Users/alice/Library/Caches/lsys
+/Users/alice/Library/Caches/lloop => /Users/alice/Library/Caches/lloop
+/Users/alice/Library/Caches/lcase => /SYSTEM/LIBRARY

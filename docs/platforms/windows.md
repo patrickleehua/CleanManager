@@ -197,3 +197,20 @@ IPC 使用仅本机命名管道，显式 DACL 绑定当前用户/登录会话与
 | `win.ntfs_enum`（实验） | unverified | 一次性 NTFS VHD 上与目录基线逐项一致（测试） | 只接受显式卷根与管理员；目录范围请求在读取前拒绝。尚无基准与真实系统卷记录 |
 | SMB 共享 | unverified | — | 未连接网络卷 |
 
+### 执行动作（MVP 9.4，`WindowsActions`）
+
+执行前对计划记录的整条父链自上而下逐级以句柄打开并核对身份（持有句柄期间父目录不能被改名或删除），再以仅属性、不跟随链接的方式打开目标，依次检查：缺失、链接/重解析点、身份、对象类型、硬链接数、大小与修改时间；独占打开探测占用，规则要求的 owner 进程以 Toolhelp32 探测，无法映射的 owner 返回 unknown 而非放行。动作作用于同一已核验句柄，执行前关闭 SeBackup/SeRestore 特权。
+
+| 动作 | 结果 | 证据 | 限制 |
+| --- | --- | --- | --- |
+| delete（同一句柄 POSIX 删除，退回普通删除） | 测试通过 | `cm-platform` actions 测试 | 打开时不给 `FILE_SHARE_DELETE`，他人以删除权限打开的文件记为 `in_use`；多硬链接文件跳过（`unsupported`） |
+| quarantine（同卷不覆盖改名） | 测试通过；CLI 端到端通过 | actions 测试、`plan_flow::approved_plan_quarantines_planned_files_once` | 跨卷拒绝（`cross_volume`，一次性 VHD 实测）、目标已存在拒绝（`destination_exists`）；同卷移动不释放数据，报告的空闲差值按实测给出 |
+| trash（Shell `IFileOperation` + 进度回调） | 测试通过 | actions 测试 | 网络卷与 `SHQueryRecycleBinW` 失败的卷直接拒绝；`PreDeleteItem` 缺回收标志即中止——在 `\\localhost\C$` 上实测触发中止且文件保留，从不降级为永久删除。回收站按路径操作，最后一次核验与 Shell 打开之间的改名只因结果可恢复而被接受；reconcile 不检查回收站内容，无法确认的回收保持 unknown |
+| owner 进程探测 | 实测 | 开发机运行中的 Edge | Edge 运行时 Code Cache 两项均以 `precondition_owner_running` 跳过，操作为 `partial`（退出 5），无文件被移动 |
+
+所有项都因现场前置条件跳过（无失败、无 unknown）时报告 `partial` 而不是 `failed`：没有发生系统错误，只是计划未完成。已提交的计划再次 `plan apply` 时返回已记录的操作报告（同一 `operation_id`），不重复任何动作。
+
+### 只读应用清单（MVP 11.1/11.3）
+
+`cleanmanager apps list` 读取 HKLM（64/32 位视图）与 HKCU 的卸载注册项及 HKCU 的 MSIX 包仓库，全部以 `KEY_READ` 打开；不读取或执行卸载命令字符串，不写注册表。实例 ID 由来源记录与安装位置计算，同名但位置或来源不同的安装保持为独立实例。安装位置按文件身份解析；同一身份、同一路径或互相包含的位置标为共享，不计入任何单个应用的独占空间，未知大小保持未知。没有安装记录或仅名称相似的目录只会被判定为“归属未知”，不会成为清理候选。首版每个实例的卸载能力均为 `unsupported`（只读），卸载、更新与启动项见 `add-mole-parity-suite`。开发机实测：254 个实例（99 MSI、130 MSIX、25 其他），169 个标记为受保护类别，13 个共享位置。MSIX 的间接资源名称尚未解析，显示包名。
+

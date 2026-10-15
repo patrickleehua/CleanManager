@@ -29,8 +29,8 @@
 | `libsqlite3-sys` | 0.35.0 | MIT | crates.io | Transitive: required by rusqlite |
 | `memchr` | 2.8.3 | Unlicense OR MIT | crates.io | Transitive: required by serde_json |
 | `pkg-config` | 0.3.34 | MIT OR Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys |
-| `proc-macro2` | 1.0.107 | MIT OR Apache-2.0 | crates.io | Transitive: required by quote, serde_derive, syn, thiserror-impl |
-| `quote` | 1.0.47 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde_derive, syn, thiserror-impl |
+| `proc-macro2` | 1.0.107 | MIT OR Apache-2.0 | crates.io | Transitive: required by quote, serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
+| `quote` | 1.0.47 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
 | `rusqlite` | 0.37.0 | MIT | crates.io | SQLite access for the rebuildable scan index and the separate audit store (bundled SQLite, no system library) |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Typed (de)serialization of protocol records, manifests and rules |
 | `serde_core` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde, serde_json |
@@ -39,6 +39,7 @@
 | `sha2` | 0.10.9 | MIT OR Apache-2.0 | crates.io | SHA-256 for plan digests (CM-C14N-v1) and fixture/sentinel hashes |
 | `shlex` | 2.0.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by cc |
 | `smallvec` | 1.16.3 | MIT OR Apache-2.0 | crates.io | Transitive: required by rusqlite |
+| `syn` | 2.0.119 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-implement, windows-interface |
 | `syn` | 3.0.9 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde_derive, thiserror-impl |
 | `thiserror` | 2.0.21 | MIT OR Apache-2.0 | crates.io | Typed error enums in cm-core and cm-store |
 | `thiserror-impl` | 2.0.21 | MIT OR Apache-2.0 | crates.io | Transitive: required by thiserror |
@@ -46,6 +47,16 @@
 | `unicode-ident` | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io | Transitive: required by proc-macro2, syn |
 | `vcpkg` | 0.2.15 | MIT/Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys |
 | `version_check` | 0.9.5 | MIT/Apache-2.0 | crates.io | Transitive: required by generic-array |
-| `windows-link` | 0.2.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-sys |
-| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | crates.io | Windows API bindings for process liveness and, later, native scan/execution backends |
+| `windows` | 0.62.2 | MIT OR Apache-2.0 | crates.io | COM bindings for the Shell IFileOperation recycle-bin action and its progress sink |
+| `windows-collections` | 0.3.2 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows |
+| `windows-core` | 0.62.2 | MIT OR Apache-2.0 | crates.io | Required by the windows crate COM implement macro (referenced by name) |
+| `windows-future` | 0.3.2 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows |
+| `windows-implement` | 0.60.2 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-core |
+| `windows-interface` | 0.59.3 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-core |
+| `windows-link` | 0.2.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-core, windows-future, windows-numerics, windows-result, windows-strings, windows-sys, windows-threading |
+| `windows-numerics` | 0.3.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows |
+| `windows-result` | 0.4.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-core |
+| `windows-strings` | 0.5.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-core |
+| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | crates.io | Windows API bindings for process liveness, scan backends and verified file actions |
+| `windows-threading` | 0.2.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by windows-future |
 | `zmij` | 1.0.23 | MIT | crates.io | Transitive: required by serde_json |

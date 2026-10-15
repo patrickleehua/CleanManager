@@ -15,7 +15,7 @@ use crate::args::Parsed;
 use crate::commands::{fields, open_stores, store_error};
 use crate::{emit, fail};
 
-fn default_rules_dir() -> PathBuf {
+pub fn default_rules_dir() -> PathBuf {
     std::env::var_os("CM_RULES_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules"))

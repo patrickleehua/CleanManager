@@ -14,7 +14,9 @@ PURPOSE = {
     "base64": "Lossless raw path encoding (UTF-16LE / raw bytes) in protocol records",
     "thiserror": "Typed error enums in cm-core and cm-store",
     "rusqlite": "SQLite access for the rebuildable scan index and the separate audit store (bundled SQLite, no system library)",
-    "windows-sys": "Windows API bindings for process liveness and, later, native scan/execution backends",
+    "windows-sys": "Windows API bindings for process liveness, scan backends and verified file actions",
+    "windows": "COM bindings for the Shell IFileOperation recycle-bin action and its progress sink",
+    "windows-core": "Required by the windows crate COM implement macro (referenced by name)",
     "libc": "macOS system calls (process liveness via kill/proc_pidinfo, later POSIX scan backend)",
 }
 

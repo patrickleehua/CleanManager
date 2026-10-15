@@ -29,6 +29,19 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["scan", "cancel", id] => p.allow(&["store"], &[]).map(|_| scan_cancel(req, &p, id)),
         ["analyze"] => p.allow(&["scan", "store", "rules", "preview-rule"], &[]).map(|_| crate::analysis_cmd::analyze_cmd(req, &p)),
         ["candidates", "list"] => p.allow(&["set", "store", "limit", "cursor"], &[]).map(|_| crate::analysis_cmd::candidates_list(req, &p)),
+        ["plan", "create"] => p.allow(&["set", "store", "mode", "candidates"], &["all-default-selected"]).map(|_| crate::plan_cmd::plan_create(req, &p)),
+        ["plan", "show", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::plan_show(req, &p, id)),
+        ["plan", "review", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::plan_review(req, &p, id)),
+        ["plan", "revoke", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::plan_revoke(req, &p, id)),
+        ["plan", "apply", id] => p.allow(&["store", "rules"], &[]).map(|_| crate::apply_cmd::plan_apply(req, &p, id)),
+        ["operations", "show", id] => p.allow(&["store"], &[]).map(|_| crate::apply_cmd::operations_show(req, &p, id)),
+        ["operations", "reconcile", id] => p.allow(&["store"], &[]).map(|_| crate::apply_cmd::operations_reconcile(req, &p, id)),
+        ["policy", "create"] => p.allow(&["store", "scope", "rules", "mode"], &[]).map(|_| crate::plan_cmd::policy_create(req, &p)),
+        ["apps", "list"] => p.allow(&["limit", "cursor"], &[]).map(|_| crate::apps_cmd::apps_list(req, &p)),
+        ["policy", "list"] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_list(req, &p)),
+        ["policy", "enable", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_set_state(req, &p, id, cm_core::authz::PolicyState::Enabled)),
+        ["policy", "pause", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_set_state(req, &p, id, cm_core::authz::PolicyState::Paused)),
+        ["policy", "revoke", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_set_state(req, &p, id, cm_core::authz::PolicyState::Revoked)),
         [] => Err("missing command".to_string()),
         other => Err(format!("unknown command: {}", other.join(" "))),
     };
@@ -71,15 +84,22 @@ fn backend() -> impl ScanBackend {
     cm_platform::windows::directory::DirectoryBackend
 }
 
-#[cfg(not(windows))]
+/// macOS: the portable POSIX walker is the default until the bulk backend's record layout is
+/// verified on real hardware (MVP 5.x); both produce identical row shapes.
+#[cfg(target_os = "macos")]
+fn backend() -> impl ScanBackend {
+    cm_platform::macos::posix::PosixBackend
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn backend() -> impl ScanBackend {
     UnsupportedBackend
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 struct UnsupportedBackend;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 impl ScanBackend for UnsupportedBackend {
     fn name(&self) -> &'static str {
         "mac.posix"
@@ -90,19 +110,19 @@ impl ScanBackend for UnsupportedBackend {
             volume_id: None,
             backend: "mac.posix".into(),
             state: cm_core::capability::CapabilityState::Unsupported,
-            reason: "macOS backend not implemented in this build".into(),
+            reason: "no scan backend for this platform".into(),
         }
     }
     fn scan(&self, _: &cm_core::path::RawPath, _: &mut dyn cm_core::scan::ScanSink, _: &ScanOptions) -> cm_core::scan::ScanReport {
         cm_core::scan::ScanReport {
             state: ScanState::Failed,
             backend: "mac.posix".into(),
-            backend_reason: "macOS backend not implemented in this build".into(),
+            backend_reason: "no scan backend for this platform".into(),
             entries: 0,
             skipped_ranges: 0,
             boundaries: 0,
             elevated_read: vec![],
-            issues: vec![cm_core::scan::ScanIssue { code: "unsupported".into(), scope_display: String::new(), message: "macOS backend not implemented".into() }],
+            issues: vec![cm_core::scan::ScanIssue { code: "unsupported".into(), scope_display: String::new(), message: "no scan backend for this platform".into() }],
         }
     }
 }

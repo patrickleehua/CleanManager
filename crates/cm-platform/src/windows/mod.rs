@@ -1,5 +1,6 @@
 //! Windows backends.
 
+pub mod actions;
 pub mod apps;
 pub mod directory;
 pub mod hard_deny;

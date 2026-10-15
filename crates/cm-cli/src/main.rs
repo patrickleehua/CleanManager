@@ -1,8 +1,11 @@
 //! `cleanmanager` command-line entry point. Runs without any GUI process (CLI-01).
 
 mod analysis_cmd;
+mod apply_cmd;
+mod apps_cmd;
 mod args;
 mod commands;
+mod plan_cmd;
 
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;

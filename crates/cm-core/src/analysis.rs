@@ -153,6 +153,9 @@ pub struct Candidate {
     pub allowed_modes: Vec<Mode>,
     pub probes: Vec<String>,
     pub impact: String,
+    /// Owner of the first matching rule (used by the owner-process probe at execution).
+    #[serde(default)]
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -352,6 +355,7 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
                             allowed_modes: modes,
                             probes: rule.probes.clone(),
                             impact: rule.impact.summary.clone(),
+                            owner_id: Some(rule.owner.id.clone()),
                         });
                     }
                 }

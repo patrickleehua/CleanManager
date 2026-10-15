@@ -16,11 +16,17 @@ use cm_store::index::{ScanInit, StagingSink};
 struct LifecycleSink<'a> {
     inner: StagingSink<'a>,
     stopping: bool,
+    entries: u64,
+    progress: Option<&'a dyn Fn(u64)>,
 }
 
 impl ScanSink for LifecycleSink<'_> {
     fn write(&mut self, objects: &[ObjectRow], entries: &[EntryRow], skipped: &[SkippedRow]) -> Result<(), String> {
         self.inner.write(objects, entries, skipped)?;
+        self.entries += entries.len() as u64;
+        if let Some(report) = self.progress {
+            report(self.entries);
+        }
         self.inner.store.heartbeat(&self.inner.scan_id, &now_utc()).map_err(|e| e.to_string())
     }
 
@@ -55,6 +61,17 @@ pub struct ScanOutcome {
 /// Run one scan to a published terminal state. Errors from the store are returned; backend
 /// problems are part of the report and still publish whatever was confirmed.
 pub fn run_scan(index: &IndexStore, backend: &dyn ScanBackend, request: &ScanRequest, options: &ScanOptions) -> Result<ScanOutcome, cm_store::StoreError> {
+    run_scan_with_progress(index, backend, request, options, None)
+}
+
+/// Like `run_scan`, reporting the number of committed entries after every batch.
+pub fn run_scan_with_progress(
+    index: &IndexStore,
+    backend: &dyn ScanBackend,
+    request: &ScanRequest,
+    options: &ScanOptions,
+    progress: Option<&dyn Fn(u64)>,
+) -> Result<ScanOutcome, cm_store::StoreError> {
     let revision = index.begin_scan(&ScanInit {
         scan_id: request.scan_id.clone(),
         scope_id: request.scope_id.clone(),
@@ -63,7 +80,7 @@ pub fn run_scan(index: &IndexStore, backend: &dyn ScanBackend, request: &ScanReq
         host: request.host.clone(),
         started_at: now_utc(),
     })?;
-    let mut sink = LifecycleSink { inner: StagingSink { store: index, scan_id: request.scan_id.clone(), revision }, stopping: false };
+    let mut sink = LifecycleSink { inner: StagingSink { store: index, scan_id: request.scan_id.clone(), revision }, stopping: false, entries: 0, progress };
     let mut report = backend.scan(&request.root, &mut sink, options);
     // A cancel observed during the last batch still ends as cancelled, never completed.
     if sink.stopping && report.state == ScanState::Completed {

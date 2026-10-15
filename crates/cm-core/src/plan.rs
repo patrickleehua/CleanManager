@@ -78,6 +78,14 @@ pub struct Plan {
     /// Candidate tiers at planning time (policy matching needs them; not part of the digest).
     pub tiers: Vec<Tier>,
     pub rule_refs: Vec<String>,
+    /// Per item (same order as `body.items`): probes and rule owner needed at execution.
+    pub item_meta: Vec<ItemMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemMeta {
+    pub probes: Vec<String>,
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -210,6 +218,7 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
     let mut items = Vec::new();
     let mut observations = Vec::new();
     let mut tiers = Vec::new();
+    let mut item_meta = Vec::new();
     let mut rule_refs = Vec::new();
     let mut seen_objects = std::collections::BTreeSet::new();
     for c in &chosen {
@@ -237,6 +246,7 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
             });
             observations.push(obs);
             tiers.push(c.tier);
+            item_meta.push(ItemMeta { probes: c.probes.clone(), owner_id: c.owner_id.clone() });
         }
     }
     for (i, item) in items.iter_mut().enumerate() {
@@ -258,7 +268,7 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
         items,
     };
     let digest = body.digest()?;
-    Ok(Plan { body, digest, observations, tiers, rule_refs })
+    Ok(Plan { body, digest, observations, tiers, rule_refs, item_meta })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

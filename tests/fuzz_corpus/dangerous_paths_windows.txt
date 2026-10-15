@@ -1,0 +1,210 @@
+# CleanManager dangerous-path regression corpus - Windows (PRT-05, design D5).
+#
+# Format: UTF-8, one path per line; blank lines and lines starting with '#' are ignored and
+# lines are NOT trimmed. Escapes: <EMPTY> is the empty path; <U+XXXX> (4-6 hex digits) is that
+# code point, or a lone UTF-16 code unit for D800-DFFF. "LINK => TARGET" declares that LINK is a
+# symlink/junction to TARGET (visible to every line) and checks LINK; "LINK => !" declares a
+# link whose target cannot be resolved.
+#
+# Every line MUST be denied, either by the textual pre-filter or by the identity check against
+# the fixture volume (C: with user "alice", D: data disk, 8.3 short names, the usual junctions).
+# The cm-core test `protect::corpus_tests` loads this file and also mutates every line (case,
+# separators, trailing dot/space, \?\ prefix); any Allowed result fails CI.
+
+# --- empty, relative, drive-relative, roots -------------------------------------------------
+<EMPTY>
+C:
+C:\
+c:/
+D:\
+C:Windows
+Windows\System32
+\Windows\System32
+.\cache
+..\..\Windows
+<U+0020>C:\Windows
+
+# --- system roots and case / separator / trailing variants ----------------------------------
+C:\Windows
+c:\windows
+C:\WINDOWS\system32
+C:\Windows\System32\drivers\etc\hosts
+C:\Windows\WinSxS
+C:\Windows\WinSxS\amd64_microsoft-windows-foo_31bf3856ad364e35_10.0.0.0_none_0
+C:\Windows\SysWOW64
+C:/Windows/System32
+C:\Windows\
+C:\Windows\System32
+C:\Windows.
+C:\Windows<U+0020>
+C:\Windows<U+0020>\System32
+C:\Windows\System32\.
+C:\Program Files
+C:\Program Files\Common Files
+C:\Program Files (x86)
+C:\Program Files\Windows Defender
+C:\ProgramData
+C:\ProgramData\Microsoft\Windows Defender\Scans
+C:\ProgramData\Microsoft\Windows Defender Advanced Threat Protection
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys
+
+# --- profiles, credentials, the tool's own store --------------------------------------------
+C:\Users
+C:\Users\Default
+C:\Users\Default\NTUSER.DAT
+C:\Users\Public\Documents
+C:\Users\All Users
+C:\Users\alice
+c:\users\ALICE\
+C:\Users\alice\NTUSER.DAT
+C:\Users\alice\ntuser.dat.LOG1
+C:\Users\alice\AppData\Local\Microsoft\Windows\UsrClass.dat
+C:\Users\alice\AppData
+C:\Users\alice\AppData\Local
+C:\Users\alice\AppData\Roaming
+C:\Users\alice\AppData\Roaming\Microsoft\Protect
+C:\Users\alice\AppData\Roaming\Microsoft\Credentials\ABCDEF
+C:\Users\alice\AppData\Roaming\Microsoft\SystemCertificates\My
+C:\Users\alice\AppData\Local\Microsoft\Vault
+C:\Users\alice\AppData\Local\CleanManager\store
+C:\Users\alice\AppData\Local\CleanManager\store\audit\0001.log
+C:\Documents and Settings
+
+# --- volume metadata, recycle bin, recovery, boot -------------------------------------------
+C:\System Volume Information
+D:\System Volume Information\tracking.log
+C:\$Recycle.Bin
+C:\$Recycle.Bin\S-1-5-21-1-2-3-1001
+D:\$Recycle.Bin
+C:\Recovery\WindowsRE
+C:\Config.Msi
+C:\Boot\BCD
+C:\EFI
+C:\pagefile.sys
+C:\hiberfil.sys
+C:\swapfile.sys
+C:\bootmgr
+C:\$MFT
+C:\$Extend\$UsnJrnl
+C:\$WinREAgent
+
+# --- 8.3 short names (pass the text filter; denied by identity) ------------------------------
+C:\PROGRA~1
+C:\PROGRA~1\Common Files
+C:\progra~2\Microsoft
+C:\PROGRA~3
+C:\DOCUME~1\alice
+C:\SYSTEM~1
+C:\$RECYC~1
+C:\CONFIG~1.MSI
+\?\C:\PROGRA~1
+
+# --- traversal ------------------------------------------------------------------------------
+C:\Users\alice\AppData\Local\Temp\..\..\..\..\..\Windows
+C:\Users\alice\AppData\Local\Temp\.\x
+D:\cache\..\..\Windows
+C:\Users\alice\AppData\Local\Temp\..
+
+# --- verbatim, device and object-manager paths ----------------------------------------------
+\?\C:\Windows\System32
+\?\c:\windows
+\?\C:\Windows\.
+\?\C:/Windows
+\?\C:\Users\alice\AppData\Local\Temp\x
+\?\GLOBALROOT\Device\HarddiskVolume3\Windows
+\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Users
+\?\HarddiskVolume1\Windows
+\?\PhysicalDrive0
+\?\pipe\cleanmanager
+\?\Volume{12345678-1234-1234-1234-123456789abc}\
+\?\Volume{12345678-1234-1234-1234-123456789abc}
+\?\Volume{12345678-1234-1234-1234-123456789abc}\Windows
+\?\Volume{12345678-1234-1234-1234-123456789abc}\PROGRA~1
+\?\Volume{not-a-guid}\x
+\.\C:
+\.\PhysicalDrive0
+\.\pipe\cleanmanager
+\.
+//./C:/Windows
+//?/C:/Windows
+\??\C:\Windows
+/??/C:/Windows
+
+# --- UNC and administrative shares ----------------------------------------------------------
+\server\C$
+\server\c$\Users\alice
+\localhost\ADMIN$\System32
+\127.0.0.1\C$\Windows
+\?\UNC\server\C$\Windows
+\?\UNC\localhost\c$
+\server\IPC$
+\server\print$
+\server\share
+\server\share\
+\server
+\
+//server/c$/windows
+\server\share\Windows\System32
+
+# --- reserved device names ------------------------------------------------------------------
+C:\Users\alice\AppData\Local\Temp\CON
+C:\Users\alice\AppData\Local\Temp\nul.txt
+C:\Users\alice\AppData\Local\Temp\COM1
+C:\Users\alice\AppData\Local\Temp\LPT9.log
+C:\Users\alice\AppData\Local\Temp\aux
+C:\Users\alice\AppData\Local\Temp\prn.tar.gz
+C:\Users\alice\AppData\Local\Temp\CONIN$
+C:\Users\alice\AppData\Local\Temp\COM¹
+C:\Users\alice\AppData\Local\Temp\con<U+0020>.txt
+C:\Users\alice\AppData\Local\Temp\NUL\x
+
+# --- alternate data streams and invalid name characters -------------------------------------
+C:\Users\alice\Documents\report.docx:Zone.Identifier
+C:\Users\alice\AppData\Local\Temp\x::$DATA
+C:\Users\alice\AppData\Local\Temp\file.txt:hidden:$DATA
+C:\Users\alice\AppData\Local\Temp:stream
+C:\Users\alice\AppData\Local\Temp\a*b
+C:\Users\alice\AppData\Local\Temp\a?b
+C:\Users\alice\AppData\Local\Temp\a|b
+C:\Users\alice\AppData\Local\Temp\a<b
+C:\Users\alice\AppData\Local\Temp\"q"
+
+# --- control, invisible and encoding anomalies ----------------------------------------------
+C:\Users\alice\AppData\Local\Temp\a<U+0000>b
+C:\Users\alice\AppData\Local\Temp\a<U+0001>b
+C:\Users\alice\AppData\Local\Temp\evil<U+001B>[2J
+C:\Users\alice\AppData\Local\Temp\line<U+000A>break
+C:\Users\alice\AppData\Local\Temp\tab<U+0009>x
+C:\Users\alice\AppData\Local\Temp\del<U+007F>
+C:\Users\alice\AppData\Local\Temp\c1<U+0085>
+C:\Users\alice\AppData\Local\Temp\<U+202E>txt.exe
+C:\Win<U+200B>dows\System32
+C:\Users\alice\AppData\Local\Temp\bom<U+FEFF>
+C:\Users\alice\AppData\Local\Temp\soft<U+00AD>hyphen
+C:\Users\alice\AppData\Local\Temp\lone<U+D800>
+C:\Users\alice\AppData\Local\Temp\lone<U+DC00>low
+
+# --- Unicode look-alikes --------------------------------------------------------------------
+Ｃ:\Windows
+C：\Windows
+C:＼Windows
+C:\Users\alice\AppData\Local\Temp\vanished-before-check
+
+# --- links: junctions / symlinks into hard-deny locations -----------------------------------
+C:\Users\alice\AppData\Local\Temp\jwin => C:\Windows
+C:\Users\alice\AppData\Local\Temp\jwin\System32
+C:\Users\alice\AppData\Local\Temp\jsys => C:\Windows\System32
+C:\Users\alice\AppData\Local\Temp\jsys\drivers
+C:\Users\alice\AppData\Local\Temp\jroot => C:\
+C:\Users\alice\AppData\Local\Temp\jprof => C:\Users\alice
+C:\Users\alice\AppData\Local\Temp\jusers => C:\Users
+C:\Users\alice\AppData\Local\Temp\jbroken => !
+C:\Users\alice\AppData\Local\Temp\jbroken\inner
+C:\Users\alice\AppData\Local\Temp\jstore => C:\Users\alice\AppData\Local\CleanManager\store
+C:\Users\alice\AppData\Local\Temp\jdef => C:\ProgramData\Microsoft\Windows Defender
+C:\Users\alice\AppData\Local\Temp\jjwin => C:\Users\alice\AppData\Local\Temp\jwin
+C:\Users\alice\AppData\Local\Temp\jshort => C:\PROGRA~1
+D:\links\pf => C:\Program Files
+D:\links\pf\App\cache
+D:\links\vol => D:\
+D:\links\loop => D:\links\loop

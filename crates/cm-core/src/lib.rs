@@ -5,10 +5,12 @@
 
 pub mod analysis;
 pub mod apps;
+pub mod authz;
 pub mod bytes;
 pub mod c14n;
 pub mod capability;
 pub mod error;
+pub mod execute;
 pub mod host;
 pub mod model;
 pub mod obs;
