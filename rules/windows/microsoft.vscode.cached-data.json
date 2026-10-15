@@ -1,0 +1,57 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.vscode.cached-data",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.vscode"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "CachedData"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Visual Studio Code compiled JavaScript cache of VS Code itself, one folder per VS Code build.",
+    "regeneration": "VS Code recreates it on the next start; the first start after removal may be slower.",
+    "offline_effect": "None expected: no settings, extensions, workspaces or state databases are inside."
+  },
+  "tested_registry_ref": "microsoft.vscode.cached-data@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_microsoft_vscode_cached_data"
+  ]
+}

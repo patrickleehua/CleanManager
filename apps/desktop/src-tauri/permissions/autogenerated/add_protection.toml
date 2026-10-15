@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-protection"
+description = "Enables the add_protection command without any pre-configured scope."
+commands.allow = ["add_protection"]
+
+[[permission]]
+identifier = "deny-add-protection"
+description = "Denies the add_protection command without any pre-configured scope."
+commands.deny = ["add_protection"]

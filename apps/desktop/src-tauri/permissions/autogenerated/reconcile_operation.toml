@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reconcile-operation"
+description = "Enables the reconcile_operation command without any pre-configured scope."
+commands.allow = ["reconcile_operation"]
+
+[[permission]]
+identifier = "deny-reconcile-operation"
+description = "Denies the reconcile_operation command without any pre-configured scope."
+commands.deny = ["reconcile_operation"]

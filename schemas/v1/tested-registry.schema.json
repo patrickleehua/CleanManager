@@ -50,6 +50,17 @@
       }
     },
     "known_effects": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
-    "evidence_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+    "evidence_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "thresholds": {
+      "description": "Thresholds the run exercised (CAT-07); required when the rule declares any. A changed threshold needs a new rule version and a new test.",
+      "type": "object", "additionalProperties": false,
+      "required": ["min_age_days", "age_basis", "min_size_bytes", "retention_days"],
+      "properties": {
+        "min_age_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 },
+        "age_basis": { "enum": ["modified_time", "created_time", null] },
+        "min_size_bytes": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$" }] },
+        "retention_days": { "type": ["integer", "null"], "minimum": 1, "maximum": 3650 }
+      }
+    }
   }
 }

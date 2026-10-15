@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-operation-items"
+description = "Enables the list_operation_items command without any pre-configured scope."
+commands.allow = ["list_operation_items"]
+
+[[permission]]
+identifier = "deny-list-operation-items"
+description = "Denies the list_operation_items command without any pre-configured scope."
+commands.deny = ["list_operation_items"]

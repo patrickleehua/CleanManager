@@ -1,0 +1,49 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "go.build-cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "windows"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "tool",
+    "id": "go"
+  },
+  "root_resolver": "package_manager_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "tool_adapter",
+  "adapter_ref": "go.build-cache-clean",
+  "allowed_modes": [],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Go build cache (GOCACHE).",
+    "regeneration": "The next build recompiles every package.",
+    "offline_effect": "None: no network is needed to rebuild."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": [
+    "run_win_catalog_go_build_cache"
+  ]
+}

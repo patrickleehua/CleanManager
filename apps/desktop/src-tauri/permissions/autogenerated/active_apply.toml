@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-active-apply"
+description = "Enables the active_apply command without any pre-configured scope."
+commands.allow = ["active_apply"]
+
+[[permission]]
+identifier = "deny-active-apply"
+description = "Denies the active_apply command without any pre-configured scope."
+commands.deny = ["active_apply"]

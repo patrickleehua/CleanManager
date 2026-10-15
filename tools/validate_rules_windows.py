@@ -99,16 +99,18 @@ def write_record(run_id, test_id, expected, actual, ok, backend, measurements, l
 
 
 def promote(rule_id, subject, name, version_range, positive, negative, effects, run_id):
+    rule_path = ROOT / "rules/windows" / f"{rule_id}.json"
+    rule = json.loads(rule_path.read_text(encoding="utf-8"))
+    # The registry records the thresholds the run exercised (CAT-07): changing one needs a new rule version.
     reg = {"schema_version": "1.0", "registry_id": f"{rule_id}@1.0.0", "rule_id": rule_id, "rule_version": "1.0.0", "synthetic": False,
            "subject": subject | {"name": name}, "version_range": version_range,
            "platforms": [{"platform": "windows", "os_versions": [os_facts()["build"]], "architectures": [os_facts()["architecture"]]}],
            "tested_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "result": "passed",
-           "fixtures": {"positive": positive, "negative": negative}, "known_effects": effects, "evidence_refs": [run_id]}
+           "fixtures": {"positive": positive, "negative": negative}, "known_effects": effects, "evidence_refs": [run_id],
+           "thresholds": rule["thresholds"]}
     SCHEMAS["tested-registry"].validate(reg)
     (ROOT / "rules/registry").mkdir(exist_ok=True)
     (ROOT / "rules/registry" / f"{rule_id}@1.0.0.json").write_text(json.dumps(reg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    rule_path = ROOT / "rules/windows" / f"{rule_id}.json"
-    rule = json.loads(rule_path.read_text(encoding="utf-8"))
     rule.update(status="enabled", tested_registry_ref=f"{rule_id}@1.0.0", evidence_refs=[run_id])
     SCHEMAS["rule-v2"].validate(rule)
     rule_path.write_text(json.dumps(rule, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

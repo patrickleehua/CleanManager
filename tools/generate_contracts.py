@@ -156,6 +156,8 @@ def main():
     defs["plan_item"] = obj({"action_id": STR, "candidate_id": STR, "entry_id": STR,
         "path": ref("path"), "identity": ref("identity"), "observed_fingerprint_sha256": HASH,
         "logical_bytes": UINT, "allocated_bytes": nullable(UINT), "must_not_follow_links": {"const": True}})
+    # Optional (absent = file): a directory item is removed only when empty after its planned contents.
+    defs["plan_item"]["properties"]["kind"] = enum("file", "directory")
     defs["plan_body"] = obj({"engine_contract": {"const": "plan/v1"}, "plan_id": STR, "scope_id": STR,
         "scan_id": STR, "scan_revision": COUNT, "rule_set_digest": HASH, "policy_digest": HASH,
         "created_at": TIME, "expires_at": TIME, "mode": enum("trash", "quarantine", "delete"),
@@ -298,10 +300,27 @@ def main():
             "mounted", "identity_changed", "partial_evidence", "admin_required")),
         "probes": arr(ref("probe_result")), "logical_bytes": nullable(UINT), "reclaimable_estimate_bytes": nullable(UINT),
         "impact": STR})
+    # Purge/installer previews (PUR/INC): optional source label and notes; version control undecidable.
+    defs["preview_item"]["properties"].update({"source_label": nullable(STR), "notes": arr(STR)})
+    defs["preview_item"]["properties"]["skip_reason"]["anyOf"][0]["enum"].append("vcs_unknown")
     defs["selection_preview"] = record("selection_preview", {"command": STR, "scan_id": nullable(STR), "scan_revision": nullable(COUNT),
         "dry_run": {"const": True}, "non_interactive": {"type": "boolean"}, "items": arr(ref("preview_item")), **page,
         "summary": obj({"selected_count": COUNT, "selected_known_bytes": UINT, "selected_unknown_size_count": COUNT,
             "review_only_count": COUNT, "blocked_count": COUNT, "skipped_count": COUNT}), "convertible_to_plan": {"type": "boolean"}})
+    # CAT-01/03/05 `clean list`: categories, rules with tested-registry coverage, owner-tool adapter previews.
+    defs["catalog_rule"] = obj({"rule_id": STR, "version": STR, "status": enum("experimental", "verified", "enabled"), "max_tier": tier,
+        "effective_tier_ceiling": tier, "rebuild_class": enum("local_rebuild", "network_redownload", "not_rebuildable"),
+        "action_kind": enum("filesystem", "tool_adapter", "review_only_row"), "adapter_ref": nullable(STR), "owner_id": STR,
+        "installed_version": nullable(STR), "registry_status": enum("covered", "version_untested", "not_registered"),
+        "tested_range": nullable(STR), "tested_at": nullable(STR), "evidence_refs": arr(STR), "summary": STR})
+    defs["adapter_preview"] = obj({"adapter_id": STR, "version": STR, "tool_id": STR, "status": enum("available", "unavailable", "timed_out", "failed"),
+        "reason": nullable(STR), "executable": nullable(STR), "executable_sha256": nullable(HASH), "script": nullable(STR),
+        "script_sha256": nullable(HASH), "argv": arr(STR, 1), "exit_code": nullable({"type": "integer"}), "duration_ms": COUNT,
+        "output_summary": {"type": "string", "maxLength": 1048576}, "reported_path": nullable(STR), "cleanup_argv": arr(STR, 1), "cleanup_effect": STR})
+    defs["cleanup_catalog"] = record("cleanup_catalog", {"platform": enum("windows", "macos"), "catalog_version": STR, "rule_set_digest": HASH,
+        "categories": arr(obj({"category": STR, "label": STR, "wave": {"type": "integer", "minimum": 1},
+            "status": enum("available", "unverified", "unsupported"), "rules": arr(ref("catalog_rule"))})),
+        "adapters": arr(ref("adapter_preview"))})
     capability_state = enum("available", "permission_required", "unsupported", "unverified")
     defs["app_instance"] = obj({"app_instance_id": STR, "name": STR, "version": nullable(STR),
         "source": enum("app_bundle", "homebrew", "app_store", "registry_uninstall", "msi", "msix_store", "winget", "scoop", "unknown"),
@@ -353,6 +372,9 @@ def main():
         "checks": arr(obj({"check": STR, "status": enum("ok", "warning", "failed", "unknown"), "detail": STR}))})
     defs["purge_roots"] = record("purge_roots", {"roots": arr(obj({"path": ref("path"), "source": enum("default", "user"),
         "exists": {"type": "boolean"}}))})
+    defs["installer_locations"] = record("installer_locations", {"locations": arr(obj({"path": ref("path"),
+        "source_label": enum("downloads", "desktop", "browser_downloads"), "exists": {"type": "boolean"}})),
+        "max_depth": {"type": "integer", "minimum": 1, "maximum": 4}})
     install_method = enum("standalone", "homebrew", "winget", "scoop", "desktop_bundle")
     defs["release_info"] = record("release_info", {"current_version": STR, "latest_version": nullable(STR), "release_id": nullable(STR),
         "install_method": install_method, "status": enum("update_available", "up_to_date", "use_package_manager", "cannot_check"),
@@ -371,7 +393,8 @@ def main():
              "authorization_status", "operation_status", "operation_cancel_receipt", "quarantine_list", "operation_list",
              "cli_request", "selection_preview", "app_list", "startup_list", "maintenance_catalog", "maintenance_report",
              "status_snapshot", "protection_list", "protection_check", "insight_list", "doctor_report", "purge_roots", "release_info",
-             "self_update_result", "self_remove_preview", "completion_script"]
+             "self_update_result", "self_remove_preview", "completion_script", "cleanup_catalog"]
+    kinds.append("installer_locations")  # INC-01 declared locations
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
               "$id": "urn:cleanmanager:protocol:1.0", "title": "CleanManager proposed v1 record",
               "description": "Pre-implementation contract; examples are synthetic, not runtime evidence.",
@@ -515,6 +538,19 @@ def main():
                      "not_rebuildable", False, skip="protected", size=None)],
             summary={"selected_count": 1, "selected_known_bytes": "1048576", "selected_unknown_size_count": 0,
                      "review_only_count": 1, "blocked_count": 1, "skipped_count": 2}),
+        "cleanup-catalog": rec("cleanup_catalog", platform="windows", catalog_version="catalog/1", rule_set_digest="0" * 64, categories=[
+            {"category": "browsers", "label": "Browsers", "wave": 1, "status": "available", "rules": [
+                {"rule_id": "example.browser.code-cache", "version": "0.1.0", "status": "enabled", "max_tier": "default_selected",
+                 "effective_tier_ceiling": "review_only", "rebuild_class": "local_rebuild", "action_kind": "filesystem", "adapter_ref": None,
+                 "owner_id": "example.browser", "installed_version": "2.0.1", "registry_status": "version_untested",
+                 "tested_range": "1.0..2.0", "tested_at": "2026-10-15", "evidence_refs": ["synthetic:schema-example"],
+                 "summary": "Synthetic browser code cache"}]},
+            {"category": "trash", "label": "Recycle Bin / Trash", "wave": 1, "status": "unsupported", "rules": []}],
+            adapters=[{"adapter_id": "example.adapter.cache-clean-unreferenced", "version": "1.0.0", "tool_id": "example.tool",
+                       "status": "unavailable", "reason": "Synthetic tool not found in a trusted location", "executable": None,
+                       "executable_sha256": None, "script": None, "script_sha256": None, "argv": ["cache", "path"], "exit_code": None,
+                       "duration_ms": 0, "output_summary": "", "reported_path": None, "cleanup_argv": ["cache", "clean"],
+                       "cleanup_effect": "Synthetic: the tool removes unreferenced entries"}]),
         "needs-approval-uninstall": rec("error", code="needs_approval", message="Uninstall plan needs user review", retryable=False,
             required_action="Review the plan in the desktop app or with plan review", details={"plan_id": "p_v2_uninstall",
             "operation_id": None, "scope_id": None}),
@@ -696,6 +732,35 @@ def main():
              "rule_refs": ["example.cache@0.1.0"], "counts": None, "processed_logical_bytes": None, "recovery": {"availability": "unknown",
                  "guidance": "Outcome unconfirmed; run `cleanmanager operations reconcile op_unknown` before deciding anything."}}]),
     })
+    # PUR/INC previews: purge artifacts by rebuildability, installers review-only with a source label.
+    def purge_item(oid, display, rule, t, reason, rebuild, selected, skip=None, notes=(), source=None):
+        it = {**item(oid, display, "project_build_output" if rebuild == "local_rebuild" else "project_dependencies", t, reason, rebuild, selected, skip),
+              "rule_id": rule, "rule_version": "1.0.0", "registry_status": "covered", "notes": list(notes)}
+        if source:
+            it.update({"category": "installers", "source_label": source})
+        return it
+    cli["preview-purge"] = rec("selection_preview", command="purge.preview", scan_id="s_demo", scan_revision=1, dry_run=True,
+        non_interactive=True, next_cursor=None, page_size=3, convertible_to_plan=True, items=[
+            purge_item("c_t", "C:\\Users\\Example\\Projects\\app\\target", "purge.target", "default_selected",
+                       "build output next to its project marker; rebuilt locally", "local_rebuild", True, notes=["project: ... (cargo.toml)"]),
+            purge_item("c_n", "C:\\Users\\Example\\Projects\\web\\node_modules", "purge.node-modules", "review_only",
+                       "dependencies: review only, reinstalling needs the network", "network_redownload", False, skip="recent"),
+            purge_item("c_d", "C:\\Users\\Example\\Projects\\web\\dist", "purge.dist", "blocked", "vcs_tracked:3_files", "local_rebuild", False,
+                       skip="vcs_tracked")],
+        summary={"selected_count": 1, "selected_known_bytes": "1048576", "selected_unknown_size_count": 0,
+                 "review_only_count": 1, "blocked_count": 1, "skipped_count": 2})
+    cli["preview-installer"] = rec("selection_preview", command="installer.preview", scan_id="s_demo", scan_revision=1, dry_run=True,
+        non_interactive=True, next_cursor=None, page_size=2, convertible_to_plan=True, items=[
+            purge_item("c_e", "C:\\Users\\Example\\Downloads\\ExampleSetup.exe", "installer.exe", "review_only",
+                       "installers are review-only: choose them one by one or by source", "network_redownload", False,
+                       notes=["recognized: nsis: installer data header after the image", "signed by Example Publisher"], source="downloads"),
+            purge_item("c_i", "C:\\Users\\Example\\Downloads\\example.iso", "installer.iso", "review_only", "mounted_image: eject it first",
+                       "network_redownload", False, skip="mounted", source="downloads")],
+        summary={"selected_count": 0, "selected_known_bytes": "0", "selected_unknown_size_count": 0,
+                 "review_only_count": 2, "blocked_count": 0, "skipped_count": 1})
+    cli["installer-locations"] = rec("installer_locations", max_depth=2, locations=[
+        {"path": wpath("C:\\Users\\Example\\Downloads"), "source_label": "downloads", "exists": True},
+        {"path": wpath("C:\\Users\\Example\\Desktop"), "source_label": "desktop", "exists": True}])
     for name, example in cli.items():
         save("examples/contracts/" + name + ".json", example)
     save("rules/examples/example-cache.json", {"schema_version": "1.0", "rule_id": "example.cache", "version": "0.1.0",

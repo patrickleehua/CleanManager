@@ -120,15 +120,24 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
     if stores.audit.plan_contract(plan_id).ok().as_deref() == Some(cm_core::recovery::RECOVERY_CONTRACT) {
         return crate::recovery_cmd::plan_apply(req, p, &stores, plan_id);
     }
-    let digest = match current_rule_set_digest(p) {
+    let stored = stores.audit.load_plan(plan_id).ok();
+    // Built-in catalogs (purge, installer) ship with this binary: their digest is checked by the core.
+    let builtin = stored.as_ref().map(|pl| pl.body.rule_set_digest.clone()).filter(|d| cm_core::plan::is_builtin_catalog_digest(d));
+    let digest = match builtin.map(Ok).unwrap_or_else(|| current_rule_set_digest(p)) {
         Ok(d) => d,
         Err(e) => return fail(req, ErrorCode::InternalError, &format!("rule set unavailable: {e}"), p.format),
     };
     let principal = current_principal();
     let host = OsHostProbe.current("cli");
     // An unknown plan id still reaches apply_plan, which reports it; protection is only consulted per action.
-    let rule_refs = stores.audit.load_plan(plan_id).map(|pl| pl.rule_refs).unwrap_or_default();
-    let protect = cm_platform::protection::checker(&stores.dir, rule_refs);
+    let rule_refs = stored.as_ref().map(|pl| pl.rule_refs.clone()).unwrap_or_default();
+    let base = cm_platform::protection::checker(&stores.dir, rule_refs);
+    // PUR-03: purge plans re-read version-control state per artifact before acting.
+    #[cfg(windows)]
+    let gate = stored.as_ref().map(cm_platform::windows::purge::vcs_gate);
+    #[cfg(not(windows))]
+    let gate: Option<fn(&cm_core::execute::ActionTarget<'_>) -> Result<(), String>> = None;
+    let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t).and_then(|()| gate.as_ref().map_or(Ok(()), |g| g(t)));
     let ctx = ApplyContext {
         principal: &principal,
         host: &host,

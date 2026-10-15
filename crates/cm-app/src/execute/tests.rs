@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use super::*;
+use cm_core::execute::TreeMember;
 use cm_core::analysis::{AnalysisInput, ResolvedRoot, analyze};
 use cm_core::authz::{Policy, PolicyState};
 use cm_core::capability::Platform;
@@ -21,6 +22,12 @@ struct Fake {
     quarantine: RefCell<BTreeMap<String, String>>,
     calls: Cell<u32>,
     unknown_on: RefCell<Option<String>>,
+    /// Directories by path (directory items); `tree_ok` lets `trash_tree` succeed.
+    dirs: RefCell<BTreeMap<String, String>>,
+    tree_ok: Cell<bool>,
+    tree_calls: Cell<u32>,
+    /// A file created inside a directory right after this action id runs (mid-plan arrival).
+    arrive_after: RefCell<Option<(String, String)>>,
 }
 
 impl Fake {
@@ -55,6 +62,9 @@ impl FileActions for Fake {
     fn delete(&self, t: &ActionTarget<'_>) -> ActionOutcome {
         self.calls.set(self.calls.get() + 1);
         self.files.borrow_mut().remove(&t.path.lossy());
+        if let Some((after, path)) = self.arrive_after.borrow().clone() && after == t.action_id {
+            self.files.borrow_mut().insert(path, "inode64:00000000000000ee".into());
+        }
         if self.unknown_on.borrow().as_deref() == Some(t.action_id) {
             return ActionOutcome::Unknown { message: "simulated lost acknowledgement".into() };
         }
@@ -64,14 +74,44 @@ impl FileActions for Fake {
         RawPath::unix(format!("/q/{op}").into_bytes()).ok()
     }
     fn reconcile(&self, t: &ActionTarget<'_>, _: Mode, _: Option<&RawPath>) -> Reconciled {
-        match self.files.borrow().get(&t.path.lossy()) {
+        let key = t.path.lossy();
+        match self.files.borrow().get(&key).or(self.dirs.borrow().get(&key)) {
             Some(id) if *id == t.identity.file_id => Reconciled::NotPerformed,
             Some(_) => Reconciled::StillUnknown,
             None => Reconciled::Performed,
         }
     }
     fn free_space(&self, _: &RawPath) -> Option<u64> {
-        Some(1_000_000 + 100 * (3 - self.files.borrow().len() as u64))
+        Some(1_000_000 + 100 * 3u64.saturating_sub(self.files.borrow().len() as u64))
+    }
+    fn remove_empty_dir(&self, t: &ActionTarget<'_>) -> ActionOutcome {
+        self.calls.set(self.calls.get() + 1);
+        let key = t.path.lossy();
+        match self.dirs.borrow().get(&key) {
+            None => return ActionOutcome::Skipped { code: "missing".into(), message: "gone".into() },
+            Some(id) if *id != t.identity.file_id => return ActionOutcome::Skipped { code: "identity_changed".into(), message: "swapped".into() },
+            Some(_) => {}
+        }
+        let inside = format!("{key}/");
+        if self.files.borrow().keys().chain(self.dirs.borrow().keys()).any(|k| k.starts_with(&inside)) {
+            return ActionOutcome::Skipped { code: "new_descendant".into(), message: "not empty".into() };
+        }
+        self.dirs.borrow_mut().remove(&key);
+        ActionOutcome::Succeeded { recovery: Recovery::Unavailable }
+    }
+    fn trash_tree(&self, root: &ActionTarget<'_>, members: &[TreeMember<'_>]) -> ActionOutcome {
+        self.tree_calls.set(self.tree_calls.get() + 1);
+        let inside = format!("{}/", root.path.lossy());
+        let live: Vec<String> = self.files.borrow().keys().chain(self.dirs.borrow().keys()).filter(|k| k.starts_with(&inside)).cloned().collect();
+        if !self.tree_ok.get() || live.len() != members.len() || !members.iter().all(|m| live.contains(&m.path.lossy())) {
+            return ActionOutcome::Skipped { code: "tree_mismatch".into(), message: "differs".into() };
+        }
+        for k in live {
+            self.files.borrow_mut().remove(&k);
+            self.dirs.borrow_mut().remove(&k);
+        }
+        self.dirs.borrow_mut().remove(&root.path.lossy());
+        ActionOutcome::Succeeded { recovery: Recovery::Trash }
     }
 }
 
@@ -105,6 +145,11 @@ struct Env {
 
 /// /r/app/Cache/{a,b,c} (100 bytes each) and /r/app/Other/{a} ; plans: p1 = Cache, p2 = Cache again (overlap)
 fn env(name: &str, mode: Mode) -> Env {
+    env_with(name, mode, "cache")
+}
+
+/// `rule_id` starting with `purge.` makes the Cache directory itself a planned directory item.
+fn env_with(name: &str, mode: Mode, rule_id: &str) -> Env {
     let dir = std::env::temp_dir().join(format!("cm-exec-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let stores = Stores::open(&dir).unwrap();
@@ -118,8 +163,8 @@ fn env(name: &str, mode: Mode) -> Env {
     stores.index.write_batch("s", 1, &objects, &entries, &[]).unwrap();
     stores.index.publish("s", 1, ScanState::Completed, "t").unwrap();
     let view = stores.index.view("s").unwrap();
-    let rules = RuleSet { rules: vec![rule("cache", "Cache")], digest: "rs".into() };
-    let roots = [ResolvedRoot { rule_id: "cache".into(), path: RawPath::unix(b"/r/app".to_vec()).unwrap(), volume_id: "v".into(), file_id: "inode64:0000000000000002".into() }];
+    let rules = RuleSet { rules: vec![rule(rule_id, "Cache")], digest: "rs".into() };
+    let roots = [ResolvedRoot { rule_id: rule_id.into(), path: RawPath::unix(b"/r/app".to_vec()).unwrap(), volume_id: "v".into(), file_id: "inode64:0000000000000002".into() }];
     let set = analyze(&view, &rules, &AnalysisInput { scan_id: "s", revision: 1, now_unix: T0, roots: &roots, protected: &[] });
     let cid = set.candidates[0].candidate_id.clone();
     for (pid, created) in [("p1", T0), ("p2", T0 + 1)] {
@@ -287,4 +332,117 @@ fn quarantine_records_a_restorable_manifest() {
     assert_eq!((r.processed_logical_bytes.as_str(), r.quarantined_logical_bytes.as_str(), r.estimated_freed_bytes.as_str()), ("300", "300", "0"));
     assert_eq!(e.stores.audit.quarantine_items().unwrap().len(), 3);
     assert_eq!(f.quarantine.borrow().len(), 3);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Directory items (project artifacts): leaves first, then verified empty-directory removal.
+
+fn dir_fake() -> Fake {
+    let f = fake();
+    f.dirs.borrow_mut().insert("/r/app/Cache".into(), "inode64:0000000000000003".into());
+    f
+}
+
+fn plan_items(e: &Env, plan_id: &str) -> Vec<cm_core::plan::PlanItem> {
+    e.stores.audit.load_plan(plan_id).unwrap().body.items
+}
+
+#[test]
+fn directory_items_follow_their_files_and_are_digest_covered() {
+    let e = env_with("dir-plan", Mode::Delete, "purge.test");
+    let items = plan_items(&e, "p1");
+    let kinds: Vec<ItemKind> = items.iter().map(|i| i.kind).collect();
+    assert_eq!(kinds, [ItemKind::File, ItemKind::File, ItemKind::File, ItemKind::Directory]);
+    let body = serde_json::to_value(&e.stores.audit.load_plan("p1").unwrap().body).unwrap();
+    assert_eq!(body["items"][3]["kind"], "directory");
+    assert!(body["items"][0].get("kind").is_none(), "file items keep the plan/v1 shape");
+    // Quarantine keeps directories (restores need the original parents) and other catalogs stay files-only.
+    assert!(plan_items(&env_with("dir-q", Mode::Quarantine, "purge.test"), "p1").iter().all(|i| i.kind == ItemKind::File));
+    assert!(plan_items(&env("dir-none", Mode::Delete), "p1").iter().all(|i| i.kind == ItemKind::File));
+}
+
+#[test]
+fn emptied_directory_is_removed_after_its_files() {
+    let e = env_with("dir-ok", Mode::Delete, "purge.test");
+    let f = dir_fake();
+    approve(&e, "p1");
+    let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
+    assert_eq!((r.status.as_str(), r.succeeded), ("completed", 4), "{r:?}");
+    assert!(f.dirs.borrow().is_empty() && f.files.borrow().is_empty());
+    assert_eq!(r.items[3].message, "empty directory removed");
+    assert_eq!(r.processed_logical_bytes, "300", "directories add no bytes");
+}
+
+#[test]
+fn a_file_arriving_mid_plan_keeps_the_directory() {
+    let e = env_with("dir-new", Mode::Delete, "purge.test");
+    let f = dir_fake();
+    *f.arrive_after.borrow_mut() = Some(("a0000002".into(), "/r/app/Cache/late".into()));
+    approve(&e, "p1");
+    let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
+    assert_eq!((r.status.as_str(), r.succeeded, r.skipped), ("partial", 3, 1));
+    assert_eq!(r.items[3].code, "precondition_new_descendant");
+    assert!(f.files.borrow().contains_key("/r/app/Cache/late"), "the new file is never touched");
+    assert!(f.dirs.borrow().contains_key("/r/app/Cache"));
+}
+
+#[test]
+fn a_kept_file_keeps_its_directory_without_trying() {
+    let e = env_with("dir-kept", Mode::Delete, "purge.test");
+    let f = dir_fake();
+    f.files.borrow_mut().insert("/r/app/Cache/b".into(), "inode64:00000000000000ff".into());
+    approve(&e, "p1");
+    let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
+    assert_eq!(r.items[3].code, "precondition_descendant_kept");
+    assert_eq!(f.calls.get(), 2, "two deletes, no directory attempt");
+    assert!(f.dirs.borrow().contains_key("/r/app/Cache"));
+}
+
+#[test]
+fn trash_mode_prefers_the_whole_verified_tree_and_falls_back_to_leaves() {
+    let e = env_with("dir-tree", Mode::Trash, "purge.test");
+    let f = dir_fake();
+    f.tree_ok.set(true);
+    approve(&e, "p1");
+    let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
+    assert_eq!((r.status.as_str(), r.succeeded, f.tree_calls.get(), f.calls.get()), ("completed", 4, 1, 0), "{r:?}");
+    assert!(r.items.iter().all(|i| i.recovery == "trash"));
+
+    let e = env_with("dir-tree-fallback", Mode::Trash, "purge.test");
+    let f = dir_fake();
+    approve(&e, "p1");
+    let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
+    assert_eq!((r.status.as_str(), r.succeeded, f.tree_calls.get()), ("completed", 4, 1), "{r:?}");
+    assert_eq!((r.items[0].recovery.as_str(), r.items[3].recovery.as_str()), ("trash", "not_applicable"));
+    assert!(f.dirs.borrow().is_empty());
+}
+
+#[test]
+fn interrupted_directory_removal_is_reconciled_as_a_delete() {
+    let e = env_with("dir-crash", Mode::Delete, "purge.test");
+    let f = dir_fake();
+    approve(&e, "p1");
+    assert!(matches!(run(&e, &f, "p1", T0 + 10, None, Some((FaultPoint::AfterAction, "a0000003"))), Err(ApplyError::Crashed(_))));
+    let moved = e.stores.audit.reconcile_hosts(|_| cm_core::host::Liveness::Exited).unwrap();
+    let host = HostRef { kind: "cli".into(), pid: 2, started_at: "t".into() };
+    let ctx = ApplyContext { principal: PRINCIPAL, host: &host, current_rule_set_digest: "rs", now: &|| T0 + 20, cancel: &|| false, fault: &|_, _| false, protect: &|_| Ok(()) };
+    let r = reconcile_operation(&e.stores, &f, &moved[0], &ctx).unwrap();
+    assert_eq!((r.items[3].status, r.items[3].recovery.as_str()), (ActionStatus::Succeeded, "not_applicable"), "{r:?}");
+}
+
+#[test]
+fn a_protected_member_keeps_the_tree_out_of_the_recycle_bin() {
+    let e = env_with("dir-tree-protected", Mode::Trash, "purge.test");
+    let f = dir_fake();
+    f.tree_ok.set(true);
+    approve(&e, "p1");
+    let host = HostRef { kind: "cli".into(), pid: 1, started_at: "t".into() };
+    let ctx = ApplyContext {
+        principal: PRINCIPAL, host: &host, current_rule_set_digest: "rs", now: &|| T0 + 10, cancel: &|| false, fault: &|_, _| false,
+        protect: &|t| if t.path.lossy().ends_with("/b") { Err("protected by user entry u1".into()) } else { Ok(()) },
+    };
+    let r = apply_plan(&e.stores, &f, "p1", &ctx).unwrap();
+    assert_eq!(f.tree_calls.get(), 0, "no whole-tree move when anything inside is protected");
+    assert_eq!((r.succeeded, r.skipped), (2, 2), "{r:?}");
+    assert!(f.files.borrow().contains_key("/r/app/Cache/b") && f.dirs.borrow().contains_key("/r/app/Cache"));
 }

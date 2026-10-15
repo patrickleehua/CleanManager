@@ -1,9 +1,10 @@
 // Application state shared by the shell and pages. Pages keep their own view state (filters,
 // path, scroll) in long-lived view objects; this store carries what several pages show.
 
-import type { Capabilities, IpcError, RecentScan, ScanState, ScanStatus } from './types';
+import type { Capabilities, Counts, IpcError, RecentScan, ScanState, ScanStatus } from './types';
 
-export type Page = 'scope' | 'overview' | 'disk';
+export type Page = 'scope' | 'overview' | 'disk' | 'cleanup' | 'plan' | 'operation' | 'apps' | 'activity' | 'settings';
+export type ActivityTab = 'operations' | 'plans' | 'scans' | 'quarantine';
 
 /** The scan hosted by this desktop process (global task area). */
 export interface Task {
@@ -19,15 +20,35 @@ export interface Task {
   dismissed: boolean;
 }
 
+/** The plan application hosted by this desktop process (global task area). */
+export interface ApplyTask {
+  planId: string;
+  operationId: string;
+  total: number;
+  counts: Counts;
+  cancelRequested: boolean;
+  running: boolean;
+  status: string | null;
+  error: IpcError | null;
+  dismissed: boolean;
+}
+
 export interface AppState {
   page: Page;
   caps: Capabilities | null;
   recent: RecentScan[];
-  /** The scan the overview and disk pages are bound to. */
+  /** The scan the overview, disk, cleanup and apps pages are bound to. */
   scanId: string | null;
   status: ScanStatus | null;
   statusError: IpcError | null;
   task: Task | null;
+  apply: ApplyTask | null;
+  /** The plan shown on the review page and the operation shown on the result page. */
+  planId: string | null;
+  operationId: string | null;
+  /** Where the plan / operation page was opened from (its back link). */
+  returnTo: Page | null;
+  activityTab: ActivityTab;
   closing: boolean;
   preview: boolean;
 }
@@ -49,3 +70,5 @@ export class Store {
     return () => this.listeners.delete(l);
   }
 }
+
+export const EMPTY_COUNTS: Counts = { succeeded: 0, skipped: 0, failed: 0, not_started: 0, unknown: 0, in_flight: 0 };

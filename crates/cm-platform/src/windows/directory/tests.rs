@@ -53,7 +53,7 @@ fn raw(p: &Path) -> RawPath {
 fn scan(root: &Path, sink: &mut MemSink) -> ScanReport {
     // Tests model an ordinary-permission scan even when the harness token has backup rights.
     super::super::privileges::disable_bypass_privileges().unwrap();
-    DirectoryBackend.scan(&raw(root), sink, &ScanOptions { batch_entries: 4 })
+    DirectoryBackend.scan(&raw(root), sink, &ScanOptions { batch_entries: 4, ..Default::default() })
 }
 
 #[test]
@@ -327,10 +327,38 @@ fn volume_replaced_during_scan_stops_and_keeps_confirmed_results() {
     };
     super::super::privileges::disable_bypass_privileges().unwrap();
     let root = PathBuf::from(format!("{letter}:\\data"));
-    let report = DirectoryBackend.scan(&raw(&root), &mut sink, &ScanOptions { batch_entries: 4 });
+    let report = DirectoryBackend.scan(&raw(&root), &mut sink, &ScanOptions { batch_entries: 4, ..Default::default() });
     assert_eq!(report.state, ScanState::Partial, "{:?}", report.issues);
     assert!(report.issues.iter().any(|i| i.code == "volume_changed"));
     assert!(sink.inner.skipped.iter().any(|s| s.reason == SkipReason::VolumeChanged));
     assert!(sink.inner.entries.iter().any(|e| e.name.display() == "top.txt"), "results from the original volume are kept");
     assert!(!sink.inner.entries.iter().any(|e| e.name.display() == "other-volume.txt"), "nothing is read from the new volume");
+}
+
+#[test]
+fn own_store_directory_is_a_reported_boundary_not_a_refusal() {
+    let root = scratch("own-store");
+    let store = root.join("AppData").join("CleanManager").join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(store.join("index.db"), vec![0u8; 4096]).unwrap();
+    std::fs::write(root.join("keep.txt"), b"hello").unwrap();
+    super::super::privileges::disable_bypass_privileges().unwrap();
+    let mut sink = MemSink::default();
+    let opts = ScanOptions { batch_entries: 4, own_store_dirs: vec![raw(&store)] };
+    let report = DirectoryBackend.scan(&raw(&root), &mut sink, &opts);
+    assert_eq!(report.state, ScanState::Completed, "a skipped own store is not an unread range: {:?}", report.issues);
+    let st = sink.by_name("store");
+    assert_eq!((st.kind, st.boundary), (ObjectKind::Directory, Some(BoundaryKind::OwnStore)));
+    assert!(!sink.entries.iter().any(|e| e.name.display() == "index.db"), "the store is never traversed");
+    assert!(sink.entries.iter().any(|e| e.name.display() == "keep.txt"));
+    assert!(report.issues.iter().any(|i| i.code == "own_store_skipped" && i.scope_display.ends_with("store")), "reported, not silent");
+    assert!(sink.skipped.is_empty());
+
+    // Scanning the store itself records only the root as the boundary.
+    let mut sink = MemSink::default();
+    let report = DirectoryBackend.scan(&raw(&store), &mut sink, &opts);
+    assert_eq!(sink.entries.len(), 1);
+    assert_eq!(sink.entries[0].boundary, Some(BoundaryKind::OwnStore));
+    assert!(report.issues.iter().any(|i| i.code == "own_store_skipped"));
+    let _ = std::fs::remove_dir_all(&root);
 }

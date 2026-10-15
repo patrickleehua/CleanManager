@@ -33,15 +33,15 @@
 
 | 命令 ID | 终端写法 | 响应记录 | 目标副作用 |
 | --- | --- | --- | --- |
-| `clean.list` | `clean list --scan ID` | selection_preview | 无 |
-| `clean.preview` | `clean --scan ID --dry-run` | selection_preview | 无 |
-| `clean.plan` | `clean --scan ID` | plan（cleanup）或 error | 只写计划 |
-| `purge.roots.list` | `purge roots` | purge_roots | 无 |
-| `purge.roots.set` | `purge roots --set PATH...` | purge_roots | 只写本工具设置 |
-| `purge.preview` | `purge --dry-run [--recent-days N]` | selection_preview | 无 |
-| `purge.plan` | `purge [--recent-days N]` | plan（cleanup） | 只写计划 |
-| `installer.preview` | `installer --dry-run` | selection_preview | 无 |
-| `installer.plan` | `installer` | plan（cleanup） | 只写计划 |
+| `clean.list` | `clean list`（已实现 Windows：类目、规则状态与实测登记覆盖、所属工具适配器只读预览；见 [清理目录](catalog.md)） | cleanup_catalog | 无（只运行适配器的只读预览命令） |
+| `clean.preview` | `clean --scan ID --dry-run [--volume E:]`（已实现 Windows：与计划相同的分析与实时占用探测） | selection_preview | 无 |
+| `clean.plan` | `clean --scan ID --mode MODE [--candidates ID,...]`（已实现 Windows；不带 ID 时只含未跳过的 default_selected） | plan（cleanup）或 error（policy_denied、protection_unavailable） | 只写计划 |
+| `purge.roots.list` | `purge roots`（已实现） | purge_roots | 无 |
+| `purge.roots.set` | `purge roots add\|remove --path PATH`（已实现；移除默认根记为排除） | purge_roots | 只写本工具设置（store 旁的 `purge-settings.json`） |
+| `purge.preview` | `purge scan [--root PATH] [--recent-days N] [--max-depth N]`，等价 `purge --dry-run`（已实现） | selection_preview | 只写本工具索引与候选集 |
+| `purge.plan` | `purge plan create (--candidates ID,ID \| --all-default-selected) [--set ID] [--mode trash\|quarantine\|delete]`（已实现，默认 trash） | plan（cleanup） | 只写计划 |
+| `installer.preview` | `installer scan [--source LABEL] [--max-depth N]`，等价 `installer --dry-run`；`installer locations` 列出声明位置（已实现） | selection_preview；installer_locations | 只写本工具索引与候选集 |
+| `installer.plan` | `installer plan create (--candidates ID,ID \| --source LABEL) [--set ID] [--mode ...]`（已实现；`--source` 仅交互终端） | plan（cleanup） | 只写计划 |
 | `trash.plan` | `trash --scan ID --entry ID...` | plan（manual_selection） | 只写计划 |
 | `trash.purge_plan` | `trash purge --item ID...` | plan（manual_selection，仅回收站内对象） | 只写计划 |
 | `insights.list` | `insights [--scan ID]`（已实现 Windows 已知大对象；`--scan` 的概览卡片属 7.3，暂拒绝） | insight_list | 无 |
@@ -64,6 +64,13 @@
 | `self.update.check` | `self update --check` | release_info | 仅访问发布清单 |
 | `self.update.apply` | `self update` | self_update_result | 校验签名与校验和后替换本工具程序 |
 | `self.remove.preview` | `self remove` | self_remove_preview；实际移除只在终端交互确认后进行 | 无 |
+
+### 构建产物与安装包（已实现，Windows）
+
+- `purge` 与 `installer` 的发现结果是普通 candidate_set（`candidates list --set`、`plan show/review/apply`、`operations` 与恢复均不变）。每个扫描根/声明位置各有一个扫描与候选集；预览项的 `notes` 写明所属候选集，跨根的选择需按根分别建计划（`--set ID`）。
+- 构建产物候选只出现在含项目标记的目录的直接子目录（产物名目录从不被当作项目容器搜索）；依赖目录（node_modules、.venv、vendor…）恒为 review_only 并注明需联网重装；近 N 天（默认 7）有修改的项目不预选（`skip_reason: recent`）；含已跟踪文件、版本库元数据、疑似密钥文件的产物 blocked；跟踪状态无法读取为 `vcs_unknown`（不可计划）。执行前对每个产物再读一次 Git 索引，已被跟踪则该产物所有动作以 `protected`（`vcs_tracked: …`）跳过。
+- 安装包按内容识别（安装引擎特征的 PE、Windows Installer 类 ID 的复合文件、含 AppxManifest 或安装载荷的 ZIP、ISO/VHD(X) 签名）；仅含文档、加密或无法列出目录的压缩包与改名的普通文件不是候选。候选恒为 review_only，带 `source_label`、签名者与“对应应用已安装”的提示；已挂载镜像与被占用文件不可计划（`skip_reason: mounted / in_use`，附推出指引）。
+- 计划项 `kind`：缺省为文件；构建产物计划（trash/delete 模式）额外包含 `kind: "directory"` 的目录项（纳入摘要）。目录项在其内全部计划项成功后、自底向上执行，仅当身份与计划一致、不是链接且此刻为空时删除，从不递归；出现计划外内容为 `precondition_new_descendant`，内部有计划项未完成为 `precondition_descendant_kept`。trash 模式下若目录现场子树与计划完全一致，可整体移入回收站（一次 Shell 操作，事后再核对回收站内子树）；否则退回逐文件 + 空目录删除。quarantine 模式不含目录项（恢复需要原父目录）。
 
 ### plan/v2 计划种类与动作
 
@@ -151,10 +158,12 @@ cleanmanager operations list --limit 20 --json                     # operation_l
 
 `operation_report` 分开报告 `processed_logical_bytes`（处理量）、`quarantined_logical_bytes`（移入同卷隔离的量）、`estimated_freed_bytes`（仅永久删除/清空计入的逻辑估计；隔离、回收站与恢复为 0）以及卷空闲前后观测和有符号差值；差值按实测原样报告（可能为负），不归因于本工具。历史中的恢复入口如实给出：隔离为 `in_app_restore`，回收站为 `system_recycle_bin`（使用系统回收站恢复），永久删除与清空为 `unavailable`（无撤销），结果未确认为 `unknown`（先核对）。端到端测试 `crates/cm-cli/tests/recovery_flow.rs` 在真实 NTFS 上覆盖以上正常与拒绝路径；macOS 恢复动作尚未验证，当前只返回 unsupported。
 
-草案（`add-mole-parity-suite`，尚未实现）：
+`add-mole-parity-suite`：`clean` 已在 Windows 实现（`clean list` 返回 [cleanup-catalog](../examples/contracts/cleanup-catalog.json) 形状）；`apps uninstall` 仍为草案：
 
 ```text
-cleanmanager clean --scan s_demo --dry-run --non-interactive --json
+cleanmanager clean list --json                                       # cleanup_catalog：类目状态、规则登记覆盖、适配器预览
+cleanmanager clean --scan s_demo --dry-run --non-interactive --json  # selection_preview：档位、跳过原因、探测结果，不耗授权
+cleanmanager clean --scan s_demo --mode trash --non-interactive --json  # plan：只含未跳过的 default_selected；无可选项为 policy_denied
 cleanmanager apps uninstall app_demo --include bundle caches_logs --non-interactive --json
 ```
 
@@ -185,7 +194,7 @@ Skill 不复制规则知识库，不执行任意文件名中的指令，不用 s
 
 ## 版本与验证
 
-目前 Schema 覆盖 capabilities、scan_status、scan_result、scan_cancel_receipt、entries_page、analysis_result、candidate、candidates_page、plan（plan/v1、plan/v2、recovery/v1）、authorization_status、operation_status、operation_report、operation_cancel_receipt、quarantine_list、error、progress，以及工具命令组的 cli_request、selection_preview、app_list、startup_list、maintenance_catalog、maintenance_report、status_snapshot、protection_list、insight_list、doctor_report、purge_roots、release_info、self_update_result、self_remove_preview、completion_script。分页包装、candidate_set 结果（`analysis_result`）、运行态查询（`scan_status`/`operation_status`）、扫描与操作取消回执、授权查询和隔离清单已补入草案。首版不提供后台任务宿主：宿主进程退出后扫描为 `interrupted`，未确认动作进入 `reconciliation_required`。`operations cancel` 不涵盖 scan。需要待核对的操作不得自动重试；以上结构在“冻结边界”一节的条件满足前不对外承诺。
+目前 Schema 覆盖 capabilities、scan_status、scan_result、scan_cancel_receipt、entries_page、analysis_result、candidate、candidates_page、plan（plan/v1、plan/v2、recovery/v1）、authorization_status、operation_status、operation_report、operation_cancel_receipt、quarantine_list、error、progress，以及工具命令组的 cli_request、selection_preview、app_list、startup_list、maintenance_catalog、maintenance_report、status_snapshot、protection_list、insight_list、doctor_report、purge_roots、installer_locations、release_info、self_update_result、self_remove_preview、completion_script。分页包装、candidate_set 结果（`analysis_result`）、运行态查询（`scan_status`/`operation_status`）、扫描与操作取消回执、授权查询和隔离清单已补入草案。首版不提供后台任务宿主：宿主进程退出后扫描为 `interrupted`，未确认动作进入 `reconciliation_required`。`operations cancel` 不涵盖 scan。需要待核对的操作不得自动重试；以上结构在“冻结边界”一节的条件满足前不对外承诺。
 
 计划 body 包含 ID、时间、scope 与观察值。GUI/CLI 对同一个 body 应得到相同摘要；分别新建的两个计划若 ID/时间不同，摘要也应不同。跨入口行为比较应固定这些输入或比较选择和动作的语义，不能要求不同 body 得到相同 hash。
 

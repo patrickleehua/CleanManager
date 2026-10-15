@@ -5,14 +5,20 @@
 //! stop checks (cancel, expiry, revocation) → durable intent → live check → OS action → durable
 //! result. Unknown outcomes put the operation into `reconciliation_required`; nothing is ever
 //! retried or rolled back automatically.
+//!
+//! Directory items (project artifacts) run after every file item, deepest first, and only when
+//! everything planned inside them succeeded; the platform then removes each one only if it is
+//! the planned object and empty at that moment. In trash mode a planned directory whose live
+//! subtree still equals the plan may first go to the Recycle Bin as one object; any refusal
+//! falls back to leaves + empty-directory removal.
 
 use serde::{Deserialize, Serialize};
 
 use cm_core::authz::{Policy, Receipt, ReceiptSource, policy_covers, receipt_valid};
-use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery};
+use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery, TreeMember};
 use cm_core::host::HostRef;
 use cm_core::path::RawPath;
-use cm_core::plan::{Plan, StaleReason, check_plan, parse_utc};
+use cm_core::plan::{ItemKind, Plan, StaleReason, check_plan, parse_utc};
 use cm_core::rules::Mode;
 use cm_core::time::utc_from_unix;
 use cm_store::{StoreError, Stores};
@@ -228,49 +234,114 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
     stores.audit.set_operation_state(&operation_id, "running")?;
     let free_before = plan.body.items.first().and_then(|i| actions.free_space(&i.path));
 
-    let mut results: Vec<ActionResult> = Vec::with_capacity(plan.body.items.len());
-    let mut cancelled = false;
-    let expires = parse_utc(&plan.body.expires_at).unwrap_or(i64::MIN);
-    for (idx, item) in plan.body.items.iter().enumerate() {
-        let not_started = |code: &str, message: &str| ActionResult {
-            action_id: item.action_id.clone(),
-            status: ActionStatus::NotStarted,
-            code: code.into(),
-            message: message.into(),
-            recovery: "not_applicable".into(),
-        };
-        // EXE-06: cancellation, expiry and revocation stop new actions only.
-        if cancelled || (ctx.cancel)() {
-            cancelled = true;
-            results.push(not_started("cancelled", "operation cancelled before this action started"));
-            continue;
-        }
-        if (ctx.now)() >= expires {
-            results.push(not_started("plan_expired", "plan expired before this action started"));
-            continue;
-        }
-        if auth_source == "interactive_review" && !stores.audit.receipts_for(plan_id)?.iter().any(|r| receipt_valid(r, &plan, ctx.principal, (ctx.now)())) {
-            results.push(not_started("authorization_revoked", "authorization was revoked or expired"));
-            continue;
-        }
-        let meta = plan.item_meta.get(idx);
-        let probes = meta.map(|m| m.probes.clone()).unwrap_or_default();
-        let target = ActionTarget {
+    let n = plan.body.items.len();
+    let probes: Vec<Vec<String>> = (0..n).map(|i| plan.item_meta.get(i).map(|m| m.probes.clone()).unwrap_or_default()).collect();
+    let target = |idx: usize| {
+        let item = &plan.body.items[idx];
+        ActionTarget {
             action_id: &item.action_id,
             path: &item.path,
             identity: &item.identity,
             parent_chain: &plan.observations[idx].parent_chain,
             observation: &plan.observations[idx],
-            probes: &probes,
-            owner_id: meta.and_then(|m| m.owner_id.as_deref()),
-        };
-        let intent = serde_json::json!({"mode": plan.body.mode, "path": item.path, "identity": item.identity, "fingerprint": item.observed_fingerprint_sha256});
-        stores.audit.record_intent(&operation_id, &item.action_id, &intent.to_string(), &utc_from_unix((ctx.now)()))?;
+            probes: &probes[idx],
+            owner_id: plan.item_meta.get(idx).and_then(|m| m.owner_id.as_deref()),
+        }
+    };
+    let mut slots: Vec<Option<ActionResult>> = vec![None; n];
+    let mut intended = vec![false; n];
+    let mut cancelled = false;
+    let expires = parse_utc(&plan.body.expires_at).unwrap_or(i64::MIN);
+    let now_text = || utc_from_unix((ctx.now)());
+    let record = |r: &ActionResult| -> Result<(), ApplyError> {
+        stores.audit.record_result(&operation_id, &r.action_id, serde_json::to_value(r.status).unwrap().as_str().unwrap(), &serde_json::to_string(r).unwrap(), &now_text())?;
+        Ok(())
+    };
+
+    // Trash mode: a planned directory goes to the Recycle Bin as one object when its live subtree
+    // still equals the plan; otherwise its items fall through to the per-item pass below.
+    if plan.body.mode == Mode::Trash {
+        for root in tree_roots(&plan) {
+            if stop_reason(stores, &plan, ctx, &auth_source, expires, &mut cancelled)?.is_some() {
+                break; // the per-item pass records every remaining item as not started
+            }
+            let members: Vec<usize> = (0..n).filter(|&m| m == root || is_ancestor(&plan, root, m)).collect();
+            // Every member must pass the protection re-check; otherwise the per-item pass reports
+            // the protected ones and keeps their directories.
+            if members.iter().any(|&m| (ctx.protect)(&target(m)).is_err()) {
+                continue;
+            }
+            for &m in &members {
+                let item = &plan.body.items[m];
+                let intent = serde_json::json!({"mode": plan.body.mode, "action": "trash_tree", "root": plan.body.items[root].action_id,
+                    "path": item.path, "identity": item.identity, "fingerprint": item.observed_fingerprint_sha256});
+                stores.audit.record_intent(&operation_id, &item.action_id, &intent.to_string(), &now_text())?;
+                intended[m] = true;
+            }
+            let root_id = &plan.body.items[root].action_id;
+            if (ctx.fault)(FaultPoint::AfterIntent, root_id) {
+                return Err(ApplyError::Crashed("after_intent".into()));
+            }
+            let tree: Vec<TreeMember<'_>> = members
+                .iter()
+                .filter(|&&m| m != root)
+                .map(|&m| TreeMember {
+                    path: &plan.body.items[m].path,
+                    identity: &plan.body.items[m].identity,
+                    observation: &plan.observations[m],
+                    directory: plan.body.items[m].kind == ItemKind::Directory,
+                })
+                .collect();
+            let outcome = actions.trash_tree(&target(root), &tree);
+            if (ctx.fault)(FaultPoint::AfterAction, root_id) {
+                return Err(ApplyError::Crashed("after_action".into()));
+            }
+            let (status, code, message, recovery) = match &outcome {
+                ActionOutcome::Succeeded { .. } => (ActionStatus::Succeeded, "done", "moved to the Recycle Bin with its directory".to_string(), "trash"),
+                ActionOutcome::Unknown { message } => (ActionStatus::Unknown, "outcome_unconfirmed", message.clone(), "unknown"),
+                _ => continue, // nothing changed: fall back to leaves + empty-directory removal
+            };
+            for &m in &members {
+                let r = ActionResult { action_id: plan.body.items[m].action_id.clone(), status, code: code.into(), message: message.clone(), recovery: recovery.into() };
+                record(&r)?;
+                slots[m] = Some(r);
+            }
+        }
+    }
+
+    // Leaves first, then directories deepest first (bottom-up).
+    for idx in schedule(&plan) {
+        if slots[idx].is_some() {
+            continue;
+        }
+        let item = &plan.body.items[idx];
+        let directory = item.kind == ItemKind::Directory;
+        // EXE-06: cancellation, expiry and revocation stop new actions only.
+        if let Some((code, message)) = stop_reason(stores, &plan, ctx, &auth_source, expires, &mut cancelled)? {
+            slots[idx] = Some(ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: code.into(), message: message.into(), recovery: "not_applicable".into() });
+            continue;
+        }
+        // A directory is attempted only once everything planned inside it is gone.
+        if directory && (0..n).any(|d| is_ancestor(&plan, idx, d) && slots[d].as_ref().is_none_or(|r| r.status != ActionStatus::Succeeded)) {
+            let r = ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Skipped, code: "precondition_descendant_kept".into(),
+                message: "a planned item inside was not removed; the directory is kept".into(), recovery: "not_applicable".into() };
+            record(&r)?;
+            slots[idx] = Some(r);
+            continue;
+        }
+        let target = target(idx);
+        if !intended[idx] {
+            let action = if directory { "remove_empty_dir" } else { "file" };
+            let intent = serde_json::json!({"mode": plan.body.mode, "action": action, "path": item.path, "identity": item.identity, "fingerprint": item.observed_fingerprint_sha256});
+            stores.audit.record_intent(&operation_id, &item.action_id, &intent.to_string(), &now_text())?;
+        }
         if (ctx.fault)(FaultPoint::AfterIntent, &item.action_id) {
             return Err(ApplyError::Crashed("after_intent".into()));
         }
         let outcome = if let Err(reason) = (ctx.protect)(&target) {
             ActionOutcome::Skipped { code: "protected".into(), message: reason }
+        } else if directory {
+            actions.remove_empty_dir(&target)
         } else {
             match actions.check(&target) {
             LiveCheck::Match => match plan.body.mode {
@@ -291,6 +362,8 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
             return Err(ApplyError::Crashed("after_action".into()));
         }
         let result = match &outcome {
+            ActionOutcome::Succeeded { .. } if directory => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "done".into(),
+                message: "empty directory removed".into(), recovery: "not_applicable".into() },
             ActionOutcome::Succeeded { recovery } => {
                 if let Recovery::Quarantine { location } = recovery {
                     let record = serde_json::json!({
@@ -308,17 +381,56 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
             ActionOutcome::Failed { code, message } => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Failed, code: code.clone(), message: message.clone(), recovery: "not_applicable".into() },
             ActionOutcome::Unknown { message } => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Unknown, code: "outcome_unconfirmed".into(), message: message.clone(), recovery: "unknown".into() },
         };
-        stores.audit.record_result(&operation_id, &item.action_id, serde_json::to_value(result.status).unwrap().as_str().unwrap(),
-            &serde_json::to_string(&result).unwrap(), &utc_from_unix((ctx.now)()))?;
-        results.push(result);
+        record(&result)?;
+        slots[idx] = Some(result);
     }
+    let results: Vec<ActionResult> = slots.into_iter().map(|s| s.expect("every planned item is scheduled once")).collect();
     finish(stores, actions, &plan, &operation_id, &started_at, results, cancelled, free_before, &auth_source, policy.is_some(), ctx)
+}
+
+/// Why no new action may start now (EXE-06), as a `not_started` code and message.
+fn stop_reason(stores: &Stores, plan: &Plan, ctx: &ApplyContext<'_>, auth_source: &str, expires: i64, cancelled: &mut bool) -> Result<Option<(&'static str, &'static str)>, ApplyError> {
+    if *cancelled || (ctx.cancel)() {
+        *cancelled = true;
+        return Ok(Some(("cancelled", "operation cancelled before this action started")));
+    }
+    if (ctx.now)() >= expires {
+        return Ok(Some(("plan_expired", "plan expired before this action started")));
+    }
+    if auth_source == "interactive_review" && !stores.audit.receipts_for(&plan.body.plan_id)?.iter().any(|r| receipt_valid(r, plan, ctx.principal, (ctx.now)())) {
+        return Ok(Some(("authorization_revoked", "authorization was revoked or expired")));
+    }
+    Ok(None)
+}
+
+/// Whether directory item `dir` is a planned ancestor of item `other` (by identity, not text).
+fn is_ancestor(plan: &Plan, dir: usize, other: usize) -> bool {
+    let d = &plan.body.items[dir];
+    dir != other
+        && d.kind == ItemKind::Directory
+        && plan.observations[other].parent_chain.iter().any(|p| p.volume_id == d.identity.volume_id && p.wire_file_id() == d.identity.file_id)
+}
+
+/// Directory items with no planned directory above them.
+fn tree_roots(plan: &Plan) -> Vec<usize> {
+    let n = plan.body.items.len();
+    (0..n).filter(|&i| plan.body.items[i].kind == ItemKind::Directory && !(0..n).any(|d| is_ancestor(plan, d, i))).collect()
+}
+
+/// Execution order: files in plan order, then directories deepest first (bottom-up).
+fn schedule(plan: &Plan) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..plan.body.items.len()).collect();
+    order.sort_by_key(|&i| match plan.body.items[i].kind {
+        ItemKind::File => (0, 0, i),
+        ItemKind::Directory => (1, usize::MAX - plan.observations[i].parent_chain.len(), i),
+    });
+    order
 }
 
 /// Platforms re-verify inside the action itself; a failed re-check there is the same
 /// precondition failure as one found by `check`, so both report one code family.
 fn precondition_code(code: &str) -> String {
-    const LIVE: [&str; 8] = ["missing", "link_or_reparse", "identity_changed", "parent_changed", "metadata_changed", "in_use", "owner_running", "unsupported"];
+    const LIVE: [&str; 9] = ["missing", "link_or_reparse", "identity_changed", "parent_changed", "metadata_changed", "in_use", "owner_running", "unsupported", "new_descendant"];
     if LIVE.contains(&code) { format!("precondition_{code}") } else { code.to_owned() }
 }
 
@@ -381,7 +493,11 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
         let result = match (row, existing) {
             (_, Some(r)) if r.status != ActionStatus::Unknown => r,
             (None, _) => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "never_started".into(), message: "no action was started".into(), recovery: "not_applicable".into() },
-            (Some(_), _) => {
+            (Some(row), _) => {
+                // An empty-directory removal is a delete whatever the plan mode (nothing to recover).
+                let tree = serde_json::from_str::<serde_json::Value>(&row.intent_json).ok().is_some_and(|v| v["action"] == "trash_tree");
+                let empty_dir = item.kind == ItemKind::Directory && !tree;
+                let mode = if empty_dir { Mode::Delete } else { plan.body.mode };
                 let meta = plan.item_meta.get(idx);
                 let probes = meta.map(|m| m.probes.clone()).unwrap_or_default();
                 let target = ActionTarget {
@@ -396,10 +512,10 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
                     };
                     d.join(&name).ok()
                 });
-                let r = match actions.reconcile(&target, plan.body.mode, qloc.as_ref()) {
+                let r = match actions.reconcile(&target, mode, qloc.as_ref()) {
                     Reconciled::NotPerformed => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "reconciled_not_performed".into(), message: "object still at its planned place".into(), recovery: "not_applicable".into() },
                     Reconciled::Performed => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "reconciled_performed".into(), message: "the action was found to have taken effect".into(),
-                        recovery: match plan.body.mode { Mode::Delete => "unavailable", Mode::Trash => "trash", Mode::Quarantine => "quarantine" }.into() },
+                        recovery: if empty_dir { "not_applicable" } else { match mode { Mode::Delete => "unavailable", Mode::Trash => "trash", Mode::Quarantine => "quarantine" } }.into() },
                     Reconciled::StillUnknown => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Unknown, code: "outcome_unconfirmed".into(), message: "evidence insufficient; needs a person to check".into(), recovery: "unknown".into() },
                 };
                 stores.audit.record_result(operation_id, &item.action_id, serde_json::to_value(r.status).unwrap().as_str().unwrap(), &serde_json::to_string(&r).unwrap(), &utc_from_unix((ctx.now)()))?;

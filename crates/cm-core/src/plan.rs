@@ -1,9 +1,12 @@
 //! Fixed plans (PLN-01/02/03): a finite list of file actions frozen from reviewed candidates.
 //!
-//! A directory candidate is expanded to the files observed under it; directories themselves are
-//! never acted on, so files created after planning can never be swept up. Every item binds a
-//! CM-OBS-v1 metadata fingerprint; the body digest is CM-C14N-v1. Changing the selection, the
-//! mode or any bound version produces a new plan with a new digest.
+//! A directory candidate is expanded to the files observed under it. Catalogs whose whole
+//! directory is the artifact (project build outputs, [`removes_directories`]) also plan each
+//! observed directory as a `directory` item: after its planned contents succeeded it is removed
+//! only if it is still the planned object and empty at that moment, never recursively, so files
+//! created after planning can never be swept up. Every item binds a CM-OBS-v1 metadata
+//! fingerprint; the body digest is CM-C14N-v1. Changing the selection, the mode or any bound
+//! version produces a new plan with a new digest.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +31,23 @@ pub struct WireIdentity {
     pub observed_at: String,
 }
 
+/// What a plan item acts on. `file` is the default and is omitted on the wire, so files-only
+/// bodies (and their digests) are unchanged; `directory` items are digest-covered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemKind {
+    #[default]
+    File,
+    /// Remove only when empty at action time, after the planned contents succeeded.
+    Directory,
+}
+
+impl ItemKind {
+    pub fn is_file(&self) -> bool {
+        *self == ItemKind::File
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlanItem {
@@ -40,6 +60,8 @@ pub struct PlanItem {
     pub logical_bytes: Bytes,
     pub allocated_bytes: Option<Bytes>,
     pub must_not_follow_links: bool,
+    #[serde(default, skip_serializing_if = "ItemKind::is_file")]
+    pub kind: ItemKind,
 }
 
 /// Protocol `plan_body` (plan/v1).
@@ -86,6 +108,10 @@ pub struct Plan {
 pub struct ItemMeta {
     pub probes: Vec<String>,
     pub owner_id: Option<String>,
+    /// Path of the candidate the item came from (pre-execution checks such as version control
+    /// are made per candidate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_root: Option<RawPath>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -174,6 +200,40 @@ pub fn observe(view: &dyn IndexView, entry: u64, observed_at: &str) -> Observati
     }
 }
 
+/// Whether a rule-set digest belongs to a catalog built into this binary (purge, installers):
+/// the executor's "rules unchanged" check for such plans needs no rule pack on disk.
+pub fn is_builtin_catalog_digest(d: &str) -> bool {
+    crate::purge::is_current_digest(d) || crate::installer::is_current_digest(d)
+}
+
+/// Rule-id prefixes of catalogs whose candidate directory is itself the artifact to remove.
+/// Other catalogs stay files-only (their directories may be expected by the owning app).
+pub const DIRECTORY_REMOVAL_PREFIXES: &[&str] = &["purge."];
+
+/// Whether planning this candidate also plans its observed directories for empty removal.
+pub fn removes_directories(c: &Candidate) -> bool {
+    c.kind == ObjectKind::Directory && !c.rules.is_empty() && c.rules.iter().all(|r| DIRECTORY_REMOVAL_PREFIXES.iter().any(|p| r.rule_id.starts_with(p)))
+}
+
+/// Directories at and under `entry` that were traversed (links/mounts are boundaries, not planned).
+fn dirs_under(view: &dyn IndexView, entry: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut stack = vec![entry];
+    while let Some(id) = stack.pop() {
+        let f = view.info(id);
+        if f.boundary || f.kind != ObjectKind::Directory {
+            continue;
+        }
+        out.push(id);
+        stack.extend_from_slice(view.children(id));
+    }
+    out
+}
+
+fn depth(view: &dyn IndexView, entry: u64) -> usize {
+    std::iter::successors(view.parent(entry), |p| view.parent(*p)).count()
+}
+
 fn files_under(view: &dyn IndexView, entry: u64) -> Vec<u64> {
     let mut out = Vec::new();
     let mut stack = vec![entry];
@@ -190,6 +250,31 @@ fn files_under(view: &dyn IndexView, entry: u64) -> Vec<u64> {
     }
     out.sort_unstable();
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_item(
+    view: &dyn IndexView, c: &Candidate, entry: u64, kind: ItemKind, logical: Bytes, allocated: Option<Bytes>, input: &PlanInput<'_>,
+    items: &mut Vec<PlanItem>, observations: &mut Vec<ObservationRecord>, tiers: &mut Vec<Tier>, item_meta: &mut Vec<ItemMeta>,
+) -> Result<(), PlanError> {
+    let obs = observe(view, entry, input.observed_at);
+    let fingerprint = obs.fingerprint()?;
+    items.push(PlanItem {
+        action_id: String::new(),
+        candidate_id: c.candidate_id.clone(),
+        entry_id: entry.to_string(),
+        path: view.path(entry),
+        identity: wire_identity(view, entry, input.observed_at),
+        observed_fingerprint_sha256: fingerprint,
+        logical_bytes: logical,
+        allocated_bytes: allocated,
+        must_not_follow_links: true,
+        kind,
+    });
+    observations.push(obs);
+    tiers.push(c.tier);
+    item_meta.push(ItemMeta { probes: c.probes.clone(), owner_id: c.owner_id.clone(), candidate_root: Some(c.path.clone()) });
+    Ok(())
 }
 
 /// Freeze a selection into a plan. Only allowed (or explicitly reviewed review-only) candidates
@@ -221,6 +306,8 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
     let mut item_meta = Vec::new();
     let mut rule_refs = Vec::new();
     let mut seen_objects = std::collections::BTreeSet::new();
+    // Directory items come after every file item, deepest first (bottom-up removal).
+    let mut dirs: Vec<(usize, u64, &Candidate)> = Vec::new();
     for c in &chosen {
         for r in &c.rules {
             rule_refs.push(format!("{}@{}", r.rule_id, r.version));
@@ -231,22 +318,17 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
                 continue; // one action per object
             }
             let logical = f.logical.ok_or_else(|| PlanError::UnknownSize(c.candidate_id.clone()))?;
-            let obs = observe(view, file, input.observed_at);
-            let fingerprint = obs.fingerprint()?;
-            items.push(PlanItem {
-                action_id: String::new(),
-                candidate_id: c.candidate_id.clone(),
-                entry_id: file.to_string(),
-                path: view.path(file),
-                identity: wire_identity(view, file, input.observed_at),
-                observed_fingerprint_sha256: fingerprint,
-                logical_bytes: Bytes(logical),
-                allocated_bytes: f.allocated.map(Bytes),
-                must_not_follow_links: true,
-            });
-            observations.push(obs);
-            tiers.push(c.tier);
-            item_meta.push(ItemMeta { probes: c.probes.clone(), owner_id: c.owner_id.clone() });
+            push_item(view, c, file, ItemKind::File, Bytes(logical), f.allocated.map(Bytes), input, &mut items, &mut observations, &mut tiers, &mut item_meta)?;
+        }
+        // Quarantine restores need the original parents in place, so its directories are kept.
+        if removes_directories(c) && mode != Mode::Quarantine {
+            dirs.extend(dirs_under(view, c.entry_id).into_iter().map(|d| (depth(view, d), d, *c)));
+        }
+    }
+    dirs.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    for (_, dir, c) in dirs {
+        if seen_objects.insert(view.info(dir).object_id) {
+            push_item(view, c, dir, ItemKind::Directory, Bytes(0), None, input, &mut items, &mut observations, &mut tiers, &mut item_meta)?;
         }
     }
     for (i, item) in items.iter_mut().enumerate() {

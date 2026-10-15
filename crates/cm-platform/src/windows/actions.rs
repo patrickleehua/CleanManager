@@ -22,7 +22,7 @@ use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery};
+use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery, TreeMember};
 use cm_core::model::Identity;
 use cm_core::obs::{ObservationRecord, TimeUnit};
 use cm_core::path::RawPath;
@@ -370,12 +370,17 @@ fn metadata_change(obs: &ObservationRecord, l: &Live) -> Option<String> {
     (!same).then(|| "modified time changed".into())
 }
 
-fn verify_live(t: &ActionTarget<'_>, l: &Live) -> Result<(), Stop> {
+/// `directory`: the planned object is a directory (kind must match; its size and time are not
+/// compared because removing its planned contents changes them).
+fn verify_live_as(t: &ActionTarget<'_>, l: &Live, directory: bool) -> Result<(), Stop> {
     if l.reparse() {
         return Err(Stop::Reparse);
     }
     if !l.is(&t.identity.volume_id, &t.identity.file_id) {
         return Err(Stop::Identity);
+    }
+    if directory {
+        return if l.directory { Ok(()) } else { Err(Stop::Metadata("kind: no longer a directory".into())) };
     }
     if l.directory {
         return Err(Stop::NotFile);
@@ -399,6 +404,10 @@ struct Verified {
 
 /// Pin and verify the planned ancestors, then open and verify the target with `access`/`share`.
 fn verify(t: &ActionTarget<'_>, access: u32, share: u32, flags: u32) -> Result<Verified, Stop> {
+    verify_as(t, access, share, flags, false)
+}
+
+fn verify_as(t: &ActionTarget<'_>, access: u32, share: u32, flags: u32, directory: bool) -> Result<Verified, Stop> {
     let v = verbatim(t.path)?;
     let mut ancestors = Vec::with_capacity(t.parent_chain.len());
     let mut cur = v.clone();
@@ -423,13 +432,13 @@ fn verify(t: &ActionTarget<'_>, access: u32, share: u32, flags: u32) -> Result<V
             // Directories (a swapped-in junction, say) refuse write opens without backup
             // semantics; classify with an attribute-only open before reporting a denial.
             let l = open_attrs(&v).and_then(|h| live(&h)).map_err(|_| Stop::from_open(&e))?;
-            verify_live(t, &l)?;
+            verify_live_as(t, &l, directory)?;
             return Err(Stop::from_open(&e));
         }
         Err(e) => return Err(Stop::from_open(&e)),
     };
     let l = live(&target).map_err(|e| Stop::Error(format!("cannot query target: {e}")))?;
-    verify_live(t, &l)?;
+    verify_live_as(t, &l, directory)?;
     Ok(Verified { target, live: l, verbatim: v, _pins: pins })
 }
 
@@ -495,7 +504,8 @@ fn owner_check(t: &ActionTarget<'_>) -> Option<LiveCheck> {
         return None;
     }
     let Some(owner) = t.owner_id else { return Some(LiveCheck::Unknown("owner_process probe without an owner".into())) };
-    let Some(exe) = owner_executable(owner) else { return Some(LiveCheck::Unknown(format!("no process mapping for owner {owner}"))) };
+    // Owners outside this table are mapped by the catalog probes (unmapped stays Unknown there).
+    let Some(exe) = owner_executable(owner) else { return super::probes::owner_running_check(owner) };
     match process_running(exe) {
         Ok(true) => Some(LiveCheck::OwnerRunning),
         Ok(false) => None,
@@ -606,6 +616,8 @@ pub(crate) mod shell {
     struct Guard {
         volume_id: String,
         file_id: String,
+        /// The planned item is a directory (whole-tree recycle) rather than a file.
+        directory: bool,
         refused: Rc<RefCell<Option<String>>>,
     }
 
@@ -641,7 +653,7 @@ pub(crate) mod shell {
                 other => return self.refuse(format!("item is no longer the planned file ({other:?})")),
             }
             match super::full_path(&path).and_then(|(_, v)| super::open_attrs(&v)).and_then(|h| super::live(&h)) {
-                Ok(l) if !l.reparse() && !l.directory => Ok(()),
+                Ok(l) if !l.reparse() && l.directory == self.directory => Ok(()),
                 Ok(_) => self.refuse("item is a link, reparse point or directory".into()),
                 Err(e) => self.refuse(format!("cannot re-verify item: {e}")),
             }
@@ -693,9 +705,9 @@ pub(crate) mod shell {
         }
     }
 
-    fn run(path: &[u16], volume_id: String, file_id: String) -> ShellOutcome {
+    fn run(path: &[u16], volume_id: String, file_id: String, directory: bool) -> ShellOutcome {
         let refused = Rc::new(RefCell::new(None));
-        let guard = Guard { volume_id, file_id, refused: Rc::clone(&refused) };
+        let guard = Guard { volume_id, file_id, directory, refused: Rc::clone(&refused) };
         let sink: IFileOperationProgressSink = guard.into();
         let mut z = path.to_vec();
         z.push(0);
@@ -732,13 +744,18 @@ pub(crate) mod shell {
 
     /// Recycle `path` (display form) if the item at it still has the planned identity.
     pub fn recycle(path: Vec<u16>, volume_id: String, file_id: String) -> ShellOutcome {
+        recycle_item(path, volume_id, file_id, false)
+    }
+
+    /// [`recycle`] for a planned file (`directory == false`) or a whole planned directory.
+    pub fn recycle_item(path: Vec<u16>, volume_id: String, file_id: String, directory: bool) -> ShellOutcome {
         let worker = std::thread::spawn(move || {
             // SAFETY: fresh thread; balanced with CoUninitialize below when it succeeded.
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
             if hr.is_err() {
                 return ShellOutcome { performed: Err(format!("COM initialization failed: {hr:?}")), aborted: true, refused: None };
             }
-            let out = run(&path, volume_id, file_id);
+            let out = run(&path, volume_id, file_id, directory);
             // SAFETY: matches the successful CoInitializeEx on this thread.
             unsafe { CoUninitialize() };
             out
@@ -774,7 +791,8 @@ impl FileActions for WindowsActions {
             },
         }
         drop(pins);
-        owner_check(t).unwrap_or(LiveCheck::Match)
+        // Catalog probe kinds (endpoint-security path, held download markers): `probes::execution_check`.
+        owner_check(t).or_else(|| super::probes::execution_check(t)).unwrap_or(LiveCheck::Match)
     }
 
     fn quarantine(&self, t: &ActionTarget<'_>, quarantine_dir: &RawPath, name: &str) -> ActionOutcome {
@@ -967,6 +985,200 @@ impl FileActions for WindowsActions {
         let ok = unsafe { GetDiskFreeSpaceExW(z.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), &mut free) };
         (ok != 0).then_some(free)
     }
+
+    fn remove_empty_dir(&self, t: &ActionTarget<'_>) -> ActionOutcome {
+        if let Err(o) = privileges_dropped() {
+            return o;
+        }
+        // Pinned, verified ancestors; the directory itself is opened for DELETE + listing without
+        // delete sharing, so the name cannot be swapped between the checks and the disposition.
+        let v = match verify_as(t, DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE, SHARE_PIN, FLAG_BACKUP_SEMANTICS, true) {
+            Ok(v) => v,
+            Err(stop) => return stop.outcome(),
+        };
+        let new_descendant = || ActionOutcome::Skipped {
+            code: "new_descendant".into(),
+            message: "something not in the plan is inside the directory; it is kept and nothing inside is touched".into(),
+        };
+        match has_entries(&v.target) {
+            Ok(false) => {}
+            Ok(true) => return new_descendant(),
+            Err(e) => return ActionOutcome::Failed { code: "check_failed".into(), message: format!("cannot list the directory: {e}") },
+        }
+        // The file system refuses to mark a non-empty directory for deletion, and nothing can be
+        // created in it once marked, so an entry arriving after the listing is never swept up.
+        if let Err(e) = dispose(&v.target) {
+            return match e.raw_os_error() {
+                Some(ERROR_DIR_NOT_EMPTY) => new_descendant(),
+                Some(ERROR_ACCESS_DENIED) => ActionOutcome::Failed { code: "access_denied".into(), message: format!("delete refused: {e}") },
+                Some(ERROR_SHARING_VIOLATION) => ActionOutcome::Failed { code: "in_use".into(), message: format!("delete refused: {e}") },
+                _ => ActionOutcome::Failed { code: "delete_failed".into(), message: format!("delete refused: {e}") },
+            };
+        }
+        let path = v.verbatim.clone();
+        drop(v); // closing the handle commits the removal
+        match at_path(&path, &t.identity.volume_id, &t.identity.file_id) {
+            AtPath::Missing | AtPath::Other => ActionOutcome::Succeeded { recovery: Recovery::Unavailable },
+            AtPath::Planned => ActionOutcome::Unknown { message: "directory is still present after removal (other handles may keep it pending)".into() },
+            AtPath::Error(e) => ActionOutcome::Unknown { message: format!("removal pending or unconfirmed: {e}") },
+        }
+    }
+
+    fn trash_tree(&self, t: &ActionTarget<'_>, members: &[TreeMember<'_>]) -> ActionOutcome {
+        let skip = |code: &str, message: String| ActionOutcome::Skipped { code: code.into(), message };
+        let Some(u) = units(t.path) else { return skip("unsupported", "not a Windows path".into()) };
+        let display = match full_path(u) {
+            Ok((d, _)) => d,
+            Err(e) => return ActionOutcome::Failed { code: "check_failed".into(), message: format!("cannot resolve path: {e}") },
+        };
+        if let Err(o) = privileges_dropped() {
+            return o;
+        }
+        if let Err(why) = recycle_bin_available(&display) {
+            return ActionOutcome::Failed { code: "trash_unavailable".into(), message: why };
+        }
+        // Ancestors stay pinned; the attribute-only handle on the directory follows it into the bin.
+        let v = match verify_as(t, FILE_READ_ATTRIBUTES | SYNCHRONIZE, SHARE_ALL, FLAG_BACKUP_SEMANTICS, true) {
+            Ok(v) => v,
+            Err(stop) => return stop.outcome(),
+        };
+        match compare_tree(&v.verbatim, members) {
+            Ok(d) if d.exact(members.len()) => {}
+            Ok(d) => return skip("tree_mismatch", d.summary()),
+            Err(e) => return skip("tree_mismatch", format!("cannot enumerate the directory: {e}")),
+        }
+        // RESIDUAL RACE (as for files): the Shell moves by path, so an entry created inside after
+        // the comparison would go along. It stays recoverable in the bin and is reported below.
+        let (vol, fid) = (t.identity.volume_id.clone(), t.identity.file_id.clone());
+        let shell = shell::recycle_item(display, vol, fid, true);
+        let now = at_path(&v.verbatim, &t.identity.volume_id, &t.identity.file_id);
+        let moved = final_path(&v.target).filter(|p| p.to_ascii_lowercase().contains("\\$recycle.bin\\"));
+        let reported_ok = shell.performed.is_ok() && !shell.aborted;
+        match now {
+            AtPath::Planned if reported_ok => ActionOutcome::Unknown { message: "the Shell reported success but the directory is still at its path".into() },
+            AtPath::Planned => {
+                let why = shell.refused.or(shell.performed.err()).unwrap_or_else(|| "operation aborted".into());
+                ActionOutcome::Failed { code: "trash_unavailable".into(), message: format!("not moved to the recycle bin as a whole: {why}") }
+            }
+            AtPath::Missing | AtPath::Other => match moved {
+                Some(bin) => match compare_tree(&bin.encode_utf16().collect::<Vec<u16>>(), members) {
+                    Ok(d) if d.exact(members.len()) => ActionOutcome::Succeeded { recovery: Recovery::Trash },
+                    Ok(d) => ActionOutcome::Unknown { message: format!("the directory is in the Recycle Bin but differs from the plan ({}); review it there", d.summary()) },
+                    Err(e) => ActionOutcome::Unknown { message: format!("the directory is in the Recycle Bin; its contents cannot be confirmed: {e}") },
+                },
+                None => ActionOutcome::Unknown { message: "the directory left its path but was not confirmed in the recycle bin".into() },
+            },
+            AtPath::Error(e) => ActionOutcome::Unknown { message: format!("cannot confirm the recycle result: {e}") },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Directories: emptiness on a verified handle and whole-subtree comparison with the plan
+
+const FILE_LIST_DIRECTORY: u32 = 0x0001;
+const ERROR_NO_MORE_FILES: i32 = 18;
+const ERROR_DIR_NOT_EMPTY: i32 = 145;
+
+/// Whether the directory open on `h` (with `FILE_LIST_DIRECTORY`) has any entry besides `.` and
+/// `..`, listed on that same handle so the answer is about the verified object.
+fn has_entries(h: &Owned) -> io::Result<bool> {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ID_BOTH_DIR_INFO, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo};
+    let mut buf = vec![0u64; 8 * 1024]; // 64 KiB, 8-byte aligned records
+    let mut class = FileIdBothDirectoryRestartInfo;
+    loop {
+        // SAFETY: the buffer has the declared size; the class fills FILE_ID_BOTH_DIR_INFO records.
+        let ok = unsafe { GetFileInformationByHandleEx(h.0, class, buf.as_mut_ptr().cast(), (buf.len() * 8) as u32) };
+        if ok == 0 {
+            let e = io::Error::last_os_error();
+            return if e.raw_os_error() == Some(ERROR_NO_MORE_FILES) { Ok(false) } else { Err(e) };
+        }
+        let base = buf.as_ptr().cast::<u8>();
+        let mut off = 0usize;
+        loop {
+            // SAFETY: `off` follows the NextEntryOffset chain written by the call inside `buf`;
+            // each record holds FileNameLength bytes of name after its fixed part.
+            let (next, name) = unsafe {
+                let rec = base.add(off).cast::<FILE_ID_BOTH_DIR_INFO>();
+                let len = (*rec).FileNameLength as usize / 2;
+                ((*rec).NextEntryOffset, std::slice::from_raw_parts(std::ptr::addr_of!((*rec).FileName).cast::<u16>(), len))
+            };
+            if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
+                return Ok(true);
+            }
+            if next == 0 {
+                break;
+            }
+            off += next as usize;
+        }
+        class = FileIdBothDirectoryInfo;
+    }
+}
+
+/// A live subtree compared with planned members by identity (never by name).
+#[derive(Debug, Default)]
+struct TreeDiff {
+    matched: usize,
+    unplanned: usize,
+    changed: Vec<String>,
+}
+
+impl TreeDiff {
+    fn exact(&self, members: usize) -> bool {
+        self.unplanned == 0 && self.changed.is_empty() && self.matched == members
+    }
+    fn summary(&self) -> String {
+        let mut s = format!("{} planned items found, {} not in the plan", self.matched, self.unplanned);
+        if let Some(first) = self.changed.first() {
+            s.push_str(&format!(", {} changed (first: {first})", self.changed.len()));
+        }
+        s
+    }
+}
+
+/// Walk the subtree under `root` (verbatim path) without following links; every entry must be a
+/// planned member with unchanged identity, kind and (files) size, time and single link.
+fn compare_tree(root: &[u16], members: &[TreeMember<'_>]) -> io::Result<TreeDiff> {
+    let by_id: std::collections::HashMap<&str, &TreeMember<'_>> = members.iter().map(|m| (m.identity.file_id.as_str(), m)).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut diff = TreeDiff::default();
+    let mut stack = vec![os_path(root)];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let child = entry?.path();
+            let l = match open_attrs(&wide(&child)).and_then(|h| live(&h)) {
+                Ok(l) => l,
+                Err(e) => {
+                    diff.changed.push(format!("unreadable entry: {e}"));
+                    continue;
+                }
+            };
+            let Some(m) = by_id.get(l.file_id.as_str()).filter(|m| same_volume(&l.volume_id, &m.identity.volume_id)) else {
+                diff.unplanned += 1;
+                continue;
+            };
+            let change = if l.reparse() {
+                Some("a link or reparse point".to_string())
+            } else if l.directory != m.directory {
+                Some("kind changed".into())
+            } else if !l.directory && l.links > 1 {
+                Some(format!("file has {} hard links", l.links))
+            } else if !l.directory {
+                metadata_change(m.observation, &l)
+            } else {
+                None
+            };
+            if let Some(c) = change {
+                diff.changed.push(c);
+            } else if seen.insert(l.file_id.clone()) {
+                diff.matched += 1;
+                if l.directory {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    Ok(diff)
 }
 
 /// Restore and purge of quarantined objects (`windows/recovery.rs`); a child module so it reuses

@@ -225,6 +225,9 @@ pub enum BoundaryKind {
     MountPoint,
     OtherVolume,
     CloudProvider,
+    /// CleanManager's own data directory (index, audit log): recorded, never traversed, so a
+    /// scan never observes its own writes. Reported as an issue, not hidden.
+    OwnStore,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

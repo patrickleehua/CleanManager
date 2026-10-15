@@ -1,7 +1,8 @@
-//! The complete IPC surface of the desktop host. Every command is read-only with respect to
-//! user files: there is no delete, move, trash, open-path or shell command. `start_scan` and
-//! `cancel_scan` only write CleanManager's own index. The WebView never supplies a filesystem
-//! path: scan roots are opaque tokens issued by `list_scan_roots` / `choose_folder`.
+//! Scan and index commands (P01–P03). Every command here is read-only with respect to user
+//! files; `start_scan` and `cancel_scan` only write CleanManager's own index. The WebView never
+//! supplies a filesystem path: scan roots are opaque tokens issued by `list_scan_roots` /
+//! `choose_folder`. Cleanup, execution, recovery and settings commands live in `cleanup`,
+//! `ops` and `settings`; the full allow-list is `build.rs` + `capabilities/main.json`.
 
 use std::sync::Arc;
 
@@ -17,15 +18,16 @@ use crate::args;
 use crate::dto::*;
 use crate::host::{self, AppState, root_problem};
 
-type St<'a> = State<'a, Arc<AppState>>;
+pub(crate) type St<'a> = State<'a, Arc<AppState>>;
 
 /// The scope root is the first entry the backend writes.
 const ROOT_ENTRY_ID: u64 = 1;
 /// Pages read (of `MAX_PAGE`) to total the children beyond the treemap tiles.
 const REST_PAGE_BUDGET: u32 = 40;
 const MAX_ISSUES: usize = 50;
+const RECENT_SCANS: u32 = 30;
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> IpcResult<T> + Send + 'static) -> IpcResult<T> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> IpcResult<T> + Send + 'static) -> IpcResult<T> {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| IpcError::new(ErrorCode::InternalError, "internal", format!("worker failed: {e}")))?
@@ -40,6 +42,7 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         Some(Ok(())) => (Some(true), None),
         Some(Err(e)) => (Some(false), Some(e.clone())),
     };
+    let rules = crate::rules::load(s.rules_dir.as_deref());
     Ok(CapabilitiesDto {
         platform: host.platform(),
         engine_version: cm_core::ENGINE_VERSION,
@@ -50,7 +53,13 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         bypass_privileges_disabled: disabled,
         bypass_privileges_note: note,
         interrupted_at_startup: s.startup.interrupted.clone(),
-        write_commands: false,
+        operations_to_reconcile: s.startup.operations_to_reconcile.clone(),
+        write_commands: true,
+        file_actions_verified: cfg!(windows),
+        rules_dir_display: s.rules_dir.as_deref().map(display_of),
+        rules_problem: rules.as_ref().err().cloned(),
+        rule_count: rules.as_ref().ok().map(|r| r.rules.len()),
+        principal: cm_core::authz::current_principal(),
     })
 }
 
@@ -127,7 +136,8 @@ fn root_summary(s: &AppState, idx: &cm_store::IndexStore, scan_id: &str, revisio
     if let Some(v) = s.cached_summary(&key) {
         return Ok(v);
     }
-    let v = SummaryDto::from(idx.summarize(scan_id, &[entry])?);
+    // One subtree, walked through the parent index; the same result as `summarize(&[entry])`.
+    let v = SummaryDto::from(idx.folder_total(scan_id, entry)?);
     s.store_summary(key, v.clone());
     Ok(v)
 }
@@ -135,7 +145,6 @@ fn root_summary(s: &AppState, idx: &cm_store::IndexStore, scan_id: &str, revisio
 pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResult<ScanStatusDto> {
     let active = s.active_scan_id();
     let hosted_here = matches!(&active, Some((a, false)) if a == id);
-    let mut root_display = s.recent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).root_of(id);
     let v = match idx.scan_status(id) {
         Ok(v) => v,
         // The scan thread has not created its record yet.
@@ -156,7 +165,7 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
                 skipped_ranges: 0,
                 started_at: None,
                 finished_at: None,
-                root_display,
+                root_display: None,
                 root_entry_id: None,
                 summary: None,
                 backend: None,
@@ -168,27 +177,12 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
         }
         Err(e) => return Err(e.into()),
     };
+    let root_display = Some(v.root.display());
     let mut summary = None;
     let mut root_entry_id = None;
     if v.published && v.entries_seen > 0 {
         summary = Some(root_summary(s, idx, id, v.revision, ROOT_ENTRY_ID)?);
         root_entry_id = Some(ROOT_ENTRY_ID.to_string());
-        if root_display.is_none() {
-            let q = EntryQuery {
-                scan_id: id.to_owned(),
-                sort: Sort::NameAsc,
-                filter: Filter { kind: KindFilter::Any, name_contains: None, parent_entry_id: Some(ROOT_ENTRY_ID) },
-                page_size: 1,
-                cursor: None,
-            };
-            if let Ok(page) = idx.list_entries(&q)
-                && let Some(first) = page.items.first()
-            {
-                let d = first.path.display();
-                let name = last_component(&d);
-                root_display = Some(d[..d.len() - name.len()].trim_end_matches(['\\', '/']).to_owned()).filter(|r| !r.is_empty());
-            }
-        }
     }
     let report = idx.scan_report(id)?.unwrap_or(serde_json::Value::Null);
     let all_issues = report["issues"].as_array().cloned().unwrap_or_default();
@@ -241,35 +235,27 @@ pub async fn scan_status(state: St<'_>, scan_id: String) -> IpcResult<ScanStatus
 #[tauri::command(rename_all = "snake_case")]
 pub async fn recent_scans(state: St<'_>) -> IpcResult<Vec<RecentScanDto>> {
     let s = state.inner().clone();
-    blocking(move || {
-        let items = s.recent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).items.clone();
-        s.with_index(|idx| {
-            Ok(items
-                .into_iter()
-                .map(|r| match idx.scan_status(&r.scan_id) {
-                    Ok(v) => RecentScanDto {
-                        scan_id: r.scan_id,
-                        root_display: r.root_display,
-                        started_at: r.started_at,
-                        state: Some(v.state),
-                        completeness: v.completeness,
-                        finished_at: v.finished_at,
-                        problem: None,
-                    },
-                    Err(e) => RecentScanDto {
-                        scan_id: r.scan_id,
-                        root_display: r.root_display,
-                        started_at: r.started_at,
-                        state: None,
-                        completeness: None,
-                        finished_at: None,
-                        problem: Some(e.into()),
-                    },
-                })
-                .collect())
+    blocking(move || s.with_index(recent_of)).await
+}
+
+/// Scans recorded in the store (from this desktop or the CLI), newest first. The store is
+/// the only source: there is no desktop-private list to drift from it.
+pub fn recent_of(idx: &cm_store::IndexStore) -> IpcResult<Vec<RecentScanDto>> {
+    let (items, _) = idx.list_scans(RECENT_SCANS, None)?;
+    Ok(items
+        .into_iter()
+        .map(|r| RecentScanDto {
+            scan_id: r.scan_id,
+            root_display: r.root.display(),
+            started_at: r.started_at,
+            state: Some(r.state),
+            published: r.published,
+            host_kind: r.host_kind,
+            completeness: r.completeness,
+            finished_at: r.finished_at,
+            problem: None,
         })
-    })
-    .await
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]

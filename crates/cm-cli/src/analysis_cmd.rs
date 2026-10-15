@@ -1,14 +1,20 @@
 //! `analyze` and `candidates list` (ANA-*, CLI-02/06). Analysis writes only this tool's derived
-//! results; it never touches targets or grants authorization.
+//! results; it never touches targets or grants authorization. `analyze` and `clean` share
+//! [`run_analysis`], so both see the same candidates and tiers for one scan revision (CAT-02).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cm_core::analysis::{AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, UserList, analyze_preview_with, analyze_with};
+use cm_core::analysis::{
+    AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogSet, Undetermined, UserList, analyze_catalog, analyze_preview_with,
+};
+use cm_core::catalog::CatalogContext;
 use cm_core::error::ErrorCode;
 use cm_core::protocol::record;
 use cm_core::rules::{RegistryEntry, Rule, RuleSet, Tier};
+use cm_store::Stores;
+use cm_store::index::ScanStatusView;
 use serde_json::{Value, json};
 
 use crate::args::Parsed;
@@ -36,6 +42,11 @@ fn read_json_files(dir: &Path) -> Result<Vec<(PathBuf, String)>, String> {
 
 /// Platform rule pack plus tested registry; any invalid rule makes the whole set unavailable.
 pub fn load_rules(dir: &Path) -> Result<RuleSet, String> {
+    load_rules_and_registry(dir).map(|(r, _)| r)
+}
+
+/// [`load_rules`] keeping the tested registry for version verdicts (CAT-03).
+pub fn load_rules_and_registry(dir: &Path) -> Result<(RuleSet, BTreeMap<String, RegistryEntry>), String> {
     let platform_dir = if cfg!(windows) { "windows" } else { "macos" };
     let mut registry = BTreeMap::new();
     for (p, text) in read_json_files(&dir.join("registry"))? {
@@ -46,52 +57,80 @@ pub fn load_rules(dir: &Path) -> Result<RuleSet, String> {
         .into_iter()
         .map(|(p, text)| Rule::parse(&text).map_err(|e| format!("{}: {e}", p.display())))
         .collect::<Result<Vec<_>, _>>()?;
-    RuleSet::new(rules, &registry).map_err(|e| e.to_string())
+    let set = RuleSet::new(rules, &registry).map_err(|e| e.to_string())?;
+    Ok((set, registry))
 }
 
 #[cfg(windows)]
-fn resolver_env() -> (cm_platform::windows::resolve::ResolverEnv, Vec<Value>) {
+fn resolver_env(volume: Option<PathBuf>) -> (cm_platform::windows::resolve::ResolverEnv, Vec<Value>) {
     let mut env = cm_platform::windows::resolve::ResolverEnv::from_os();
     let mut issues = Vec::new();
-    for (var, slot) in [("CM_RESOLVE_LOCALAPPDATA", &mut env.local_app_data), ("CM_RESOLVE_TEMP", &mut env.temp)] {
+    for (var, slot) in [
+        ("CM_RESOLVE_LOCALAPPDATA", &mut env.local_app_data),
+        ("CM_RESOLVE_TEMP", &mut env.temp),
+        ("CM_RESOLVE_APPDATA", &mut env.app_data),
+        ("CM_RESOLVE_USERPROFILE", &mut env.user_profile),
+        ("CM_RESOLVE_DOWNLOADS", &mut env.downloads),
+    ] {
         if let Some(v) = std::env::var_os(var) {
             issues.push(json!({"code": "resolver_override", "scope_display": var,
                 "message": "rule roots resolved from an override (validation fixture), not the user's real location"}));
             *slot = Some(PathBuf::from(v));
         }
     }
+    env.removable_volume = volume;
     (env, issues)
 }
 
-fn roots_for(rules: &[Rule]) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<Value>) {
+fn roots_for(rules: &[Rule], volume: Option<PathBuf>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<Value>) {
     #[cfg(windows)]
     {
-        let (env, issues) = resolver_env();
+        let (env, issues) = resolver_env(volume);
         (cm_platform::windows::resolve::resolve(rules, &env), issues)
     }
     #[cfg(not(windows))]
     {
-        let _ = rules;
+        let _ = (rules, volume);
         (Vec::new(), Vec::new())
     }
 }
 
-pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
-    let Some(scan_id) = p.option("scan") else { return fail(req, ErrorCode::InvalidArgument, "analyze needs --scan ID", p.format) };
-    let stores = match open_stores(req, p) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
+/// Installed owner versions for the registry verdicts; unknown owners are simply absent.
+pub fn installed_versions(rules: &[Rule]) -> BTreeMap<String, String> {
+    #[cfg(windows)]
+    {
+        cm_platform::windows::resolve::installed_versions(rules)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = rules;
+        BTreeMap::new()
+    }
+}
+
+pub fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// A published scan's catalog analysis with every protection layer, the tested registry and the
+/// installed versions; the candidate set is stored so a plan can be built from it.
+pub struct Analysis {
+    pub set: CandidateSet,
+    pub catalog: CatalogSet,
+    pub issues: Vec<Value>,
+    pub status: ScanStatusView,
+    pub user_problem: Option<String>,
+}
+
+pub fn run_analysis(req: &str, p: &Parsed, stores: &Stores, scan_id: &str, volume: Option<PathBuf>) -> Result<Analysis, ExitCode> {
     let status = match stores.index.scan_status(scan_id) {
         Ok(s) if s.published => s,
-        Ok(_) => return fail(req, ErrorCode::InvalidArgument, "scan is not published yet", p.format),
-        Err(e) => return store_error(req, &e, p.format),
+        Ok(_) => return Err(fail(req, ErrorCode::InvalidArgument, "scan is not published yet", p.format)),
+        Err(e) => return Err(store_error(req, &e, p.format)),
     };
-    let view = match stores.index.view(scan_id) {
-        Ok(v) => v,
-        Err(e) => return store_error(req, &e, p.format),
-    };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let view = stores.index.view(scan_id).map_err(|e| store_error(req, &e, p.format))?;
+    let dir = p.raw_option("rules").map(PathBuf::from).unwrap_or_else(default_rules_dir);
+    let (rules, registry) = load_rules_and_registry(&dir).map_err(|e| fail(req, ErrorCode::InternalError, &format!("rule set unavailable: {e}"), p.format))?;
     // Protection layers 1 and 3 (PRT-01/02/03). An unusable user list does not stop this
     // read-only analysis; it makes every candidate unplannable and is reported as an issue.
     let hard = cm_platform::protection::hard_deny_set();
@@ -106,33 +145,25 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
         // No read-only Git probe yet: every worktree root is `worktree_status_unknown` (blocked).
         worktrees: &[],
     };
-    let (set, mut issues): (CandidateSet, Vec<Value>) = if let Some(preview) = p.raw_option("preview-rule") {
-        let rule = match std::fs::read_to_string(preview).map_err(|e| e.to_string()).and_then(|t| Rule::parse(&t).map_err(|e| e.to_string())) {
-            Ok(r) => r,
-            Err(e) => return fail(req, ErrorCode::InvalidArgument, &format!("preview rule: {e}"), p.format),
-        };
-        let (roots, mut issues) = roots_for(std::slice::from_ref(&rule));
-        issues.push(json!({"code": "experimental_preview", "scope_display": rule.rule_id,
-            "message": "preview of a rule that is not enabled; results cannot be planned"}));
-        let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now, roots: &roots, protected: &[] };
-        (analyze_preview_with(&view, &rule, &input, &prot), issues)
-    } else {
-        let dir = p.raw_option("rules").map(PathBuf::from).unwrap_or_else(default_rules_dir);
-        let rules = match load_rules(&dir) {
-            Ok(r) => r,
-            Err(e) => return fail(req, ErrorCode::InternalError, &format!("rule set unavailable: {e}"), p.format),
-        };
-        let (roots, issues) = roots_for(&rules.rules);
-        let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now, roots: &roots, protected: &[] };
-        (analyze_with(&view, &rules, &input, &prot), issues)
-    };
-    if let Err(e) = stores.index.save_candidates(&set) {
-        return store_error(req, &e, p.format);
-    }
+    let (roots, issues) = roots_for(&rules.rules, volume);
+    let installed = installed_versions(&rules.rules);
+    let ctx = CatalogContext { registry: Some(&registry), installed: Some(&installed) };
+    let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
+    let (set, catalog) = analyze_catalog(&view, &rules, &input, &prot, &ctx);
+    stores.index.save_candidates(&set).map_err(|e| store_error(req, &e, p.format))?;
+    Ok(Analysis { set, catalog, issues, status, user_problem })
+}
+
+/// Issues every analysis reports alongside its result.
+pub fn standing_issues(set: &CandidateSet, undetermined: &[Undetermined], user_problem: Option<&str>, issues: &mut Vec<Value>) {
     for (rule, why) in &set.inapplicable {
         issues.push(json!({"code": "rule_inapplicable", "scope_display": rule, "message": why}));
     }
-    if let Some(problem) = &user_problem {
+    for u in undetermined {
+        issues.push(json!({"code": "undetermined", "scope_display": u.rule_id,
+            "message": format!("{} matched object(s) not judged ({}); they are not candidates", u.count, u.reason)}));
+    }
+    if let Some(problem) = user_problem {
         issues.push(json!({"code": "protection_unavailable", "scope_display": cm_platform::protection::PROTECTION_FILE,
             "message": format!("{problem}; candidates stay pending and every write is stopped until the list is repaired")}));
     }
@@ -140,6 +171,55 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
         issues.push(json!({"code": "protected_reviewable", "scope_display": "AI sessions and worktrees",
             "message": "default-protected objects listed for per-object review only; they are never selected automatically or matched by a policy"}));
     }
+}
+
+pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
+    let Some(scan_id) = p.option("scan") else { return fail(req, ErrorCode::InvalidArgument, "analyze needs --scan ID", p.format) };
+    let stores = match open_stores(req, p) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let (set, undetermined, status, mut issues, user_problem) = if let Some(preview) = p.raw_option("preview-rule") {
+        let status = match stores.index.scan_status(scan_id) {
+            Ok(s) if s.published => s,
+            Ok(_) => return fail(req, ErrorCode::InvalidArgument, "scan is not published yet", p.format),
+            Err(e) => return store_error(req, &e, p.format),
+        };
+        let view = match stores.index.view(scan_id) {
+            Ok(v) => v,
+            Err(e) => return store_error(req, &e, p.format),
+        };
+        let rule = match std::fs::read_to_string(preview).map_err(|e| e.to_string()).and_then(|t| Rule::parse(&t).map_err(|e| e.to_string())) {
+            Ok(r) => r,
+            Err(e) => return fail(req, ErrorCode::InvalidArgument, &format!("preview rule: {e}"), p.format),
+        };
+        let hard = cm_platform::protection::hard_deny_set();
+        let user = cm_platform::protection::load(&stores.dir);
+        let user_problem = user.as_ref().err().map(ToString::to_string);
+        let prot = AnalysisProtection {
+            hard_deny: Some(&hard),
+            user: match (&user, &user_problem) {
+                (Ok(list), _) => UserList::Loaded(list),
+                (Err(_), problem) => UserList::Unavailable(problem.as_deref().unwrap_or_default()),
+            },
+            worktrees: &[],
+        };
+        let (roots, mut issues) = roots_for(std::slice::from_ref(&rule), None);
+        issues.push(json!({"code": "experimental_preview", "scope_display": rule.rule_id,
+            "message": "preview of a rule that is not enabled; results cannot be planned"}));
+        let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
+        let set = analyze_preview_with(&view, &rule, &input, &prot);
+        if let Err(e) = stores.index.save_candidates(&set) {
+            return store_error(req, &e, p.format);
+        }
+        (set, vec![], status, issues, user_problem)
+    } else {
+        match run_analysis(req, p, &stores, scan_id, None) {
+            Ok(a) => (a.set, a.catalog.undetermined, a.status, a.issues, a.user_problem),
+            Err(code) => return code,
+        }
+    };
+    standing_issues(&set, &undetermined, user_problem.as_deref(), &mut issues);
     let known = set.candidates.iter().fold(0u64, |a, c| a.saturating_add(c.logical.known.0));
     let unknown: u64 = set.candidates.iter().map(|c| c.logical.unknown_count).sum();
     let rule_digest = if set.rule_set_digest.len() == 64 {

@@ -228,6 +228,10 @@ pub struct RegistryEntry {
     pub fixtures: Fixtures,
     pub known_effects: Vec<String>,
     pub evidence_refs: Vec<String>,
+    /// Thresholds the run exercised (CAT-07). A rule with thresholds is only covered while they
+    /// are unchanged: changing a threshold needs a new rule version and a new test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thresholds: Option<Thresholds>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -357,6 +361,12 @@ impl Rule {
             if !entry.platforms.iter().any(|t| t.platform == *p) {
                 return Err(invalid(id, format!("platform {p:?} has no tested registry evidence")));
             }
+        }
+        let has_thresholds = self.thresholds != Thresholds { min_age_days: None, age_basis: None, min_size_bytes: None, retention_days: None };
+        match &entry.thresholds {
+            Some(t) if *t != self.thresholds => return Err(invalid(id, "thresholds differ from the tested ones; a new rule version must be tested")),
+            None if has_thresholds => return Err(invalid(id, "registry entry does not record the tested thresholds")),
+            _ => {}
         }
         Ok(())
     }

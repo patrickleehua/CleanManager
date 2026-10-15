@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Read-only CleanManager host commands for the main window. No shell, fs, opener or dialog permissions are exposed to the WebView; folder picking happens in Rust and returns an opaque root token.",
+  "description": "CleanManager host commands for the main window. No shell, fs, opener or dialog permissions are exposed to the WebView; folder picking happens in Rust and returns an opaque root token. No command accepts a filesystem path or a plan body: plans, operations, quarantine items and policies are named by store-issued ids, and approval needs a host-issued review token plus the typed digest prefix.",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -16,6 +16,31 @@
     "allow-cancel-scan",
     "allow-list-entries",
     "allow-treemap-layer",
-    "allow-summarize-selection"
+    "allow-summarize-selection",
+    "allow-candidate-summary",
+    "allow-analyze-scan",
+    "allow-list-candidates",
+    "allow-create-plan",
+    "allow-plan-detail",
+    "allow-plan-items",
+    "allow-approve-plan",
+    "allow-revoke-plan",
+    "allow-list-policies",
+    "allow-set-policy-state-cmd",
+    "allow-create-policy-from-plan",
+    "allow-start-apply",
+    "allow-cancel-apply",
+    "allow-active-apply",
+    "allow-operation-detail",
+    "allow-list-operation-items",
+    "allow-reconcile-operation",
+    "allow-list-operations",
+    "allow-list-plans",
+    "allow-list-quarantine",
+    "allow-create-recovery-plan",
+    "allow-list-protection",
+    "allow-add-protection",
+    "allow-remove-protection",
+    "allow-list-apps"
   ]
 }

@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "npm.cache-logs@1.0.0",
+  "rule_id": "npm.cache-logs",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "tool",
+    "id": "npm",
+    "name": "npm"
+  },
+  "version_range": {
+    "min_inclusive": "11.0",
+    "max_exclusive": "12.0"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old debug log in _logs is a review-only candidate"
+    ],
+    "negative": [
+      "A log modified today is not a candidate",
+      "A non-.log file in _logs is not matched",
+      "A .log file elsewhere in the cache is not matched"
+    ]
+  },
+  "known_effects": [
+    "Logs of past npm runs are no longer available for troubleshooting."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_npm_cache_logs"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

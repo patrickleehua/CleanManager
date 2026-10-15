@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0",
+  "kind": "selection_preview",
+  "request_id": "req_synthetic",
+  "command": "purge.preview",
+  "scan_id": "s_demo",
+  "scan_revision": 1,
+  "dry_run": true,
+  "non_interactive": true,
+  "next_cursor": null,
+  "page_size": 3,
+  "convertible_to_plan": true,
+  "items": [
+    {
+      "object_id": "c_t",
+      "entry_id": "e_c_t",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Projects\\app\\target",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBvAGoAZQBjAHQAcwBcAGEAcABwAFwAdABhAHIAZwBlAHQA"
+      },
+      "category": "project_build_output",
+      "rule_id": "purge.target",
+      "rule_version": "1.0.0",
+      "tier": "default_selected",
+      "tier_reason": "build output next to its project marker; rebuilt locally",
+      "rebuild_class": "local_rebuild",
+      "registry_status": "covered",
+      "selected_by_default": true,
+      "skip_reason": null,
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text",
+      "notes": [
+        "project: ... (cargo.toml)"
+      ]
+    },
+    {
+      "object_id": "c_n",
+      "entry_id": "e_c_n",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Projects\\web\\node_modules",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBvAGoAZQBjAHQAcwBcAHcAZQBiAFwAbgBvAGQAZQBfAG0AbwBkAHUAbABlAHMA"
+      },
+      "category": "project_dependencies",
+      "rule_id": "purge.node-modules",
+      "rule_version": "1.0.0",
+      "tier": "review_only",
+      "tier_reason": "dependencies: review only, reinstalling needs the network",
+      "rebuild_class": "network_redownload",
+      "registry_status": "covered",
+      "selected_by_default": false,
+      "skip_reason": "recent",
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text",
+      "notes": []
+    },
+    {
+      "object_id": "c_d",
+      "entry_id": "e_c_d",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Projects\\web\\dist",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBvAGoAZQBjAHQAcwBcAHcAZQBiAFwAZABpAHMAdAA="
+      },
+      "category": "project_build_output",
+      "rule_id": "purge.dist",
+      "rule_version": "1.0.0",
+      "tier": "blocked",
+      "tier_reason": "vcs_tracked:3_files",
+      "rebuild_class": "local_rebuild",
+      "registry_status": "covered",
+      "selected_by_default": false,
+      "skip_reason": "vcs_tracked",
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text",
+      "notes": []
+    }
+  ],
+  "summary": {
+    "selected_count": 1,
+    "selected_known_bytes": "1048576",
+    "selected_unknown_size_count": 0,
+    "review_only_count": 1,
+    "blocked_count": 1,
+    "skipped_count": 2
+  }
+}

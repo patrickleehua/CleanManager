@@ -29,6 +29,10 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["scan", "cancel", id] => p.allow(&["store"], &[]).map(|_| scan_cancel(req, &p, id)),
         ["analyze"] => p.allow(&["scan", "store", "rules", "preview-rule"], &[]).map(|_| crate::analysis_cmd::analyze_cmd(req, &p)),
         ["candidates", "list"] => p.allow(&["set", "store", "limit", "cursor"], &[]).map(|_| crate::analysis_cmd::candidates_list(req, &p)),
+        ["clean", "list"] => p.allow(&["rules"], &[]).map(|_| crate::clean_cmd::clean_list(req, &p)),
+        ["clean"] => p
+            .allow(&["scan", "store", "rules", "mode", "candidates", "volume", "limit", "cursor"], &["dry-run", "non-interactive"])
+            .map(|_| crate::clean_cmd::clean(req, &p)),
         ["plan", "create"] => p.allow(&["set", "store", "mode", "candidates"], &["all-default-selected"]).map(|_| crate::plan_cmd::plan_create(req, &p)),
         ["plan", "show", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::plan_show(req, &p, id)),
         ["plan", "review", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::plan_review(req, &p, id)),
@@ -53,6 +57,18 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["protect", "add"] => p.allow(&["store", "path", "match", "glob", "rule", "task", "note"], &[]).map(|_| crate::protect_cmd::protect_add(req, &p)),
         ["protect", "remove", id] => p.allow(&["store"], &[]).map(|_| crate::protect_cmd::protect_remove(req, &p, id)),
         ["protect", "check"] => p.allow(&["store", "path", "rule"], &[]).map(|_| crate::protect_cmd::protect_check(req, &p)),
+        ["purge", "roots"] | ["purge", "roots", "list"] => p.allow(&["store"], &[]).map(|_| crate::purge_cmd::roots(req, &p, None)),
+        ["purge", "roots", "add"] => p.allow(&["store", "path"], &[]).map(|_| crate::purge_cmd::roots(req, &p, Some(true))),
+        ["purge", "roots", "remove"] => p.allow(&["store", "path"], &[]).map(|_| crate::purge_cmd::roots(req, &p, Some(false))),
+        ["purge", "scan" | "preview"] | ["purge"] if p.words.len() > 1 || p.flag("dry-run") => {
+            p.allow(&["store", "root", "recent-days", "max-depth"], &["dry-run", "non-interactive"]).map(|_| crate::purge_cmd::scan(req, &p))
+        }
+        ["purge", "plan", "create"] => p.allow(&["store", "set", "mode", "candidates"], &["all-default-selected", "non-interactive"]).map(|_| crate::purge_cmd::plan_create(req, &p)),
+        ["installer", "locations"] => p.allow(&["store"], &[]).map(|_| crate::installer_cmd::locations(req, &p)),
+        ["installer", "scan" | "preview"] | ["installer"] if p.words.len() > 1 || p.flag("dry-run") => {
+            p.allow(&["store", "source", "max-depth"], &["dry-run", "non-interactive"]).map(|_| crate::installer_cmd::scan(req, &p))
+        }
+        ["installer", "plan", "create"] => p.allow(&["store", "set", "mode", "candidates", "source"], &["all-default-selected", "non-interactive"]).map(|_| crate::installer_cmd::plan_create(req, &p)),
         [] => Err("missing command".to_string()),
         other => Err(format!("unknown command: {}", other.join(" "))),
     };

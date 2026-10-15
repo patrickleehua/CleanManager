@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "windows.wer.report-queue@1.0.0",
+  "rule_id": "windows.wer.report-queue",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "system",
+    "id": "windows.wer",
+    "name": "Windows Error Reporting (per user)"
+  },
+  "version_range": {
+    "min_inclusive": "10.0.26200",
+    "max_exclusive": "10.0.26201"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old report folder in ReportQueue is a review-only candidate"
+    ],
+    "negative": [
+      "A report folder from today is not a candidate",
+      "A loose old file beside the report folders is not matched"
+    ]
+  },
+  "known_effects": [
+    "Crash history for troubleshooting is lost; queued reports are not sent."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_windows_wer_report_queue"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

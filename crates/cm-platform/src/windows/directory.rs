@@ -259,6 +259,33 @@ struct Work {
 
 pub struct DirectoryBackend;
 
+/// File IDs (on the scanned volume `serial`) of CleanManager's own data directories: the ones
+/// the caller named plus the default store location. Unresolvable paths are simply absent.
+fn own_store_ids(dirs: &[RawPath], serial: u64) -> Vec<[u8; 16]> {
+    let mut paths: Vec<Vec<u16>> = dirs.iter().filter_map(|p| match p {
+        RawPath::Windows(u) => Some(u.clone()),
+        RawPath::Unix(_) => None,
+    }).collect();
+    if let Some(dir) = crate::paths::default_store_dir() {
+        use std::os::windows::ffi::OsStrExt;
+        paths.push(dir.as_os_str().encode_wide().collect());
+    }
+    let mut out = Vec::new();
+    for units in paths {
+        let Ok((_, verbatim)) = full_path(&units) else { continue };
+        let Ok(h) = Handle::open(&verbatim, FILE_READ_ATTRIBUTES | SYNCHRONIZE) else { continue };
+        if let Ok((s, id)) = h.id_info()
+            && s == serial
+            && !out.contains(&id)
+        {
+            out.push(id);
+        }
+    }
+    out
+}
+
+const OWN_STORE_MESSAGE: &str = "CleanManager's own data directory: recorded but not scanned, so the scan never reads its own index writes; its size is not counted";
+
 /// Protocol identity (`volume_id`, `file_id`) of a path, in the same form `win.directory`
 /// records, so rule roots and protected locations can be matched by identity, not by text.
 pub fn identity_of(path: &[u16]) -> io::Result<(String, String)> {
@@ -357,6 +384,7 @@ impl ScanBackend for DirectoryBackend {
         } else {
             format!("directory enumeration within the selected root on {fs} WITH ACL-bypass privileges enabled: {}", report.elevated_read.join(", "))
         };
+        let own_store = own_store_ids(&options.own_store_dirs, serial);
         let mut class = ListClass::Extd;
         let mut ctx = Ctx {
             sink,
@@ -381,6 +409,21 @@ impl ScanBackend for DirectoryBackend {
                 return ctx.report;
             }
         };
+        if own_store.contains(&root_id) {
+            ctx.issue("own_store_skipped", &display, OWN_STORE_MESSAGE.into());
+            if let Some(e) = ctx.entries.last_mut() {
+                e.boundary = Some(BoundaryKind::OwnStore);
+                ctx.report.boundaries += 1;
+            }
+            ctx.report.state = match ctx.flush() {
+                Ok(()) => ScanState::Completed,
+                Err(msg) => {
+                    ctx.issue("store_error", &display, msg);
+                    ScanState::Failed
+                }
+            };
+            return ctx.report;
+        }
         let mut queue = VecDeque::from([Work { entry_id: root_entry, display, verbatim, expected_id: root_id }]);
         let mut held_root = Some(root_handle);
         let mut state = ScanState::Completed;
@@ -469,6 +512,11 @@ impl ScanBackend for DirectoryBackend {
                     (Some(_), true) => {
                         let o = ctx.object(&rec, ObjectKind::Reparse, None, None, cloud);
                         ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Reparse, Some(BoundaryKind::Junction)).map(|_| ())
+                    }
+                    (_, true) if own_store.contains(&rec.file_id) => {
+                        ctx.issue("own_store_skipped", &join(&work.display, &rec.name), OWN_STORE_MESSAGE.into());
+                        let o = ctx.object(&rec, ObjectKind::Directory, None, None, cloud);
+                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, Some(BoundaryKind::OwnStore)).map(|_| ())
                     }
                     (_, true) => {
                         let o = ctx.object(&rec, ObjectKind::Directory, None, None, cloud);

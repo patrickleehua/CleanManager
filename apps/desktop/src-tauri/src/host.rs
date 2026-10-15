@@ -20,7 +20,6 @@ use cm_store::{INDEX_FILE, IndexStore, Stores};
 use tauri::{AppHandle, Emitter};
 
 use crate::dto::{IpcError, IpcResult, ScanFinishedEvent, SummaryDto, display_of};
-use crate::recent::RecentScans;
 
 pub const EVENT_PROGRESS: &str = "scan-progress";
 pub const EVENT_FINISHED: &str = "scan-finished";
@@ -61,19 +60,30 @@ pub struct StartupInfo {
     pub bypass_privileges: Option<Result<(), String>>,
     pub store_problem: Option<IpcError>,
     pub interrupted: Vec<String>,
+    /// Operations found without a live host at startup (now `reconciliation_required`).
+    pub operations_to_reconcile: Vec<String>,
 }
 
 pub struct AppState {
     pub store_dir: Option<PathBuf>,
     pub startup: StartupInfo,
-    query: Mutex<Option<IndexStore>>,
+    /// Shared connections for queries and short writes (index + audit). Long-running work
+    /// (scans, plan application) opens its own connections.
+    stores: Mutex<Option<Stores>>,
     pub roots: Mutex<RootRegistry>,
     pub active: Mutex<Option<ActiveScan>>,
     summaries: Mutex<HashMap<(String, u32, u64), SummaryDto>>,
-    pub recent: Mutex<RecentScans>,
+    /// Plan review sessions handed to the WebView with a plan's detail (see `cleanup`).
+    pub reviews: Mutex<crate::cleanup::Reviews>,
+    /// Last candidate set read, parsed once for paging.
+    pub candidates: Mutex<Option<Arc<crate::cleanup::Loaded>>>,
+    /// The plan application hosted by this process, if any (see `ops`).
+    pub apply: Mutex<Option<crate::ops::ActiveApply>>,
+    /// Where the platform rule pack is read from (see `rules`).
+    pub rules_dir: Option<PathBuf>,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding a lock must not take the whole UI down; the guarded values are
     // plain caches/registries that stay consistent between statements.
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -86,15 +96,16 @@ fn no_store() -> IpcError {
 impl AppState {
     /// Drop ACL-bypass privileges, open the stores and mark scans whose host process exited
     /// as `interrupted` (their committed rows are published, never reported as completed).
-    pub fn init(recent_file: Option<PathBuf>) -> Self {
+    pub fn init(rules_dir: Option<PathBuf>) -> Self {
         let bypass_privileges = drop_bypass_privileges();
-        Self::with_store(cm_platform::paths::default_store_dir(), recent_file, bypass_privileges)
+        Self::with_store(cm_platform::paths::default_store_dir(), rules_dir, bypass_privileges)
     }
 
-    pub fn with_store(store_dir: Option<PathBuf>, recent_file: Option<PathBuf>, bypass_privileges: Option<Result<(), String>>) -> Self {
+    pub fn with_store(store_dir: Option<PathBuf>, rules_dir: Option<PathBuf>, bypass_privileges: Option<Result<(), String>>) -> Self {
         let mut store_problem = None;
         let mut interrupted = Vec::new();
-        let mut query = None;
+        let mut operations_to_reconcile = Vec::new();
+        let mut opened = None;
         match &store_dir {
             None => store_problem = Some(no_store()),
             Some(dir) => match Stores::open(dir) {
@@ -103,31 +114,46 @@ impl AppState {
                         Ok(ids) => interrupted = ids,
                         Err(e) => store_problem = Some(e.into()),
                     }
-                    query = Some(stores.index);
+                    // Operations whose host exited need a person to reconcile them (GUI-06).
+                    if let Ok(ids) = stores.audit.reconcile_hosts(|h| OsHostProbe.liveness(h)) {
+                        operations_to_reconcile = ids;
+                    }
+                    opened = Some(stores);
                 }
                 Err(e) => store_problem = Some(e.into()),
             },
         }
         AppState {
             store_dir,
-            startup: StartupInfo { bypass_privileges, store_problem, interrupted },
-            query: Mutex::new(query),
+            startup: StartupInfo { bypass_privileges, store_problem, interrupted, operations_to_reconcile },
+            stores: Mutex::new(opened),
             roots: Mutex::new(RootRegistry::default()),
             active: Mutex::new(None),
             summaries: Mutex::new(HashMap::new()),
-            recent: Mutex::new(RecentScans::load(recent_file)),
+            reviews: Mutex::new(crate::cleanup::Reviews::default()),
+            candidates: Mutex::new(None),
+            apply: Mutex::new(None),
+            rules_dir,
         }
     }
 
-    /// Run `f` with the shared read connection, opening it on first use.
-    pub fn with_index<T>(&self, f: impl FnOnce(&IndexStore) -> IpcResult<T>) -> IpcResult<T> {
-        let mut guard = lock(&self.query);
+    /// Run `f` with the shared connections, opening them on first use.
+    pub fn with_stores<T>(&self, f: impl FnOnce(&Stores) -> IpcResult<T>) -> IpcResult<T> {
+        let mut guard = lock(&self.stores);
         if guard.is_none() {
             let dir = self.store_dir.as_ref().ok_or_else(no_store)?;
-            std::fs::create_dir_all(dir).map_err(|e| IpcError::new(ErrorCode::IoError, "io_error", e.to_string()))?;
-            *guard = Some(IndexStore::open(&dir.join(INDEX_FILE)).map_err(IpcError::from)?);
+            *guard = Some(Stores::open(dir).map_err(IpcError::from)?);
         }
         f(guard.as_ref().expect("opened above"))
+    }
+
+    /// Run `f` with the shared index connection.
+    pub fn with_index<T>(&self, f: impl FnOnce(&IndexStore) -> IpcResult<T>) -> IpcResult<T> {
+        self.with_stores(|s| f(&s.index))
+    }
+
+    pub fn store_dir(&self) -> IpcResult<&Path> {
+        self.store_dir.as_deref().ok_or_else(no_store)
     }
 
     pub fn cached_summary(&self, key: &(String, u32, u64)) -> Option<SummaryDto> {
@@ -162,6 +188,8 @@ fn drop_bypass_privileges() -> Option<Result<(), String>> {
 }
 
 /// Why a root cannot be scanned, if anything (checked when offering and again when starting).
+/// A root that *contains* CleanManager's store is fine: the scanner records the store as an
+/// `own_store` boundary and reports it. A root at or inside the store is refused.
 pub fn root_problem(root: &Path, store_dir: Option<&Path>) -> Option<IpcError> {
     match std::fs::metadata(root) {
         Ok(m) if m.is_dir() => {}
@@ -176,12 +204,12 @@ pub fn root_problem(root: &Path, store_dir: Option<&Path>) -> Option<IpcError> {
     }
     if let Some(store) = store_dir
         && let (Ok(s), Ok(r)) = (std::fs::canonicalize(store), std::fs::canonicalize(root))
-        && s.starts_with(&r)
+        && r.starts_with(&s)
     {
         return Some(IpcError::new(
             ErrorCode::InvalidArgument,
-            "store_inside_scope",
-            format!("This folder contains CleanManager's own index ({}); choose a folder that does not contain it", display_of(store)),
+            "root_inside_store",
+            format!("This folder is part of CleanManager's own data ({}); choose another folder", display_of(store)),
         ));
     }
     None
@@ -231,22 +259,23 @@ pub fn start(app: &AppHandle, state: &Arc<AppState>, root: PathBuf) -> IpcResult
     {
         return Err(IpcError::new(ErrorCode::Conflict, "scan_running", format!("Scan {} is still running; wait for it or cancel it first", a.scan_id)));
     }
-    // The scan thread gets its own connection; the store check repeats the overlap rule.
+    // The scan thread gets its own connection. The store directory is handed to the scanner,
+    // which records it as an `own_store` boundary instead of reading its own writes.
     let stores = Stores::open(&dir).map_err(IpcError::from)?;
-    stores.ensure_outside(&root).map_err(IpcError::from)?;
+    let own_store: Vec<_> = cm_platform::paths::raw_path(dir.as_os_str()).ok().into_iter().collect();
 
     let scan_id = new_scan_id();
     let request = ScanRequest { scan_id: scan_id.clone(), scope_id: scope_id_for(&root), root: raw, host: OsHostProbe.current("desktop") };
     let done = Arc::new(AtomicBool::new(false));
     *active = Some(ActiveScan { scan_id: scan_id.clone(), done: done.clone() });
     drop(active);
-    lock(&state.recent).push(&scan_id, &root_display, &now_utc());
 
     let scan_app = app.clone();
     let scan_done = done.clone();
     let scan_id_t = scan_id.clone();
     let spawned = std::thread::Builder::new().name("cm-scan".into()).spawn(move || {
-        let outcome = run_scan(&stores.index, backend.as_ref(), &request, &ScanOptions::default());
+        let options = ScanOptions { own_store_dirs: own_store, ..ScanOptions::default() };
+        let outcome = run_scan(&stores.index, backend.as_ref(), &request, &options);
         scan_done.store(true, Ordering::Release);
         let event = match outcome {
             Ok(o) => ScanFinishedEvent { scan_id: scan_id_t, state: Some(o.state), error: None },
@@ -291,15 +320,31 @@ fn spawn_progress(app: AppHandle, dir: PathBuf, scan_id: String, done: Arc<Atomi
     });
 }
 
-/// Window close while a scan runs: request a safe stop, tell the WebView, and exit only after
-/// the scan has published its terminal state (never claim it keeps running without a host).
+/// Window close while a scan or an operation runs: request a safe stop (a scan publishes what
+/// it confirmed; an operation stops scheduling new actions and journals the one in flight),
+/// tell the WebView, and exit only afterwards — never claim work continues without a host.
 pub fn close_requested(app: &AppHandle, state: &Arc<AppState>) -> bool {
-    let Some((scan_id, done)) = state.active_running() else { return false };
-    let _ = state.with_index(|idx| idx.request_cancel(&scan_id).map_err(IpcError::from));
-    let _ = app.emit(EVENT_CLOSING, serde_json::json!({ "scan_id": scan_id }));
+    let scan = state.active_running();
+    let apply = crate::ops::running_apply(state);
+    if scan.is_none() && apply.is_none() {
+        return false;
+    }
+    let mut waits: Vec<Arc<AtomicBool>> = Vec::new();
+    let mut what = Vec::new();
+    if let Some((scan_id, done)) = scan {
+        let _ = state.with_index(|idx| idx.request_cancel(&scan_id).map_err(IpcError::from));
+        what.push("scan");
+        waits.push(done);
+    }
+    if let Some((cancel, done)) = apply {
+        cancel.store(true, Ordering::Release);
+        what.push("operation");
+        waits.push(done);
+    }
+    let _ = app.emit(EVENT_CLOSING, serde_json::json!({ "waiting_for": what }));
     let app = app.clone();
     let _ = std::thread::Builder::new().name("cm-exit".into()).spawn(move || {
-        while !done.load(Ordering::Acquire) {
+        while waits.iter().any(|d| !d.load(Ordering::Acquire)) {
             std::thread::sleep(Duration::from_millis(100));
         }
         app.exit(0);
@@ -330,12 +375,13 @@ mod tests {
     }
 
     #[test]
-    fn root_containing_the_store_is_refused() {
+    fn root_containing_the_store_is_allowed_but_not_one_inside_it() {
         let base = std::env::temp_dir().join(format!("cm-desktop-test-{}", std::process::id()));
         let store = base.join("store");
-        std::fs::create_dir_all(&store).unwrap();
-        assert_eq!(root_problem(&base, Some(&store)).map(|e| e.reason), Some("store_inside_scope"));
-        assert!(root_problem(&store, Some(&base.join("elsewhere"))).is_none());
+        std::fs::create_dir_all(store.join("quarantine")).unwrap();
+        assert!(root_problem(&base, Some(&store)).is_none(), "the scanner skips the store as a boundary");
+        assert_eq!(root_problem(&store, Some(&store)).map(|e| e.reason), Some("root_inside_store"));
+        assert_eq!(root_problem(&store.join("quarantine"), Some(&store)).map(|e| e.reason), Some("root_inside_store"));
         let _ = std::fs::remove_dir_all(&base);
     }
 

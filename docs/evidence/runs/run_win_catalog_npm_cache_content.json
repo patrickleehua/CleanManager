@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-05",
+  "run_id": "run_win_catalog_npm_cache_content",
+  "recorded_at": "2026-10-15T07:32:29Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/npm.cache-content.json"
+  ],
+  "seed": null,
+  "expected": "npm 11.19.0: the real npm cache's _cacache is one review-only owner-tool row without file modes; the read-only adapter preview (node npm-cli.js config get cache) reports the same cache root the resolver uses",
+  "actual": "candidates=1 matched=1 risk=medium modes=[] adapter_status=available adapter_exit=0 adapter_path_matches_resolver=True",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "tool_version": "11.19.0",
+    "adapter_executable": "E:\\nodejs\\node.exe",
+    "adapter_sha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+    "adapter_script_sha256": "3ce7cba6f5128dd5f54c98b6a5036b0f850496878cc2e21044b675fe3c594e3e",
+    "adapter_duration_ms": 178
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Only the read-only adapter preview ran; `npm cache verify` (the declared cleanup) was not executed this round."
+  ],
+  "status": "passed"
+}

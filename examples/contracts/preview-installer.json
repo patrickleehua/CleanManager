@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "kind": "selection_preview",
+  "request_id": "req_synthetic",
+  "command": "installer.preview",
+  "scan_id": "s_demo",
+  "scan_revision": 1,
+  "dry_run": true,
+  "non_interactive": true,
+  "next_cursor": null,
+  "page_size": 2,
+  "convertible_to_plan": true,
+  "items": [
+    {
+      "object_id": "c_e",
+      "entry_id": "e_c_e",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Downloads\\ExampleSetup.exe",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAbwB3AG4AbABvAGEAZABzAFwARQB4AGEAbQBwAGwAZQBTAGUAdAB1AHAALgBlAHgAZQA="
+      },
+      "category": "installers",
+      "rule_id": "installer.exe",
+      "rule_version": "1.0.0",
+      "tier": "review_only",
+      "tier_reason": "installers are review-only: choose them one by one or by source",
+      "rebuild_class": "network_redownload",
+      "registry_status": "covered",
+      "selected_by_default": false,
+      "skip_reason": null,
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text",
+      "notes": [
+        "recognized: nsis: installer data header after the image",
+        "signed by Example Publisher"
+      ],
+      "source_label": "downloads"
+    },
+    {
+      "object_id": "c_i",
+      "entry_id": "e_c_i",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Downloads\\example.iso",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAbwB3AG4AbABvAGEAZABzAFwAZQB4AGEAbQBwAGwAZQAuAGkAcwBvAA=="
+      },
+      "category": "installers",
+      "rule_id": "installer.iso",
+      "rule_version": "1.0.0",
+      "tier": "review_only",
+      "tier_reason": "mounted_image: eject it first",
+      "rebuild_class": "network_redownload",
+      "registry_status": "covered",
+      "selected_by_default": false,
+      "skip_reason": "mounted",
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text",
+      "notes": [],
+      "source_label": "downloads"
+    }
+  ],
+  "summary": {
+    "selected_count": 0,
+    "selected_known_bytes": "0",
+    "selected_unknown_size_count": 0,
+    "review_only_count": 2,
+    "blocked_count": 0,
+    "skipped_count": 1
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "cargo.registry-cache@1.0.0",
+  "rule_id": "cargo.registry-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "tool",
+    "id": "cargo",
+    "name": "Cargo"
+  },
+  "version_range": {
+    "min_inclusive": "1.99",
+    "max_exclusive": "1.100"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real registry\\cache matched as the only candidate"
+    ],
+    "negative": [
+      "registry\\src, registry\\index, git checkouts and bin are not matched"
+    ]
+  },
+  "known_effects": [
+    "Crates are downloaded again by the next build; skipped while cargo runs."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_cargo_registry_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

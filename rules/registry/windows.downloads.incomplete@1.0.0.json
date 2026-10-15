@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "windows.downloads.incomplete@1.0.0",
+  "rule_id": "windows.downloads.incomplete",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "system",
+    "id": "windows.downloads",
+    "name": "Windows Downloads folder"
+  },
+  "version_range": {
+    "min_inclusive": "10.0.26200",
+    "max_exclusive": "10.0.26201"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old .crdownload is a review-only candidate"
+    ],
+    "negative": [
+      "A .part file modified today is not a candidate",
+      "A finished .zip is not matched",
+      "A marker in a subfolder is not matched"
+    ]
+  },
+  "known_effects": [
+    "Skipped while a browser still writes the file (incomplete_download_handle)."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_windows_downloads_incomplete"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

@@ -9,10 +9,11 @@ use serde::Serialize;
 use crate::bytes::{Bytes, KnownTotal};
 use crate::c14n::digest;
 use crate::capability::Platform;
+use crate::catalog::{CatalogContext, ProbeResult, RegistryStatus, SkipReason, TierInputs, compute_tier, is_dependency_store};
 use crate::model::{CloudState, IdentityQuality, ObjectKind};
 use crate::path::RawPath;
 use crate::protect::{HARD_DENY_VERSION, HardDenySet, ObjectIdentity, UserProtection, hard_deny_within, prefilter};
-use crate::rules::{Mode, ObjectType, Rule, RuleSet, Tier, glob_match};
+use crate::rules::{ActionKind, Mode, ObjectType, RebuildClass, Rule, RuleSet, Tier, glob_match};
 
 /// Version of the built-in protection classes; bound into candidate sets and plans.
 /// `protection/2`: AI sessions and clean worktree roots are `protected_reviewable` (CAT-04).
@@ -214,6 +215,82 @@ pub struct Candidate {
     /// Owner of the first matching rule (used by the owner-process probe at execution).
     #[serde(default)]
     pub owner_id: Option<String>,
+}
+
+/// Catalog facts of a candidate (CAT-02/03/05/09): how its tier was computed and what kind of
+/// row it is. Kept beside the candidate set ([`CatalogSet`]) so existing set and candidate
+/// records keep their shape; the default's tier inputs are blocked, so a missing fact never widens.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
+pub struct CatalogFacts {
+    pub rebuild_class: Option<RebuildClass>,
+    pub action_kind: Option<ActionKind>,
+    /// Owner-tool adapter for `tool_adapter` rows (CAT-05).
+    pub adapter_ref: Option<String>,
+    pub registry_status: RegistryStatus,
+    pub installed_version: Option<String>,
+    pub tier_inputs: TierInputs,
+    /// Set by a live probe pass ([`apply_probes`]): in_use or unknown makes the row unselectable.
+    pub skip: Option<SkipReason>,
+}
+
+impl CatalogFacts {
+    /// Large-item hint rows (CAT-09) are shown with guidance, never planned.
+    pub fn is_hint(&self) -> bool {
+        self.action_kind == Some(ActionKind::ReviewOnlyRow)
+    }
+
+    /// Owner-tool rows (CAT-05) are executed by the owning tool, never as file actions.
+    pub fn is_adapter_row(&self) -> bool {
+        self.action_kind == Some(ActionKind::ToolAdapter)
+    }
+}
+
+/// Catalog facts per candidate id plus what could not be judged; produced with the set.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
+pub struct CatalogSet {
+    pub facts: BTreeMap<String, CatalogFacts>,
+    /// Matched objects left out because a needed fact was unavailable (e.g. no timestamp).
+    pub undetermined: Vec<Undetermined>,
+}
+
+/// Could become a file action in a plan right now (state, tier, modes and live probes). Without
+/// catalog facts the probes were never run, so the candidate is not plannable through a catalog entry.
+pub fn plannable(c: &Candidate, facts: Option<&CatalogFacts>) -> bool {
+    c.state == CandidateState::Allowed && c.tier != Tier::Blocked && !c.allowed_modes.is_empty() && facts.is_some_and(|f| f.skip.is_none())
+}
+
+/// Part of the non-interactive default selection (CLI-12).
+pub fn default_selected(c: &Candidate, facts: Option<&CatalogFacts>) -> bool {
+    plannable(c, facts) && c.tier == Tier::DefaultSelected
+}
+
+/// Objects a rule matched that could not be judged and therefore are not candidates (CAT-07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct Undetermined {
+    pub rule_id: String,
+    pub reason: String,
+    pub count: u64,
+}
+
+fn rebuild_rank(r: RebuildClass) -> u8 {
+    match r {
+        RebuildClass::LocalRebuild => 0,
+        RebuildClass::NetworkRedownload => 1,
+        RebuildClass::NotRebuildable => 2,
+    }
+}
+
+/// Record live probe results on a candidate and recompute its tier with the shared function
+/// (CAT-06: called at preview and plan creation; the executor re-checks before acting).
+pub fn apply_probes(c: &mut Candidate, facts: &mut CatalogFacts, results: Vec<ProbeResult>) {
+    facts.tier_inputs.probes = results;
+    let d = compute_tier(&facts.tier_inputs);
+    c.tier = if c.state == CandidateState::Blocked { Tier::Blocked } else { d.tier };
+    facts.skip = d.skip;
+    c.reasons.retain(|r| !r.starts_with("probe:"));
+    c.reasons.extend(d.reasons.into_iter().filter(|r| r.starts_with("probe:")));
+    c.reasons.sort();
+    c.reasons.dedup();
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -437,9 +514,19 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
     analyze_with(view, rules, input, &AnalysisProtection::default())
 }
 
-/// Evaluate all enabled rules with every protection layer the caller could supply.
+/// Evaluate all enabled rules with every protection layer the caller could supply, without the
+/// tested registry (tiers are not lowered for versions). Entries use [`analyze_catalog`].
 pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>, prot: &AnalysisProtection<'_>) -> CandidateSet {
+    analyze_catalog(view, rules, input, prot, &CatalogContext::default()).0
+}
+
+/// The analysis every entry (GUI, CLI, agent) uses: all protection layers plus the tested
+/// registry and installed versions. Every tier comes from [`compute_tier`].
+pub fn analyze_catalog(
+    view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>, prot: &AnalysisProtection<'_>, ctx: &CatalogContext<'_>,
+) -> (CandidateSet, CatalogSet) {
     let platform = view.platform();
+    let mut facts_by_entry: BTreeMap<u64, CatalogFacts> = BTreeMap::new();
     let ci = platform == Platform::Windows;
     let mut protected_ids = BTreeMap::new();
     for p in input.protected {
@@ -448,8 +535,11 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
         }
     }
     let mut inapplicable = Vec::new();
+    let mut undetermined: BTreeMap<(String, String), u64> = BTreeMap::new();
     let mut by_entry: BTreeMap<u64, Candidate> = BTreeMap::new();
     for rule in rules.enabled_for(platform) {
+        let verdict = ctx.verdict(rule);
+        let dependency = is_dependency_store(rule);
         let roots: Vec<u64> = input
             .roots
             .iter()
@@ -471,7 +561,7 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
                     .collect();
                 let mut reasons = Vec::new();
                 let mut state = CandidateState::Allowed;
-                let mut tier = rule.max_tier;
+                let mut evidence = Tier::DefaultSelected;
                 let mut protection = None;
                 match class_outcome(view, entry, &sub, &ancestor_classes, prot.worktrees) {
                     ClassOutcome::Clear => {}
@@ -522,24 +612,43 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
                 }
                 if let Some(days) = rule.thresholds.min_age_days {
                     match f.modified_unix {
-                        None if state < CandidateState::PendingEvidence => {
-                            reasons.push("modified_time_unknown".into());
-                            state = CandidateState::PendingEvidence;
+                        // An unavailable timestamp never satisfies an age condition (CAT-07): not a
+                        // candidate, counted as undetermined. Blocked rows stay visible as such.
+                        None if state != CandidateState::Blocked => {
+                            *undetermined.entry((rule.rule_id.clone(), "modified_time_unknown".into())).or_default() += 1;
+                            continue;
                         }
+                        None => reasons.push("modified_time_unknown".into()),
                         Some(t) if input.now_unix - t < i64::from(days) * 86_400 => continue, // too recent: not a candidate
                         _ => {}
                     }
                 }
                 if f.quality == IdentityQuality::Weak {
                     reasons.push("weak_identity".into());
-                    tier = tier.min(Tier::ReviewOnly);
+                    evidence = Tier::ReviewOnly;
                 }
-                if state == CandidateState::Blocked {
-                    tier = Tier::Blocked;
-                } else if state != CandidateState::Allowed {
-                    tier = tier.min(Tier::ReviewOnly);
+                match rule.action_kind {
+                    ActionKind::ReviewOnlyRow => reasons.push("large_item_hint:not_selectable".into()),
+                    ActionKind::ToolAdapter => reasons.push(format!("owner_tool:{}", rule.adapter_ref.as_deref().unwrap_or("none"))),
+                    ActionKind::Filesystem => {}
                 }
-                let modes = if state == CandidateState::Blocked { vec![] } else { rule.allowed_modes.clone() };
+                if let Some(why) = &verdict.reason {
+                    reasons.push(format!("registry:{why}"));
+                }
+                let inputs = TierInputs {
+                    rule_max: rule.max_tier,
+                    dependency,
+                    registry: verdict.status,
+                    protection: match state {
+                        CandidateState::Blocked => Tier::Blocked,
+                        CandidateState::ProtectedReviewable => Tier::ReviewOnly,
+                        _ => Tier::DefaultSelected,
+                    },
+                    evidence: if state == CandidateState::PendingEvidence { Tier::ReviewOnly } else { evidence },
+                    probes: vec![],
+                };
+                // Only filesystem rows carry file modes; hint and owner-tool rows are never file actions.
+                let modes = if state == CandidateState::Blocked || rule.action_kind != ActionKind::Filesystem { vec![] } else { rule.allowed_modes.clone() };
                 let rref = RuleRef { rule_id: rule.rule_id.clone(), version: rule.version.clone() };
                 match by_entry.get_mut(&entry) {
                     // Two rules on one entry: one candidate, both reasons, stricter outcome (ANA-04).
@@ -548,9 +657,19 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
                         existing.reasons.extend(reasons);
                         existing.state = existing.state.max(state);
                         existing.protection = existing.protection.or(protection);
-                        existing.tier = existing.tier.min(tier);
                         existing.allowed_modes.retain(|m| modes.contains(m));
                         existing.probes.extend(rule.probes.iter().cloned());
+                        let facts = facts_by_entry.entry(entry).or_default();
+                        facts.tier_inputs.merge(&inputs);
+                        facts.registry_status = facts.registry_status.worse(verdict.status);
+                        if facts.rebuild_class.is_none_or(|r| rebuild_rank(rule.rebuild_class) > rebuild_rank(r)) {
+                            facts.rebuild_class = Some(rule.rebuild_class);
+                        }
+                        if facts.action_kind != Some(rule.action_kind) {
+                            // Mixed row kinds on one object: shown for review only, never a file action.
+                            facts.action_kind = Some(ActionKind::ReviewOnlyRow);
+                            existing.allowed_modes.clear();
+                        }
                     }
                     None => {
                         by_entry.insert(entry, Candidate {
@@ -561,7 +680,7 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
                             rules: vec![rref],
                             category: rule.category.clone(),
                             state,
-                            tier,
+                            tier: Tier::Blocked, // computed below from the stored inputs
                             reasons,
                             protection,
                             logical: sub.logical,
@@ -570,14 +689,24 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
                             impact: rule.impact.summary.clone(),
                             owner_id: Some(rule.owner.id.clone()),
                         });
+                        facts_by_entry.insert(entry, CatalogFacts {
+                            rebuild_class: Some(rule.rebuild_class),
+                            action_kind: Some(rule.action_kind),
+                            adapter_ref: rule.adapter_ref.clone(),
+                            registry_status: verdict.status,
+                            installed_version: verdict.installed.clone(),
+                            tier_inputs: inputs,
+                            skip: None,
+                        });
                     }
                 }
             }
         }
     }
-    // Parent/child overlap: an allowed ancestor absorbs its candidate descendants; a blocked or
-    // pending ancestor never covers them (they stay separate, ANA-04).
-    let allowed: BTreeSet<u64> = by_entry.iter().filter(|(_, c)| c.state == CandidateState::Allowed).map(|(e, _)| *e).collect();
+    // Parent/child overlap: an allowed file-action ancestor absorbs its candidate descendants; a
+    // blocked, pending, hint or owner-tool ancestor never covers them (they stay separate, ANA-04).
+    let allowed: BTreeSet<u64> =
+        by_entry.iter().filter(|(_, c)| c.state == CandidateState::Allowed && !c.allowed_modes.is_empty()).map(|(e, _)| *e).collect();
     let covered: Vec<u64> = by_entry
         .keys()
         .copied()
@@ -593,8 +722,9 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
         *names_per_object.entry(view.info(c.entry_id).object_id).or_default() += 1;
     }
     let mut seen_objects = BTreeSet::new();
-    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut candidates: Vec<(Candidate, CatalogFacts)> = Vec::new();
     for mut c in by_entry.into_values() {
+        let mut facts = facts_by_entry.remove(&c.entry_id).unwrap_or_default();
         let f = view.info(c.entry_id);
         if f.kind != ObjectKind::Directory {
             if !seen_objects.insert(f.object_id) {
@@ -603,15 +733,19 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
             let in_scope = names_per_object[&f.object_id];
             if in_scope > 1 {
                 c.reasons.push(format!("hard_link_shared:{in_scope}_names"));
-                c.tier = c.tier.min(Tier::ReviewOnly);
+                facts.tier_inputs.evidence = Tier::ReviewOnly;
             } else if f.link_count.is_some_and(|n| n > 1) {
                 c.reasons.push("hard_link_outside_scope".into());
-                c.tier = c.tier.min(Tier::ReviewOnly);
+                facts.tier_inputs.evidence = Tier::ReviewOnly;
             }
         }
-        candidates.push(c);
+        // One shared computation for every tier (CAT-02, design D3).
+        let d = compute_tier(&facts.tier_inputs);
+        c.tier = if c.state == CandidateState::Blocked { Tier::Blocked } else { d.tier };
+        c.reasons.extend(d.reasons);
+        candidates.push((c, facts));
     }
-    for c in &mut candidates {
+    for (c, _) in &mut candidates {
         c.rules.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
         c.rules.dedup();
         c.reasons.sort();
@@ -629,20 +763,30 @@ pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput
         UserList::Unavailable(_) => "unavailable".into(),
     };
     let worktree_key: Vec<_> = prot.worktrees.iter().map(|w| (&w.volume_id, &w.file_id, w.state)).collect();
-    let set_key = serde_json::json!({
+    // Registry verdicts change tiers, so the installed versions they used are part of the identity too.
+    let catalog_key = ctx.registry.map(|_| serde_json::json!({"catalog": crate::catalog::CATALOG_VERSION, "installed": ctx.installed}));
+    let mut set_key = serde_json::json!({
         "scan": input.scan_id, "revision": input.revision, "rules": rules.digest, "protection": PROTECTION_VERSION,
         "hard_deny": prot.hard_deny.map(|_| HARD_DENY_VERSION), "user": user_key, "worktrees": worktree_key,
-        "candidates": candidates.iter().map(|c| c.candidate_id.clone()).collect::<Vec<_>>(),
+        "candidates": candidates.iter().map(|(c, _)| c.candidate_id.clone()).collect::<Vec<_>>(),
     });
-    CandidateSet {
+    if let Some(k) = catalog_key {
+        set_key["catalog"] = k;
+    }
+    let catalog = CatalogSet {
+        facts: candidates.iter().map(|(c, f)| (c.candidate_id.clone(), f.clone())).collect(),
+        undetermined: undetermined.into_iter().map(|((rule_id, reason), count)| Undetermined { rule_id, reason, count }).collect(),
+    };
+    let set = CandidateSet {
         candidate_set_id: format!("cs_{}", &digest(&set_key).expect("plain JSON")[..24]),
         scan_id: input.scan_id.into(),
         revision: input.revision,
         rule_set_digest: rules.digest.clone(),
         protection_version: PROTECTION_VERSION.into(),
-        candidates,
+        candidates: candidates.into_iter().map(|(c, _)| c).collect(),
         inapplicable,
-    }
+    };
+    (set, catalog)
 }
 
 /// Evaluate one not-yet-enabled rule without making anything actionable: candidates keep their

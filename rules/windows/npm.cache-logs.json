@@ -1,0 +1,56 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "npm.cache-logs",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "tool",
+    "id": "npm"
+  },
+  "root_resolver": "package_manager_cache",
+  "match": {
+    "object_type": "file",
+    "relative_components": [
+      "_logs"
+    ],
+    "name_glob": "*.log",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "npm debug logs older than 7 days in the npm cache's _logs folder.",
+    "regeneration": "Not regenerated: logs of past npm runs.",
+    "offline_effect": "None for installs; the logs are no longer available for troubleshooting."
+  },
+  "tested_registry_ref": "npm.cache-logs@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_npm_cache_logs"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-03",
+  "run_id": "run_win_catalog_microsoft_vscode_code_cache",
+  "recorded_at": "2026-10-15T07:32:26Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/microsoft.vscode.code-cache.json"
+  ],
+  "seed": null,
+  "expected": "VS Code 1.141.0: a read-only scan of the real %APPDATA%\\Code matches only Code\\Code Cache as one review-only candidate",
+  "actual": "candidates=1 matched=1 risk=medium protected_or_state_matches=0",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "app_version": "1.141.0",
+    "candidate_count": 1,
+    "matched_logical_bytes": "5932"
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Read-only scan of the real VS Code data folder; nothing was removed, so regeneration was not exercised and the rule stays review_only."
+  ],
+  "status": "passed"
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-revoke-plan"
+description = "Enables the revoke_plan command without any pre-configured scope."
+commands.allow = ["revoke_plan"]
+
+[[permission]]
+identifier = "deny-revoke-plan"
+description = "Denies the revoke_plan command without any pre-configured scope."
+commands.deny = ["revoke_plan"]

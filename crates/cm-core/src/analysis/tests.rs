@@ -154,7 +154,7 @@ fn temp_named_database_credentials_ai_sessions_worktrees_and_models_never_become
 }
 
 #[test]
-fn age_thresholds_use_modified_time_and_unknown_time_is_pending() {
+fn age_thresholds_use_modified_time_and_unknown_time_is_not_a_candidate() {
     let mut b = Builder::new();
     let temp = b.dir(b.view.root, "Temp");
     b.file(temp, "old.tmp", 1, Some(OLD));
@@ -163,8 +163,7 @@ fn age_thresholds_use_modified_time_and_unknown_time_is_pending() {
     let set = run(&b, vec![rule("user.temp", &[], Some("*.tmp"), 0, Some(7))], temp);
     assert_eq!(by_name(&set, "old.tmp").state, CandidateState::Allowed);
     assert!(!set.candidates.iter().any(|c| c.path.lossy().ends_with("new.tmp")), "too recent: not a candidate");
-    let u = by_name(&set, "unknown.tmp");
-    assert_eq!((u.state, u.tier), (CandidateState::PendingEvidence, Tier::ReviewOnly));
+    assert!(!set.candidates.iter().any(|c| c.path.lossy().ends_with("unknown.tmp")), "no timestamp never satisfies an age condition (CAT-07)");
 }
 
 #[test]
@@ -487,4 +486,200 @@ fn protection_inputs_are_part_of_the_set_identity() {
     let c = run_with(&b, r(), app, &AnalysisProtection { user: UserList::Loaded(&one), ..Default::default() });
     assert_ne!(a.candidate_set_id, c.candidate_set_id, "a changed list never replaces a stored set in place");
     assert_eq!(a.candidates[0].candidate_id, c.candidates[0].candidate_id);
+}
+
+
+// ---- catalog tiers (CAT-02/03/05/06/07/09, design D3) ---------------------------------------
+
+use crate::catalog::{CatalogContext, ProbeResult, ProbeState, RegistryStatus, SkipReason};
+use crate::rules::{Fixtures, RegistryEntry, RegistryPlatform, RegistrySubject, VersionRange};
+
+fn registry_for(rules: &[&Rule], min: &str, max: Option<&str>) -> BTreeMap<String, RegistryEntry> {
+    rules
+        .iter()
+        .map(|r| {
+            let e = RegistryEntry {
+                schema_version: "1.0".into(),
+                registry_id: format!("{}@{}", r.rule_id, r.version),
+                rule_id: r.rule_id.clone(),
+                rule_version: r.version.clone(),
+                synthetic: false,
+                subject: RegistrySubject { kind: OwnerKind::App, id: r.owner.id.clone(), name: "Test".into() },
+                version_range: VersionRange { min_inclusive: min.into(), max_exclusive: max.map(str::to_owned) },
+                platforms: vec![RegistryPlatform { platform: Platform::Windows, os_versions: vec!["10.0.26200".into()], architectures: vec!["x64".into()] }],
+                tested_at: "2026-10-15".into(),
+                result: "passed".into(),
+                fixtures: Fixtures { positive: vec!["p".into()], negative: vec!["n".into()] },
+                known_effects: vec![],
+                evidence_refs: vec!["run".into()],
+                thresholds: Some(r.thresholds.clone()),
+            };
+            (e.registry_id.clone(), e)
+        })
+        .collect()
+}
+
+fn run_cat(b: &Builder, rules: Vec<Rule>, root: u64, ctx: &CatalogContext<'_>) -> (CandidateSet, CatalogSet) {
+    let roots: Vec<ResolvedRoot> = rules
+        .iter()
+        .map(|r| ResolvedRoot { rule_id: r.rule_id.clone(), path: b.view.path(root), volume_id: "v".into(), file_id: format!("id{root}") })
+        .collect();
+    let set = RuleSet { rules, digest: "d".into() };
+    let input = AnalysisInput { scan_id: "s", revision: 1, now_unix: NOW, roots: &roots, protected: &[] };
+    analyze_catalog(&b.view, &set, &input, &AnalysisProtection::default(), ctx)
+}
+
+fn facts<'a>(cat: &'a CatalogSet, c: &Candidate) -> &'a CatalogFacts {
+    &cat.facts[&c.candidate_id]
+}
+
+fn registered(id: &str) -> Rule {
+    let mut r = rule(id, &["Cache"], None, 0, None);
+    r.tested_registry_ref = Some(format!("{id}@1.0.0"));
+    r
+}
+
+#[test]
+fn unknown_time_is_counted_as_undetermined() {
+    let mut b = Builder::new();
+    let temp = b.dir(b.view.root, "Temp");
+    b.file(temp, "unknown.tmp", 1, None);
+    let (set, cat) = run_cat(&b, vec![rule("user.temp", &[], Some("*.tmp"), 0, Some(7))], temp, &CatalogContext::default());
+    assert!(set.candidates.is_empty());
+    assert_eq!(cat.undetermined, vec![Undetermined { rule_id: "user.temp".into(), reason: "modified_time_unknown".into(), count: 1 }]);
+}
+
+#[test]
+fn installed_version_outside_the_tested_range_lowers_the_tier() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "x", 1, Some(OLD));
+    let r = registered("app.cache");
+    let reg = registry_for(&[&r], "155.0", Some("156.0"));
+    for (installed, tier, status) in [
+        (Some("155.0.8059.41"), Tier::DefaultSelected, RegistryStatus::Covered),
+        (Some("156.0.1"), Tier::ReviewOnly, RegistryStatus::VersionUntested),
+        (None, Tier::ReviewOnly, RegistryStatus::VersionUntested),
+    ] {
+        let versions: BTreeMap<String, String> = installed.map(|v| ("test.app".to_string(), v.to_string())).into_iter().collect();
+        let ctx = CatalogContext { registry: Some(&reg), installed: Some(&versions) };
+        let (set, cat) = run_cat(&b, vec![r.clone()], app, &ctx);
+        let c = by_name(&set, "Cache");
+        let f = facts(&cat, c);
+        assert_eq!((c.tier, f.registry_status), (tier, status), "installed {installed:?}");
+        assert_eq!(f.installed_version.as_deref(), installed);
+        if tier == Tier::ReviewOnly {
+            assert!(c.reasons.contains(&"version_untested".to_string()), "{:?}", c.reasons);
+        }
+    }
+}
+
+#[test]
+fn a_changed_installed_version_yields_a_new_set_identity() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    b.dir(app, "Cache");
+    let r = registered("app.cache");
+    let reg = registry_for(&[&r], "1.0", None);
+    let v1: BTreeMap<String, String> = [("test.app".to_string(), "1.0".to_string())].into();
+    let v2: BTreeMap<String, String> = [("test.app".to_string(), "2.0".to_string())].into();
+    let a = run_cat(&b, vec![r.clone()], app, &CatalogContext { registry: Some(&reg), installed: Some(&v1) }).0;
+    let c = run_cat(&b, vec![r], app, &CatalogContext { registry: Some(&reg), installed: Some(&v2) }).0;
+    assert_ne!(a.candidate_set_id, c.candidate_set_id, "a stored set is never replaced by one with other version facts");
+}
+
+#[test]
+fn dependency_stores_are_review_only_even_if_a_rule_says_otherwise() {
+    let mut b = Builder::new();
+    let tool = b.dir(b.view.root, "npm-cache");
+    let cache = b.dir(tool, "Cache");
+    b.file(cache, "x", 1, Some(OLD));
+    let mut r = rule("npm.cache", &["Cache"], None, 0, None);
+    r.root_resolver = RootResolver::PackageManagerCache;
+    let (set, cat) = run_cat(&b, vec![r], tool, &CatalogContext::default());
+    let c = by_name(&set, "Cache");
+    assert_eq!(c.tier, Tier::ReviewOnly);
+    assert!(c.reasons.contains(&"dependency_store_review_only".to_string()));
+    assert!(!default_selected(c, Some(facts(&cat, c))));
+}
+
+#[test]
+fn hint_rows_and_owner_tool_rows_are_never_file_actions() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let big = b.dir(app, "Big");
+    let inner = b.dir(big, "Cache");
+    b.file(inner, "disk.vhdx", 1 << 30, Some(OLD));
+    let tool = b.dir(app, "Tool");
+    b.file(tool, "blob", 10, Some(OLD));
+    let mut hint = rule("large.big", &["Big"], None, 0, None);
+    hint.action_kind = ActionKind::ReviewOnlyRow;
+    hint.max_tier = Tier::ReviewOnly;
+    hint.allowed_modes = vec![];
+    let mut adapter = rule("tool.cache", &["Tool"], None, 0, None);
+    adapter.action_kind = ActionKind::ToolAdapter;
+    adapter.adapter_ref = Some("npm.cache-verify".into());
+    adapter.allowed_modes = vec![];
+    let child = rule("big.cache", &["Big", "Cache"], None, 0, None);
+    let (set, cat) = run_cat(&b, vec![hint, adapter, child], app, &CatalogContext::default());
+    let h = by_name(&set, "Big");
+    assert!(facts(&cat, h).is_hint() && h.allowed_modes.is_empty() && !plannable(h, Some(facts(&cat, h))));
+    assert!(h.reasons.contains(&"large_item_hint:not_selectable".to_string()));
+    let t = by_name(&set, "Tool");
+    assert!(facts(&cat, t).is_adapter_row() && t.allowed_modes.is_empty() && !plannable(t, Some(facts(&cat, t))));
+    assert_eq!(facts(&cat, t).adapter_ref.as_deref(), Some("npm.cache-verify"));
+    // A hint does not absorb an actionable child: the child keeps its own row.
+    let inner_c = by_name(&set, "Big\\Cache");
+    assert!(plannable(inner_c, Some(facts(&cat, inner_c))));
+    let input = crate::plan::PlanInput { plan_id: "p", scope_id: "sc", created_unix: NOW, observed_at: "2026-10-15T00:00:00Z", policy_digest: "x" };
+    for id in [&h.candidate_id, &t.candidate_id] {
+        assert!(crate::plan::build_plan(&b.view, &set, std::slice::from_ref(id), Mode::Trash, &input).is_err(), "hint/tool rows cannot become file plans");
+    }
+}
+
+#[test]
+fn probes_skip_in_use_and_unknown_and_never_widen() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "x", 1, Some(OLD));
+    let (set, cat) = run_cat(&b, vec![rule("app.cache", &["Cache"], None, 0, None)], app, &CatalogContext::default());
+    let base = by_name(&set, "Cache").clone();
+    let base_facts = facts(&cat, &base).clone();
+    assert!(default_selected(&base, Some(&base_facts)));
+    assert!(!plannable(&base, None), "no catalog facts: probes never ran, not plannable through a catalog entry");
+    for (state, skip) in [(ProbeState::InUse, Some(SkipReason::InUse)), (ProbeState::Unknown, Some(SkipReason::ProbeUnknown)), (ProbeState::NotInUse, None)] {
+        let (mut c, mut f) = (base.clone(), base_facts.clone());
+        apply_probes(&mut c, &mut f, vec![ProbeResult::new("owner_process", state, "probe")]);
+        assert_eq!(f.skip, skip);
+        assert_eq!(default_selected(&c, Some(&f)), skip.is_none(), "{state:?}");
+    }
+    // Missing facts (default) have blocked inputs: a probe pass can only make things stricter.
+    let mut c = base.clone();
+    let mut f = CatalogFacts::default();
+    apply_probes(&mut c, &mut f, vec![]);
+    assert_eq!(c.tier, Tier::Blocked);
+}
+
+#[test]
+fn every_entry_gets_identical_candidates_and_tiers_for_one_revision() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    for n in ["Cache", "GPUCache"] {
+        let d = b.dir(app, n);
+        b.file(d, "x", 3, Some(OLD));
+    }
+    let r1 = registered("a.cache");
+    let mut r2 = rule("a.gpu", &["GPUCache"], None, 0, None);
+    r2.rebuild_class = RebuildClass::NetworkRedownload;
+    r2.max_tier = Tier::ReviewOnly;
+    let reg = registry_for(&[&r1, &r2], "1.0", None);
+    let versions: BTreeMap<String, String> = [("test.app".to_string(), "2.0".to_string())].into();
+    let ctx = CatalogContext { registry: Some(&reg), installed: Some(&versions) };
+    let gui = run_cat(&b, vec![r1.clone(), r2.clone()], app, &ctx);
+    let cli = run_cat(&b, vec![r1, r2], app, &ctx);
+    assert_eq!(gui, cli, "one function, one result: no entry has a wider set");
+    assert_eq!(by_name(&gui.0, "\\Cache").tier, Tier::DefaultSelected);
+    assert_eq!(by_name(&gui.0, "GPUCache").tier, Tier::ReviewOnly);
 }

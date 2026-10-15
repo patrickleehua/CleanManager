@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "kind": "installer_locations",
+  "request_id": "req_synthetic",
+  "max_depth": 2,
+  "locations": [
+    {
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Downloads",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAbwB3AG4AbABvAGEAZABzAA=="
+      },
+      "source_label": "downloads",
+      "exists": true
+    },
+    {
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Desktop",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAZQBzAGsAdABvAHAA"
+      },
+      "source_label": "desktop",
+      "exists": true
+    }
+  ]
+}

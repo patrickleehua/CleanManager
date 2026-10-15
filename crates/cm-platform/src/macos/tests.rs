@@ -71,7 +71,7 @@ fn raw(p: &Path) -> RawPath {
 }
 
 fn scan_with(backend: &dyn ScanBackend, root: &Path, sink: &mut MemSink) -> ScanReport {
-    backend.scan(&raw(root), sink, &ScanOptions { batch_entries: 4 })
+    backend.scan(&raw(root), sink, &ScanOptions { batch_entries: 4, ..Default::default() })
 }
 
 fn is_root_user() -> bool {

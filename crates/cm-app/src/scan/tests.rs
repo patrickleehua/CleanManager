@@ -204,7 +204,7 @@ fn volume_going_offline_mid_scan_publishes_partial_results() {
     let index = IndexStore::open(&dir.join("index.db")).unwrap();
     let root: Vec<u16> = std::ffi::OsStr::new(&format!("{letter}:\\data")).encode_wide().collect();
     let req = ScanRequest { scan_id: "off".into(), scope_id: "s".into(), root: RawPath::windows(root).unwrap(), host: host() };
-    let out = run_scan(&index, &Offline { dismount: &dismount }, &req, &ScanOptions { batch_entries: 1 }).unwrap();
+    let out = run_scan(&index, &Offline { dismount: &dismount }, &req, &ScanOptions { batch_entries: 1, ..Default::default() }).unwrap();
     let _ = Command::new("powershell").args(["-NoProfile", "-Command", &format!("{dismount}; Remove-Item \"{}\"", vhd.display())]).output();
     assert_eq!(out.state, ScanState::Partial, "{:?}", out.report.issues);
     assert!(out.report.skipped_ranges >= 1);

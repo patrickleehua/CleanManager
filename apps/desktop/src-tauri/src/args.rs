@@ -120,6 +120,63 @@ pub fn cursor(s: Option<&str>) -> R<Option<String>> {
     }
 }
 
+/// Store-issued identifiers (plan, candidate set, candidate, operation, quarantine item,
+/// policy, protection entry): the same character set as scan ids, never a path.
+pub fn record_id(kind: &str, s: &str) -> R<String> {
+    if s.is_empty() || s.len() > MAX_ID_LEN || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.') {
+        return err(format!("{kind} id must be 1-128 characters of [A-Za-z0-9_.-]"));
+    }
+    Ok(s.to_owned())
+}
+
+/// A bounded list of record ids (candidate or quarantine selections). Duplicates are removed
+/// in order; nothing else is changed.
+pub fn record_ids(kind: &str, ids: &[String], max: usize) -> R<Vec<String>> {
+    if ids.is_empty() {
+        return err(format!("select at least one {kind}"));
+    }
+    if ids.len() > max {
+        return err(format!("at most {max} {kind} ids per request"));
+    }
+    let mut out: Vec<String> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let id = record_id(kind, id)?;
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
+pub fn parse_mode(s: &str) -> R<cm_core::rules::Mode> {
+    match s {
+        "trash" => Ok(cm_core::rules::Mode::Trash),
+        "quarantine" => Ok(cm_core::rules::Mode::Quarantine),
+        "delete" => Ok(cm_core::rules::Mode::Delete),
+        other => err(format!("unknown mode {other:?}; expected trash, quarantine or delete")),
+    }
+}
+
+/// Offset cursors of host-side listings: `o<offset>` bound to a listing key the host checks.
+pub fn offset_cursor(s: Option<&str>) -> R<usize> {
+    match s {
+        None => Ok(0),
+        Some(c) => match c.strip_prefix('o').map(str::parse::<usize>) {
+            Some(Ok(n)) if n <= 10_000_000 => Ok(n),
+            _ => err("cursor is malformed"),
+        },
+    }
+}
+
+/// What a person typed to confirm: trimmed, at most 64 visible characters, no controls.
+pub fn confirmation(s: &str) -> R<String> {
+    let t = s.trim();
+    if t.is_empty() || t.chars().count() > 64 || t.chars().any(char::is_control) {
+        return err("confirmation text is missing or malformed");
+    }
+    Ok(t.to_owned())
+}
+
 pub fn summary_ids(ids: &[String]) -> R<Vec<u64>> {
     if ids.is_empty() {
         return err("select at least one entry");
@@ -210,6 +267,32 @@ mod tests {
         assert!(cursor(Some("eyJ2IjoxfQ")).is_ok());
         assert!(cursor(Some("a+b/c=")).is_err());
         assert!(cursor(Some(&"a".repeat(4097))).is_err());
+    }
+
+    #[test]
+    fn record_ids_are_validated_deduplicated_and_bounded() {
+        assert_eq!(record_id("plan", "p_desk_1"), Ok("p_desk_1".into()));
+        for bad in ["", "../p", "p 1", "C:\\x", "p/1"] {
+            assert!(record_id("plan", bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(record_ids("candidate", &["c_1".into(), "c_2".into(), "c_1".into()], 10), Ok(vec!["c_1".into(), "c_2".into()]));
+        assert!(record_ids("candidate", &[], 10).is_err());
+        assert!(record_ids("candidate", &vec!["c".to_string(); 11], 10).is_err());
+    }
+
+    #[test]
+    fn modes_cursors_and_confirmations_parse_exactly() {
+        assert_eq!(parse_mode("quarantine"), Ok(cm_core::rules::Mode::Quarantine));
+        assert!(parse_mode("Delete").is_err());
+        assert!(parse_mode("purge").is_err());
+        assert_eq!(offset_cursor(None), Ok(0));
+        assert_eq!(offset_cursor(Some("o40")), Ok(40));
+        for bad in ["40", "o-1", "o", "ox", "o99999999999"] {
+            assert!(offset_cursor(Some(bad)).is_err(), "{bad:?}");
+        }
+        assert_eq!(confirmation("  3fa9c2e1 "), Ok("3fa9c2e1".into()));
+        assert!(confirmation("  ").is_err());
+        assert!(confirmation("a\nb").is_err());
     }
 
     #[test]

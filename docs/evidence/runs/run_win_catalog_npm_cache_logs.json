@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-07",
+  "run_id": "run_win_catalog_npm_cache_logs",
+  "recorded_at": "2026-10-15T07:32:29Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/npm.cache-logs.json"
+  ],
+  "seed": null,
+  "expected": "Only *.log files directly in the npm cache's _logs folder and at least 7 days old are review-only candidates",
+  "actual": "candidates=['2026-01-01T00_00_00_000Z-debug-0.log'] real_npm_log_files_present=16",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "tool_version": "11.19.0",
+    "candidate_count": 1
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Controlled fixture reached through npm's own npm_config_cache variable; the real cache was not modified."
+  ],
+  "status": "passed"
+}

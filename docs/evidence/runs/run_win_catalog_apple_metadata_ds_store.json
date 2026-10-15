@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-08",
+  "run_id": "run_win_catalog_apple_metadata_ds_store",
+  "recorded_at": "2026-10-15T07:32:32Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "none",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "list"
+  ],
+  "seed": null,
+  "expected": "apple.metadata.ds-store: validate against a real installation on this device",
+  "actual": "not validated: no removable volume is attached to this device; the resolver only accepts a user-selected removable drive root",
+  "terminal_state": "not_run",
+  "exit_code": null,
+  "measurements": {
+    "observed": {}
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "no removable volume is attached to this device; the resolver only accepts a user-selected removable drive root"
+  ],
+  "status": "incomplete"
+}

@@ -121,6 +121,11 @@ export class OverviewPage {
     const disk = h('button', { type: 'button', id: 'ov-disk', class: running ? '' : 'primary' }, '浏览磁盘');
     disk.addEventListener('click', () => this.app.navigate('disk'));
     actions.push(disk);
+    if (s.published) {
+      const clean = h('button', { type: 'button', id: 'ov-cleanup' }, '查看清理候选');
+      clean.addEventListener('click', () => this.app.navigate('cleanup'));
+      actions.push(clean);
+    }
 
     return h(
       'article',
@@ -277,7 +282,7 @@ export class OverviewPage {
         'dl',
         { class: 'facts-list' },
         h('dt', {}, '写入操作'),
-        h('dd', {}, caps.write_commands ? '可用' : '此版本桌面端没有任何删除、移动或写入用户文件的命令'),
+        h('dd', {}, caps.write_commands ? '只执行你批准（或有限策略覆盖）的已存储计划，每一项执行前重新检查' : '此版本桌面端没有任何删除、移动或写入用户文件的命令'),
         h('dt', {}, '绕过权限读取'),
         h(
           'dd',

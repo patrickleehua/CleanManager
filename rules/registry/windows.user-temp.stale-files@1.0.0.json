@@ -42,5 +42,11 @@
   ],
   "evidence_refs": [
     "run_win_rule_user_temp_stale"
-  ]
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
 }

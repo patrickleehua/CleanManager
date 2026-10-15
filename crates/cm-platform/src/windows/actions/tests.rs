@@ -462,3 +462,138 @@ fn permission_refusal_never_touches_the_file() {
     drop(guard);
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+// ---------------------------------------------------------------------------------------------
+// Directory items: verified empty removal and whole-tree recycling
+
+fn member(p: &Planned) -> TreeMember<'_> {
+    TreeMember { path: &p.path, identity: &p.identity, observation: &p.obs, directory: p.obs.kind == ObjectKind::Directory }
+}
+
+#[test]
+fn empty_directories_are_removed_bottom_up_after_their_files() {
+    let root = scratch("emptydir");
+    let nm = root.join("proj").join("node_modules");
+    let f = nm.join("pkg").join("index.js");
+    write(&f, "module.exports = 1;");
+    let keep = root.join("proj").join("package.json");
+    write(&keep, "{}");
+    let (pf, pkg, pnm) = (plan(&root, &f), plan(&root, &nm.join("pkg")), plan(&root, &nm));
+    // A directory with its planned file still inside is never removed (the OS refuses too).
+    assert_eq!(skipped(&A.remove_empty_dir(&pkg.target())), "new_descendant");
+    assert!(f.exists());
+    assert_eq!(A.delete(&pf.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    assert_eq!(A.remove_empty_dir(&pkg.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    assert_eq!(A.remove_empty_dir(&pnm.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    assert!(!nm.exists());
+    assert_eq!(read(&keep), "{}", "the project itself is untouched");
+    assert_eq!(skipped(&A.remove_empty_dir(&pnm.target())), "missing");
+    assert_eq!(A.reconcile(&pnm.target(), Mode::Delete, None), Reconciled::Performed);
+}
+
+#[test]
+fn a_file_appearing_mid_plan_keeps_the_directory_and_the_file() {
+    let root = scratch("newdesc");
+    let dist = root.join("dist");
+    let planned = dist.join("bundle.js");
+    write(&planned, "old");
+    let (pf, pd) = (plan(&root, &planned), plan(&root, &dist));
+    assert_eq!(A.delete(&pf.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    let late = dist.join("late.js");
+    write(&late, "new work");
+    assert_eq!(skipped(&A.remove_empty_dir(&pd.target())), "new_descendant");
+    assert_eq!(read(&late), "new work");
+    // A new empty sub-directory counts as new content too: never a recursive delete.
+    std::fs::remove_file(&late).unwrap();
+    std::fs::create_dir(dist.join("sub")).unwrap();
+    assert_eq!(skipped(&A.remove_empty_dir(&pd.target())), "new_descendant");
+    assert!(dist.join("sub").is_dir());
+    assert_eq!(A.reconcile(&pd.target(), Mode::Delete, None), Reconciled::NotPerformed);
+}
+
+#[test]
+fn replaced_or_linked_directories_are_never_removed() {
+    let root = scratch("dirswap");
+    let outside = scratch("dirswap-outside");
+    write(&outside.join("sentinel.txt"), "sentinel");
+    let (a, b) = (root.join("target"), root.join("build"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (pa, pb) = (plan(&root, &a), plan(&root, &b));
+    // Same name, different directory.
+    std::fs::rename(&a, root.join("target-old")).unwrap();
+    std::fs::create_dir(&a).unwrap();
+    assert_eq!(skipped(&A.remove_empty_dir(&pa.target())), "identity_changed");
+    assert!(a.is_dir() && root.join("target-old").is_dir());
+    // A junction swapped in for the planned directory is inspected, never followed or removed.
+    std::fs::remove_dir(&b).unwrap();
+    let out = Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&b).arg(&outside).output().unwrap();
+    assert!(out.status.success(), "mklink /J: {}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(skipped(&A.remove_empty_dir(&pb.target())), "link_or_reparse");
+    assert!(matches!(A.trash_tree(&pb.target(), &[]), ActionOutcome::Skipped { .. }));
+    assert_ne!(std::fs::symlink_metadata(&b).unwrap().file_attributes() & ATTR_REPARSE_POINT, 0, "junction still in place");
+    assert_eq!(read(&outside.join("sentinel.txt")), "sentinel");
+    // A planned file where a directory is expected is not a directory item.
+    let f = root.join("f.tmp");
+    write(&f, "x");
+    let pf = plan(&root, &f);
+    assert!(matches!(A.remove_empty_dir(&pf.target()), ActionOutcome::Skipped { .. }));
+    assert_eq!(read(&f), "x");
+    std::fs::remove_dir(&b).unwrap();
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+#[test]
+fn directory_in_use_is_skipped() {
+    let root = scratch("dirbusy");
+    let d = root.join("obj");
+    std::fs::create_dir_all(&d).unwrap();
+    let pd = plan(&root, &d);
+    // Another listing handle without delete sharing blocks the removal open (attribute-only
+    // opens take no part in sharing checks).
+    let holder = std::fs::OpenOptions::new().access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES).share_mode(SHARE_READ | SHARE_WRITE).custom_flags(FLAG_BACKUP_SEMANTICS).open(&d).unwrap();
+    assert_eq!(skipped(&A.remove_empty_dir(&pd.target())), "in_use");
+    drop(holder);
+    assert!(d.is_dir());
+    assert_eq!(A.remove_empty_dir(&pd.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+}
+
+/// Remove a recycled `$R` item (file or directory) and its `$I` record found through `watch`.
+fn purge_recycled(watch: std::fs::File) {
+    let recycled = held_final_path(&watch).expect("recycled path");
+    drop(watch);
+    assert!(recycled.to_string_lossy().to_ascii_lowercase().contains(r"\$recycle.bin\"), "{}", recycled.display());
+    let name = recycled.file_name().unwrap().to_string_lossy().into_owned();
+    if recycled.is_dir() { std::fs::remove_dir_all(&recycled).unwrap() } else { std::fs::remove_file(&recycled).unwrap() }
+    if let Some(rest) = name.strip_prefix("$R") {
+        let _ = std::fs::remove_file(recycled.with_file_name(format!("$I{rest}")));
+    }
+}
+
+#[test]
+fn whole_tree_goes_to_the_recycle_bin_only_when_it_equals_the_plan() {
+    let root = scratch("tree");
+    let t = root.join("proj").join("target");
+    write(&t.join("debug").join("app.exe"), "binary");
+    write(&t.join("CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55");
+    let paths = [t.clone(), t.join("debug"), t.join("debug").join("app.exe"), t.join("CACHEDIR.TAG")];
+    let planned: Vec<Planned> = paths.iter().map(|p| plan(&root, p)).collect();
+    let members: Vec<TreeMember<'_>> = planned[1..].iter().map(member).collect();
+
+    // Something not in the plan inside: refused, nothing moved.
+    write(&t.join("debug").join("late.txt"), "new");
+    assert_eq!(skipped(&A.trash_tree(&planned[0].target(), &members)), "tree_mismatch");
+    assert_eq!(read(&t.join("debug").join("late.txt")), "new");
+    std::fs::remove_file(t.join("debug").join("late.txt")).unwrap();
+    // A changed planned file: refused as well.
+    write(&t.join("CACHEDIR.TAG"), "Signature: changed and longer");
+    assert_eq!(skipped(&A.trash_tree(&planned[0].target(), &members)), "tree_mismatch");
+    let tag = plan(&root, &t.join("CACHEDIR.TAG"));
+    let members: Vec<TreeMember<'_>> = [&planned[1], &planned[2], &tag].into_iter().map(member).collect();
+
+    let watch = std::fs::OpenOptions::new().access_mode(FILE_READ_ATTRIBUTES).share_mode(SHARE_ALL).custom_flags(FLAG_OPEN_REPARSE_POINT | FLAG_BACKUP_SEMANTICS).open(&t).unwrap();
+    assert_eq!(A.trash_tree(&planned[0].target(), &members), ActionOutcome::Succeeded { recovery: Recovery::Trash });
+    assert!(!t.exists());
+    assert!(root.join("proj").is_dir());
+    purge_recycled(watch);
+}

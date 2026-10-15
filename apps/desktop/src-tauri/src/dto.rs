@@ -238,7 +238,18 @@ pub struct CapabilitiesDto {
     pub bypass_privileges_disabled: Option<bool>,
     pub bypass_privileges_note: Option<String>,
     pub interrupted_at_startup: Vec<String>,
+    /// Operations found at startup whose host had exited: outcomes need reconciliation.
+    pub operations_to_reconcile: Vec<String>,
+    /// File actions run only for stored, authorized plans (never a path from the WebView).
     pub write_commands: bool,
+    /// Whether this build has verified file actions for the platform (Windows only today).
+    pub file_actions_verified: bool,
+    pub rules_dir_display: Option<String>,
+    /// Why the rule pack cannot be used (analysis and execution stop), if so.
+    pub rules_problem: Option<String>,
+    pub rule_count: Option<usize>,
+    /// The OS user that receipts and policies bind to.
+    pub principal: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,6 +258,9 @@ pub struct RecentScanDto {
     pub root_display: String,
     pub started_at: String,
     pub state: Option<ScanState>,
+    pub published: bool,
+    /// `desktop` or `cli`: which kind of process hosted the scan.
+    pub host_kind: String,
     pub completeness: Option<String>,
     pub finished_at: Option<String>,
     pub problem: Option<IpcError>,

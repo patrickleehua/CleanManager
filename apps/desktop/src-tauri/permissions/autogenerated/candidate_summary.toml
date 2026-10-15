@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-candidate-summary"
+description = "Enables the candidate_summary command without any pre-configured scope."
+commands.allow = ["candidate_summary"]
+
+[[permission]]
+identifier = "deny-candidate-summary"
+description = "Denies the candidate_summary command without any pre-configured scope."
+commands.deny = ["candidate_summary"]

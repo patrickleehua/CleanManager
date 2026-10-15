@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-03",
+  "run_id": "run_win_catalog_windows_directx_shader_cache",
+  "recorded_at": "2026-10-15T07:32:26Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/windows.directx.shader-cache.json"
+  ],
+  "seed": null,
+  "expected": "Read-only scan of the real %LOCALAPPDATA%\\D3DSCache: every per-application folder (and nothing deeper) is a review-only candidate",
+  "actual": "candidates=12 folders_present=12 all_direct_children=True risks=['medium']",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "os_version": "10.0.26200",
+    "candidate_count": 12
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Read-only scan; regeneration by the graphics driver was not exercised, so the rule stays review_only."
+  ],
+  "status": "passed"
+}

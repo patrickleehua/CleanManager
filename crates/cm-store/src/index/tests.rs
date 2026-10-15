@@ -329,3 +329,82 @@ fn unrepresentable_directory_total_is_unknown_not_wrapped() {
     let s = store.summarize("s1", &[1]);
     assert!(s.is_err(), "selection summaries use checked addition and report overflow");
 }
+
+/// /r{a/{x,z?},b/{y=x},locked/(unread)} with a hard link and an unknown size.
+fn tree_fixture(dir: &std::path::Path) -> IndexStore {
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    let rev = begin(&store, "s1");
+    let objects = [obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::Directory, None), obj(3, ObjectKind::Directory, None),
+        obj(5, ObjectKind::File, Some(100)), obj(6, ObjectKind::File, None), obj(9, ObjectKind::Directory, None), obj(10, ObjectKind::File, Some(7))];
+    let entries = [ent(1, None, "/r", 1, ObjectKind::Directory), ent(2, Some(1), "a", 2, ObjectKind::Directory),
+        ent(3, Some(1), "b", 3, ObjectKind::Directory), ent(4, Some(2), "x", 5, ObjectKind::File),
+        ent(7, Some(3), "y", 5, ObjectKind::File), ent(8, Some(2), "z", 6, ObjectKind::File),
+        ent(9, Some(1), "locked", 9, ObjectKind::Directory), ent(10, Some(3), "w", 10, ObjectKind::File)];
+    store.write_batch("s1", rev, &objects, &entries,
+        &[SkippedRow { parent_entry_id: Some(9), path: unix("/r/locked/deep"), reason: SkipReason::PermissionDenied }]).unwrap();
+    store.publish("s1", rev, ScanState::Completed, "t").unwrap();
+    store
+}
+
+#[test]
+fn folder_total_matches_the_full_tree_summary_for_every_entry() {
+    let dir = scratch("folder-total");
+    let store = tree_fixture(&dir);
+    for id in [1, 2, 3, 4, 7, 8, 9, 10] {
+        assert_eq!(store.folder_total("s1", id).unwrap(), store.summarize("s1", &[id]).unwrap(), "entry {id}");
+    }
+    let root = store.folder_total("s1", 1).unwrap();
+    assert_eq!(root.logical.known, Bytes(107), "hard link counted once");
+    assert_eq!(root.logical.unknown_count, 2, "one unknown size plus one unread range, never zero");
+    assert_eq!(root.unread_ranges, 1);
+    assert_eq!(root.covered_entries, 8);
+    assert!(matches!(store.folder_total("s1", 99), Err(StoreError::NotFound(_))));
+    // Staging revisions stay invisible.
+    let rev = begin(&store, "s2");
+    store.write_batch("s2", rev, &[obj(1, ObjectKind::Directory, None)], &[ent(1, None, "/r", 1, ObjectKind::Directory)], &[]).unwrap();
+    assert!(matches!(store.folder_total("s2", 1), Err(StoreError::InvalidState(_))));
+}
+
+#[test]
+fn get_entry_and_identity_lookup_return_published_rows_only() {
+    let dir = scratch("get-entry");
+    let store = tree_fixture(&dir);
+    let e = store.get_entry("s1", 8).unwrap();
+    assert_eq!((e.path.display(), e.logical_bytes, e.size_basis), ("/r/a/z".to_string(), None, SizeBasis::Unknown));
+    let a = store.get_entry("s1", 2).unwrap();
+    assert_eq!((a.logical_bytes, a.unknown_descendants), (Some(Bytes(100)), Some(1)));
+    assert!(matches!(store.get_entry("s1", 77), Err(StoreError::NotFound(_))));
+    let found = store
+        .entries_by_identity("s1", &[("vol".into(), format!("inode64:{:016x}", 3)), ("vol".into(), "inode64:ffff".into())])
+        .unwrap();
+    assert_eq!(found.iter().map(|(id, i)| (id.1.clone(), i.path.display())).collect::<Vec<_>>(), [(format!("inode64:{:016x}", 3), "/r/b".to_string())], "absent identities are not invented");
+    assert!(store.entries_by_identity("s1", &[("vol".into(), format!("inode64:{:016x}", 5))]).unwrap().is_empty(), "directories only");
+}
+
+#[test]
+fn scans_are_listed_newest_first_with_their_root() {
+    let dir = scratch("list-scans");
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    for i in 0..5 {
+        let id = format!("s{i}");
+        let rev = store
+            .begin_scan(&ScanInit { scan_id: id.clone(), scope_id: "scope".into(), root: unix(&format!("/root{i}")), backend: "t".into(),
+                host: host(), started_at: format!("2026-10-15T00:00:0{i}Z") })
+            .unwrap();
+        if i != 3 {
+            store.publish(&id, rev, ScanState::Completed, "t").unwrap();
+        }
+    }
+    assert_eq!(store.scan_status("s2").unwrap().root.display(), "/root2");
+    let (first, next) = store.list_scans(2, None).unwrap();
+    assert_eq!(first.iter().map(|s| s.scan_id.as_str()).collect::<Vec<_>>(), ["s4", "s3"]);
+    assert_eq!((first[1].state, first[1].published), (ScanState::Running, false));
+    assert_eq!(first[0].root.display(), "/root4");
+    let (second, next) = store.list_scans(2, next.as_deref()).unwrap();
+    assert_eq!(second.iter().map(|s| s.scan_id.as_str()).collect::<Vec<_>>(), ["s2", "s1"]);
+    let (last, end) = store.list_scans(2, next.as_deref()).unwrap();
+    assert_eq!((last.len(), end), (1, None));
+    assert!(matches!(store.list_scans(3, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to page size");
+    assert!(matches!(store.list_scans(0, None), Err(StoreError::InvalidArgument(_))));
+    assert_eq!(store.latest_candidate_set("s1").unwrap(), None);
+}

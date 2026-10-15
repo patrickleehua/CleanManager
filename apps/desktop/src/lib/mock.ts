@@ -4,6 +4,7 @@
 // revisions only, size-desc with unknown last and entry_id tie-break, bounded pages.
 
 import type { Backend } from './api';
+import { mockOps } from './mockOps';
 import type {
   Entry,
   EntriesPage,
@@ -238,17 +239,19 @@ export function mockBackend(): Backend {
   const offers: RootOffer[] = [
     { token: 'r1', label: '下载', kind: 'user_folder', path_display: 'C:\\Users\\Lin\\Downloads', problem: null },
     { token: 'r2', label: '文档', kind: 'user_folder', path_display: 'C:\\Users\\Lin\\Documents', problem: null },
-    {
-      token: 'r3',
-      label: '用户目录',
-      kind: 'user_home',
-      path_display: 'C:\\Users\\Lin',
-      problem: err('invalid_argument', 'store_inside_scope', '此文件夹包含 CleanManager 自己的索引，请选择不包含它的文件夹'),
-    },
+    { token: 'r3', label: '用户目录', kind: 'user_home', path_display: 'C:\\Users\\Lin', problem: null },
     { token: 'r4', label: 'D: 卷', kind: 'volume', path_display: 'D:\\', problem: null },
+    {
+      token: 'r5',
+      label: 'E: 卷',
+      kind: 'volume',
+      path_display: 'E:\\',
+      problem: err('invalid_argument', 'root_missing', 'This folder does not exist or its volume is offline'),
+    },
   ];
 
   return {
+    ...mockOps(),
     preview: true,
     async capabilities() {
       return {
@@ -264,7 +267,13 @@ export function mockBackend(): Backend {
         bypass_privileges_disabled: true,
         bypass_privileges_note: null,
         interrupted_at_startup: [],
-        write_commands: false,
+        operations_to_reconcile: [],
+        write_commands: true,
+        file_actions_verified: true,
+        rules_dir_display: 'C:\\Program Files\\CleanManager\\rules',
+        rules_problem: null,
+        rule_count: 3,
+        principal: 'user:DESKTOP\\Lin',
       };
     },
     async listScanRoots() {
@@ -283,6 +292,8 @@ export function mockBackend(): Backend {
         root_display: s.root,
         started_at: s.started,
         state: s.state,
+        published: !['created', 'running', 'stopping'].includes(s.state),
+        host_kind: 'desktop',
         completeness: s.state === 'completed' ? 'verified_scope' : s.state === 'partial' ? 'partial_scope' : null,
         finished_at: s.finished,
         problem: null,

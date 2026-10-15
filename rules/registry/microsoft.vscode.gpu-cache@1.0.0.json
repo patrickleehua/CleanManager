@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "microsoft.vscode.gpu-cache@1.0.0",
+  "rule_id": "microsoft.vscode.gpu-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "microsoft.vscode",
+    "name": "Visual Studio Code"
+  },
+  "version_range": {
+    "min_inclusive": "1.141",
+    "max_exclusive": "1.142"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real %APPDATA%\\Code\\GPUCache matched as the only candidate"
+    ],
+    "negative": [
+      "User settings, globalStorage/workspaceStorage state databases, Backups and Local Storage are not matched"
+    ]
+  },
+  "known_effects": [
+    "Recreated by VS Code on the next start; skipped while VS Code runs or holds a file open."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_microsoft_vscode_gpu_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

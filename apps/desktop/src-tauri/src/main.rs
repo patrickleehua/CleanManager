@@ -1,16 +1,23 @@
-//! CleanManager desktop host (MVP 13.1/13.2). A thin Tauri shell over the shared services:
-//! scan lifecycle from `cm-app`, revision-bound queries from `cm-store`, platform access from
-//! `cm-platform`. The WebView talks to the explicit commands in `commands.rs` only (see
-//! `build.rs` and `capabilities/main.json`); no plugin APIs are exposed to it.
+//! CleanManager desktop host (MVP 13.1–13.5). A thin Tauri shell over the shared services:
+//! scan lifecycle, plan application and recovery from `cm-app`, plans/authorization/rules from
+//! `cm-core`, revision-bound queries and the audit log from `cm-store`, platform access from
+//! `cm-platform`. The WebView talks to the explicit commands registered below only (see
+//! `build.rs` and `capabilities/main.json`); no plugin APIs are exposed to it, and no command
+//! accepts a filesystem path or a plan body from it.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod args;
+mod cleanup;
 mod commands;
 mod dto;
 mod host;
-mod recent;
+mod ops;
 mod roots;
+mod rules;
+mod settings;
+#[cfg(all(test, windows))]
+mod flow_tests;
 
 use std::sync::Arc;
 
@@ -23,8 +30,7 @@ fn main() {
         // Used from Rust only (choose_folder); the capability grants the WebView no dialog API.
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let recent = app.path().app_local_data_dir().ok().map(|d| d.join("recent-scans.json"));
-            app.manage(Arc::new(AppState::init(recent)));
+            app.manage(Arc::new(AppState::init(rules::locate())));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -46,6 +52,31 @@ fn main() {
             commands::list_entries,
             commands::treemap_layer,
             commands::summarize_selection,
+            cleanup::candidate_summary,
+            cleanup::analyze_scan,
+            cleanup::list_candidates,
+            cleanup::create_plan,
+            cleanup::plan_detail,
+            cleanup::plan_items,
+            cleanup::approve_plan,
+            cleanup::revoke_plan,
+            cleanup::list_policies,
+            cleanup::set_policy_state_cmd,
+            cleanup::create_policy_from_plan,
+            ops::start_apply,
+            ops::cancel_apply,
+            ops::active_apply,
+            ops::operation_detail,
+            ops::list_operation_items,
+            ops::reconcile_operation,
+            ops::list_operations,
+            ops::list_plans,
+            ops::list_quarantine,
+            ops::create_recovery_plan,
+            settings::list_protection,
+            settings::add_protection,
+            settings::remove_protection,
+            settings::list_apps,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CleanManager desktop");

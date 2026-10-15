@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "windows.directx.shader-cache@1.0.0",
+  "rule_id": "windows.directx.shader-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "system",
+    "id": "windows.directx",
+    "name": "Windows DirectX shader cache"
+  },
+  "version_range": {
+    "min_inclusive": "10.0.26200",
+    "max_exclusive": "10.0.26201"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Every real per-application cache folder under D3DSCache matched"
+    ],
+    "negative": [
+      "Files inside the folders are not separate candidates"
+    ]
+  },
+  "known_effects": [
+    "Shaders are rebuilt when applications next run; the first run may stutter."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_windows_directx_shader_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

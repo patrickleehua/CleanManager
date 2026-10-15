@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "npm.cache-content@1.0.0",
+  "rule_id": "npm.cache-content",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "tool",
+    "id": "npm",
+    "name": "npm"
+  },
+  "version_range": {
+    "min_inclusive": "11.0",
+    "max_exclusive": "12.0"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real _cacache matched as one owner-tool row"
+    ],
+    "negative": [
+      "_logs, index files and anything outside _cacache are not part of this row",
+      "The row has no file modes: it can never become a direct delete"
+    ]
+  },
+  "known_effects": [
+    "Packages are downloaded again on the next install; offline installs of removed packages fail."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_npm_cache_content"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

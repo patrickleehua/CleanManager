@@ -324,6 +324,17 @@ pub struct OperationRow {
     pub finished_at: Option<String>,
 }
 
+/// One stored plan (any type) in listings; the plan body is loaded separately by type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanRow {
+    pub plan_id: String,
+    pub plan_digest: String,
+    /// `plan/v1` or `recovery/v1`.
+    pub contract: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
 /// Opaque keyset cursor: the insertion key (rowid) of the last row and the page size it was
 /// issued for. Rows are never renumbered, so a page boundary is stable while history grows.
 fn encode_cursor(kind: &str, rowid: i64, page_size: u32) -> String {
@@ -424,6 +435,25 @@ impl AuditStore {
         });
         let rows = rows.into_iter().map(|(o, _)| o).collect();
         Ok((rows, next))
+    }
+
+    /// Stored plans of every type, most recently created first, keyset-paginated (P08 timeline).
+    pub fn plans_page(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<PlanRow>, Option<String>)> {
+        check_page(page_size)?;
+        let before = cursor.map(|c| decode_cursor("plans", c, page_size)).transpose()?.unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare(
+            "SELECT plan_id, plan_digest, contract, created_at, expires_at, rowid FROM plans WHERE rowid < ?1 ORDER BY rowid DESC LIMIT ?2",
+        )?;
+        let mut rows: Vec<(PlanRow, i64)> = stmt
+            .query_map(params![before, i64::from(page_size) + 1], |r| {
+                Ok((PlanRow { plan_id: r.get(0)?, plan_digest: r.get(1)?, contract: r.get(2)?, created_at: r.get(3)?, expires_at: r.get(4)? }, r.get(5)?))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        let next = (rows.len() > page_size as usize).then(|| {
+            rows.truncate(page_size as usize);
+            encode_cursor("plans", rows.last().expect("page is not empty").1, page_size)
+        });
+        Ok((rows.into_iter().map(|(p, _)| p).collect(), next))
     }
 
     pub fn save_recovery_plan(&self, plan: &cm_core::recovery::RecoveryPlan) -> Result<()> {
@@ -676,6 +706,27 @@ mod tests {
         assert!(matches!(a.quarantine_page(2, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its page size");
         assert!(matches!(a.operations_page(3, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its listing");
         assert!(matches!(a.operations_page(501, None), Err(StoreError::InvalidArgument(_))));
+    }
+
+    #[test]
+    fn plans_are_listed_newest_first_with_their_type() {
+        use cm_core::recovery::{QuarantineManifest, RecoveryKind, build_recovery_plan};
+        let dir = scratch("audit-plans");
+        let a = AuditStore::open(&dir.join("audit.db")).unwrap();
+        let id = |f: &str| cm_core::plan::WireIdentity { volume_id: "v".into(), file_id: format!("inode64:{f:0>16}"), generation: None, quality: "strong".into(), observed_at: "2026-10-15T00:00:00Z".into() };
+        for i in 0..3 {
+            let m = QuarantineManifest {
+                original_path: cm_core::path::RawPath::unix(b"/r/a".to_vec()).unwrap(), original_identity: id("1"), original_parent: Some(id("2")),
+                location: cm_core::path::RawPath::unix(b"/q/a".to_vec()).unwrap(), logical_bytes: cm_core::bytes::Bytes(1),
+            };
+            a.save_recovery_plan(&build_recovery_plan(RecoveryKind::Restore, &[("q1".into(), m)], &format!("rp{i}"), 1_800_000_000 + i).unwrap()).unwrap();
+        }
+        let (first, next) = a.plans_page(2, None).unwrap();
+        assert_eq!(first.iter().map(|p| p.plan_id.as_str()).collect::<Vec<_>>(), ["rp2", "rp1"]);
+        assert_eq!(first[0].contract, "recovery/v1");
+        let (rest, end) = a.plans_page(2, next.as_deref()).unwrap();
+        assert_eq!((rest.len(), end), (1, None));
+        assert!(matches!(a.plans_page(2, Some("bogus")), Err(StoreError::CursorStale(_))));
     }
 
     #[test]

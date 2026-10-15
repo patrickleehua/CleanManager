@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "microsoft.wsl.distro-disk@1.0.0",
+  "rule_id": "microsoft.wsl.distro-disk",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "microsoft.wsl",
+    "name": "Windows Subsystem for Linux"
+  },
+  "version_range": {
+    "min_inclusive": "3.0",
+    "max_exclusive": "3.1"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real ext4.vhdx of the installed distribution listed as a hint row"
+    ],
+    "negative": [
+      "Other files under Local AppData\\wsl are not listed",
+      "The row has no allowed modes and is never default-selected"
+    ]
+  },
+  "known_effects": [
+    "Space is reclaimed inside the distribution or with WSL's own tools, never by deleting the disk."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_microsoft_wsl_distro_disk"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.edge.http-cache",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "browsers",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.edge"
+  },
+  "root_resolver": "browser_profile",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "Cache",
+      "Cache_Data"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "HTTP disk cache of Microsoft Edge for one browser profile (downloaded page resources).",
+    "regeneration": "Resources are downloaded again from the network when pages are next visited.",
+    "offline_effect": "Pages and resources that were only cached cannot be shown offline until downloaded again."
+  },
+  "tested_registry_ref": "microsoft.edge.http-cache@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_microsoft_edge_http_cache"
+  ]
+}

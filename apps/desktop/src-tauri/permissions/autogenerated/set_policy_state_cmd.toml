@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-policy-state-cmd"
+description = "Enables the set_policy_state_cmd command without any pre-configured scope."
+commands.allow = ["set_policy_state_cmd"]
+
+[[permission]]
+identifier = "deny-set-policy-state-cmd"
+description = "Denies the set_policy_state_cmd command without any pre-configured scope."
+commands.deny = ["set_policy_state_cmd"]

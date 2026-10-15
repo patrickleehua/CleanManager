@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-06",
+  "run_id": "run_win_catalog_probe_e2e",
+  "recorded_at": "2026-10-15T07:32:32Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "--scan",
+    "ID",
+    "--dry-run",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "clean --dry-run probes live: a held .crdownload is skipped as in_use and never preselected; once released it is not_in_use but stays review_only, so a non-interactive plan without explicit IDs has nothing to include (policy_denied)",
+  "actual": "held: skip=in_use probe=in_use selected=False; released: skip=None probe=not_in_use tier=review_only selected=False; non_interactive_plan=error:policy_denied",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "preview_items_held": 1,
+    "plan_exit_code": 3
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Controlled fixture; the file was held open by this validator to stand in for a browser download."
+  ],
+  "status": "passed"
+}

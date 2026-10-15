@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-analyze-scan"
+description = "Enables the analyze_scan command without any pre-configured scope."
+commands.allow = ["analyze_scan"]
+
+[[permission]]
+identifier = "deny-analyze-scan"
+description = "Denies the analyze_scan command without any pre-configured scope."
+commands.deny = ["analyze_scan"]

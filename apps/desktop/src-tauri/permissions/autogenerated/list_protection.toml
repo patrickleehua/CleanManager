@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-protection"
+description = "Enables the list_protection command without any pre-configured scope."
+commands.allow = ["list_protection"]
+
+[[permission]]
+identifier = "deny-list-protection"
+description = "Denies the list_protection command without any pre-configured scope."
+commands.deny = ["list_protection"]

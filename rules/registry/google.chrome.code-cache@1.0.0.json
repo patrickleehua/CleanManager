@@ -41,5 +41,11 @@
   ],
   "evidence_refs": [
     "run_win_rule_google_chrome_code_cache"
-  ]
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
 }

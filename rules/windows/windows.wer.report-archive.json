@@ -1,0 +1,56 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "windows.wer.report-archive",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "windows.wer"
+  },
+  "root_resolver": "crash_reports",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "ReportArchive"
+    ],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Per-user Windows Error Reporting archived reports older than 7 days (one folder per report).",
+    "regeneration": "Not regenerated: these are records of past application crashes.",
+    "offline_effect": "Queued reports that were not yet sent are not sent; crash history for troubleshooting is lost."
+  },
+  "tested_registry_ref": "windows.wer.report-archive@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_windows_wer_report_archive"
+  ]
+}

@@ -100,3 +100,24 @@ fn tier_min_is_the_stricter_tier() {
     assert_eq!(Tier::DefaultSelected.min(Tier::ReviewOnly), Tier::ReviewOnly);
     assert_eq!(Tier::Blocked.min(Tier::DefaultSelected), Tier::Blocked);
 }
+
+#[test]
+fn changing_a_threshold_needs_a_newly_tested_rule_version() {
+    let mut v = example_v2();
+    v["status"] = "enabled".into();
+    v["platforms"] = serde_json::json!(["windows"]);
+    v["evidence_refs"] = serde_json::json!(["run_x"]);
+    v["thresholds"]["min_age_days"] = 7.into();
+    v["thresholds"]["age_basis"] = "modified_time".into();
+    let mut entry: RegistryEntry = serde_json::from_str(&repo("rules/registry/examples/example-browser-code-cache.registry.json")).unwrap();
+    entry.synthetic = false;
+    v["tested_registry_ref"] = entry.registry_id.clone().into();
+    let mut rule = parse(&v).unwrap();
+    let reg = |e: &RegistryEntry| BTreeMap::from([(e.registry_id.clone(), e.clone())]);
+    assert!(rule.check_registry(&reg(&entry)).is_err(), "a rule with thresholds needs the tested thresholds recorded");
+    entry.thresholds = Some(rule.thresholds.clone());
+    rule.check_registry(&reg(&entry)).unwrap();
+    rule.thresholds.min_age_days = Some(1);
+    let err = rule.check_registry(&reg(&entry)).unwrap_err().to_string();
+    assert!(err.contains("thresholds differ"), "{err}");
+}

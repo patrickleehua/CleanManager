@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "kind": "cleanup_catalog",
+  "request_id": "req_synthetic",
+  "platform": "windows",
+  "catalog_version": "catalog/1",
+  "rule_set_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "categories": [
+    {
+      "category": "browsers",
+      "label": "Browsers",
+      "wave": 1,
+      "status": "available",
+      "rules": [
+        {
+          "rule_id": "example.browser.code-cache",
+          "version": "0.1.0",
+          "status": "enabled",
+          "max_tier": "default_selected",
+          "effective_tier_ceiling": "review_only",
+          "rebuild_class": "local_rebuild",
+          "action_kind": "filesystem",
+          "adapter_ref": null,
+          "owner_id": "example.browser",
+          "installed_version": "2.0.1",
+          "registry_status": "version_untested",
+          "tested_range": "1.0..2.0",
+          "tested_at": "2026-10-15",
+          "evidence_refs": [
+            "synthetic:schema-example"
+          ],
+          "summary": "Synthetic browser code cache"
+        }
+      ]
+    },
+    {
+      "category": "trash",
+      "label": "Recycle Bin / Trash",
+      "wave": 1,
+      "status": "unsupported",
+      "rules": []
+    }
+  ],
+  "adapters": [
+    {
+      "adapter_id": "example.adapter.cache-clean-unreferenced",
+      "version": "1.0.0",
+      "tool_id": "example.tool",
+      "status": "unavailable",
+      "reason": "Synthetic tool not found in a trusted location",
+      "executable": null,
+      "executable_sha256": null,
+      "script": null,
+      "script_sha256": null,
+      "argv": [
+        "cache",
+        "path"
+      ],
+      "exit_code": null,
+      "duration_ms": 0,
+      "output_summary": "",
+      "reported_path": null,
+      "cleanup_argv": [
+        "cache",
+        "clean"
+      ],
+      "cleanup_effect": "Synthetic: the tool removes unreferenced entries"
+    }
+  ]
+}

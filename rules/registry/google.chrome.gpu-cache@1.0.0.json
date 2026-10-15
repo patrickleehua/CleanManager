@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "google.chrome.gpu-cache@1.0.0",
+  "rule_id": "google.chrome.gpu-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "google.chrome",
+    "name": "Google Chrome"
+  },
+  "version_range": {
+    "min_inclusive": "155.0",
+    "max_exclusive": "156.0"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Headless throwaway profile: Default\\GPUCache matched as the only candidate"
+    ],
+    "negative": [
+      "Code Cache, Local Storage, IndexedDB, Cookies and the other profile folders are not matched",
+      "Recreated after removal; the test page still renders"
+    ]
+  },
+  "known_effects": [
+    "Skipped while the browser is running or holds a cache file open.",
+    "The first page draws may be slower."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_google_chrome_gpu_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

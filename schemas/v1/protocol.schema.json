@@ -102,6 +102,12 @@
     },
     {
       "$ref": "#/$defs/completion_script"
+    },
+    {
+      "$ref": "#/$defs/cleanup_catalog"
+    },
+    {
+      "$ref": "#/$defs/installer_locations"
     }
   ],
   "$defs": {
@@ -2236,6 +2242,12 @@
         },
         "must_not_follow_links": {
           "const": true
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory"
+          ]
         }
       },
       "required": [
@@ -5380,7 +5392,8 @@
                 "mounted",
                 "identity_changed",
                 "partial_evidence",
-                "admin_required"
+                "admin_required",
+                "vcs_unknown"
               ]
             },
             {
@@ -5420,6 +5433,25 @@
         "impact": {
           "type": "string",
           "minLength": 1
+        },
+        "source_label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -5572,6 +5604,378 @@
         "page_size",
         "summary",
         "convertible_to_plan"
+      ],
+      "additionalProperties": false
+    },
+    "catalog_rule": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "experimental",
+            "verified",
+            "enabled"
+          ]
+        },
+        "max_tier": {
+          "enum": [
+            "default_selected",
+            "review_only",
+            "blocked"
+          ]
+        },
+        "effective_tier_ceiling": {
+          "enum": [
+            "default_selected",
+            "review_only",
+            "blocked"
+          ]
+        },
+        "rebuild_class": {
+          "enum": [
+            "local_rebuild",
+            "network_redownload",
+            "not_rebuildable"
+          ]
+        },
+        "action_kind": {
+          "enum": [
+            "filesystem",
+            "tool_adapter",
+            "review_only_row"
+          ]
+        },
+        "adapter_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "installed_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "registry_status": {
+          "enum": [
+            "covered",
+            "version_untested",
+            "not_registered"
+          ]
+        },
+        "tested_range": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tested_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "rule_id",
+        "version",
+        "status",
+        "max_tier",
+        "effective_tier_ceiling",
+        "rebuild_class",
+        "action_kind",
+        "adapter_ref",
+        "owner_id",
+        "installed_version",
+        "registry_status",
+        "tested_range",
+        "tested_at",
+        "evidence_refs",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "adapter_preview": {
+      "type": "object",
+      "properties": {
+        "adapter_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "timed_out",
+            "failed"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "script": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "script_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "output_summary": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "reported_path": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cleanup_argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "cleanup_effect": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "adapter_id",
+        "version",
+        "tool_id",
+        "status",
+        "reason",
+        "executable",
+        "executable_sha256",
+        "script",
+        "script_sha256",
+        "argv",
+        "exit_code",
+        "duration_ms",
+        "output_summary",
+        "reported_path",
+        "cleanup_argv",
+        "cleanup_effect"
+      ],
+      "additionalProperties": false
+    },
+    "cleanup_catalog": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "cleanup_catalog"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos"
+          ]
+        },
+        "catalog_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_set_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "wave": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "enum": [
+                  "available",
+                  "unverified",
+                  "unsupported"
+                ]
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/catalog_rule"
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "category",
+              "label",
+              "wave",
+              "status",
+              "rules"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "adapters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/adapter_preview"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "platform",
+        "catalog_version",
+        "rule_set_digest",
+        "categories",
+        "adapters"
       ],
       "additionalProperties": false
     },
@@ -6847,6 +7251,62 @@
         "kind",
         "request_id",
         "roots"
+      ],
+      "additionalProperties": false
+    },
+    "installer_locations": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "installer_locations"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "source_label": {
+                "enum": [
+                  "downloads",
+                  "desktop",
+                  "browser_downloads"
+                ]
+              },
+              "exists": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "source_label",
+              "exists"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "locations",
+        "max_depth"
       ],
       "additionalProperties": false
     },

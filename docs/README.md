@@ -16,6 +16,7 @@
 | [Windows 后端](platforms/windows.md) | NTFS、USN、权限、云占位、应用管理与发布 |
 | [macOS 后端](platforms/macos.md) | 批量枚举、APFS、FSEvents、TCC 与平台限制 |
 | [规则与执行](safety-and-rules.md) | 候选如何成为固定计划，如何授权和核验 |
+| [清理目录](catalog.md) | 第 1 波 Windows 类目、档位计算、占用探测、所属工具委托与实测证据 |
 | [CLI 与 Agent 协议](cli-protocol.md) | 命令、JSON、退出码、分页和 Skill 边界 |
 | [设计决策](decisions.md) | 关键选择、依据与重新评估条件 |
 | [分发与许可](distribution-and-licensing.md) | 参考代码、第三方包、签名、更新和隐私 |

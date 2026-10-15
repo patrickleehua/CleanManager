@@ -1,0 +1,56 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "windows.crash-dumps.user",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "windows.crash-dumps"
+  },
+  "root_resolver": "crash_reports",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [
+      "dmp"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "User-mode crash dump files (*.dmp) in Local AppData\\CrashDumps older than 7 days.",
+    "regeneration": "Not regenerated: each dump is a snapshot of a past crash.",
+    "offline_effect": "The dumps are no longer available to send to a vendor or debug."
+  },
+  "tested_registry_ref": "windows.crash-dumps.user@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_windows_crash_dumps_user"
+  ]
+}

@@ -114,6 +114,36 @@
       "platform": "macos",
       "state": "unverified",
       "run_ids": []
+    },
+    {
+      "claim": "catalog.win.wave1",
+      "platform": "windows",
+      "state": "verified",
+      "run_ids": [
+        "run_win_catalog_cargo_registry_cache",
+        "run_win_catalog_google_chrome_gpu_cache",
+        "run_win_catalog_google_chrome_http_cache",
+        "run_win_catalog_microsoft_edge_gpu_cache",
+        "run_win_catalog_microsoft_edge_http_cache",
+        "run_win_catalog_microsoft_vscode_cached_data",
+        "run_win_catalog_microsoft_vscode_code_cache",
+        "run_win_catalog_microsoft_vscode_gpu_cache",
+        "run_win_catalog_microsoft_wsl_distro_disk",
+        "run_win_catalog_npm_cache_content",
+        "run_win_catalog_npm_cache_logs",
+        "run_win_catalog_probe_e2e",
+        "run_win_catalog_windows_crash_dumps_user",
+        "run_win_catalog_windows_directx_shader_cache",
+        "run_win_catalog_windows_downloads_incomplete",
+        "run_win_catalog_windows_wer_report_archive",
+        "run_win_catalog_windows_wer_report_queue"
+      ]
+    },
+    {
+      "claim": "catalog.mac.wave1",
+      "platform": "macos",
+      "state": "unverified",
+      "run_ids": []
     }
   ]
 }

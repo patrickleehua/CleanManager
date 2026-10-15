@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-09",
+  "run_id": "run_win_catalog_microsoft_wsl_distro_disk",
+  "recorded_at": "2026-10-15T07:32:31Z",
+  "code_commit": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+  "binary_sha256": "5ce2d8537f707ac4cc11233de03aa726a161852ee535f53370786e55ddd31d94",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/microsoft.wsl.distro-disk.json"
+  ],
+  "seed": null,
+  "expected": "Each real WSL distribution disk (ext4.vhdx) appears as one large-item hint row with no file modes",
+  "actual": "hint_rows=1 disks_present=1 all_without_modes=True",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "wsl_version": "3.0.3.0",
+    "hint_rows": 1,
+    "logical_bytes": [
+      "1536163840"
+    ]
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Read-only scan; the hint row cannot be selected or planned by construction."
+  ],
+  "status": "passed"
+}

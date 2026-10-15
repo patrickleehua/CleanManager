@@ -3,22 +3,27 @@
 //! This crate must not depend on a GUI toolkit, terminal styling or a specific agent.
 //! Platform access lives behind traits implemented in `cm-platform`.
 
+pub mod adapter;
 pub mod analysis;
 pub mod apps;
 pub mod authz;
 pub mod bytes;
 pub mod c14n;
 pub mod capability;
+pub mod catalog;
 pub mod error;
 pub mod execute;
 pub mod host;
 pub mod insights;
+pub mod installer;
 pub mod model;
 pub mod obs;
 pub mod path;
 pub mod plan;
 pub mod protect;
 pub mod protocol;
+pub mod purge;
+pub mod purge_git;
 pub mod recovery;
 pub mod rules;
 pub mod scan;

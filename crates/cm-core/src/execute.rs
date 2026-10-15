@@ -79,6 +79,19 @@ pub enum Reconciled {
     StillUnknown,
 }
 
+/// One planned object under a directory that [`FileActions::trash_tree`] may move as a whole.
+#[derive(Debug, Clone, Copy)]
+pub struct TreeMember<'a> {
+    pub path: &'a RawPath,
+    pub identity: &'a WireIdentity,
+    pub observation: &'a ObservationRecord,
+    pub directory: bool,
+}
+
+fn unsupported(what: &str) -> ActionOutcome {
+    ActionOutcome::Skipped { code: "unsupported".into(), message: format!("{what} is not supported by this platform backend") }
+}
+
 pub trait FileActions {
     fn check(&self, target: &ActionTarget<'_>) -> LiveCheck;
     /// Move into `quarantine_dir` (same volume) under `name`, never replacing anything there.
@@ -93,4 +106,18 @@ pub trait FileActions {
     fn reconcile(&self, target: &ActionTarget<'_>, mode: crate::rules::Mode, quarantine_location: Option<&RawPath>) -> Reconciled;
     /// Free bytes on the volume holding `path`, for before/after observations (REC-05).
     fn free_space(&self, path: &RawPath) -> Option<u64>;
+    /// Remove a planned directory only if it is still the planned object, is not a link or
+    /// reparse point, passes the platform checks and is empty at this moment; never recursive.
+    /// Anything new inside is `Skipped { code: "new_descendant" }`.
+    fn remove_empty_dir(&self, target: &ActionTarget<'_>) -> ActionOutcome {
+        let _ = target;
+        unsupported("empty-directory removal")
+    }
+    /// Move a planned directory to the recycle bin as one object, only when its live subtree is
+    /// exactly `members` (same identities and metadata, nothing extra, no links). Any skip or
+    /// failure leaves everything in place so the caller can fall back to per-item actions.
+    fn trash_tree(&self, root: &ActionTarget<'_>, members: &[TreeMember<'_>]) -> ActionOutcome {
+        let _ = (root, members);
+        unsupported("whole-directory recycling")
+    }
 }

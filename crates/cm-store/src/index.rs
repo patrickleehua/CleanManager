@@ -146,6 +146,22 @@ pub struct ScanStatusView {
     pub skipped_ranges: u64,
     pub started_at: String,
     pub finished_at: Option<String>,
+    /// The scope root as recorded at scan start (display with `RawPath::display`).
+    pub root: RawPath,
+}
+
+/// One scan in the store-wide listing (most recently started first).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScanListItem {
+    pub scan_id: String,
+    pub scope_id: String,
+    pub root: RawPath,
+    pub state: ScanState,
+    pub published: bool,
+    pub completeness: Option<String>,
+    pub host_kind: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -415,7 +431,7 @@ impl IndexStore {
                         s.host_started_at, s.heartbeat_at,
                         (SELECT count(*) FROM entries e WHERE e.scan_id=s.scan_id AND e.revision=s.revision),
                         (SELECT count(*) FROM skipped k WHERE k.scan_id=s.scan_id AND k.revision=s.revision),
-                        s.started_at, s.finished_at
+                        s.started_at, s.finished_at, s.platform, s.root_raw
                  FROM scans s JOIN revisions r ON r.scan_id=s.scan_id AND r.revision=s.revision WHERE s.scan_id=?1",
                 [scan_id],
                 |r| {
@@ -423,12 +439,13 @@ impl IndexStore {
                         r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, u32>(2)?, r.get::<_, String>(3)?,
                         r.get::<_, Option<String>>(4)?, r.get::<_, i64>(5)?, r.get::<_, String>(6)?, r.get::<_, u32>(7)?,
                         r.get::<_, String>(8)?, r.get::<_, String>(9)?, r.get::<_, i64>(10)?, r.get::<_, i64>(11)?,
-                        r.get::<_, String>(12)?, r.get::<_, Option<String>>(13)?,
+                        r.get::<_, String>(12)?, r.get::<_, Option<String>>(13)?, r.get::<_, String>(14)?, r.get::<_, Vec<u8>>(15)?,
                     ))
                 },
             )
             .optional()?
             .ok_or_else(|| StoreError::NotFound(scan_id.into()))?;
+        let root = path_from_raw(enum_parse(&row.14)?, row.15)?;
         Ok(ScanStatusView {
             scan_id: scan_id.into(),
             scope_id: row.0,
@@ -443,7 +460,61 @@ impl IndexStore {
             skipped_ranges: row.11 as u64,
             started_at: row.12,
             finished_at: row.13,
+            root,
         })
+    }
+
+    /// Every scan in this store, most recently started first, keyset-paginated by insertion
+    /// order (rows are never renumbered, so pages stay stable while new scans start).
+    pub fn list_scans(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<ScanListItem>, Option<String>)> {
+        if page_size == 0 || page_size > MAX_PAGE {
+            return Err(StoreError::InvalidArgument(format!("page_size must be 1..={MAX_PAGE}")));
+        }
+        let before = match cursor {
+            None => i64::MAX,
+            Some(c) => {
+                let bad = || StoreError::CursorStale("malformed cursor".into());
+                let bytes = URL_SAFE_NO_PAD.decode(c).map_err(|_| bad())?;
+                let (kind, rowid, size): (String, i64, u32) = serde_json::from_slice(&bytes).map_err(|_| bad())?;
+                if kind != "scans" || size != page_size {
+                    return Err(StoreError::CursorStale("cursor belongs to another listing or page size".into()));
+                }
+                rowid
+            }
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT s.scan_id, s.scope_id, s.platform, s.root_raw, s.state, r.status, s.completeness, s.host_kind, s.started_at, s.finished_at, s.rowid
+             FROM scans s JOIN revisions r ON r.scan_id=s.scan_id AND r.revision=s.revision
+             WHERE s.rowid < ?1 ORDER BY s.rowid DESC LIMIT ?2",
+        )?;
+        type Row = (String, String, String, Vec<u8>, String, String, Option<String>, String, String, Option<String>, i64);
+        let mut rows: Vec<Row> = stmt
+            .query_map(params![before, i64::from(page_size) + 1], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        let next = (rows.len() > page_size as usize).then(|| {
+            rows.truncate(page_size as usize);
+            let last = rows.last().expect("page is not empty").10;
+            URL_SAFE_NO_PAD.encode(serde_json::json!(["scans", last, page_size]).to_string())
+        });
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                Ok(ScanListItem {
+                    scan_id: r.0,
+                    scope_id: r.1,
+                    root: path_from_raw(enum_parse(&r.2)?, r.3)?,
+                    state: enum_parse(&r.4)?,
+                    published: r.5 == "published",
+                    completeness: r.6,
+                    host_kind: r.7,
+                    started_at: r.8,
+                    finished_at: r.9,
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok((items, next))
     }
 
     /// Persist the backend's report (backend reason, issues, elevated-read label) so it can be
@@ -538,6 +609,18 @@ impl IndexStore {
         serde_json::from_str(&text).map_err(|e| StoreError::IndexCorrupt(e.to_string()))
     }
 
+    /// The most recently saved candidate set of a scan, if any (`candidate_set_id`, `created_at`).
+    pub fn latest_candidate_set(&self, scan_id: &str) -> Result<Option<(String, String)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT candidate_set_id, created_at FROM candidate_sets WHERE scan_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                [scan_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     /// One page of candidates ordered by candidate_id; the cursor binds the set and page size.
     pub fn list_candidates(&self, candidate_set_id: &str, page_size: u32, cursor: Option<&str>) -> Result<(Vec<serde_json::Value>, Option<String>)> {
         if page_size == 0 || page_size > MAX_PAGE {
@@ -626,9 +709,8 @@ impl IndexStore {
             return Err(StoreError::CursorStale("cursor belongs to another revision, sort, filter or page size".into()));
         }
 
-        let mut sql = String::from(
-            "SELECT e.entry_id, e.parent_entry_id, e.object_id, e.kind, e.boundary, e.sort_logical_be, e.sort_allocated_be,
-                    e.unknown_descendants, o.link_count, o.quality, e.name_raw
+        let mut sql = format!(
+            "SELECT {ITEM_COLUMNS}
              FROM entries e JOIN objects o ON o.scan_id=e.scan_id AND o.revision=e.revision AND o.object_id=e.object_id
              WHERE e.scan_id=?1 AND e.revision=?2",
         );
@@ -676,13 +758,8 @@ impl IndexStore {
         });
         sql.push_str(&format!(" LIMIT {}", q.page_size + 1));
 
-        type Row = (i64, Option<i64>, i64, String, Option<String>, Option<Vec<u8>>, Option<Vec<u8>>, Option<i64>, Option<u32>, String, Vec<u8>);
         let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows: Vec<Row> = stmt
-            .query_map(params_from_iter(args.iter()), |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?))
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+        let mut rows: Vec<ItemRow> = stmt.query_map(params_from_iter(args.iter()), item_row)?.collect::<std::result::Result<_, _>>()?;
         let has_more = rows.len() > q.page_size as usize;
         rows.truncate(q.page_size as usize);
 
@@ -690,30 +767,11 @@ impl IndexStore {
         let mut items = Vec::with_capacity(rows.len());
         let mut unknown = 0u64;
         for row in &rows {
-            let kind: ObjectKind = enum_parse(&row.3)?;
-            let logical = from_be(row.5.clone())?;
-            if logical.is_none() {
+            let item = to_item(row, &mut paths)?;
+            if item.logical_bytes.is_none() {
                 unknown += 1;
             }
-            let basis = match (kind, logical) {
-                (_, None) => SizeBasis::Unknown,
-                (ObjectKind::Directory, Some(_)) => SizeBasis::SubtreeKnown,
-                _ => SizeBasis::Entity,
-            };
-            items.push(EntryItem {
-                entry_id: row.0.to_string(),
-                parent_entry_id: row.1.map(|p| p.to_string()),
-                object_id: row.2.to_string(),
-                path: paths.path(row.0 as u64)?,
-                kind,
-                logical_bytes: logical.map(Bytes),
-                allocated_bytes: from_be(row.6.clone())?.map(Bytes),
-                size_basis: basis,
-                unknown_descendants: row.7.map(|n| n as u64),
-                link_count: row.8,
-                boundary: row.4.as_deref().map(enum_parse).transpose()?,
-                identity_quality: enum_parse(&row.9)?,
-            });
+            items.push(item);
         }
         let next_cursor = if has_more {
             let last = rows.last().expect("non-empty when more rows exist");
@@ -782,6 +840,138 @@ impl IndexStore {
         }
         Ok(summary)
     }
+
+    /// One entry of the published revision by id, with its full raw path.
+    pub fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
+        let (revision, _, platform) = self.published(scan_id)?;
+        let row = self
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT {ITEM_COLUMNS} FROM entries e JOIN objects o ON o.scan_id=e.scan_id AND o.revision=e.revision AND o.object_id=e.object_id
+                     WHERE e.scan_id=?1 AND e.revision=?2 AND e.entry_id=?3"
+                ),
+                params![scan_id, revision, entry_id as i64],
+                item_row,
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(format!("entry {entry_id}")))?;
+        to_item(&row, &mut PathCache::new(&self.conn, scan_id, revision, platform))
+    }
+
+    /// Directory entries of the published revision whose object has one of the given
+    /// identities (`volume_id`, `file_id`), e.g. application install locations. Identities
+    /// absent from the scan are not returned (unknown, not zero). At most `MAX_PAGE` identities.
+    pub fn entries_by_identity(&self, scan_id: &str, identities: &[(String, String)]) -> Result<Vec<((String, String), EntryItem)>> {
+        if identities.len() > MAX_PAGE as usize {
+            return Err(StoreError::InvalidArgument(format!("at most {MAX_PAGE} identities per query")));
+        }
+        let (revision, _, platform) = self.published(scan_id)?;
+        if identities.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: BTreeSet<(&str, &str)> = identities.iter().map(|(v, f)| (v.as_str(), f.as_str())).collect();
+        let mut objects = Vec::new();
+        {
+            let mut stmt = self.conn.prepare("SELECT object_id, volume_id, file_id FROM objects WHERE scan_id=?1 AND revision=?2 AND kind='directory'")?;
+            let mut rows = stmt.query(params![scan_id, revision])?;
+            while let Some(r) = rows.next()? {
+                let (vol, fid): (String, String) = (r.get(1)?, r.get(2)?);
+                if wanted.contains(&(vol.as_str(), fid.as_str())) {
+                    objects.push((r.get::<_, i64>(0)?, (vol, fid)));
+                }
+            }
+        }
+        let mut paths = PathCache::new(&self.conn, scan_id, revision, platform);
+        let mut out = Vec::new();
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {ITEM_COLUMNS} FROM entries e JOIN objects o ON o.scan_id=e.scan_id AND o.revision=e.revision AND o.object_id=e.object_id
+             WHERE e.scan_id=?1 AND e.revision=?2 AND e.object_id=?3 ORDER BY e.entry_id"
+        ))?;
+        for (obj, identity) in objects {
+            let rows: Vec<ItemRow> = stmt.query_map(params![scan_id, revision, obj], item_row)?.collect::<std::result::Result<_, _>>()?;
+            for row in &rows {
+                out.push((identity.clone(), to_item(row, &mut paths)?));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Overlap-free total of one entry's subtree: the same result as `summarize(&[id])`,
+    /// computed by walking only that subtree through the parent index instead of loading the
+    /// whole revision into memory. Objects count once; unread ranges count as unknown.
+    pub fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
+        let (revision, _, _) = self.published(scan_id)?;
+        let id = entry_id as i64;
+        let exists: Option<i64> = self
+            .conn
+            .query_row("SELECT 1 FROM entries WHERE scan_id=?1 AND revision=?2 AND entry_id=?3", params![scan_id, revision, id], |r| r.get(0))
+            .optional()?;
+        if exists.is_none() {
+            return Err(StoreError::NotFound(format!("entry {entry_id}")));
+        }
+        const SUBTREE: &str = "WITH RECURSIVE sub(id) AS (
+                SELECT ?3
+                UNION ALL
+                SELECT e.entry_id FROM entries e JOIN sub ON e.scan_id=?1 AND e.revision=?2 AND e.parent_entry_id=sub.id
+            )";
+        let covered = self.conn.query_row(&format!("{SUBTREE} SELECT count(*) FROM sub"), params![scan_id, revision, id], |r| r.get::<_, i64>(0))? as u64;
+        let mut summary = SelectionSummary { covered_entries: covered, ..SelectionSummary::default() };
+        {
+            let mut stmt = self.conn.prepare(&format!(
+                "{SUBTREE} SELECT o.logical_be, o.allocated_be FROM objects o
+                 WHERE o.scan_id=?1 AND o.revision=?2 AND o.object_id IN (
+                     SELECT e.object_id FROM entries e JOIN sub ON e.scan_id=?1 AND e.revision=?2 AND e.entry_id=sub.id WHERE e.kind != 'directory')"
+            ))?;
+            let mut rows = stmt.query(params![scan_id, revision, id])?;
+            while let Some(r) = rows.next()? {
+                summary.logical.add(from_be(r.get(0)?)?.map(Bytes))?;
+                summary.allocated.add(from_be(r.get(1)?)?.map(Bytes))?;
+            }
+        }
+        summary.unread_ranges = self.conn.query_row(
+            &format!("{SUBTREE} SELECT count(*) FROM skipped k WHERE k.scan_id=?1 AND k.revision=?2 AND k.parent_entry_id IN (SELECT id FROM sub)"),
+            params![scan_id, revision, id],
+            |r| r.get::<_, i64>(0),
+        )? as u64;
+        for _ in 0..summary.unread_ranges {
+            summary.logical.add(None)?;
+            summary.allocated.add(None)?;
+        }
+        Ok(summary)
+    }
+}
+
+const ITEM_COLUMNS: &str = "e.entry_id, e.parent_entry_id, e.object_id, e.kind, e.boundary, e.sort_logical_be, e.sort_allocated_be,
+                    e.unknown_descendants, o.link_count, o.quality, e.name_raw";
+type ItemRow = (i64, Option<i64>, i64, String, Option<String>, Option<Vec<u8>>, Option<Vec<u8>>, Option<i64>, Option<u32>, String, Vec<u8>);
+
+fn item_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ItemRow> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?))
+}
+
+fn to_item(row: &ItemRow, paths: &mut PathCache<'_>) -> Result<EntryItem> {
+    let kind: ObjectKind = enum_parse(&row.3)?;
+    let logical = from_be(row.5.clone())?;
+    let basis = match (kind, logical) {
+        (_, None) => SizeBasis::Unknown,
+        (ObjectKind::Directory, Some(_)) => SizeBasis::SubtreeKnown,
+        _ => SizeBasis::Entity,
+    };
+    Ok(EntryItem {
+        entry_id: row.0.to_string(),
+        parent_entry_id: row.1.map(|p| p.to_string()),
+        object_id: row.2.to_string(),
+        path: paths.path(row.0 as u64)?,
+        kind,
+        logical_bytes: logical.map(Bytes),
+        allocated_bytes: from_be(row.6.clone())?.map(Bytes),
+        size_basis: basis,
+        unknown_descendants: row.7.map(|n| n as u64),
+        link_count: row.8,
+        boundary: row.4.as_deref().map(enum_parse).transpose()?,
+        identity_quality: enum_parse(&row.9)?,
+    })
 }
 
 /// In-memory view of one revision used for aggregation and selection summaries.

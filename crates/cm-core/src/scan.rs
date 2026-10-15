@@ -71,11 +71,15 @@ pub struct RootProbe {
 pub struct ScanOptions {
     /// Rows per sink batch.
     pub batch_entries: usize,
+    /// CleanManager's own data directories. A backend records a directory with the same
+    /// identity as an `own_store` boundary and does not traverse it (it would otherwise observe
+    /// its own index writes); the default store location is always added by the platform.
+    pub own_store_dirs: Vec<RawPath>,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        ScanOptions { batch_entries: 4_096 }
+        ScanOptions { batch_entries: 4_096, own_store_dirs: Vec::new() }
     }
 }
 
