@@ -21,7 +21,11 @@
 - **THEN** 系统不把数据库标为已证实可删除的临时文件
 
 ### Requirement: ANA-03 Protected user and system content
-系统 SHALL 默认保护用户文档、凭据、源码/工作树、数据库、浏览器站点存储、AI 会话/配置和未知来源模型，以及系统修复/安装依赖。保护判定 SHALL 优先于允许规则，保护配置的改变不得扩大旧计划。
+系统 SHALL 默认保护用户文档、凭据、源码/工作树、数据库、浏览器站点存储、AI 会话/配置和未知来源模型，以及系统修复/安装依赖。保护判定 SHALL 优先于允许规则，保护配置的改变不得扩大旧计划。受保护类目 SHALL 不进入自动候选或预授权策略；独立能力定义的逐对象人工确认流程不属于允许规则，且不得绕过硬性拒绝。
+
+#### Scenario: A protected AI session is reviewed individually
+- **WHEN** 用户在独立审阅流程中逐个确认一个闲置会话
+- **THEN** 只有该会话进入新计划并需人工授权，预授权策略不匹配，其他会话保持保护
 
 #### Scenario: A cache-like parent contains a credential descendant
 - **WHEN** 父目录匹配规则，但后代包含被保护的凭据
