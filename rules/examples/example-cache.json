@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "rule_id": "example.cache",
+  "version": "0.1.0",
+  "status": "experimental",
+  "platforms": [
+    "windows",
+    "macos"
+  ],
+  "root_resolver": "application_cache",
+  "owner_app_id": "example.invalid.fixture-app",
+  "relative_components": [
+    "Cache"
+  ],
+  "min_age_days": 14,
+  "risk": "low",
+  "allowed_modes": [
+    "trash"
+  ],
+  "requires_owner_inactive": true,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": "Synthetic rule only; no production cache path or cleanup support is claimed.",
+  "evidence_refs": []
+}

@@ -1,0 +1,423 @@
+{
+  "retrieved_on": "2026-10-14",
+  "source_url": "https://diskanalyzer.com/files/wiztree_4_33_portable.zip",
+  "discovery_url": "https://diskanalyzer.com/download",
+  "archive_sha256": "38b30aab08710613d8a06a7d3dfb777e43ed436cfd7d1ff8bd33d0b5b6bd2c6d",
+  "archive_bytes": 7905571,
+  "inventory_evidence_id": "ev_8ee19e31856ebf5270cbad35564f722991acd2af2486eda09307885bbc9c1bdf",
+  "inspection_evidence_id": "ev_4996e85a985656d790a72c14c7f6ac2c448d97de2c957438debdb8bc4b7a82c7",
+  "extraction_evidence_id": "ev_1ac1d5698402d8ee9ad95edd8428564eca07ab50fa08dfa21ff77f64b496b764",
+  "pe_evidence_id": "ev_be7c36ce7aea2b7315085aba8a5474859f3bb10e0fe380ac733eb272fd976a8f",
+  "manifest": {
+    "manifest_id": "agm_34dc0bb3106c2586a10126a820fc4e2957b48789bdfa449c59171621c08e1753",
+    "root_artifact_id": "art_9a00bebc61ac2ce50273a3e9de802e78bfd0ad73ae7b968c4ad1d5dfed95160f",
+    "root_sha256": "38b30aab08710613d8a06a7d3dfb777e43ed436cfd7d1ff8bd33d0b5b6bd2c6d",
+    "root_format": "zip",
+    "graph_sha256": "6337321d760d92633f8b79b365adca4b547806b4fc7ea6a4635f359390d6e042",
+    "node_count": 126,
+    "occurrence_count": 126,
+    "edge_count": 125
+  },
+  "files": [
+    {
+      "path": "WizTree.exe",
+      "bytes": 7402808,
+      "format": "pe",
+      "sha256": "c8ec4ebaa694fd72de95636ea799de556479ba1e49a04d06a94875afc1ebad4a"
+    },
+    {
+      "path": "WizTree64.exe",
+      "bytes": 11017016,
+      "format": "pe",
+      "sha256": "117e8e3b212f25442e9be5261e96b8d10e8baa3ca6e87317e2e11f313f03d533"
+    },
+    {
+      "path": "license.txt",
+      "bytes": 7915,
+      "format": "file",
+      "sha256": "5cb2369edd70ed210d5db89970df8d09e4214e64f15f116bbd633c203bc4d383"
+    },
+    {
+      "path": "locale/How to Translate WizTree.txt",
+      "bytes": 186,
+      "format": "file",
+      "sha256": "046ba6f9a45fe04f6bf859b7721267a92c8e858959eb84a1432fcb327ff0396c"
+    },
+    {
+      "path": "locale/ar/LC_MESSAGES/default.mo",
+      "bytes": 25327,
+      "format": "file",
+      "sha256": "bea5c1e98765db07e66efcd61fbe4b3e8b4500f3172c1417334ba9022bfe21bc"
+    },
+    {
+      "path": "locale/ar/LC_MESSAGES/default.po",
+      "bytes": 30251,
+      "format": "file",
+      "sha256": "6a87005152b1a15e4d84555180391bfc0ee9aa6d7aa6e619aaf3b2886d6a6b45"
+    },
+    {
+      "path": "locale/bg/LC_MESSAGES/default.mo",
+      "bytes": 28105,
+      "format": "file",
+      "sha256": "e5242b03721c96b460d1fc285afebea996a9995608e33103570f3de7663760ed"
+    },
+    {
+      "path": "locale/bg/LC_MESSAGES/default.po",
+      "bytes": 33050,
+      "format": "file",
+      "sha256": "6c38c847e9826195a7533622d70811da97d080b62c3f55859ee636548a76bf0f"
+    },
+    {
+      "path": "locale/cs/LC_MESSAGES/default.mo",
+      "bytes": 21164,
+      "format": "file",
+      "sha256": "e30d75bee07936656ff770a2e2334f9cc98870a7c6a040e91736a3736bab01c2"
+    },
+    {
+      "path": "locale/cs/LC_MESSAGES/default.po",
+      "bytes": 26113,
+      "format": "file",
+      "sha256": "36e1f11c185e7237dfd818a239e9814af198a2042b0a9f854ad873877f279b15"
+    },
+    {
+      "path": "locale/da/LC_MESSAGES/default.mo",
+      "bytes": 20357,
+      "format": "file",
+      "sha256": "46fdc0b320b9941ae6704452c48cb4c6a97134ef682794840aba8b84894fd159"
+    },
+    {
+      "path": "locale/da/LC_MESSAGES/default.po",
+      "bytes": 25377,
+      "format": "file",
+      "sha256": "9a0454bb495627a32fc0fcbafd0aaa1cdb99fde183014386ddb37d75b98ddfbc"
+    },
+    {
+      "path": "locale/de/LC_MESSAGES/default.mo",
+      "bytes": 21224,
+      "format": "file",
+      "sha256": "207d800dfcd50f7adf37e3ec89604e6e1c1ca5da8c4f26f098768936e82a3489"
+    },
+    {
+      "path": "locale/de/LC_MESSAGES/default.po",
+      "bytes": 26172,
+      "format": "file",
+      "sha256": "67df24b352b762aee13e28c4a3d6a2e104217434442132a9acd09858bc6d5b45"
+    },
+    {
+      "path": "locale/el/LC_MESSAGES/default.mo",
+      "bytes": 28460,
+      "format": "file",
+      "sha256": "31fb50910a96bea714b8e9c44a988a6963e7e531dffa40b5f401a3e6f9a5ac1c"
+    },
+    {
+      "path": "locale/el/LC_MESSAGES/default.po",
+      "bytes": 33406,
+      "format": "file",
+      "sha256": "302ed7ff3c66be4c6bf3866de13115697e0865f96da56d96ae04f50a181731ae"
+    },
+    {
+      "path": "locale/en/LC_MESSAGES/default.mo",
+      "bytes": 357,
+      "format": "file",
+      "sha256": "a3cccd7aa58aeb88fca79083a942e2828748889bc26e9583c72ca168bd374c24"
+    },
+    {
+      "path": "locale/en/LC_MESSAGES/default.po",
+      "bytes": 17884,
+      "format": "file",
+      "sha256": "60fa20aea1b94bac2cb23732cadcf3e54c8367ac56167d9a0893b40d1272bee9"
+    },
+    {
+      "path": "locale/es/LC_MESSAGES/default.mo",
+      "bytes": 21725,
+      "format": "file",
+      "sha256": "ef8f72e7b63e3553fdd914e350c93bcd1104b2c6b20856cf967c46111da407a1"
+    },
+    {
+      "path": "locale/es/LC_MESSAGES/default.po",
+      "bytes": 26669,
+      "format": "file",
+      "sha256": "2bfea7f333318c8e5a8894855858de8eb81fea68fe9c846603b0c15eefe096e2"
+    },
+    {
+      "path": "locale/fi/LC_MESSAGES/default.mo",
+      "bytes": 21223,
+      "format": "file",
+      "sha256": "0ba1744178d8f5bf5e46b2bd56c80d903140a53c675d6329ca9b25404db457e1"
+    },
+    {
+      "path": "locale/fi/LC_MESSAGES/default.po",
+      "bytes": 26170,
+      "format": "file",
+      "sha256": "5afd0d79a5ab242b6fe7f8651110e5e0330484eca24a063140bc2366d24f5ebb"
+    },
+    {
+      "path": "locale/fr/LC_MESSAGES/default.mo",
+      "bytes": 21928,
+      "format": "file",
+      "sha256": "50aaaa8ff33e6232ac2b8d62ed7570807ce21db5bceab998a8ea845808b74e51"
+    },
+    {
+      "path": "locale/fr/LC_MESSAGES/default.po",
+      "bytes": 26856,
+      "format": "file",
+      "sha256": "3edfc4bb90ff8c45c4710bcb541c4ba1bb643b0f877b6df4d79547aa185b0c49"
+    },
+    {
+      "path": "locale/he/LC_MESSAGES/default.mo",
+      "bytes": 23052,
+      "format": "file",
+      "sha256": "c2456687d0b334b59e0d8847975a28c9a8f8c4803abc31e00dfa2ab4d1f25210"
+    },
+    {
+      "path": "locale/he/LC_MESSAGES/default.po",
+      "bytes": 27981,
+      "format": "file",
+      "sha256": "cbf707a888da2d7b65719ede3dc7adcbec25e2009f1031bd68635009ecdebc08"
+    },
+    {
+      "path": "locale/hu/LC_MESSAGES/default.mo",
+      "bytes": 22370,
+      "format": "file",
+      "sha256": "f9a0679275da8c30c83fbec2ff0ec6c3b8821695d52018719d87a5b5ab306d32"
+    },
+    {
+      "path": "locale/hu/LC_MESSAGES/default.po",
+      "bytes": 27316,
+      "format": "file",
+      "sha256": "2c9071f790e7b329a1b57881ce3b55e2d3ed8703bdff0a376e89fcbd32713261"
+    },
+    {
+      "path": "locale/id/LC_MESSAGES/default.mo",
+      "bytes": 20845,
+      "format": "file",
+      "sha256": "a5ca307c4e9f2cb9557e33151da63a6edf3db74ee11b27b5d174055a006a700b"
+    },
+    {
+      "path": "locale/id/LC_MESSAGES/default.po",
+      "bytes": 25792,
+      "format": "file",
+      "sha256": "3ce5a1aeec4ad790b334d13a7a9425301ea1e690667b989112e9f7e40296ad15"
+    },
+    {
+      "path": "locale/it/LC_MESSAGES/default.mo",
+      "bytes": 21389,
+      "format": "file",
+      "sha256": "de67e22623d5bc6b5df7b8f6e18172457c37573795fa44d92ddbd9977141cab6"
+    },
+    {
+      "path": "locale/it/LC_MESSAGES/default.po",
+      "bytes": 26366,
+      "format": "file",
+      "sha256": "1c835efdeec7f40bc2e4875c4cfee322e114b1815b8be3aaf348aa8f20a8ad2e"
+    },
+    {
+      "path": "locale/ja/LC_MESSAGES/default.mo",
+      "bytes": 23282,
+      "format": "file",
+      "sha256": "2a1e015af15b6131c755e6089bef8d15e613f232e47bf8459035347d24d5e6a3"
+    },
+    {
+      "path": "locale/ja/LC_MESSAGES/default.po",
+      "bytes": 28215,
+      "format": "file",
+      "sha256": "f932e3c5a55c1f5f6b8bf6f359feed7a0bcbf814dd062f242b87203e9e37fe3b"
+    },
+    {
+      "path": "locale/ko/LC_MESSAGES/default.mo",
+      "bytes": 22069,
+      "format": "file",
+      "sha256": "260bdfdda30fec5c04187d60874d7169d886a34879d2c1a8a2b5e5505174e6ff"
+    },
+    {
+      "path": "locale/ko/LC_MESSAGES/default.po",
+      "bytes": 27023,
+      "format": "file",
+      "sha256": "437004352e83c067c898e095570993b6eacb65a07a7e8efd74e42a6c11dcccb5"
+    },
+    {
+      "path": "locale/nl/LC_MESSAGES/default.mo",
+      "bytes": 21328,
+      "format": "file",
+      "sha256": "a742403c2cd534d440bcb66acd7696bc5b374a156640a6baaefc77138a0311c1"
+    },
+    {
+      "path": "locale/nl/LC_MESSAGES/default.po",
+      "bytes": 26267,
+      "format": "file",
+      "sha256": "0f391d35e85b4bd42d38afafddf3586f89eb157418cd2d395337e37a804e5d7a"
+    },
+    {
+      "path": "locale/no/LC_MESSAGES/default.mo",
+      "bytes": 20411,
+      "format": "file",
+      "sha256": "82983ae488c1e213ef1ea150f65d53457840f1e3488217e9a48f2425353b41eb"
+    },
+    {
+      "path": "locale/no/LC_MESSAGES/default.po",
+      "bytes": 25351,
+      "format": "file",
+      "sha256": "8d7bcaceaee1b0024f88ea0d5a689c80c8cd3d6263b40e3e1b00ca1e07009e72"
+    },
+    {
+      "path": "locale/pl/LC_MESSAGES/default.mo",
+      "bytes": 21426,
+      "format": "file",
+      "sha256": "e37fcd9fc0b0bc3258888563c7a8934927d19b58d3fc124ec117bc77eb38358e"
+    },
+    {
+      "path": "locale/pl/LC_MESSAGES/default.po",
+      "bytes": 26364,
+      "format": "file",
+      "sha256": "1b2a80be2c45b9dd688d60731ab9f6e5e79a100990aaa1f2863c3e0b0b090aba"
+    },
+    {
+      "path": "locale/pt_BR/LC_MESSAGES/default.mo",
+      "bytes": 21599,
+      "format": "file",
+      "sha256": "56de900486d5edd5b4c2b01205517fa31854b497d6ba64ae1e4507ce2ad791b6"
+    },
+    {
+      "path": "locale/pt_BR/LC_MESSAGES/default.po",
+      "bytes": 26548,
+      "format": "file",
+      "sha256": "98135365485c41fc524ce7b69edaff34c533dc23a68d3b4c7a29378694c833e7"
+    },
+    {
+      "path": "locale/ru/LC_MESSAGES/default.mo",
+      "bytes": 26338,
+      "format": "file",
+      "sha256": "74b13cfbdf9adb41e09f17d5bd9eedbd1f0db2f35dcee7e62d4e00ebdc47ddda"
+    },
+    {
+      "path": "locale/ru/LC_MESSAGES/default.po",
+      "bytes": 31600,
+      "format": "file",
+      "sha256": "ebd3ec9e41564d5508fc6f9b636f8fad2fa022ace4df279d79e3909741322067"
+    },
+    {
+      "path": "locale/sk/LC_MESSAGES/default.mo",
+      "bytes": 21539,
+      "format": "file",
+      "sha256": "a167b2a0d4c7f0d951169c225fc1503f8b1969f4df6792f0e44137239f759337"
+    },
+    {
+      "path": "locale/sk/LC_MESSAGES/default.po",
+      "bytes": 26864,
+      "format": "file",
+      "sha256": "58b4f79403955155671a07818990f264f9795e06b651b76f61b9a5a5a0187115"
+    },
+    {
+      "path": "locale/sl/LC_MESSAGES/default.mo",
+      "bytes": 21032,
+      "format": "file",
+      "sha256": "21e6510be8d636bd820d3274e409d2b43d0980da84ded51f4b28980709d60652"
+    },
+    {
+      "path": "locale/sl/LC_MESSAGES/default.po",
+      "bytes": 25960,
+      "format": "file",
+      "sha256": "f33d6049372faddd082b4b06e0413672263902c72d404ad20da60204a8e77734"
+    },
+    {
+      "path": "locale/sr/LC_MESSAGES/default.mo",
+      "bytes": 25809,
+      "format": "file",
+      "sha256": "4b50db851faff2f52e3484c318ad01caa295d27ecb9d2edfdb69af01f8cc846f"
+    },
+    {
+      "path": "locale/sr/LC_MESSAGES/default.po",
+      "bytes": 30748,
+      "format": "file",
+      "sha256": "abb848245b3e663a669ce72a4b63187c1fe6654f95b85a6aa8c44e3b9b68882d"
+    },
+    {
+      "path": "locale/sv/LC_MESSAGES/default.mo",
+      "bytes": 20542,
+      "format": "file",
+      "sha256": "4473f9b0fcd394b7b08a9dca05ea63c920e826472d89a3594b7f559b9b25fb74"
+    },
+    {
+      "path": "locale/sv/LC_MESSAGES/default.po",
+      "bytes": 25862,
+      "format": "file",
+      "sha256": "b41ab4781f56954d2036861db85c10363955bc4c0817350c813f3a1097865c89"
+    },
+    {
+      "path": "locale/th/LC_MESSAGES/default.mo",
+      "bytes": 32129,
+      "format": "file",
+      "sha256": "cdb3b5bbc9774d55e7defe5bfa698402d393728fb255274fa5a73f1a6e2729e1"
+    },
+    {
+      "path": "locale/th/LC_MESSAGES/default.po",
+      "bytes": 37057,
+      "format": "file",
+      "sha256": "2fe062a234c85e1bd20d77183a5607de19d2b7af14a3051bdceb8222de2a99ec"
+    },
+    {
+      "path": "locale/tr/LC_MESSAGES/default.mo",
+      "bytes": 21837,
+      "format": "file",
+      "sha256": "52c19b92ee547e272b5cadda3572b46ae75004e54257fc7ad9607c04d4efc3ae"
+    },
+    {
+      "path": "locale/tr/LC_MESSAGES/default.po",
+      "bytes": 26781,
+      "format": "file",
+      "sha256": "186dce790c68ead523d5bb5754dc334b6e163b1c345ed157869b4c09ea949a99"
+    },
+    {
+      "path": "locale/uk/LC_MESSAGES/default.mo",
+      "bytes": 26755,
+      "format": "file",
+      "sha256": "f3458cc06ac318bdb400d72fb481f40448918fad912258c8db1fde9c823527df"
+    },
+    {
+      "path": "locale/uk/LC_MESSAGES/default.po",
+      "bytes": 31699,
+      "format": "file",
+      "sha256": "d5d47856d153acf08038a61ee4b667098c01f6cbd36b1f338cab161da7dc72b0"
+    },
+    {
+      "path": "locale/zh_CHS/LC_MESSAGES/default.mo",
+      "bytes": 19596,
+      "format": "file",
+      "sha256": "e44a78872c3b09a740bc65d0e3d3e42d548d1826c56c2c72c0adb14585c50ae8"
+    },
+    {
+      "path": "locale/zh_CHS/LC_MESSAGES/default.po",
+      "bytes": 24538,
+      "format": "file",
+      "sha256": "04b52e3b18a52fdc899c080cf4e1cba47c6863a025a12a203329a46a660cba17"
+    },
+    {
+      "path": "locale/zh_CHT/LC_MESSAGES/default.mo",
+      "bytes": 19880,
+      "format": "file",
+      "sha256": "b6826b25a19e4408874e13ed67cedcb1148302f63d5c91bc11651a8215adf296"
+    },
+    {
+      "path": "locale/zh_CHT/LC_MESSAGES/default.po",
+      "bytes": 24837,
+      "format": "file",
+      "sha256": "fb6b8da521bd8a7ac53c24687803db3b216e6fa075c274277dfbad6902cef19b"
+    }
+  ],
+  "pe": {
+    "format": "pe32-plus",
+    "machine": 34404,
+    "coverage": {
+      "status": "complete",
+      "examined_entries": 390,
+      "resources": 189
+    }
+  },
+  "limitations": [
+    "Inspection derives bounded static hypotheses and next probes; it does not execute the artifact or claim format-specific semantics.",
+    "ZIP inventory lists central-directory entries only. Bytes after the central directory, including an APK Signing Block or a ZIP comment, are not occurrences.",
+    "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
+    "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
+    "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected."
+  ]
+}

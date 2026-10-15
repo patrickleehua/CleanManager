@@ -1,0 +1,971 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cleanmanager:protocol:1.0",
+  "title": "CleanManager proposed v1 record",
+  "description": "Pre-implementation contract; examples are synthetic, not runtime evidence.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/capabilities"
+    },
+    {
+      "$ref": "#/$defs/scan_result"
+    },
+    {
+      "$ref": "#/$defs/candidate"
+    },
+    {
+      "$ref": "#/$defs/plan"
+    },
+    {
+      "$ref": "#/$defs/operation_report"
+    },
+    {
+      "$ref": "#/$defs/error"
+    },
+    {
+      "$ref": "#/$defs/progress"
+    }
+  ],
+  "$defs": {
+    "path": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "enum": [
+            "windows",
+            "macos"
+          ]
+        },
+        "display": {
+          "type": "string",
+          "minLength": 1
+        },
+        "raw_encoding": {
+          "enum": [
+            "windows_utf16le_base64",
+            "unix_bytes_base64"
+          ]
+        },
+        "raw_base64": {
+          "type": "string",
+          "minLength": 4,
+          "contentEncoding": "base64"
+        }
+      },
+      "required": [
+        "platform",
+        "display",
+        "raw_encoding",
+        "raw_base64"
+      ],
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "volume_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quality": {
+          "enum": [
+            "strong",
+            "weak"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "volume_id",
+        "file_id",
+        "generation",
+        "quality",
+        "observed_at"
+      ],
+      "additionalProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_display": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "code",
+        "scope_display",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "available",
+            "permission_required",
+            "unsupported",
+            "unverified"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "capabilities"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos"
+          ]
+        },
+        "engine_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supported_schema_versions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "platform",
+        "engine_version",
+        "supported_schema_versions",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "scan_result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "scan_result"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "backend": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "partial",
+            "cancelled",
+            "failed"
+          ]
+        },
+        "completeness": {
+          "enum": [
+            "verified_scope",
+            "partial_scope"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "entries_seen": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skipped_ranges": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "logical_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "allocated_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown_size_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issue"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "scan_id",
+        "scope_id",
+        "revision",
+        "backend",
+        "status",
+        "completeness",
+        "started_at",
+        "finished_at",
+        "entries_seen",
+        "skipped_ranges",
+        "logical_bytes",
+        "allocated_bytes",
+        "unknown_size_count",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "candidate"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "entry_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "blocked"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "impact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "allocated_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reclaimable_estimate_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimate_basis": {
+          "enum": [
+            "metadata_estimate",
+            "shared_blocks_unknown",
+            "not_computed"
+          ]
+        },
+        "allowed_modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "trash",
+              "quarantine",
+              "delete"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "candidate_id",
+        "scan_id",
+        "scan_revision",
+        "entry_id",
+        "rule_id",
+        "rule_version",
+        "risk",
+        "path",
+        "reason",
+        "impact",
+        "logical_bytes",
+        "allocated_bytes",
+        "reclaimable_estimate_bytes",
+        "estimate_basis",
+        "allowed_modes"
+      ],
+      "additionalProperties": false
+    },
+    "plan_item": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "observed_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "logical_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "allocated_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "must_not_follow_links": {
+          "const": true
+        }
+      },
+      "required": [
+        "action_id",
+        "candidate_id",
+        "entry_id",
+        "path",
+        "identity",
+        "observed_fingerprint_sha256",
+        "logical_bytes",
+        "allocated_bytes",
+        "must_not_follow_links"
+      ],
+      "additionalProperties": false
+    },
+    "plan_body": {
+      "type": "object",
+      "properties": {
+        "engine_contract": {
+          "const": "plan/v1"
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rule_set_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "mode": {
+          "enum": [
+            "trash",
+            "quarantine",
+            "delete"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/plan_item"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "engine_contract",
+        "plan_id",
+        "scope_id",
+        "scan_id",
+        "scan_revision",
+        "rule_set_digest",
+        "policy_digest",
+        "created_at",
+        "expires_at",
+        "mode",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "plan"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "$ref": "#/$defs/plan_body"
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "authorization_status": {
+          "enum": [
+            "required",
+            "authorized",
+            "expired",
+            "revoked"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "body",
+        "plan_digest",
+        "authorization_status"
+      ],
+      "additionalProperties": false
+    },
+    "action_result": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "skipped",
+            "failed",
+            "not_started",
+            "unknown"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recovery": {
+          "enum": [
+            "trash",
+            "quarantine",
+            "unavailable",
+            "not_applicable",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "action_id",
+        "status",
+        "code",
+        "message",
+        "recovery"
+      ],
+      "additionalProperties": false
+    },
+    "operation_report": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "operation_report"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "partial",
+            "cancelled",
+            "failed",
+            "reconciliation_required"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "succeeded": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "not_started": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action_result"
+          },
+          "minItems": 0
+        },
+        "processed_logical_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "volume_free_before_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "volume_free_after_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_free_delta_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|-?[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation_id",
+        "plan_id",
+        "plan_digest",
+        "status",
+        "started_at",
+        "finished_at",
+        "succeeded",
+        "skipped",
+        "failed",
+        "not_started",
+        "unknown",
+        "items",
+        "processed_logical_bytes",
+        "volume_free_before_bytes",
+        "volume_free_after_bytes",
+        "observed_free_delta_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "error"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "enum": [
+            "invalid_argument",
+            "schema_mismatch",
+            "needs_approval",
+            "policy_denied",
+            "permission_required",
+            "plan_stale",
+            "cursor_stale",
+            "conflict",
+            "unsupported",
+            "io_error",
+            "internal_error",
+            "cancelled"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "required_action": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operation_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scope_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "plan_id",
+            "operation_id",
+            "scope_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "code",
+        "message",
+        "retryable",
+        "required_action",
+        "details"
+      ],
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "progress"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "enum": [
+            "discovering",
+            "indexing",
+            "analyzing",
+            "validating",
+            "applying",
+            "stopping"
+          ]
+        },
+        "completed_units": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "total_units": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "emitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "task_id",
+        "sequence",
+        "phase",
+        "completed_units",
+        "total_units",
+        "emitted_at"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

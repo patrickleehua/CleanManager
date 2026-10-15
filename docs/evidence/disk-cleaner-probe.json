@@ -1,0 +1,54 @@
+{
+  "source_commit": "fe16728994e4599242b3fd74b2f1ebff702063a9",
+  "scope": "Synthetic CSV analysis only; no scan, backup or deletion executed.",
+  "cases": [
+    {
+      "case": "keyword_false_positive",
+      "input_rows": [
+        [
+          "D:\\Projects\\temp\\invoice.db",
+          104857600
+        ]
+      ],
+      "selected": {
+        "high": [
+          {
+            "path": "D:\\Projects\\temp\\invoice.db",
+            "size": 104857600,
+            "size_formatted": "100.00 MB",
+            "name": "临时文件",
+            "safe": true
+          }
+        ],
+        "medium": [],
+        "low": []
+      }
+    },
+    {
+      "case": "excluded_child_under_selected_parent",
+      "input_rows": [
+        [
+          "C:\\Users\\demo\\AppData\\Local\\Temp\\",
+          1073741824
+        ],
+        [
+          "C:\\Users\\demo\\AppData\\Local\\Temp\\.ssh\\id_ed25519",
+          104857600
+        ]
+      ],
+      "selected": {
+        "high": [
+          {
+            "path": "C:\\Users\\demo\\AppData\\Local\\Temp\\",
+            "size": 1073741824,
+            "size_formatted": "1.00 GB",
+            "name": "临时文件",
+            "safe": true
+          }
+        ],
+        "medium": [],
+        "low": []
+      }
+    }
+  ]
+}

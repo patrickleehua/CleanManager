@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "needs_approval",
+  "message": "Plan needs user authorization",
+  "retryable": false,
+  "required_action": "Review the plan in the trusted UI",
+  "details": {
+    "plan_id": "p_demo",
+    "operation_id": null,
+    "scope_id": "scope_demo"
+  }
+}

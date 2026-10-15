@@ -1,0 +1,14 @@
+{
+  "FileVersion": "4.33.0.0",
+  "ProductVersion": "4.33",
+  "ProductName": "WizTree",
+  "CompanyName": "Antibody Software Limited",
+  "SignatureStatus": "Valid",
+  "SignerSubject": "CN=Antibody Software Limited, O=Antibody Software Limited, S=Bay of Plenty, C=NZ, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.3=NZ, SERIALNUMBER=1988665",
+  "SignerThumbprint": "BD10DE8E797A2F0028F705896BFEF97E4BBFC934",
+  "observation_id": "OBS-WIZ-01",
+  "observed_on": "2026-10-14",
+  "artifact": "WizTree64.exe",
+  "artifact_sha256": "117e8e3b212f25442e9be5261e96b8d10e8baa3ca6e87317e2e11f313f03d533",
+  "method": "PowerShell FileInfo.VersionInfo and Get-AuthenticodeSignature; ordinary observation, not REA evidence"
+}

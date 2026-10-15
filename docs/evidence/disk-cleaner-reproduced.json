@@ -1,0 +1,58 @@
+{
+  "source_commit": "fe16728994e4599242b3fd74b2f1ebff702063a9",
+  "source_url": "https://github.com/iziqing/-disk-cleaner/blob/fe16728994e4599242b3fd74b2f1ebff702063a9/analyze.py",
+  "source_sha256": "4630f81980b4badf74bf49ab234a838f00c9753fe77454020362971169d7c03a",
+  "source_lf_normalized_sha256": "150dc73f335e71ed343a5f9fa5ef9c1334b17c26dcc4c3aec008a83d9fbdf069",
+  "scope": "Synthetic CSV classification only. No vendor scan, backup, script generation or deletion executed.",
+  "cases": [
+    {
+      "case": "keyword_false_positive",
+      "input_rows": [
+        [
+          "D:\\Projects\\temp\\invoice.db",
+          104857600
+        ]
+      ],
+      "selected": {
+        "high": [
+          {
+            "path": "D:\\Projects\\temp\\invoice.db",
+            "size": 104857600,
+            "size_formatted": "100.00 MB",
+            "name": "临时文件",
+            "safe": true
+          }
+        ],
+        "medium": [],
+        "low": []
+      }
+    },
+    {
+      "case": "excluded_child_under_selected_parent",
+      "input_rows": [
+        [
+          "C:\\Users\\demo\\AppData\\Local\\Temp\\",
+          1073741824
+        ],
+        [
+          "C:\\Users\\demo\\AppData\\Local\\Temp\\.ssh\\id_ed25519",
+          104857600
+        ]
+      ],
+      "selected": {
+        "high": [
+          {
+            "path": "C:\\Users\\demo\\AppData\\Local\\Temp\\",
+            "size": 1073741824,
+            "size_formatted": "1.00 GB",
+            "name": "临时文件",
+            "safe": true
+          }
+        ],
+        "medium": [],
+        "low": []
+      }
+    }
+  ],
+  "assertions": "Both classification observations reproduced; this does not demonstrate an actual deletion."
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "kind": "progress",
+  "request_id": "req_synthetic",
+  "task_id": "s_demo",
+  "sequence": 0,
+  "phase": "discovering",
+  "completed_units": 12,
+  "total_units": null,
+  "emitted_at": "2026-10-14T12:00:02Z"
+}

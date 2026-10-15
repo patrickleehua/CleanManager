@@ -1,0 +1,118 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "rule_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "experimental",
+        "verified",
+        "enabled"
+      ]
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "windows",
+          "macos"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "root_resolver": {
+      "enum": [
+        "application_cache",
+        "user_temp",
+        "project_build_output"
+      ]
+    },
+    "owner_app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relative_components": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "min_age_days": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "allowed_modes": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "trash",
+          "quarantine",
+          "delete"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "requires_owner_inactive": {
+      "type": "boolean"
+    },
+    "protect_descendants": {
+      "const": true
+    },
+    "follow_links": {
+      "const": false
+    },
+    "impact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "rule_id",
+    "version",
+    "status",
+    "platforms",
+    "root_resolver",
+    "owner_app_id",
+    "relative_components",
+    "min_age_days",
+    "risk",
+    "allowed_modes",
+    "requires_owner_inactive",
+    "protect_descendants",
+    "follow_links",
+    "impact",
+    "evidence_refs"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cleanmanager:rule:1.0"
+}

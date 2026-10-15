@@ -1,0 +1,50 @@
+{
+  "evidence_id": "ev_9f6646a91db82b68d551a30410f4d94d2dbb72b10d4f91e6c707472fdf1db2e0",
+  "authority": "controlled-replay",
+  "confidence": "observed",
+  "operation": "capture_browser_scenario",
+  "provider": {
+    "id": "rea-playwright-browser-scenario",
+    "name": "REA Playwright browser scenario capture provider",
+    "version": "1"
+  },
+  "steps": [
+    {
+      "id": "scenario_start",
+      "status": "completed",
+      "url": "https://mole.fit/zh/"
+    },
+    {
+      "id": "feature_0",
+      "status": "completed",
+      "url": "https://mole.fit/zh/mac-cleaner"
+    },
+    {
+      "id": "feature_1",
+      "status": "completed",
+      "url": "https://mole.fit/zh/mac-optimizer"
+    },
+    {
+      "id": "feature_2",
+      "status": "completed",
+      "url": "https://mole.fit/zh/mac-disk-analyzer"
+    },
+    {
+      "id": "feature_3",
+      "status": "completed",
+      "url": "https://mole.fit/zh/mac-system-monitor"
+    }
+  ],
+  "limitations": [
+    "This file is an evidence metadata summary; full REA record was returned and retained in the session.",
+    "Only official website content was observed, not desktop binaries or actual native actions.",
+    "Artifact identity is unavailable for this observation.",
+    "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+    "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
+    "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+    "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
+    "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+    "Storage values are hashed only after declared-secret redaction.",
+    "Browser host platform and architecture were not observed."
+  ]
+}

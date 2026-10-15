@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-15",
+  "format": "Pure HTML/CSS/JavaScript interactive preview. No image assets or image generation.",
+  "entry": "index.html",
+  "references": [
+    {
+      "url": "https://mole.fit/zh/mac-cleaner",
+      "applied": "Short first-run entry, scoped scan, evidence/impact before selection."
+    },
+    {
+      "url": "https://mole.fit/zh/mac-disk-analyzer",
+      "applied": "Drilldown treemap, breadcrumb navigation, contextual actions, unknown sizes stay distinct."
+    },
+    {
+      "url": "https://mole.fit/zh/mac-app-uninstaller",
+      "applied": "App icon rows, inline associated content, persistent selection bar."
+    },
+    {
+      "url": "https://mole.fit/zh/mac-optimizer",
+      "applied": "Problem-specific maintenance tasks with applicability and item results."
+    },
+    {
+      "url": "https://mole.fit/zh/mac-system-monitor",
+      "applied": "Metrics with trends, sortable process list, process explanation/pinning, compact status panel."
+    }
+  ],
+  "rea_evidence_id": "ev_9f6646a91db82b68d551a30410f4d94d2dbb72b10d4f91e6c707472fdf1db2e0",
+  "scope": {
+    "current_openspec": [
+      "Scoped scan and partial/cancel states",
+      "Candidate evidence, protection and impact",
+      "App inventory and associated candidate inspection",
+      "Disk query, equivalent table and unknown measurements",
+      "Immutable plan, consent, mode replacement, expiration",
+      "Execution/stop and partial/unknown outcomes",
+      "Independent recovery/purge with conflict handling",
+      "Agent handoff and bounded policy concept"
+    ],
+    "extension_concepts": [
+      "Native app uninstaller/update handoff",
+      "Login-item management",
+      "OS maintenance",
+      "Resource/process status and compact tray panel"
+    ],
+    "not_modified": "OpenSpec artifacts and product Rust/CLI implementation"
+  },
+  "prototype_limits": [
+    "All data/actions are in-browser examples; no file/OS access, installation, process termination or network system monitoring.",
+    "CSS layout and charts are original code; competitor brand/planet assets are not copied.",
+    "Theme preference is saved locally; other demo state resets on reload.",
+    "System capability matrix, policy quotas and authorization credentials require actual core implementation and real-platform acceptance."
+  ],
+  "delivered_interactions": [
+    "Start/cancel scoped scan and retain known results",
+    "Global navigation preserves tasks",
+    "Explicit candidate selection and details",
+    "AI cache/session/model separation",
+    "App search/filter/sort/inline expansion and conceptual update/login/uninstall flows",
+    "Treemap selection/drill/breadcrumb/table/metric switch",
+    "Fixed task selection and maintenance plan",
+    "Status trends/process search/sort/pin and tray toggles",
+    "Plan modes create new immutable plans; approval resets",
+    "Partial and interrupted execution reports; duplicate execution reuses its report",
+    "Restore conflict and destination planning; independent purge",
+    "Settings, exact-root preauthorization toggle, demo failure scenarios",
+    "Ctrl+K navigation"
+  ],
+  "validation": {
+    "initial": "All 12 routes rendered; scan continuity/cancel, plan freezing/consent/mode, changed-object skip, duplicate apply, restore conflict, treemap unknowns, process drawer and command palette verified.",
+    "responsive": "390px viewport checked for document overflow on 10 pages; no console errors."
+  }
+}

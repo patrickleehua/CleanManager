@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_report",
+  "request_id": "req_synthetic",
+  "operation_id": "op_demo",
+  "plan_id": "p_demo",
+  "plan_digest": "bf78331204805b4536d9fdae3b5dad7ea02bb39d9adef558d7bc00af43fc25a2",
+  "status": "completed",
+  "started_at": "2026-10-14T12:02:00Z",
+  "finished_at": "2026-10-14T12:02:01Z",
+  "succeeded": 1,
+  "skipped": 0,
+  "failed": 0,
+  "not_started": 0,
+  "unknown": 0,
+  "items": [
+    {
+      "action_id": "a_demo",
+      "status": "succeeded",
+      "code": "moved_to_trash",
+      "message": "Synthetic same-volume move",
+      "recovery": "trash"
+    }
+  ],
+  "processed_logical_bytes": "104857600",
+  "volume_free_before_bytes": "1000000000",
+  "volume_free_after_bytes": "1000000000",
+  "observed_free_delta_bytes": "0"
+}

@@ -1,0 +1,399 @@
+{
+  "version": "5.0",
+  "status": "browser_checks_passed",
+  "scope": "Synthetic HTML prototype UI only. No model, CLI or OS behavior validated.",
+  "checked_at": "2026-10-14T18:16:01.069Z",
+  "observations": [
+    {
+      "check": "initial-unconfigured",
+      "heading": "AI 诊断",
+      "overflow": false,
+      "provider": "尚未配置",
+      "records": 0,
+      "width": 1440
+    },
+    {
+      "check": "explicit-scope-checkboxes",
+      "expanded": true,
+      "focusTag": "INPUT",
+      "focusType": "checkbox",
+      "overflow": false,
+      "payload": {
+        "allocated_bytes": null,
+        "children": [
+          {
+            "allocated_bytes": null,
+            "logical_bytes": "30064771072",
+            "object": "子项 1"
+          },
+          {
+            "allocated_bytes": null,
+            "logical_bytes": "12884901888",
+            "object": "子项 2"
+          }
+        ],
+        "content_included": false,
+        "coverage": "部分扫描 · 后代/依赖未核实",
+        "location": "C:/Users/Lin/Models",
+        "logical_bytes": "42949672960",
+        "object_id": "disk:models",
+        "ownership": "模型共享块",
+        "protected": true,
+        "revision": "demo-r4",
+        "rule": null,
+        "scan_id": "S-DEMO-001",
+        "schema_version": "prototype-diagnosis/1",
+        "synthetic": true,
+        "type": "目录 / 集合"
+      }
+    },
+    {
+      "check": "unsupported-cli",
+      "error": "该 CLI 模式无法约束文件工具访问；请选择已验证的适配或 API。",
+      "planButton": false
+    },
+    {
+      "allocation": "40.0 GiB · 逻辑量分配量 未知部分扫描 · 后代/依赖未核实",
+      "check": "shared-model-cli",
+      "disclosure": "元数据含完整路径 · 文件内容未发送",
+      "planButton": false,
+      "provider": "已有 CLI · Claude"
+    },
+    {
+      "check": "navigation-does-not-cancel",
+      "visibleRunning": true
+    },
+    {
+      "check": "cancel-terminal",
+      "planButton": false,
+      "state": "诊断已取消"
+    },
+    {
+      "check": "provider-timeout",
+      "error": "样例提供方响应超时，尚无完整诊断。",
+      "planButton": false
+    },
+    {
+      "check": "invalid-response",
+      "error": "回答缺少有效依据与结构，不能作为诊断结论。",
+      "planButton": false
+    },
+    {
+      "check": "default-metadata",
+      "payload": {
+        "allocated_bytes": null,
+        "content_included": false,
+        "coverage": "候选所需证据 · 样例",
+        "location": "[用户目录已隐藏] / [已知缓存目录]",
+        "logical_bytes": "167772160",
+        "object_id": "candidate:code",
+        "ownership": "Visual Studio Code",
+        "protected": false,
+        "revision": "demo-r4",
+        "rule": "demo.code-cache v1",
+        "scan_id": "S-DEMO-001",
+        "schema_version": "prototype-diagnosis/1",
+        "synthetic": true,
+        "type": "应用缓存"
+      }
+    },
+    {
+      "applyDisabled": true,
+      "check": "single-object-plan",
+      "consent": false,
+      "objectRows": 1,
+      "objects": "Code CacheC:/Users/Lin/AppData/Roaming/Code/Cache160 MiB版本化规则待现场核验",
+      "title": "P-DEMO-001 · AI 诊断 → 人工审阅 · 固定对象"
+    },
+    {
+      "check": "repeat-handoff-same-plan",
+      "objectRows": 1,
+      "title": "P-DEMO-001 · AI 诊断 → 人工审阅 · 固定对象"
+    },
+    {
+      "check": "stale-blocks-plan",
+      "planEnabled": false
+    },
+    {
+      "check": "remove-diagnosis-preserves-plan",
+      "objectRows": 1,
+      "plan": "P-DEMO-001 · AI 诊断 → 人工审阅 · 固定对象"
+    },
+    {
+      "check": "installer-user-statement",
+      "planButton": false,
+      "userStatement": "用户补充 我已安装，认为可以重新获取尚未由本机核实，建议仍以现有证据为准。"
+    },
+    {
+      "check": "installer-narrow",
+      "overflow": false,
+      "scrollWidth": 375,
+      "width": 390
+    },
+    {
+      "check": "checklist-narrow",
+      "dialogWidth": 343,
+      "overflow": false
+    },
+    {
+      "check": "diagnosis-320-dark",
+      "overflow": false,
+      "scrollWidth": 305,
+      "width": 320
+    },
+    {
+      "check": "api-config-320-dark",
+      "credentialDisabled": true,
+      "dialogOverflow": false,
+      "dialogWidth": 273,
+      "viewport": 320
+    },
+    {
+      "check": "application-context-entry",
+      "object": "Visual Studio Code · 关联数据",
+      "preview": "AI 诊断 · 信息预览"
+    },
+    {
+      "check": "candidate-context-entry",
+      "object": "Code Cache",
+      "preview": "AI 诊断 · 信息预览"
+    },
+    {
+      "check": "local-works-after-provider-removal",
+      "diagnosisEntry": true,
+      "heading": "清理"
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "清理",
+      "overflow": false,
+      "route": "clean",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "AI 与开发者",
+      "overflow": false,
+      "route": "ai",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "应用",
+      "overflow": false,
+      "route": "apps",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "磁盘分析",
+      "overflow": false,
+      "route": "disk",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "Agent",
+      "overflow": false,
+      "route": "agent",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "隔离恢复",
+      "overflow": false,
+      "route": "recovery",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "审阅计划",
+      "overflow": false,
+      "route": "plans",
+      "width": 390
+    },
+    {
+      "check": "existing-route-narrow",
+      "heading": "设置",
+      "overflow": false,
+      "route": "settings",
+      "width": 390
+    },
+    {
+      "check": "command-keyboard-diagnosis",
+      "found": true
+    },
+    {
+      "check": "preview-narrow",
+      "dialogOverflow": false,
+      "scopeFull": false,
+      "width": 390
+    },
+    {
+      "answer": "AI · 样例回复恢复取决于处理方式：同卷隔离仅在内容与恢复清单仍有效时可恢复；系统回收站遵循系统能力；永久删除没有产品内撤销。未知个人文件还需确认可读备份。",
+      "check": "video-user-and-recovery",
+      "overflow": false,
+      "planButton": false,
+      "userStatement": "用户补充 我已备份，并认为当前项目已不再使用尚未由本机核实，建议仍以现有证据为准。"
+    },
+    {
+      "check": "untrusted-question-escaped",
+      "injectedImage": false,
+      "text": "<img src=x onerror=alert(1)>"
+    },
+    {
+      "check": "provider-change-requires-preview",
+      "dialog": "AI 诊断 · 信息预览",
+      "provider": "自配 API · 我的诊断模型"
+    },
+    {
+      "check": "desktop-dark",
+      "overflow": false,
+      "theme": true,
+      "width": 1440
+    },
+    {
+      "check": "keep-blocks-cache-plan",
+      "planEnabled": false
+    }
+  ],
+  "console_errors": [],
+  "supplemental_checks": [
+    {
+      "check": "metadata-preview-cancel",
+      "result": "No diagnosis record created; local workspace remains available"
+    },
+    {
+      "check": "api-config-validation",
+      "result": "Invalid URL rejected; valid sample endpoint and model saved; credential input disabled; probe labeled simulated"
+    },
+    {
+      "check": "disk-context-entry",
+      "result": "Downloads video detail opens scoped preview and completes unknown-file diagnosis without a cleanup rule"
+    }
+  ],
+  "source_hashes": [
+    {
+      "file": "index.html",
+      "sha256": "58e7c6187b8132d3e4c073748c9926aac6895459a77bf61f67afa7d501c6d8a1"
+    },
+    {
+      "file": "app.js",
+      "sha256": "e50225e04ffb122c08b00967e2d954afd7047d0bf6ec48ca18df68d7747612da"
+    },
+    {
+      "file": "style.css",
+      "sha256": "adc345c44708a72575ecb744ef4d781a3fb9672a1132e7b145462212f73de76f"
+    },
+    {
+      "file": "features-v4.js",
+      "sha256": "56c8908d10d37723f0c59efd689485e39edd400598a3d10990ced47c36c3510e"
+    },
+    {
+      "file": "features-v4.css",
+      "sha256": "43e9be19497e3732c3c32f1f570b9b1ac44d4d1b472a508d1d0a527e071a4f92"
+    },
+    {
+      "file": "ai-diagnostics-v5.js",
+      "sha256": "548a50de29d7d55805fdeafc29245aa44c5cb47ad241ffd8653ba499847dd9e6"
+    },
+    {
+      "file": "ai-diagnostics-v5.css",
+      "sha256": "7a139c0bb361cde95a70028fac798045fc7c4adb05c4f6523ebd8679c96e4566"
+    }
+  ],
+  "limitations": [
+    "No actual provider, credential store, CLI, filesystem or product runtime is exercised",
+    "Keyboard controls inspected, Narrator/VoiceOver and native WebView validation still pending",
+    "Last six diagnosis records shown; refresh resets browser demo state"
+  ],
+  "documentation_validation": {
+    "status": "passed",
+    "scope": "Document contracts and synthetic examples only; no product or OS behavior tested.",
+    "schemas": 2,
+    "protocol_examples": 8,
+    "rule_examples": 1,
+    "negative_cases_rejected": [
+      "unknown-field",
+      "numeric-byte-count",
+      "u64-overflow",
+      "tampered-plan",
+      "false-complete-scan",
+      "blocked-action",
+      "incorrect-freed-space",
+      "encoding-mismatch",
+      "unbacked-verified-rule"
+    ],
+    "local_links_checked": 138,
+    "markdown_files_checked": 17,
+    "rea_evidence_records_linked": 6,
+    "rea_unknowns_linked": 2,
+    "reference_probe_cases_matched": 2,
+    "planned_test_ids_checked": 70,
+    "planned_task_ids_checked": 40
+  },
+  "openspec_validation": {
+    "items": [
+      {
+        "id": "define-cleanmanager-mvp",
+        "type": "change",
+        "valid": true,
+        "issues": [],
+        "durationMs": 52
+      }
+    ],
+    "summary": {
+      "totals": {
+        "items": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "byType": {
+        "change": {
+          "items": 1,
+          "passed": 1,
+          "failed": 0
+        }
+      }
+    },
+    "version": "1.0",
+    "root": {
+      "path": "D:\\workplace\\cleanmanager",
+      "source": "nearest"
+    }
+  },
+  "planning_summary": {
+    "core_capabilities": 9,
+    "requirements": 71,
+    "capabilities": 10,
+    "completed_implementation_tasks": 0,
+    "ai_requirements": 13,
+    "ai_scenarios": 19,
+    "extension_capabilities": 1,
+    "scenarios": 94,
+    "implementation_tasks": 79
+  },
+  "extra_link_validation": {
+    "local_links": 26,
+    "guard_checks_passed": true,
+    "unique_requirements": 71,
+    "markdown_files": 15
+  },
+  "baseline_files_unchanged": true,
+  "syntax_checks": {
+    "passed": true,
+    "files": [
+      "app.js",
+      "features-v4.js",
+      "ai-diagnostics-v5.js"
+    ]
+  },
+  "final_ui": {
+    "plan_entry_enabled": true,
+    "clean_sample": "Code Cache",
+    "viewport_override": "reset",
+    "real_connections": false,
+    "theme": "light",
+    "page": "diagnosis"
+  }
+}

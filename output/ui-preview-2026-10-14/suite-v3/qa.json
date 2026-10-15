@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-15",
+  "type": "Browser interaction checks for the HTML prototype; not product/platform acceptance",
+  "checks": {
+    "all_12_routes_render": "passed",
+    "scan_navigation_and_cancellation": "passed",
+    "plan_freezing_consent_and_mode_replacement": "passed",
+    "changed_object_partial_result": "passed",
+    "repeat_apply_reuses_report": "passed",
+    "distinct_prior_operation_reports": "passed",
+    "restore_conflict_and_explicit_destination": "passed",
+    "custom_protection_excludes_candidates": "passed",
+    "disk_drilldown_and_unknown_area_exclusion": "passed",
+    "process_drawer_and_command_palette": "passed",
+    "default_preauthorization_off": "passed",
+    "reduced_motion_style": "passed",
+    "390px_document_overflow_on_10_pages": "none",
+    "browser_console_errors": "none",
+    "raster_image_dependencies": "none"
+  },
+  "resource_revision": "3.4",
+  "note": "Static asset query revisions prevent the browser from retaining earlier scripts during iterative preview edits."
+}

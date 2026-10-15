@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-15",
+  "scope": "HTML prototype interaction and visual checks only; no product or OS acceptance tests",
+  "baseline": "suite-v3 / resources 3.4",
+  "revision": "feature integration v4.0",
+  "entry": "http://127.0.0.1:8765/suite-v3/?v=4.0#agent",
+  "routes": [
+    "home",
+    "clean",
+    "ai",
+    "apps",
+    "disk",
+    "maintenance",
+    "status",
+    "agent",
+    "coverage",
+    "capabilities",
+    "rules",
+    "plans",
+    "activity",
+    "recovery",
+    "settings",
+    "run"
+  ],
+  "checks": {
+    "16_routes_render_at_1440": "passed",
+    "16_routes_render_at_390": "passed",
+    "document_horizontal_overflow": "none observed at either width",
+    "populated_plan_at_390": "3 rows, no document overflow, apply disabled without authorization",
+    "agent_needs_approval": "exit 3, same plan ID shown in human review",
+    "mode_replacement": "new plan ID/digest and unchecked consent",
+    "policy_first_match_drawer": "passed after keeping plan creation on the current route",
+    "policy_scope_and_quota": "matching plan enabled without repeated approval; cumulative shortage requires human review",
+    "policy_execution_and_report": "3 successful synthetic objects, 64 MiB, exit 0; usage 512 to 576 MiB / 148 to 151 items",
+    "interruption_and_reconciliation": "exit 8 with 1 success / 1 unknown / 1 not started; reserved usage 552 MiB, confirmed non-execution reduced it to 528 MiB",
+    "duplicate_submission": "returns existing partial operation, deduplicated true, exit 5; usage remains 528 MiB / 149 items",
+    "rule_pause": "Code Cache and GPU Cache selection disabled with paused-rule label",
+    "restore_conflict": "both copies retained; alternate destination creates an independent pending restore plan",
+    "macos_network_and_denied_read": "limited read requires permission, bulk and quarantine unavailable in the selected demo scene",
+    "command_search_cli": "CLI search opens Agent CLI/Skill tab",
+    "dark_theme": "rendered without document overflow; restored to original light preference",
+    "javascript_syntax": "node --check passed",
+    "console_errors": "none observed"
+  },
+  "limits": [
+    "All runtime records are synthetic browser state. No user target files or OS configuration were changed.",
+    "No real Claude/Codex connection, CLI/Skill installation, MCP server or native scan/deletion was executed.",
+    "These checks do not pass OpenSpec implementation tasks or the platform test matrix."
+  ],
+  "source_files": [
+    {
+      "path": "index.html",
+      "sha256": "381b07f1e3a0f6ed6afee7b66bf20f91bfd2141f1dd1c9c0332c0261e3bb096a",
+      "bytes": 2133
+    },
+    {
+      "path": "app.js",
+      "sha256": "e50225e04ffb122c08b00967e2d954afd7047d0bf6ec48ca18df68d7747612da",
+      "bytes": 70796
+    },
+    {
+      "path": "style.css",
+      "sha256": "adc345c44708a72575ecb744ef4d781a3fb9672a1132e7b145462212f73de76f",
+      "bytes": 19398
+    },
+    {
+      "path": "features-v4.js",
+      "sha256": "56c8908d10d37723f0c59efd689485e39edd400598a3d10990ced47c36c3510e",
+      "bytes": 65005
+    },
+    {
+      "path": "features-v4.css",
+      "sha256": "43e9be19497e3732c3c32f1f570b9b1ac44d4d1b472a508d1d0a527e071a4f92",
+      "bytes": 11981
+    }
+  ]
+}

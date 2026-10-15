@@ -1,0 +1,49 @@
+# Local research downloads and browser automation logs
+/.research/
+/.playwright-mcp/
+
+# Rust / Tauri build artifacts (keep Cargo.lock for the application)
+target/
+
+# JavaScript / TypeScript dependencies and generated output
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python dependencies, bytecode, and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Local environment and credentials (keep example templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+/.claude/settings.local.json
+
+# Editor and operating system files
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# output/ contains documented UI prototypes and is intentionally tracked.

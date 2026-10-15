@@ -1,0 +1,231 @@
+{
+  "evidence_id": "ev_bb1307e5c89d969464b5fd65d7e67fd524d89be09fe1e582339ca33423694405",
+  "subject": null,
+  "provider": {
+    "id": "rea-playwright-browser-scenario",
+    "name": "REA Playwright browser scenario capture provider",
+    "version": "1"
+  },
+  "analysis_profile": null,
+  "predicate_type": "rea.browser-scenario-capture",
+  "operation": "capture_browser_scenario",
+  "parameters": {
+    "browser": {
+      "mode": "launch",
+      "executable_path": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      "headless": true
+    },
+    "start_url": {
+      "url": "https://mole.fit/zh/mac-app-uninstaller",
+      "query": []
+    },
+    "environment": {
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "device_scale_factor": 1
+      },
+      "locale": "en-US",
+      "timezone": "UTC",
+      "color_scheme": "light",
+      "reduced_motion": "reduce",
+      "service_workers": "block"
+    },
+    "actions": [
+      {
+        "step_id": "settle",
+        "action": "wait_for_timeout",
+        "duration_ms": 1000
+      }
+    ],
+    "storage": {
+      "cookies": [],
+      "local_storage": [],
+      "session_storage": []
+    },
+    "secrets": [],
+    "capture": {
+      "after_each_step": [],
+      "at_end": [
+        "url",
+        "accessibility"
+      ],
+      "events": [],
+      "network": {
+        "request_body": false,
+        "response_body": false,
+        "header_values": false
+      }
+    },
+    "scenario_sha256": "c66a8befccb60ade9b40aed890e9e1bf361ebdf1c82722bddce8fa8ccd35f3f6"
+  },
+  "raw_result": null,
+  "normalized_result": {
+    "browser": {
+      "mode": "launch",
+      "process_ownership": "provider-owned",
+      "cleanup": "terminated-owned-process",
+      "product": "Chromium",
+      "version": "155.0.8059.41"
+    },
+    "scenario": {
+      "start_origin": "https://mole.fit",
+      "action_count": 1,
+      "secret_references": [],
+      "network_content": {
+        "request_body": false,
+        "response_body": false,
+        "header_values": false
+      }
+    },
+    "duration_ms": 11606,
+    "steps": [
+      {
+        "step_index": 0,
+        "step_id": "scenario_start",
+        "action": "goto_start",
+        "elapsed_ms": 10380,
+        "before_url": {
+          "url": "about:blank",
+          "origin": null,
+          "query_parameter_names": [],
+          "redacted": false
+        },
+        "after_url": {
+          "url": "https://mole.fit/zh/mac-app-uninstaller",
+          "origin": "https://mole.fit",
+          "query_parameter_names": [],
+          "redacted": false
+        },
+        "event_sequence_start": 1,
+        "event_sequence_end": 0,
+        "artifacts": {
+          "screenshot": {
+            "state": "not_requested"
+          },
+          "dom": {
+            "state": "not_requested"
+          },
+          "accessibility": {
+            "state": "not_requested"
+          },
+          "url": {
+            "state": "not_requested"
+          },
+          "history": {
+            "state": "not_requested"
+          },
+          "storage": {
+            "state": "not_requested"
+          }
+        },
+        "completeness": {
+          "status": "complete",
+          "equality_eligible": true,
+          "missing_sections": [],
+          "truncated_sections": []
+        },
+        "status": "completed",
+        "error": null
+      },
+      {
+        "step_index": 1,
+        "step_id": "settle",
+        "action": "wait_for_timeout",
+        "elapsed_ms": 1041,
+        "before_url": {
+          "url": "https://mole.fit/zh/mac-app-uninstaller",
+          "origin": "https://mole.fit",
+          "query_parameter_names": [],
+          "redacted": false
+        },
+        "after_url": {
+          "url": "https://mole.fit/zh/mac-app-uninstaller",
+          "origin": "https://mole.fit",
+          "query_parameter_names": [],
+          "redacted": false
+        },
+        "event_sequence_start": 1,
+        "event_sequence_end": 0,
+        "artifacts": {
+          "screenshot": {
+            "state": "not_requested"
+          },
+          "dom": {
+            "state": "not_requested"
+          },
+          "accessibility": {
+            "state": "captured",
+            "value": {
+              "sha256": "d4796f5aaa8ec5e6e6e657188de0522d9375a10ef83d07d2a721815254b75798",
+              "bytes": 5371,
+              "text": "- document:\n  - link \"跳到主要内容\":\n    - /url: \"#main-content\"\n  - status:\n    - paragraph: 这里是 Mole Mac 官网，要去 Windows 版官网吗？\n    - link \"立即跳转\":\n      - /url: /zh/windows\n    - button \"不再提示\"\n  - main:\n    - navigation \"主导航\":\n      - link \"Mole\":\n        - /url: /zh/\n      - 'button \"选择平台: Mac\"': Mac\n      - link \"功能\":\n        - /url: /zh/#features\n      - link \"实测\":\n        - /url: /zh/#tested-apps\n      - link \"口碑\":\n        - /url: /zh/#voices\n      - link \"定价\":\n        - /url: /zh/#pricing\n      - link \"常见问题\":\n        - /url: /zh/#faq\n      - link \"博客\":\n        - /url: /zh/#blog\n      - button \"搜索\"\n      - button \"选择语言\": 简体中文\n      - link \"立即购买\":\n        - /url: https://checkout.dodopayments.com/session/cks_0NpjR4g4VDH2BRLOfEAd2\n      - link \"下载\":\n        - /url: /download\n    - heading \"卸载软件，检查残留\" [level=1]\n    - paragraph: 卸载前查看 App 和相关文件，不确定属于哪个 App 的文件默认不选。系统扩展等组件可能需要使用厂商提供的卸载工具。\n    - heading \"查找 App 留下的文件\" [level=2]\n    - paragraph: Mole 根据 App 的安装信息，检查十五个以上的资源库位置，查找它的支持文件、缓存、偏好设置、日志、启动项、容器、保存状态和输入法组件。这些位置包括 Application Support、Caches、Preferences、Logs、Launch Agents、Launch Daemons、Containers、Group Containers、Saved Application State 和 Input Methods，App 本体和相关文件会一起列出，并显示各自占用的空间。\n    - figure \"软件页面把 App 更新、启动项和卸载检查放在同一处。\":\n      - img \"Mole 软件页面，显示已安装 App、更新、启动项和卸载检查\"\n      - text: 软件页面把 App 更新、启动项和卸载检查放在同一处。\n    - heading \"关联不明的文件默认不选\" [level=2]\n    - paragraph: 确认属于这个 App 的文件会一同选中，无法确认的文件只显示路径和大小，默认不勾选。同一厂商的 App 可能共用文件夹、Group Container 或登录辅助程序，卸载其中一个时，需要保留其他 App 仍在使用的文件。\n    - figure \"确认 App 和关联文件，排除共用文件与系统组件，确认后再移到废纸篓。\"\n    - heading \"更新和启动项也在这一页\" [level=2]\n    - paragraph: 软件页也会检查 App 更新，并显示可管理的登录项、Launch Agents、Launch Daemons 和后台项目。Mole 只直接开关能够通过 launchd 或 Service Management 确认的项目，无法直接管理的 Apple 项目则会打开对应的系统设置。\n    - heading \"确认后移到废纸篓\" [level=2]\n    - paragraph: App 本体和勾选的相关文件会移到 macOS 废纸篓。删除 Applications 中由系统管理员拥有的 App 时，需要输入管理员密码，同一次运行期间只授权一次。移除前还会再次检查相关进程和受保护路径。\n    - heading \"系统扩展使用厂商卸载工具\" [level=2]\n    - paragraph: VPN、杀毒软件、驱动和配置描述文件，以及带系统扩展或内核扩展的 App，可能在删除 App 本体后仍有组件运行。Mole 可以处理普通 App 和已确认的残留文件，涉及这类系统组件时，应使用厂商提供的卸载方式。\n    - heading \"购买前可完整试用两次\" [level=2]\n    - paragraph:\n      - text: 扫描免费，购买前可完整卸载两次。\n      - link \"下载 Mole\":\n        - /url: /download\n      - text: 后打开软件页，选择要卸载的 App，先核对本体和相关文件，再确认移除。如果只需要免费的拖放卸载，可以看看 AppCleaner，\n      - link \"详细对比\":\n        - /url: /zh/blog/appcleaner-alternative\n      - text: 介绍了两者的功能差异。\n    - paragraph: Mole · 鼴\n    - paragraph: 清理 Mac，管理软件，查看运行状态\n    - paragraph:\n      - link \"查看更新日志\":\n        - /url: /zh/releases\n        - text: v1.17.0 (328) · 更新日志\n    - navigation \"页脚导航\":\n      - paragraph: 产品\n      - link \"Mac 清理\":\n        - /url: /zh/mac-cleaner\n      - link \"App 卸载\":\n        - /url: /zh/mac-app-uninstaller\n      - link \"Mac 优化\":\n        - /url: /zh/mac-optimizer\n      - link \"磁盘分析\":\n        - /url: /zh/mac-disk-analyzer\n      - link \"系统监控\":\n        - /url: /zh/mac-system-monitor\n      - paragraph: 支持\n      - link \"帮助\":\n        - /url: /zh/help\n      - link \"功能文档\":\n        - /url: /zh/docs\n      - link \"更新日志\":\n        - /url: /zh/releases\n      - link \"博客\":\n        - /url: /zh/blog\n      - paragraph: 法律\n      - link \"服务条款\":\n        - /url: /zh/terms\n      - link \"隐私政策\":\n        - /url: /zh/privacy\n      - link \"退款政策\":\n        - /url: /zh/refund\n      - paragraph: 资源\n      - link \"命令行工具\":\n        - /url: https://github.com/tw93/Mole\n      - link \"推广联盟\":\n        - /url: /zh/affiliates\n      - paragraph: 联系\n      - link \"Twitter\":\n        - /url: https://x.com/HiTw93\n      - link \"hi@mole.fit\":\n        - /url: mailto:hi@mole.fit\n    - paragraph: Mole 唯一官网 mole.fit · 请勿下载来源不明的安装包\n    - paragraph: 命令行版继续免费开源。"
+            }
+          },
+          "url": {
+            "state": "captured",
+            "value": {
+              "url": "https://mole.fit/zh/mac-app-uninstaller",
+              "origin": "https://mole.fit",
+              "query_parameter_names": [],
+              "redacted": false
+            }
+          },
+          "history": {
+            "state": "not_requested"
+          },
+          "storage": {
+            "state": "not_requested"
+          }
+        },
+        "completeness": {
+          "status": "complete",
+          "equality_eligible": true,
+          "missing_sections": [],
+          "truncated_sections": []
+        },
+        "status": "completed",
+        "error": null
+      }
+    ],
+    "events": {
+      "retained": 0,
+      "dropped": 0,
+      "items": []
+    },
+    "completeness": {
+      "status": "complete",
+      "equality_eligible": true,
+      "missing_sections": [],
+      "truncated_sections": []
+    },
+    "limitations": [
+      "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+      "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
+      "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+      "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
+      "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+      "Storage values are hashed only after declared-secret redaction."
+    ]
+  },
+  "confidence": "observed",
+  "authority": "controlled-replay",
+  "environment": {
+    "id": "Chromium@155.0.8059.41",
+    "platform": "unknown",
+    "architecture": "unknown",
+    "isolation": "process"
+  },
+  "limitations": [
+    "Artifact identity is unavailable for this observation.",
+    "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+    "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
+    "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+    "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
+    "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+    "Storage values are hashed only after declared-secret redaction.",
+    "Browser host platform and architecture were not observed."
+  ],
+  "locations": [],
+  "evidence_links": []
+}

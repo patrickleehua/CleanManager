@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "scope": "Document contracts and synthetic examples only; no product or OS behavior tested.",
+  "schemas": 2,
+  "protocol_examples": 8,
+  "rule_examples": 1,
+  "negative_cases_rejected": [
+    "unknown-field",
+    "numeric-byte-count",
+    "u64-overflow",
+    "tampered-plan",
+    "false-complete-scan",
+    "blocked-action",
+    "incorrect-freed-space",
+    "encoding-mismatch",
+    "unbacked-verified-rule"
+  ],
+  "local_links_checked": 127,
+  "markdown_files_checked": 16,
+  "rea_evidence_records_linked": 6,
+  "rea_unknowns_linked": 2,
+  "reference_probe_cases_matched": 2,
+  "planned_test_ids_checked": 70,
+  "planned_task_ids_checked": 40
+}

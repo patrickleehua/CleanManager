@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "kind": "candidate",
+  "request_id": "req_synthetic",
+  "candidate_id": "c_demo",
+  "scan_id": "s_demo",
+  "scan_revision": 1,
+  "entry_id": "e_demo",
+  "rule_id": "example.cache",
+  "rule_version": "0.1.0",
+  "risk": "low",
+  "path": {
+    "platform": "windows",
+    "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache\\old.tmp",
+    "raw_encoding": "windows_utf16le_base64",
+    "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAEEAcABwAFwAQwBhAGMAaABlAFwAbwBsAGQALgB0AG0AcAA="
+  },
+  "reason": "Synthetic verified-owner cache example",
+  "impact": "Cache would need rebuilding",
+  "logical_bytes": "104857600",
+  "allocated_bytes": "104857600",
+  "reclaimable_estimate_bytes": null,
+  "estimate_basis": "not_computed",
+  "allowed_modes": [
+    "trash"
+  ]
+}

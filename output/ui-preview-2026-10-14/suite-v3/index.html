@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>CleanManager · 全功能交互预览</title><link rel="icon" href="data:,"><link rel="stylesheet" href="style.css?v=3.4"><link rel="stylesheet" href="features-v4.css?v=4.0"><link rel="stylesheet" href="ai-diagnostics-v5.css?v=5.0"></head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#clean" aria-label="CleanManager 清理首页"><span class="brand-mark">◈</span>CleanManager</a>
+  <nav id="mainNav" aria-label="主要功能"></nav>
+  <div class="header-tools"><span class="demo-badge">交互演示</span><button class="icon-button" id="commandButton" title="跳转功能 · Ctrl K" aria-label="跳转功能">⌕</button><button class="icon-button" id="trayButton" title="快捷状态面板" aria-label="快捷状态面板">▤</button><button class="icon-button" id="themeButton" title="切换主题" aria-label="切换主题">◐</button></div>
+</header>
+<div class="workspace">
+  <aside class="rail"><div class="rail-top"><button data-page="home" title="总览" aria-label="总览">⌂</button></div><div class="rail-bottom"><button data-page="plans" title="计划" aria-label="计划">▣</button><button data-page="activity" title="活动" aria-label="活动">◷</button><button data-page="recovery" title="恢复" aria-label="恢复">↶</button><button data-page="settings" title="设置" aria-label="设置">⚙</button></div></aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div id="selectionBar" class="selection-bar" hidden></div>
+<button id="taskChip" class="task-chip" hidden aria-live="polite"></button>
+<aside id="drawer" class="drawer" hidden aria-label="详情"><div id="drawerContent"></div></aside>
+<div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+<dialog id="dialog" aria-labelledby="dialogTitle"><div id="dialogContent"></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="contextMenu" class="context-menu" hidden></div>
+<script src="app.js?v=3.4"></script>
+<script src="features-v4.js?v=4.0"></script>
+<script src="ai-diagnostics-v5.js?v=5.0"></script>
+</body></html>

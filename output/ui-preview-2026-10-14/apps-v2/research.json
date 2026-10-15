@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-15",
+  "target": "Mole desktop application-management design",
+  "evidence": [
+    {
+      "id": "ev_bb1307e5c89d969464b5fd65d7e67fd524d89be09fe1e582339ca33423694405",
+      "type": "controlled-replay",
+      "source": "https://mole.fit/zh/mac-app-uninstaller",
+      "observed": "Official documentation page rendered and accessibility text captured by REA.",
+      "limits": [
+        "Not execution of the installed desktop app.",
+        "No desktop binary identity, internal call chain, actual uninstall result or performance measurement."
+      ]
+    },
+    {
+      "type": "official-public-screenshot",
+      "source": "https://mole.fit/img/ch/uninstall.jpg",
+      "observed": [
+        "Prominent app icons and concise secondary metadata.",
+        "In-place expansion of associated files.",
+        "Persistent bottom selection summary and primary action."
+      ],
+      "limits": [
+        "Published screenshot only; interactions inferred from visual affordances and official documentation."
+      ]
+    },
+    {
+      "type": "official-documentation",
+      "source": "https://mole.fit/zh/windows",
+      "observed": "Documents Windows native/vendor uninstall flow, residual review, update and startup management.",
+      "limits": [
+        "Vendor claims, not independently executed in this task."
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "feature": "Application browsing",
+      "implementation": "Search name/source/path, cache/shared/unknown filters, known-size sorting, distinct portable instance.",
+      "scope": "current OpenSpec"
+    },
+    {
+      "feature": "Progressive disclosure",
+      "implementation": "Inline app expansion; cache, user-data and shared tabs; optional evidence modal.",
+      "scope": "current OpenSpec"
+    },
+    {
+      "feature": "Selection-to-plan",
+      "implementation": "Explicit demo cache selection, hidden selection summary, fixed plan review, mode resets consent, simulated execution and stop.",
+      "scope": "current OpenSpec preview"
+    },
+    {
+      "feature": "Personal/shared data",
+      "implementation": "Disabled selection with retention explanation; shared occupancy excluded from exclusive totals.",
+      "scope": "current OpenSpec"
+    },
+    {
+      "feature": "Updates/uninstall/startup",
+      "implementation": "Candidate for future OpenSpec change; requires platform sources, a separate plan model for uninstall and external-side-effect boundaries.",
+      "scope": "future"
+    }
+  ],
+  "deliverables": [
+    "index.html",
+    "05-applications-v2.png",
+    "06-applications-dark.png",
+    "prompts.json"
+  ],
+  "visualLimits": [
+    "Image model may introduce extra labels, rows and synthetic quantities. HTML prototype keeps demo data/selection boundaries explicit.",
+    "Dark board mentions registry items as illustrative association evidence; no registry modification is implemented."
+  ],
+  "generation": "Built-in image_gen tool; prompts saved adjacent to images."
+}

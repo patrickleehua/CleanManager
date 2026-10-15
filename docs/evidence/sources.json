@@ -1,0 +1,147 @@
+{
+  "recorded_on": "2026-10-14",
+  "source_snapshots": [
+    {
+      "target": "mole-cli",
+      "commit": "eae1043b57157f1c51ab5600013d341298097d9c",
+      "evidence_class": "OBS source inspection, not REA binary evidence",
+      "coverage": "Selected files and relevant functions; not a complete repository audit",
+      "files": [
+        {
+          "path": "mole",
+          "url": "https://github.com/tw93/Mole/blob/eae1043b57157f1c51ab5600013d341298097d9c/mole",
+          "bytes": 14620,
+          "sha256": "b56857713fc5a76a8c1878964065f0eee5a0d71d888ee6a9e3e54d163b28265e",
+          "lf_normalized_sha256": "1f9b84eb369be11d7355497541a54ef40ecc39cb3a72fff5a4fdc41d0a8dbb21"
+        },
+        {
+          "path": "go.mod",
+          "url": "https://github.com/tw93/Mole/blob/eae1043b57157f1c51ab5600013d341298097d9c/go.mod",
+          "bytes": 1674,
+          "sha256": "630488a006fc0516b3e1efade89e55fbf60ea7a03916523bb6575e2b63fdb927",
+          "lf_normalized_sha256": "c1d48bb858f84b112d740d64ecc732eb9f3090b063bd11c6bea16c2d3350d6c1"
+        },
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/tw93/Mole/blob/eae1043b57157f1c51ab5600013d341298097d9c/LICENSE",
+          "bytes": 35823,
+          "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+          "lf_normalized_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        },
+        {
+          "path": "cmd/analyze/json.go",
+          "url": "https://github.com/tw93/Mole/blob/eae1043b57157f1c51ab5600013d341298097d9c/cmd/analyze/json.go",
+          "bytes": 5455,
+          "sha256": "816ed033b4df11b260bccc55d95cdc3b2d750727b4ecb22652144d249ee40c59",
+          "lf_normalized_sha256": "2b957068a3bca5ea7f25a7715316027fd67bc7ebce68139b95ae160a0af2bb13"
+        },
+        {
+          "path": "cmd/analyze/scanner.go",
+          "url": "https://github.com/tw93/Mole/blob/eae1043b57157f1c51ab5600013d341298097d9c/cmd/analyze/scanner.go",
+          "bytes": 36808,
+          "sha256": "9f1babe6fab8cfdde26b556a1ab7ac6cc81ff0537c25c9faaaf1cf06aea1353f",
+          "lf_normalized_sha256": "e2f173d673eef20b4bb32fb8501f2ae5db4b268f8e1b1efc1f9e4c427b2d42dd"
+        }
+      ]
+    },
+    {
+      "target": "disk-cleaner",
+      "commit": "fe16728994e4599242b3fd74b2f1ebff702063a9",
+      "evidence_class": "OBS source inspection, not REA binary evidence",
+      "coverage": "Selected files and relevant functions; not a complete repository audit",
+      "files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/iziqing/-disk-cleaner/blob/fe16728994e4599242b3fd74b2f1ebff702063a9/LICENSE",
+          "bytes": 1085,
+          "sha256": "7e59306ce71015d31a68fe6e16d9f5a1e831b0d777efe9767302d6c9acd1a497",
+          "lf_normalized_sha256": "5de217315386215e7105d3a4e7840fb7c4591525444c0fe9ac935bef7a340861"
+        },
+        {
+          "path": "scan.py",
+          "url": "https://github.com/iziqing/-disk-cleaner/blob/fe16728994e4599242b3fd74b2f1ebff702063a9/scan.py",
+          "bytes": 9072,
+          "sha256": "7dc82be47cfc9b7c6538bda25371fa9557433037da0d6128722bceaf4eba4004",
+          "lf_normalized_sha256": "32105ceb8bb2a1844195e780ffd76cb132a2e9aa17958439d6110fc4f11da892"
+        },
+        {
+          "path": "analyze.py",
+          "url": "https://github.com/iziqing/-disk-cleaner/blob/fe16728994e4599242b3fd74b2f1ebff702063a9/analyze.py",
+          "bytes": 15728,
+          "sha256": "4630f81980b4badf74bf49ab234a838f00c9753fe77454020362971169d7c03a",
+          "lf_normalized_sha256": "150dc73f335e71ed343a5f9fa5ef9c1334b17c26dcc4c3aec008a83d9fbdf069"
+        },
+        {
+          "path": "backup.py",
+          "url": "https://github.com/iziqing/-disk-cleaner/blob/fe16728994e4599242b3fd74b2f1ebff702063a9/backup.py",
+          "bytes": 16960,
+          "sha256": "9bfe6fdbab99c1dd32dd469e23b955042ac9f0021dedccaf2e52aa9acc39c4d1",
+          "lf_normalized_sha256": "e3cb888d921f6bb33869f1cf2aded094b4c4496a5ae0752476ffba0a49ee5842"
+        }
+      ]
+    }
+  ],
+  "official_sources": [
+    {
+      "id": "DOC-MOLE-CLI-GUI",
+      "url": "https://mole.fit/blog/mole-cli-vs-mac-app",
+      "scope": "Vendor description of CLI versus desktop product",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-MOLE-APP",
+      "url": "https://github.com/tw93/Mole-App",
+      "scope": "Desktop documentation/feedback repository",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-WIZ-PLATFORMS",
+      "url": "https://diskanalyzer.com/wiztreemac-vs-wiztree",
+      "scope": "Vendor description of platform scanning approaches, not a benchmark",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-WIZ-DOWNLOAD",
+      "url": "https://diskanalyzer.com/download",
+      "scope": "Observed portable download link",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-WIZ-DIST",
+      "url": "https://diskanalyzer.com/distribution-license",
+      "scope": "License/price snapshot; recheck before integration",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-WIZ-EULA",
+      "url": "https://diskanalyzer.com/eula",
+      "scope": "License terms",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-WIN-USN",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2",
+      "scope": "USN record fields do not include file size",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-MAC-FSEVENTS",
+      "url": "https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html",
+      "scope": "Event coalescing/loss and rescan semantics",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-TAURI-PROCESS",
+      "url": "https://v2.tauri.app/concept/process-model/",
+      "scope": "WebView and Rust process model",
+      "class": "DOC"
+    },
+    {
+      "id": "DOC-TAURI-SECURITY",
+      "url": "https://v2.tauri.app/security/",
+      "scope": "IPC capability boundary",
+      "class": "DOC"
+    }
+  ],
+  "note": "Additional API citations appear next to their claims in platform documents. URLs are references, not archived page bodies or runtime evidence. Source hashes bind the inspected local checkout bytes; normalized hashes tolerate CRLF checkout conversion."
+}

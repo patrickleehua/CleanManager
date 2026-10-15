@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "kind": "capabilities",
+  "request_id": "req_synthetic",
+  "platform": "windows",
+  "engine_version": "0.0.0-design-example",
+  "supported_schema_versions": [
+    "1.0"
+  ],
+  "capabilities": [
+    {
+      "name": "scan.portable",
+      "state": "available",
+      "reason": null
+    },
+    {
+      "name": "scan.ntfs",
+      "state": "permission_required",
+      "reason": "Synthetic elevated scanner requirement"
+    }
+  ]
+}
