@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "protection_unavailable",
+  "message": "Protection list could not be parsed",
+  "retryable": false,
+  "required_action": "Repair or reset the protection list",
+  "details": {
+    "plan_id": null,
+    "operation_id": null,
+    "scope_id": null
+  }
+}

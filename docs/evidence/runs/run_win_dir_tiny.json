@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "test_id": "SCN-01",
+  "run_id": "run_win_dir_tiny",
+  "recorded_at": "2026-10-15T05:36:29Z",
+  "code_commit": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+  "binary_sha256": "f5642dc532aa729a7b567c3d181a8b957a5701ea23931a708ce1c2746d82dbc5",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager before scanning"
+    ]
+  },
+  "scope_digest": "f50970fc33b0766c423d38bc4e03eaac0ba658a54b6af7f13b4ccb0cc21f1d13",
+  "fixture_manifest_sha256": "fa439eea0f619955f35869d0bd0cd0ea7377cecdc8772be329eae66d7b3603b7",
+  "backend": "win.directory",
+  "config": {
+    "batch_entries": 4096
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "<scratch>/tiny",
+    "--store",
+    "<scratch>/store",
+    "--json"
+  ],
+  "seed": 20261014,
+  "expected": "completed, 13 entries (root + fixture incl. 2 untraversed links + marker), exit 0, fixture and sentinel unchanged",
+  "actual": "status=completed completeness=verified_scope entries_seen=13 logical_bytes=9691 exit=0; fixture and sentinel verified unchanged",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "entries_seen": 13
+  },
+  "observer": "tools/record_windows_runs.py",
+  "limitations": [
+    "Working tree had uncommitted changes; code_commit is the base commit."
+  ],
+  "status": "passed"
+}

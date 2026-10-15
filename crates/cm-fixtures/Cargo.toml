@@ -1,0 +1,20 @@
+[package]
+name = "cm-fixtures"
+description = "Reproducible test-fixture trees with manifests and out-of-scope sentinels (test tooling only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cm-fixtures"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

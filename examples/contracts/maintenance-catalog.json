@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "kind": "maintenance_catalog",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "task_id": "windows.dns-flush",
+      "task_version": "0.1.0",
+      "platform": "windows",
+      "problem": "Stale name resolution",
+      "impact": "First lookups are slower briefly",
+      "requires_admin": false,
+      "applicability": "applicable",
+      "applicability_reason": null,
+      "user_protected": false
+    },
+    {
+      "task_id": "windows.trim-when-due",
+      "task_version": "0.1.0",
+      "platform": "windows",
+      "problem": "SSD retrim overdue",
+      "impact": "Short disk activity",
+      "requires_admin": true,
+      "applicability": "not_applicable",
+      "applicability_reason": "Last optimization is within the schedule",
+      "user_protected": false
+    }
+  ]
+}

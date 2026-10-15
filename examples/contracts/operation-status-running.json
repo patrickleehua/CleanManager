@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_status",
+  "request_id": "req_synthetic",
+  "operation_id": "op_demo",
+  "plan_id": "p_demo",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "state": "running",
+  "started_at": "2026-10-14T12:02:00Z",
+  "cancel_requested": false,
+  "succeeded": 1,
+  "skipped": 0,
+  "failed": 0,
+  "unknown": 0,
+  "remaining": 2,
+  "host": {
+    "kind": "cli",
+    "process_id": 4242,
+    "last_heartbeat_at": "2026-10-14T12:02:01Z"
+  }
+}

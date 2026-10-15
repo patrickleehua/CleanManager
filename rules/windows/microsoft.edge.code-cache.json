@@ -1,0 +1,57 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.edge.code-cache",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "browsers",
+  "max_tier": "default_selected",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.edge"
+  },
+  "root_resolver": "browser_profile",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "Code Cache"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Compiled JavaScript/WebAssembly code cache of Microsoft Edge for one browser profile.",
+    "regeneration": "Microsoft Edge recompiles scripts and recreates the cache the next time pages run script.",
+    "offline_effect": "None expected: the cache holds compiled code, not page content, cookies or site data."
+  },
+  "tested_registry_ref": "microsoft.edge.code-cache@1.0.0",
+  "evidence_refs": [
+    "run_win_rule_microsoft_edge_code_cache"
+  ]
+}

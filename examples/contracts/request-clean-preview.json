@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "kind": "cli_request",
+  "request_id": "req_synthetic",
+  "command": "clean.preview",
+  "output": "json",
+  "non_interactive": true,
+  "dry_run": true,
+  "params": {
+    "scan_id": "s_demo",
+    "cursor": null,
+    "page_size": 50,
+    "include_tiers": [
+      "default_selected"
+    ],
+    "object_ids": [],
+    "mode": null
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "kind": "self_update_result",
+  "request_id": "req_synthetic",
+  "status": "verification_failed",
+  "from_version": "0.0.0-design-example",
+  "to_version": null,
+  "signature_verified": true,
+  "checksum_verified": false,
+  "reason": "Checksum did not match the signed manifest"
+}

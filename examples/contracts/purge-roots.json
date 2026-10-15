@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "kind": "purge_roots",
+  "request_id": "req_synthetic",
+  "roots": [
+    {
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Projects",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBvAGoAZQBjAHQAcwA="
+      },
+      "source": "default",
+      "exists": true
+    },
+    {
+      "path": {
+        "platform": "windows",
+        "display": "D:\\Code",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "RAA6AFwAQwBvAGQAZQA="
+      },
+      "source": "user",
+      "exists": false
+    }
+  ]
+}

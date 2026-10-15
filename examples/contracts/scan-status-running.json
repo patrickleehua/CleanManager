@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "kind": "scan_status",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "state": "running",
+  "host": {
+    "kind": "cli",
+    "process_id": 4242,
+    "started_at": "2026-10-14T12:00:00Z",
+    "last_heartbeat_at": "2026-10-14T12:00:02Z"
+  },
+  "cancel_requested": false,
+  "entries_seen": 12,
+  "skipped_ranges": 1,
+  "known_logical_bytes": "104857600",
+  "last_issue": {
+    "code": "permission_required",
+    "scope_display": "synthetic protected subtree",
+    "message": "Synthetic access denial"
+  }
+}

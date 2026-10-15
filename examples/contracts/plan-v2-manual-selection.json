@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_manual",
+    "plan_kind": "manual_selection",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "fs_trash",
+        "target": {
+          "entry_id": "e_video",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "D:\\Videos\\example.mov",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "RAA6AFwAVgBpAGQAZQBvAHMAXABlAHgAYQBtAHAAbABlAC4AbQBvAHYA"
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:04c36dbf87bfa714",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      }
+    ]
+  },
+  "plan_digest": "079ddc6105c09ac0b1a71657a930266fe20c5779c039286629290de64e271613",
+  "authorization_status": "required"
+}

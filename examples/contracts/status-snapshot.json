@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "kind": "status_snapshot",
+  "request_id": "req_synthetic",
+  "sampled_at": "2026-10-14T12:00:02Z",
+  "stale": false,
+  "metrics": [
+    {
+      "name": "cpu.total_percent",
+      "availability": "available",
+      "value": 37.5,
+      "unit": "percent",
+      "reason": null
+    },
+    {
+      "name": "thermal.cpu_celsius",
+      "availability": "unavailable",
+      "value": null,
+      "unit": "celsius",
+      "reason": "No public sensor interface on this synthetic host"
+    }
+  ],
+  "health": {
+    "score": 82,
+    "weights": {
+      "cpu": 30,
+      "memory": 25,
+      "disk": 20,
+      "thermal": 15,
+      "io": 10
+    },
+    "lowered_by": [
+      "disk"
+    ]
+  },
+  "diagnosis": {
+    "code": "low_free_space",
+    "message": "System volume free space is low",
+    "link": "analyze"
+  }
+}

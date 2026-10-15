@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_cleanup",
+    "plan_kind": "cleanup",
+    "policy_matchable": true,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "fs_trash",
+        "target": {
+          "entry_id": "e_cache",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAEEAcABwAFwAQwBhAGMAaABlAA=="
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:1a0e7323dd43d5e8",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      },
+      {
+        "action_id": "a02",
+        "action_type": "fs_quarantine",
+        "target": {
+          "entry_id": "e_logs",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Logs",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAEEAcABwAFwATABvAGcAcwA="
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:1d765b2f24762f32",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      },
+      {
+        "action_id": "a03",
+        "action_type": "fs_delete",
+        "target": {
+          "entry_id": "e_tmp",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\AppData\\Local\\Temp\\old.tmp",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABUAGUAbQBwAFwAbwBsAGQALgB0AG0AcAA="
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:80fb4ed1d5841edb",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      },
+      {
+        "action_id": "a04",
+        "action_type": "tool_adapter",
+        "adapter_id": "example.adapter.cache-clean-unreferenced",
+        "adapter_version": "0.1.0",
+        "executable": {
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Example\\tool.exe",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwARQB4AGEAbQBwAGwAZQBcAHQAbwBvAGwALgBlAHgAZQA="
+          },
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "argv": [
+          "cache",
+          "clean",
+          "--unreferenced"
+        ],
+        "preview_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "timeout_seconds": 120
+      }
+    ]
+  },
+  "plan_digest": "ae62699192a4de7f5dee0074fa0460bbad8e16a43ad3cdb5426e3c14cec62a6d",
+  "authorization_status": "required"
+}

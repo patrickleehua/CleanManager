@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "kind": "completion_script",
+  "request_id": "req_synthetic",
+  "shell": "powershell",
+  "script": "# synthetic completion script",
+  "profile_path": null,
+  "written": false
+}

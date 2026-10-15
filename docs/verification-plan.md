@@ -51,6 +51,8 @@
 
 这些是未来测试报告字段，**不是**向严格的 v1 产品 JSON 添加字段。OS trace、观测原值与 performance report 独立存放。没有实际运行时 `actual=null`、`measurements=null`、`evidence_refs=[]`；不能写预期值或 0 伪装测量结果。
 
+运行记录格式见 [run-record Schema](../schemas/v1/run-record.schema.json) 与[空白模板](evidence/runs/run-record.template.json)，存放在 `docs/evidence/runs/`。设备矩阵 [device-matrix.json](evidence/device-matrix.json) 分开登记 expected 与 actual，缺设备时 actual 为 null。平台能力声明只有在引用同平台、已观测设备上 status=passed 且 actual 非空的运行记录时才能标为 verified；文档验证器拒绝用 Windows 运行支撑 macOS 声明（SCN-07）。
+
 ## 3. 核心与 v1 协议共同判据
 
 平台内部属性通过核心 Observation/适配层映射到 v1，不增加 Schema 未定义键。特别约束如下：
@@ -68,6 +70,17 @@
 ### 4.1 可复现数据集
 
 以下规模为**预定输入，不是已创建的数据或性能结果**。生成器固定种子 `20261014`，manifest 记录实际文件/目录数量、硬链接拓扑、路径长度分布、内容逻辑长度及测试选项；原生分配量在准备阶段采集，不能从逻辑量猜测。
+
+生成器为 `cm-fixtures`（workspace 中的测试工具，不随产品发布）。准备、核对与销毁是独立命令，生成耗时只写入 manifest 的 `generation` 块，不计入任何扫描测量：
+
+```text
+cargo run -p cm-fixtures -- sentinel --path <SENTINEL>
+cargo run -p cm-fixtures -- create --profile p0-10k --seed 20261014 --root <ROOT> --sentinel <SENTINEL>
+cargo run -p cm-fixtures -- verify --root <ROOT> --sentinel <SENTINEL>
+cargo run -p cm-fixtures -- destroy --root <ROOT> --sentinel <SENTINEL>
+```
+
+配置档：`tiny`（中文/空格/长名、0 字节、硬链接、指向 sentinel 的文件与目录链接）、`wide`（单目录 5,000 文件）、`deep`（64 层）、`p0-10k`、`p0-100k`（混合中文/空格/长名字）、`p0-1m`。`plan` 子命令只计算条目序列摘要而不写盘，同一配置与种子得到相同 `entries_sha256`。`create` 只接受不存在或为空的根、要求根与 sentinel 互不包含，并先写入根标记；`destroy` 拒绝没有标记的目录，按链接本身删除，结束后复核 sentinel 哈希。链接无法创建时在 manifest 的 `sentinel_links` 记录原因，而不是静默省略。目前未生成 junction、稀疏、压缩与 ADS 夹具，它们属于平台专项（Windows 任务 4.2）。
 
 | 数据集 ID | 预定结构 | 用途与资源边界 |
 | --- | --- | --- |

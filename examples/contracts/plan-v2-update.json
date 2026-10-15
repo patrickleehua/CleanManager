@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_update",
+    "plan_kind": "update",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "app_quit",
+        "app_instance_id": "app_demo",
+        "app_identity": "Example.App",
+        "force": "ask_user"
+      },
+      {
+        "action_id": "a02",
+        "action_type": "tool_adapter",
+        "adapter_id": "example.adapter.winget-upgrade",
+        "adapter_version": "0.1.0",
+        "executable": {
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Example\\tool.exe",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwARQB4AGEAbQBwAGwAZQBcAHQAbwBvAGwALgBlAHgAZQA="
+          },
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "argv": [
+          "upgrade",
+          "--id",
+          "Example.App",
+          "--exact"
+        ],
+        "preview_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "timeout_seconds": 120
+      }
+    ]
+  },
+  "plan_digest": "f0465935105b0b1636aafe191269cce2e6e54370c6d97763e095108331ae0eb9",
+  "authorization_status": "required"
+}

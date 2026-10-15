@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "TC-WIN-001",
+  "run_id": "run_win_dir_exfat",
+  "recorded_at": "2026-10-15T05:36:41Z",
+  "code_commit": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+  "binary_sha256": "f5642dc532aa729a7b567c3d181a8b957a5701ea23931a708ce1c2746d82dbc5",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "exFAT",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager before scanning"
+    ]
+  },
+  "scope_digest": "cce26ad3cc687ad5b8a58c29cd5a39d6a18032ca16daf9f2f3220ec53f953eaf",
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {
+    "batch_entries": 4096
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "Z:\\data",
+    "--store",
+    "<scratch>/store",
+    "--json"
+  ],
+  "seed": 20261014,
+  "expected": "completed on exFAT via FileIdBothDirectoryInfo fallback; logical_bytes 8000; identities weak",
+  "actual": "status=completed entries_seen=4 logical_bytes=8000 exit=0",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {},
+  "observer": "tools/record_windows_runs.py",
+  "limitations": [
+    "Working tree had uncommitted changes; code_commit is the base commit.",
+    "64 MiB disposable VHD; no SMB volume tested."
+  ],
+  "status": "passed"
+}

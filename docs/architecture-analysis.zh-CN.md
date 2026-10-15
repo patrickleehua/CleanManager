@@ -260,7 +260,7 @@ Skill 的职责是教 Claude/Codex 正确调用这些命令、解释结果并尊
 | 残留处理 | 精确归属证据与用户选择 | bundle ID、容器与共享数据证据 | 后续 |
 | 启动项与后台项 | 不同注册位置和任务类型逐类适配 | 系统支持范围内的登录项与后台项 | 后续 |
 | 状态监测 | CPU、内存、磁盘、网络等基础信息 | 同类基础信息与有限的平台扩展 | 简版后续 |
-| 风扇与电池控制 | 硬件差异大 | 机型与系统限制明显 | 不列入首版 |
+| 风扇与电池控制 | 硬件差异大 | 机型与系统限制明显 | 不列入首版；`add-mole-parity-suite` G4 经受限 helper 按已验证机型开放 |
 
 WinGet 的卸载能力可以覆盖部分并非由 WinGet 安装的应用，但仍需要应用身份消歧、版本和运行结果检查。[Microsoft WinGet 文档](https://learn.microsoft.com/en-us/windows/package-manager/winget/uninstall)
 

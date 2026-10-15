@@ -1,0 +1,117 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_uninstall",
+    "plan_kind": "uninstall",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "app_quit",
+        "app_instance_id": "app_demo",
+        "app_identity": "Example.App",
+        "force": "ask_user"
+      },
+      {
+        "action_id": "a02",
+        "action_type": "tool_adapter",
+        "adapter_id": "example.adapter.vendor-uninstaller",
+        "adapter_version": "0.1.0",
+        "executable": {
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Example\\tool.exe",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwARQB4AGEAbQBwAGwAZQBcAHQAbwBvAGwALgBlAHgAZQA="
+          },
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "argv": [],
+        "preview_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "timeout_seconds": 120
+      },
+      {
+        "action_id": "a03",
+        "action_type": "fs_trash",
+        "target": {
+          "entry_id": "e_appdata",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\AppData\\Roaming\\ExampleApp\\Cache",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABSAG8AYQBtAGkAbgBnAFwARQB4AGEAbQBwAGwAZQBBAHAAcABcAEMAYQBjAGgAZQA="
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:68aa43283c1e1b94",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      },
+      {
+        "action_id": "a04",
+        "action_type": "fs_quarantine",
+        "target": {
+          "entry_id": "e_shortcut",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\Desktop\\ExampleApp.lnk",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAZQBzAGsAdABvAHAAXABFAHgAYQBtAHAAbABlAEEAcABwAC4AbABuAGsA"
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:d8b33b2c0e927ec7",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "original",
+        "must_not_follow_links": true
+      },
+      {
+        "action_id": "a05",
+        "action_type": "registry_backup_delete",
+        "hive": "HKCU",
+        "key_path": "Software\\ExampleVendor\\ExampleApp",
+        "value_name": null,
+        "owner_evidence": "uninstall entry publisher and product code",
+        "backup_required": true
+      },
+      {
+        "action_id": "a06",
+        "action_type": "startup_toggle",
+        "startup_item_id": "st_demo",
+        "source": "run_key",
+        "operation": "remove_with_backup",
+        "scope": "user"
+      }
+    ]
+  },
+  "plan_digest": "c957b3469f5e4285cb2798a7f0608d79dbe99e44742552866ffbefc98092d84d",
+  "authorization_status": "required"
+}

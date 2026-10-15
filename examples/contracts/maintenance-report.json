@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "kind": "maintenance_report",
+  "request_id": "req_synthetic",
+  "operation_id": "op_maint",
+  "plan_id": "p_v2_maintenance",
+  "elevation": "declined",
+  "items": [
+    {
+      "task_id": "windows.dns-flush",
+      "outcome": "applied",
+      "reason": "Resolver cache flushed"
+    },
+    {
+      "task_id": "windows.trim-when-due",
+      "outcome": "skipped",
+      "reason": "Administrator authorization declined"
+    }
+  ],
+  "counts": {
+    "applied": 1,
+    "unchanged": 0,
+    "skipped": 1,
+    "unavailable": 0,
+    "attention": 0,
+    "failed": 0
+  },
+  "all_clear": false
+}

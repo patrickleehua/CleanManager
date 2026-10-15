@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "kind": "entries_page",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "revision": 1,
+  "sort": "logical_desc",
+  "filter": {
+    "kind": "any",
+    "name_contains": null,
+    "parent_entry_id": "e_root"
+  },
+  "page_size": 3,
+  "next_cursor": "cur_opaque_1",
+  "unknown_size_items": 1,
+  "items": [
+    {
+      "entry_id": "e_videos",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_videos",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Videos",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFYAaQBkAGUAbwBzAA=="
+      },
+      "kind": "directory",
+      "logical_bytes": "73400320",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong"
+    },
+    {
+      "entry_id": "e_iso",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_iso",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\image.iso",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAGkAbQBhAGcAZQAuAGkAcwBvAA=="
+      },
+      "kind": "file",
+      "logical_bytes": "31457280",
+      "allocated_bytes": null,
+      "size_basis": "entity",
+      "unknown_descendants": null,
+      "link_count": 1,
+      "boundary": null,
+      "identity_quality": "strong"
+    },
+    {
+      "entry_id": "e_denied",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_denied",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Private",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBpAHYAYQB0AGUA"
+      },
+      "kind": "directory",
+      "logical_bytes": null,
+      "allocated_bytes": null,
+      "size_basis": "unknown",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong"
+    }
+  ]
+}

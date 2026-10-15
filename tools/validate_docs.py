@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 # A project-local dependency directory is optional; no global packages are changed.
@@ -33,6 +34,8 @@ def semantics(value):
     def walk(x):
         if isinstance(x, dict):
             for k, v in x.items():
+                if k == "field_sources":
+                    continue  # maps field names to provenance, not byte values
                 if isinstance(v, str) and (k.endswith("_bytes") or k in ("logical_bytes", "allocated_bytes")):
                     n = int(v)
                     if k == "observed_free_delta_bytes":
@@ -71,7 +74,17 @@ def semantics(value):
         assert datetime.fromisoformat(body["created_at"]) < datetime.fromisoformat(body["expires_at"]), "invalid plan expiry"
         actions = [x["action_id"] for x in body["items"]]
         assert actions == sorted(set(actions)), "action IDs must be sorted and unique"
-        entries = [x["entry_id"] for x in body["items"]]
+        if body["engine_contract"] == "recovery/v1":
+            entries = [x["quarantine_id"] for x in body["items"]]
+        elif body["engine_contract"] == "plan/v2":
+            entries = [x["target"]["entry_id"] for x in body["items"] if "target" in x]
+            for x in body["items"]:
+                if x.get("target_location") == "platform_trash":
+                    assert body["plan_kind"] == "manual_selection" and x["action_type"] == "fs_delete", "only manual permanent delete may target the platform trash"
+            needs_admin = any(x.get("requires_admin") or x.get("hive") == "HKLM" or x.get("scope") == "system" for x in body["items"])
+            assert body["requires_admin"] == needs_admin, "plan requires_admin does not match its actions"
+        else:
+            entries = [x["entry_id"] for x in body["items"]]
         assert len(entries) == len(set(entries)), "duplicate plan entry"
         canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         assert hashlib.sha256(canonical).hexdigest() == value["plan_digest"], "plan digest mismatch"
@@ -88,12 +101,115 @@ def semantics(value):
             assert delta is None, "delta requires both observations"
         else:
             assert delta is not None and int(delta) == int(after) - int(before), "incorrect observed delta"
+    elif kind == "cli_request":
+        params = value["params"]
+        if value["non_interactive"]:
+            assert "review_only" not in params.get("include_tiers", []), "non-interactive requests cannot widen beyond default_selected"
+        if value["command"] == "protect.add" and params["entry"]["path"] is not None:
+            shown = params["entry"]["path"]["display"]
+            absolute = re.match(r"^[A-Za-z]:\\", shown) if params["entry"]["path"]["platform"] == "windows" else shown.startswith("/")
+            assert absolute and ".." not in re.split(r"[\\/]", shown), "protection paths must be absolute without traversal"
+    elif kind == "selection_preview":
+        items = value["items"]
+        for i in items:
+            if i["selected_by_default"]:
+                assert i["tier"] == "default_selected" and i["skip_reason"] is None, "only unskipped default_selected items may be preselected"
+            if i["rebuild_class"] != "local_rebuild":
+                assert i["tier"] != "default_selected", "network or non-rebuildable items cannot be default_selected"
+            if i["tier"] == "blocked":
+                assert i["skip_reason"] is not None, "blocked items need a reason"
+        s = value["summary"]
+        chosen = [i for i in items if i["selected_by_default"]]
+        assert s["selected_count"] == len(chosen), "summary selected_count mismatch"
+        assert int(s["selected_known_bytes"]) == sum(int(i["logical_bytes"]) for i in chosen if i["logical_bytes"] is not None), "summary bytes mismatch"
+        assert s["selected_unknown_size_count"] == sum(i["logical_bytes"] is None for i in chosen), "summary unknown count mismatch"
+        assert s["review_only_count"] == sum(i["tier"] == "review_only" for i in items), "summary review_only mismatch"
+        assert s["blocked_count"] == sum(i["tier"] == "blocked" for i in items), "summary blocked mismatch"
+        assert s["skipped_count"] == sum(i["skip_reason"] is not None for i in items), "summary skipped mismatch"
+    elif kind in ("entries_page", "candidates_page"):
+        assert len(value["items"]) <= value["page_size"], "page holds more items than page_size"
+        key = "entry_id" if kind == "entries_page" else "candidate_id"
+        ids = [i[key] for i in value["items"]]
+        assert len(ids) == len(set(ids)), "duplicate item in page"
+        if kind == "entries_page":
+            assert value["unknown_size_items"] == sum(i["logical_bytes"] is None for i in value["items"]), "unknown size count mismatch"
+            for i in value["items"]:
+                assert (i["logical_bytes"] is None) == (i["size_basis"] == "unknown"), "unknown size must be null with basis unknown"
+    elif kind == "quarantine_list":
+        assert len(value["items"]) <= value["page_size"], "page holds more items than page_size"
+        assert int(value["total_logical_bytes"]) == sum(int(i["logical_bytes"]) for i in value["items"]) or value["next_cursor"], "quarantine total mismatch"
+    elif kind == "authorization_status":
+        if value["status"] == "authorized":
+            assert value["source"] is not None and value["principal"] is not None and value["expires_at"] is not None, "authorization needs a source, principal and expiry"
+            if value["source"] == "policy":
+                assert value["policy_id"] and value["quota"] is not None, "policy authorization needs policy id and quota"
+                q = value["quota"]
+                assert int(q["used_bytes"]) + int(q["reserved_unknown_bytes"]) <= int(q["limit_bytes"]) and q["used_items"] <= q["limit_items"], "quota exceeded"
+        elif value["status"] == "required":
+            assert value["source"] is None and value["authorized_at"] is None, "unauthorized plan cannot carry an authorization source"
+    elif kind == "operation_status":
+        assert value["state"] != "running" or value["remaining"] > 0 or value["unknown"] > 0, "running operation without remaining work"
+    elif kind == "analysis_result":
+        if value["scan_completeness"] == "verified_scope":
+            assert value["pending_evidence_count"] == 0 or value["issues"], "pending evidence needs an issue"
+    elif kind == "maintenance_report":
+        for name, count in value["counts"].items():
+            assert count == sum(i["outcome"] == name for i in value["items"]), "maintenance outcome count mismatch"
+        if value["all_clear"]:
+            assert value["counts"]["failed"] == 0 and value["counts"]["attention"] == 0, "all_clear with failed or attention tasks"
+    elif kind == "status_snapshot":
+        for m in value["metrics"]:
+            assert (m["value"] is not None) == (m["availability"] == "available"), "unavailable metrics must be null, never 0"
+        assert sum(value["health"]["weights"].values()) == 100, "health weights must sum to 100"
+    elif kind == "protection_list":
+        for e in value["items"]:
+            assert e["removable"] == (e["layer"] == "user"), "only user protection entries are removable"
+    elif kind == "app_list":
+        for a in value["items"]:
+            if a["protected_class"]:
+                assert a["uninstall_capability"]["state"] != "available", "protected applications cannot be uninstallable"
     elif kind == "progress" and value["total_units"] is not None:
         assert value["completed_units"] <= value["total_units"], "progress beyond total"
-    if "root_resolver" in value:
+    if "root_resolver" in value and value.get("schema_version") == "1.0":
         assert all(c not in (".", "..") and not any(v in c for v in ("/", "\\", "\x00", ":")) for c in value["relative_components"]), "invalid relative component"
         if value["status"] in ("verified", "enabled"):
             assert value["evidence_refs"], "verified rules require evidence"
+
+
+def rule_v2_semantics(value, registry):
+    """Rule 2.0 invariants that JSON Schema cannot express on its own."""
+    entries = value["match"]["relative_components"] + value["exclude"]
+    assert all(".." not in c and "\x00" not in c for c in entries), "rule path escapes its resolved root"
+    if value["status"] == "enabled":
+        entry = registry.get(value["tested_registry_ref"])
+        assert entry is not None, "enabled rule references a missing tested registry entry"
+        assert (entry["rule_id"], entry["rule_version"]) == (value["rule_id"], value["version"]), "registry entry is for another rule version"
+        assert entry["result"] == "passed" and not entry["synthetic"], "enabled rule needs a passed, non-synthetic registry entry"
+        tested = {p["platform"] for p in entry["platforms"]}
+        assert set(value["platforms"]) <= tested, "enabled rule claims an untested platform"
+
+
+def device_claim_semantics(matrix, runs):
+    """SCN-07: a platform claim is verified only by passed runs observed on a real device of that platform."""
+    devices = {d["device_id"]: d for d in matrix["devices"]}
+    assert len(devices) == len(matrix["devices"]), "duplicate device id"
+    for d in matrix["devices"]:
+        if d["actual"] is not None:
+            assert d["actual"]["platform"] == d["expected"]["platform"], "device actual platform differs from expected"
+    for claim in matrix["claims"]:
+        assert claim["state"] in ("unverified", "verified", "failed"), "unknown claim state"
+        if claim["state"] == "unverified":
+            continue
+        assert claim["run_ids"], "a verified or failed claim needs run records"
+        for run_id in claim["run_ids"]:
+            run = runs.get(run_id)
+            assert run is not None, "claim references a missing run record"
+            assert run["os"]["platform"] == claim["platform"], "claim backed by another platform's run"
+            device = devices.get(run["device_id"])
+            assert device is not None and device["actual"] is not None, "run comes from a device without observed facts"
+            assert device["actual"]["platform"] == claim["platform"], "run device platform differs from claim"
+            if claim["state"] == "verified":
+                assert run["status"] == "passed" and run["actual"] is not None, "verified claim needs passed runs with actual results"
 
 
 def main():
@@ -103,7 +219,7 @@ def main():
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({"status": "validation_in_progress", "scope": "Documentation only"}) + "\n", encoding="utf-8")
-    schemas = {name: load(ROOT / "schemas" / "v1" / (name + ".schema.json")) for name in ("protocol", "rule")}
+    schemas = {name: load(ROOT / "schemas" / "v1" / (name + ".schema.json")) for name in ("protocol", "rule", "rule-v2", "tested-registry", "run-record")}
     validators = {}
     for name, schema in schemas.items():
         Draft202012Validator.check_schema(schema)
@@ -119,13 +235,66 @@ def main():
         value = load(path)
         validators["rule"].validate(value)
         semantics(value)
+    registry = {}
+    registry_paths = sorted((ROOT / "rules/registry/examples").glob("*.json"))
+    for path in registry_paths:
+        value = load(path)
+        validators["tested-registry"].validate(value)
+        assert value["registry_id"] == value["rule_id"] + "@" + value["rule_version"], "registry id mismatch"
+        assert value["registry_id"] not in registry, "duplicate registry entry"
+        registry[value["registry_id"]] = value
+    rules_v2 = {}
+    for path in sorted((ROOT / "rules/examples/v2").glob("*.json")):
+        value = load(path)
+        validators["rule-v2"].validate(value)
+        rule_v2_semantics(value, registry)
+        assert value["status"] == "experimental", "example rules must stay experimental"
+        rules_v2[path.stem] = value
+    obs_schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "$defs": schemas["protocol"]["$defs"],
+                  "$ref": "#/$defs/observation_record"}
+    obs = load(ROOT / "examples/c14n/observation-v1.json")
+    Draft202012Validator(obs_schema, format_checker=FormatChecker()).validate(obs["record"])
+    semantics(obs["record"])
+    assert hashlib.sha256(json.dumps(obs["record"], sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest() == obs["fingerprint_sha256"], "observation fingerprint mismatch"
+    golden = load(ROOT / "examples/c14n/golden.json")
+    for case in golden["cases"]:
+        canon = json.dumps(json.loads(case["input"]), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        assert canon == case["canonical"] and hashlib.sha256(canon.encode("utf-8")).hexdigest() == case["sha256"], "c14n golden mismatch: " + case["name"]
+    runs = {}
+    for path in sorted((ROOT / "docs/evidence/runs").glob("*.json")):
+        value = load(path)
+        validators["run-record"].validate(value)
+        assert value["run_id"] not in runs, "duplicate run id"
+        runs[value["run_id"]] = value
+    # Production rule packs: schema, registry-backed promotion and existing passed run evidence.
+    prod_registry = {}
+    for path in sorted((ROOT / "rules/registry").glob("*.json")):
+        value = load(path)
+        validators["tested-registry"].validate(value)
+        assert not value["synthetic"], "production registry entries cannot be synthetic: " + path.name
+        for ref in value["evidence_refs"]:
+            assert ref in runs and runs[ref]["status"] == "passed", "registry evidence must be a passed run record: " + ref
+        prod_registry[value["registry_id"]] = value
+    prod_rules = 0
+    for pack in ("windows", "macos"):
+        for path in sorted((ROOT / "rules" / pack).glob("*.json")):
+            value = load(path)
+            validators["rule-v2"].validate(value)
+            rule_v2_semantics(value, prod_registry)
+            assert pack in value["platforms"], "rule pack directory and platforms disagree: " + path.name
+            prod_rules += 1
+    matrix = load(ROOT / "docs/evidence/device-matrix.json")
+    device_claim_semantics(matrix, runs)
     negative = []
     def reject(name, source, mutate, validator="protocol"):
         bad = copy.deepcopy(source)
         mutate(bad)
         try:
             validators[validator].validate(bad)
-            semantics(bad)
+            if validator == "rule-v2":
+                rule_v2_semantics(bad, registry)
+            else:
+                semantics(bad)
         except Exception as exc:
             from jsonschema.exceptions import ValidationError
             if not isinstance(exc, (ValidationError, AssertionError, ValueError)):
@@ -141,7 +310,111 @@ def main():
     reject("blocked-action", examples["candidate"], lambda x: x.update(risk="blocked"))
     reject("incorrect-freed-space", examples["operation-trash"], lambda x: x.update(observed_free_delta_bytes="104857600"))
     reject("encoding-mismatch", examples["candidate"], lambda x: x["path"].update(raw_encoding="unix_bytes_base64"))
+    def reject_claim(name, mutate_matrix, extra_run=None):
+        bad, pool = copy.deepcopy(matrix), dict(runs)
+        if extra_run is not None:
+            validators["run-record"].validate(extra_run)
+            pool[extra_run["run_id"]] = extra_run
+        mutate_matrix(bad)
+        try:
+            device_claim_semantics(bad, pool)
+        except AssertionError:
+            negative.append(name)
+            return
+        raise AssertionError("invalid device claim accepted: " + name)
+    win_run = copy.deepcopy(runs["run_template"]) | {"run_id": "run_synthetic_win", "status": "passed",
+        "actual": "Synthetic observed result", "terminal_state": "completed", "observer": "validator"}
+    def first(m, **match):
+        return next(c for c in m["claims"] if all(c[k] == v for k, v in match.items()))
+    def claim_mac_with_windows(m):
+        first(m, platform="macos").update(state="verified", run_ids=["run_synthetic_win"])
+    reject_claim("scn07-mac-claim-from-windows-run", claim_mac_with_windows, win_run)
+    reject_claim("scn07-verified-without-runs", lambda m: first(m, platform="windows", state="unverified").update(state="verified"))
+    reject_claim("scn07-verified-from-unverified-run", lambda m: first(m, platform="windows", state="unverified").update(state="verified", run_ids=["run_template"]))
+    reject("run-unverified-with-actual", runs["run_template"], lambda x: x.update(actual="made up"), "run-record")
+    reject("run-passed-without-actual", runs["run_template"], lambda x: x.update(status="passed"), "run-record")
     reject("unbacked-verified-rule", load(rules[0]), lambda x: x.update(status="verified"), "rule")
+    def reject_plan(name, source, mutate):
+        """Mutate a plan/v2 example and re-sign it, so rejection proves the intended invariant, not a stale digest."""
+        def change(x):
+            mutate(x["body"])
+            x["plan_digest"] = hashlib.sha256(json.dumps(x["body"], sort_keys=True, ensure_ascii=False,
+                separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+        reject(name, source, change)
+    action_types = {i["action_type"] for k, v in examples.items() if k.startswith("plan-v2-") for i in v["body"]["items"]}
+    assert action_types == set(r["$ref"].rsplit("/action_", 1)[1] for r in schemas["protocol"]["$defs"]["plan_action"]["oneOf"]), "plan/v2 golden vectors must cover every action type"
+    manual, maint, uninstall = examples["plan-v2-manual-selection"], examples["plan-v2-maintenance"], examples["plan-v2-uninstall"]
+    reject_plan("v2-manual-policy-matchable", manual, lambda b: b.update(policy_matchable=True))
+    reject_plan("v2-manual-quarantine", manual, lambda b: b["items"][0].update(action_type="fs_quarantine"))
+    reject_plan("v2-manual-delete-outside-trash", manual, lambda b: b["items"][0].update(action_type="fs_delete"))
+    reject_plan("v2-cleanup-targets-platform-trash", examples["plan-v2-cleanup"], lambda b: b["items"][2].update(target_location="platform_trash"))
+    reject_plan("v2-maintenance-with-file-delete", maint, lambda b: b["items"].append(copy.deepcopy(examples["plan-v2-cleanup"]["body"]["items"][2]) | {"action_id": "a99"}))
+    reject_plan("v2-maintenance-policy-matchable", maint, lambda b: b.update(policy_matchable=True))
+    reject_plan("v2-uninstall-forced-quit", uninstall, lambda b: b["items"][0].update(force="always"))
+    reject_plan("v2-registry-without-backup", uninstall, lambda b: b["items"][4].update(backup_required=False))
+    reject_plan("v2-hklm-without-admin", uninstall, lambda b: b["items"][4].update(hive="HKLM"))
+    reject_plan("v2-adapter-shell-string", uninstall, lambda b: b["items"][1].update(command_line="cmd /c del"))
+    reject("scan-status-terminal-state", examples["scan-status-running"], lambda x: x.update(state="completed"))
+    reject("scan-interrupted-claims-verified", examples["scan-interrupted"], lambda x: x.update(completeness="verified_scope"))
+    reject("cancel-receipt-claims-stopped", examples["scan-cancel-receipt"], lambda x: x.update(note="Scan stopped."))
+    reject("entries-page-over-size", examples["entries-page"], lambda x: x.update(page_size=2))
+    reject("entries-page-501", examples["entries-page"], lambda x: x.update(page_size=501))
+    reject("entries-page-duplicate", examples["entries-page"], lambda x: x["items"].append(copy.deepcopy(x["items"][0])) or x.update(page_size=4))
+    reject("entries-unknown-as-zero", examples["entries-page"], lambda x: x["items"][2].update(logical_bytes="0"))
+    reject("entries-page-without-revision", examples["entries-page"], lambda x: x.pop("revision"))
+    restore = examples["recovery-plan-restore"]
+    reject_plan("recovery-overwrite-on-conflict", restore, lambda b: b["items"][0].update(on_conflict="overwrite"))
+    reject_plan("recovery-restore-without-target", restore, lambda b: b["items"][0]["target"].update(path=None))
+    reject_plan("recovery-purge-with-restore-target", restore, lambda b: b.update(recovery_kind="purge"))
+    reject("authorization-without-source", examples["authorization-policy"], lambda x: x.update(source=None))
+    reject("authorization-required-with-source", examples["authorization-required"], lambda x: x.update(source="interactive_review"))
+    reject("authorization-quota-exceeded", examples["authorization-policy"], lambda x: x["quota"].update(used_bytes="2147483648", reserved_unknown_bytes="1"))
+    reject("authorization-client-approved-flag", examples["authorization-required"], lambda x: x.update(approved=True))
+    reject("operation-status-terminal", examples["operation-status-running"], lambda x: x.update(state="completed"))
+    reject("operation-cancel-claims-rollback", examples["operation-cancel-receipt"], lambda x: x.update(note="Rolled back."))
+    reject("reconciliation-reported-complete", examples["operation-reconciliation"], lambda x: x.update(status="completed"))
+    reject("reconciliation-reported-partial", examples["operation-reconciliation"], lambda x: x.update(status="partial"))
+    reject("v2-tampered-plan", uninstall, lambda x: x["body"]["items"][2]["target"].update(logical_bytes="1"))
+    req, prev = examples["request-clean-preview"], examples["preview-clean"]
+    reject("cli-noninteractive-review-only", req, lambda x: x["params"].update(include_tiers=["default_selected", "review_only"]))
+    reject("cli-page-size-501", req, lambda x: x["params"].update(page_size=501))
+    reject("cli-unknown-command", req, lambda x: x.update(command="shell.exec"))
+    reject("cli-params-for-other-command", req, lambda x: x["params"].update(entry_ids=["e1"]))
+    reject("cli-protect-relative-path", req, lambda x: x.update(command="protect.add", params={"entry": {"match": "exact",
+        "path": {"platform": "windows", "display": "..\\Windows", "raw_encoding": "windows_utf16le_base64",
+                 "raw_base64": base64.b64encode("..\\Windows".encode("utf-16-le")).decode("ascii")},
+        "glob": None, "rule_id": None, "task_id": None, "note": None}}))
+    trav = "C:\\Users\\..\\Windows"
+    reject("cli-protect-traversal", req, lambda x: x.update(command="protect.add", params={"entry": {"match": "exact",
+        "path": {"platform": "windows", "display": trav, "raw_encoding": "windows_utf16le_base64",
+                 "raw_base64": base64.b64encode(trav.encode("utf-16-le")).decode("ascii")},
+        "glob": None, "rule_id": None, "task_id": None, "note": None}}))
+    reject("preview-blocked-selected", prev, lambda x: x["items"][3].update(selected_by_default=True))
+    reject("preview-network-default-selected", prev, lambda x: x["items"][1].update(tier="default_selected"))
+    reject("preview-skipped-but-selected", prev, lambda x: x["items"][2].update(selected_by_default=True))
+    reject("preview-summary-mismatch", prev, lambda x: x["summary"].update(selected_known_bytes="0"))
+    reject("preview-not-dry-run", prev, lambda x: x.update(dry_run=False))
+    reject("maintenance-all-clear-with-failure", examples["maintenance-report"], lambda x: (x["items"][1].update(outcome="failed"),
+        x["counts"].update(skipped=0, failed=1), x.update(all_clear=True)))
+    reject("status-unavailable-as-zero", examples["status-snapshot"], lambda x: x["metrics"][1].update(value=0))
+    reject("protection-hard-deny-removable", examples["protection-list"], lambda x: x["items"][0].update(removable=True))
+    reject("app-protected-uninstallable", examples["app-list"], lambda x: x["items"][1]["uninstall_capability"].update(state="available"))
+    cache_v2 = rules_v2["example-browser-code-cache"]
+    def enable(x, ref="example.browser.code-cache@0.1.0"):
+        x.update(status="enabled", tested_registry_ref=ref, evidence_refs=["synthetic:schema-example"])
+    reject("v2-script-resolver", cache_v2, lambda x: x.update(root_resolver="script"), "rule-v2")
+    reject("v2-cross-root-regex", cache_v2, lambda x: x["match"].update(path_regex=".*"), "rule-v2")
+    reject("v2-follow-links", cache_v2, lambda x: x.update(follow_links=True), "rule-v2")
+    reject("v2-component-traversal", cache_v2, lambda x: x["match"].update(relative_components=[".."]), "rule-v2")
+    reject("v2-recursive-glob", cache_v2, lambda x: x["match"].update(name_glob="**"), "rule-v2")
+    reject("v2-glob-separator", cache_v2, lambda x: x.update(exclude=["../secret"]), "rule-v2")
+    reject("v2-enabled-without-registry", cache_v2, lambda x: enable(x, None), "rule-v2")
+    reject("v2-enabled-with-synthetic-registry", cache_v2, enable, "rule-v2")
+    reject("v2-network-rebuild-default-selected", rules_v2["example-package-cache-adapter"], lambda x: x.update(max_tier="default_selected"), "rule-v2")
+    reject("v2-adapter-without-ref", rules_v2["example-package-cache-adapter"], lambda x: x.update(adapter_ref=None), "rule-v2")
+    reject("v2-adapter-with-fs-modes", rules_v2["example-package-cache-adapter"], lambda x: x.update(allowed_modes=["delete"]), "rule-v2")
+    reject("v2-blocked-with-modes", cache_v2, lambda x: x.update(max_tier="blocked"), "rule-v2")
+    reject("registry-without-negative-fixture", registry["example.browser.code-cache@0.1.0"], lambda x: x["fixtures"].update(negative=[]), "tested-registry")
     evidence = ROOT / "docs/evidence"
     bundle = load(evidence / "rea-wiztree-4.33.bundle.json")
     artifact = load(evidence / "wiztree-artifact-summary.json")
@@ -175,6 +448,32 @@ def main():
             target = target.split("#", 1)[0].strip("<>")
             assert (path.parent / target).resolve().exists(), f"broken local link: {path}: {target}"
             links += 1
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
+    members = {tomllib.loads(m.read_text(encoding="utf-8"))["package"]["name"] for m in (ROOT / "crates").glob("*/Cargo.toml")}
+    locked = {(pkg["name"], pkg["version"]) for pkg in lock["package"] if pkg["name"] not in members}
+    dep_doc = (ROOT / "docs/dependencies.md").read_text(encoding="utf-8")
+    documented_deps = set(re.findall(r"^\| `([A-Za-z0-9_-]+)` \| ([0-9][^ |]*) \|", dep_doc, re.M))
+    assert documented_deps == locked, "docs/dependencies.md differs from Cargo.lock; rerun tools/dependency_inventory.py: " + str(sorted(documented_deps ^ locked))
+    for manifest in [ROOT / "Cargo.toml", *(ROOT / "crates").glob("*/Cargo.toml")]:
+        assert ".research" not in manifest.read_text(encoding="utf-8"), "build must not reference research copies: " + str(manifest)
+    protocol_doc = (ROOT / "docs/cli-protocol.md").read_text(encoding="utf-8")
+    exits = load(ROOT / "schemas/v1/exit-codes.json")
+    assert set(exits["errors"]) == set(schemas["protocol"]["$defs"]["error"]["properties"]["code"]["enum"]), "exit table and error enum differ"
+    rows = {int(m.group(1)): m.group(2) for m in re.finditer(r"^\| (\d+) \| [^|]+ \| ([^|]+) \|$", protocol_doc, re.M)}
+    for name, code in [*exits["errors"].items(), *exits["results"].items()]:
+        assert name in rows.get(code, ""), f"exit table row {code} in docs/cli-protocol.md does not list {name}"
+    documented = set(re.findall(r"^\| `([a-z_]+(?:\.[a-z_]+)+)` \|", protocol_doc, re.M))
+    commands = set(schemas["protocol"]["$defs"]["cli_request"]["properties"]["command"]["enum"])
+    assert documented == commands, "CLI command table and schema differ: " + str(sorted(documented ^ commands))
+    record_kinds = {r["$ref"].rsplit("/", 1)[1] for r in schemas["protocol"]["oneOf"]}
+    fixture_kinds = {v["kind"] for v in examples.values()}
+    assert record_kinds <= fixture_kinds, "record kinds without a fixture: " + str(sorted(record_kinds - fixture_kinds))
+    core_section = protocol_doc.split("## 命令面与副作用", 1)[1].split("## 工具命令组", 1)[0]
+    core_rows = re.findall(r"^\| `([^`]+)` \| [^|]+ \| ([^|]+) \| [^|]+ \|$", core_section, re.M)
+    assert len(core_rows) >= 16, "core command table is incomplete"
+    for command, responses in core_rows:
+        named = set(re.findall(r"`([a-z_]+)`", responses))
+        assert named and named <= record_kinds, f"core command {command} names unknown response records: {sorted(named - record_kinds)}"
     test_text = (ROOT / "docs/verification-plan.md").read_text(encoding="utf-8")
     task_text = (ROOT / "docs/roadmap.md").read_text(encoding="utf-8")
     tests = re.findall(r"^\| (TC-[A-Z0-9]+-\d{3}) \|", test_text, re.M)
@@ -185,11 +484,13 @@ def main():
     assert referenced_tests <= set(tests), "undefined test IDs: " + str(sorted(referenced_tests - set(tests)))
     assert referenced_tasks <= set(tasks), "undefined task IDs: " + str(sorted(referenced_tasks - set(tasks)))
     report = {"status": "passed", "scope": "Document contracts and synthetic examples only; no product or OS behavior tested.",
-              "schemas": len(schemas), "protocol_examples": len(examples), "rule_examples": len(rules),
+              "schemas": len(schemas), "protocol_examples": len(examples), "rule_examples": len(rules), "rule_v2_examples": len(rules_v2), "registry_examples": len(registry),
               "negative_cases_rejected": negative, "local_links_checked": links, "markdown_files_checked": len(paths),
               "rea_evidence_records_linked": len(records), "rea_unknowns_linked": len(bundle["unknowns"]),
               "reference_probe_cases_matched": len(reproduced["cases"]),
-              "planned_test_ids_checked": len(tests), "planned_task_ids_checked": len(tasks)}
+              "planned_test_ids_checked": len(tests), "planned_task_ids_checked": len(tasks),
+              "cli_commands_documented": len(documented),
+              "run_records": len(runs), "locked_crates_documented": len(locked), "production_rules": prod_rules, "production_registry_entries": len(prod_registry), "devices_observed": sum(d["actual"] is not None for d in matrix["devices"])}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

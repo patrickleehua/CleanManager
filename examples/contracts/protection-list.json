@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "kind": "protection_list",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "protection_id": "hd_windows",
+      "layer": "hard_deny",
+      "match": "descendants",
+      "display": "C:\\Windows",
+      "removable": false
+    },
+    {
+      "protection_id": "dc_ai_sessions",
+      "layer": "default_category",
+      "match": "rule",
+      "display": "AI sessions",
+      "removable": false
+    },
+    {
+      "protection_id": "u_1",
+      "layer": "user",
+      "match": "exact",
+      "display": "C:\\Users\\Example\\Projects\\keep-cache",
+      "removable": true
+    }
+  ]
+}

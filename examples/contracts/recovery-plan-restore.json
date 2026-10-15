@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "recovery/v1",
+    "plan_id": "rp_demo",
+    "recovery_kind": "restore",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "quarantine_id": "q_demo",
+        "quarantined_path": {
+          "platform": "windows",
+          "display": "C:\\.cm-quarantine\\q_demo",
+          "raw_encoding": "windows_utf16le_base64",
+          "raw_base64": "QwA6AFwALgBjAG0ALQBxAHUAYQByAGEAbgB0AGkAbgBlAFwAcQBfAGQAZQBtAG8A"
+        },
+        "quarantined_identity": {
+          "volume_id": "synthetic-volume",
+          "file_id": "ntfs64:c3ecfc91e8f0cc7c",
+          "generation": null,
+          "quality": "strong",
+          "observed_at": "2026-10-14T12:00:02Z"
+        },
+        "original_parent_identity": {
+          "volume_id": "synthetic-volume",
+          "file_id": "ntfs64:e47125968b3b7104",
+          "generation": null,
+          "quality": "strong",
+          "observed_at": "2026-10-14T12:00:02Z"
+        },
+        "original_path": {
+          "platform": "windows",
+          "display": "C:\\Users\\Example\\report.cache",
+          "raw_encoding": "windows_utf16le_base64",
+          "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHIAZQBwAG8AcgB0AC4AYwBhAGMAaABlAA=="
+        },
+        "target": {
+          "kind": "original",
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Users\\Example\\report.cache",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHIAZQBwAG8AcgB0AC4AYwBhAGMAaABlAA=="
+          }
+        },
+        "on_conflict": "skip",
+        "logical_bytes": "1048576"
+      }
+    ]
+  },
+  "plan_digest": "ef69f68a82bc09e6d6bbc235c3d9dae7f186b11746185dfef35d3f695701b0ae",
+  "authorization_status": "required"
+}

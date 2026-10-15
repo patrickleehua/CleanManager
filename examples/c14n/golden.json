@@ -1,0 +1,62 @@
+{
+  "contract": "CM-C14N-v1",
+  "cases": [
+    {
+      "name": "key-order-and-nesting",
+      "input": "{\n \"b\": [\n  3,\n  {\n   \"z\": null,\n   \"a\": true\n  }\n ],\n \"a\": \"x\"\n}",
+      "canonical": "{\"a\":\"x\",\"b\":[3,{\"a\":true,\"z\":null}]}",
+      "sha256": "38cbe0439d3f6c5bbfbd3dbdbc98f81c558549bb5135b27daec2ecbb696d33ea"
+    },
+    {
+      "name": "escapes",
+      "input": "{\n \"s\": \"q\\\"\\\\/\\n\\r\\t\\b\\f\\u0001\\u001f\"\n}",
+      "canonical": "{\"s\":\"q\\\"\\\\/\\n\\r\\t\\b\\f\\u0001\\u001f\"}",
+      "sha256": "f812514f66d208fe9b82658365397f394394a4b900f3d5595cccd449b0c13182"
+    },
+    {
+      "name": "unicode-kept-raw",
+      "input": "{\n \"name\": \"中文 文件 😀\",\n \"e_accent\": \"é\"\n}",
+      "canonical": "{\"e_accent\":\"é\",\"name\":\"中文 文件 😀\"}",
+      "sha256": "00049365afd1ca31c7b7b89016f2dd3f9802d5a34d7691860258e871e9ed2e06"
+    },
+    {
+      "name": "integers-at-bounds",
+      "input": "{\n \"min\": -9223372036854775808,\n \"max\": 18446744073709551615,\n \"zero\": 0\n}",
+      "canonical": "{\"max\":18446744073709551615,\"min\":-9223372036854775808,\"zero\":0}",
+      "sha256": "78bf031b8164a0a27a0d6c023748024b38ad225fb087674638e74ece789e7505"
+    },
+    {
+      "name": "plan-like",
+      "input": "{\n \"items\": [\n  {\n   \"action_id\": \"a01\",\n   \"logical_bytes\": \"18446744073709551615\"\n  }\n ],\n \"mode\": \"trash\"\n}",
+      "canonical": "{\"items\":[{\"action_id\":\"a01\",\"logical_bytes\":\"18446744073709551615\"}],\"mode\":\"trash\"}",
+      "sha256": "7006d6d10253d0524852f3c5a45f1ecf24fe5e024720538ef63b922bc33121a7"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "duplicate-key",
+      "input": "{\"a\":1,\"a\":2}",
+      "reason": "duplicate_key"
+    },
+    {
+      "name": "float",
+      "input": "{\"a\":1.5}",
+      "reason": "float"
+    },
+    {
+      "name": "exponent",
+      "input": "{\"a\":1e3}",
+      "reason": "float"
+    },
+    {
+      "name": "trailing-data",
+      "input": "{\"a\":1} x",
+      "reason": "malformed"
+    },
+    {
+      "name": "non-ascii-key",
+      "input": "{\"名\":1}",
+      "reason": "non_ascii_key"
+    }
+  ]
+}

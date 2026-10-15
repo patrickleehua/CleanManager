@@ -1,0 +1,27 @@
+[package]
+name = "cm-platform"
+description = "CleanManager system access: conditional Windows/macOS backends behind cm-core traits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cm-core.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Registry", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.177"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+cm-fixtures = { path = "../cm-fixtures" }
+
+# Test-only provider for the cloud placeholder boundary tests (Cloud Files API).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_CloudFilters", "Win32_System_CorrelationVector"] }

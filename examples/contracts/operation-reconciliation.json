@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_report",
+  "request_id": "req_synthetic",
+  "operation_id": "op_unknown",
+  "plan_id": "p_demo",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "status": "reconciliation_required",
+  "started_at": "2026-10-14T12:02:00Z",
+  "finished_at": "2026-10-14T12:02:01Z",
+  "succeeded": 1,
+  "skipped": 0,
+  "failed": 0,
+  "not_started": 0,
+  "unknown": 1,
+  "items": [
+    {
+      "action_id": "a_demo",
+      "status": "succeeded",
+      "code": "moved_to_trash",
+      "message": "Synthetic move",
+      "recovery": "trash"
+    },
+    {
+      "action_id": "a_demo2",
+      "status": "unknown",
+      "code": "outcome_unconfirmed",
+      "message": "Process stopped after the OS call and before the result was recorded",
+      "recovery": "unknown"
+    }
+  ],
+  "processed_logical_bytes": "104857600",
+  "volume_free_before_bytes": "1000000000",
+  "volume_free_after_bytes": null,
+  "observed_free_delta_bytes": null
+}

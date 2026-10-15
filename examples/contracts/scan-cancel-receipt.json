@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "kind": "scan_cancel_receipt",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "accepted": true,
+  "state_at_receipt": "running",
+  "requested_at": "2026-10-14T12:00:02Z",
+  "note": "Receipt only: the scan stops at the next safe boundary; query scan show for the terminal record."
+}

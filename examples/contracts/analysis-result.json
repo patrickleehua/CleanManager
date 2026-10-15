@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "kind": "analysis_result",
+  "request_id": "req_synthetic",
+  "candidate_set_id": "cs_demo",
+  "scan_id": "s_demo",
+  "scan_revision": 1,
+  "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "scan_completeness": "partial_scope",
+  "candidate_count": 1,
+  "blocked_count": 0,
+  "pending_evidence_count": 1,
+  "known_logical_bytes": "104857600",
+  "unknown_size_count": 0,
+  "issues": [
+    {
+      "code": "partial_evidence",
+      "scope_display": "synthetic protected subtree",
+      "message": "A rule needing complete descendants was left pending"
+    }
+  ]
+}

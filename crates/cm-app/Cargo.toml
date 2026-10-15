@@ -1,0 +1,20 @@
+[package]
+name = "cm-app"
+description = "CleanManager application services shared by the CLI and desktop (scan lifecycle, later plans and execution)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cm-core.workspace = true
+cm-platform.workspace = true
+cm-store = { path = "../cm-store" }
+serde_json.workspace = true
+
+[dev-dependencies]
+cm-fixtures = { path = "../cm-fixtures" }
+
+[lints]
+workspace = true

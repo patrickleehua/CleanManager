@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_recovery",
+    "plan_kind": "recovery",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "registry_restore",
+        "backup_id": "rb_demo",
+        "hive": "HKCU",
+        "key_path": "Software\\ExampleVendor\\ExampleApp",
+        "on_existing": "skip"
+      },
+      {
+        "action_id": "a02",
+        "action_type": "startup_toggle",
+        "startup_item_id": "st_demo",
+        "source": "run_key",
+        "operation": "restore",
+        "scope": "user"
+      },
+      {
+        "action_id": "a03",
+        "action_type": "settings_change",
+        "setting_id": "display.keep_awake",
+        "from_value": "on_60_minutes",
+        "to_value": "off",
+        "restore_on_exit": false
+      }
+    ]
+  },
+  "plan_digest": "bee0b1d423c7313d9bc306b09df2d51e9a9b34c49131bc843b9d60fd82fea5fd",
+  "authorization_status": "required"
+}

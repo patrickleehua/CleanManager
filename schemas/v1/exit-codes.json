@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "description": "Stable CLI exit classifications (CLI-05). Callers branch on the typed code, never on messages.",
+  "results": { "success": 0, "partial": 5, "reconciliation_required": 8 },
+  "errors": {
+    "invalid_argument": 2,
+    "schema_mismatch": 2,
+    "needs_approval": 3,
+    "policy_denied": 3,
+    "permission_required": 4,
+    "plan_stale": 6,
+    "cursor_stale": 6,
+    "conflict": 6,
+    "unsupported": 7,
+    "io_error": 8,
+    "internal_error": 8,
+    "protection_unavailable": 8,
+    "cancelled": 130
+  }
+}

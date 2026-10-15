@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "kind": "doctor_report",
+  "request_id": "req_synthetic",
+  "generated_at": "2026-10-14T12:00:02Z",
+  "redacted": true,
+  "engine_version": "0.0.0-design-example",
+  "platform": "windows",
+  "capabilities": [
+    {
+      "name": "uninstall.registry",
+      "state": "unverified",
+      "reason": "Synthetic report"
+    }
+  ],
+  "checks": [
+    {
+      "check": "protection_list",
+      "status": "ok",
+      "detail": "3 entries"
+    },
+    {
+      "check": "index_store",
+      "status": "unknown",
+      "detail": "Synthetic report"
+    }
+  ]
+}

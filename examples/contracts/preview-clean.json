@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "kind": "selection_preview",
+  "request_id": "req_synthetic",
+  "command": "clean.preview",
+  "scan_id": "s_demo",
+  "scan_revision": 1,
+  "dry_run": true,
+  "non_interactive": true,
+  "next_cursor": null,
+  "page_size": 50,
+  "convertible_to_plan": true,
+  "items": [
+    {
+      "object_id": "o1",
+      "entry_id": "e_o1",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\AppData\\Local\\FixtureBrowser\\Code Cache",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABGAGkAeAB0AHUAcgBlAEIAcgBvAHcAcwBlAHIAXABDAG8AZABlACAAQwBhAGMAaABlAA=="
+      },
+      "category": "browsers",
+      "rule_id": "example.browser.code-cache",
+      "rule_version": "0.1.0",
+      "tier": "default_selected",
+      "tier_reason": "Verified local cache",
+      "rebuild_class": "local_rebuild",
+      "registry_status": "covered",
+      "selected_by_default": true,
+      "skip_reason": null,
+      "probes": [
+        {
+          "probe": "owner_process",
+          "result": "not_in_use"
+        }
+      ],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text"
+    },
+    {
+      "object_id": "o2",
+      "entry_id": "e_o2",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\AppData\\Local\\FixtureTool\\packages",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABGAGkAeAB0AHUAcgBlAFQAbwBvAGwAXABwAGEAYwBrAGEAZwBlAHMA"
+      },
+      "category": "developer",
+      "rule_id": "example.browser.code-cache",
+      "rule_version": "0.1.0",
+      "tier": "review_only",
+      "tier_reason": "Needs network to rebuild",
+      "rebuild_class": "network_redownload",
+      "registry_status": "version_untested",
+      "selected_by_default": false,
+      "skip_reason": null,
+      "probes": [],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text"
+    },
+    {
+      "object_id": "o3",
+      "entry_id": "e_o3",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\AppData\\Local\\FixtureBrowser2\\Code Cache",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABGAGkAeAB0AHUAcgBlAEIAcgBvAHcAcwBlAHIAMgBcAEMAbwBkAGUAIABDAGEAYwBoAGUA"
+      },
+      "category": "browsers",
+      "rule_id": "example.browser.code-cache",
+      "rule_version": "0.1.0",
+      "tier": "default_selected",
+      "tier_reason": "Verified local cache",
+      "rebuild_class": "local_rebuild",
+      "registry_status": "covered",
+      "selected_by_default": false,
+      "skip_reason": "in_use",
+      "probes": [
+        {
+          "probe": "owner_process",
+          "result": "in_use"
+        }
+      ],
+      "logical_bytes": "1048576",
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text"
+    },
+    {
+      "object_id": "o4",
+      "entry_id": "e_o4",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\.ssh",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAC4AcwBzAGgA"
+      },
+      "category": "user_essentials",
+      "rule_id": "example.browser.code-cache",
+      "rule_version": "0.1.0",
+      "tier": "blocked",
+      "tier_reason": "Credentials are protected",
+      "rebuild_class": "not_rebuildable",
+      "registry_status": "version_untested",
+      "selected_by_default": false,
+      "skip_reason": "protected",
+      "probes": [],
+      "logical_bytes": null,
+      "reclaimable_estimate_bytes": null,
+      "impact": "Synthetic impact text"
+    }
+  ],
+  "summary": {
+    "selected_count": 1,
+    "selected_known_bytes": "1048576",
+    "selected_unknown_size_count": 0,
+    "review_only_count": 1,
+    "blocked_count": 1,
+    "skipped_count": 2
+  }
+}

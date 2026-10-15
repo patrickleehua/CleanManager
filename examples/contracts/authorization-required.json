@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "kind": "authorization_status",
+  "request_id": "req_synthetic",
+  "plan_id": "p_demo",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "status": "required",
+  "source": null,
+  "policy_id": null,
+  "policy_version": null,
+  "principal": null,
+  "authorized_at": null,
+  "expires_at": null,
+  "quota": null
+}

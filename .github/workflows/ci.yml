@@ -1,0 +1,52 @@
+# Controlled unit/contract checks only. CI results never update real-device, signing or
+# permission acceptance records (docs/evidence/device-matrix.json is only validated here).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            expected_arch: X64
+          - os: macos-15
+            expected_arch: ARM64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record actual runner and architecture
+        shell: bash
+        run: |
+          echo "runner.os=${{ runner.os }} runner.arch=${{ runner.arch }} image=${ImageOS:-unknown} ${ImageVersion:-}"
+          uname -a
+          if [ "${{ runner.arch }}" != "${{ matrix.expected_arch }}" ]; then
+            echo "::warning::runner architecture ${{ runner.arch }} differs from expected ${{ matrix.expected_arch }}"
+          fi
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc -vV
+          cargo -V
+      - name: Unit and integration tests
+        run: cargo test --locked --workspace
+      - name: Lints
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Document and contract validation
+        shell: bash
+        run: |
+          python -m pip install --target .research/python-deps -r requirements-docs.txt
+          python tools/generate_contracts.py
+          git diff --exit-code -- schemas examples rules
+          python tools/validate_docs.py

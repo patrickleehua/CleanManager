@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "kind": "app_list",
+  "request_id": "req_synthetic",
+  "next_cursor": null,
+  "page_size": 50,
+  "items": [
+    {
+      "app_instance_id": "app_demo",
+      "name": "Example App",
+      "version": "1.2.3",
+      "source": "registry_uninstall",
+      "location": {
+        "platform": "windows",
+        "display": "C:\\Program Files\\Example App",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwBcAEUAeABhAG0AcABsAGUAIABBAHAAcAA="
+      },
+      "publisher": "Example Vendor",
+      "identity_evidence": [
+        "uninstall entry",
+        "authenticode publisher"
+      ],
+      "uninstall_capability": {
+        "state": "available",
+        "reason": null
+      },
+      "update_status": "not_checked",
+      "protected_class": false
+    },
+    {
+      "app_instance_id": "app_security",
+      "name": "Example Endpoint Agent",
+      "version": null,
+      "source": "msi",
+      "location": null,
+      "publisher": "Example Security",
+      "identity_evidence": [
+        "msi product code"
+      ],
+      "uninstall_capability": {
+        "state": "unsupported",
+        "reason": "Endpoint security agents use their vendor process"
+      },
+      "update_status": "cannot_check",
+      "protected_class": true
+    }
+  ]
+}

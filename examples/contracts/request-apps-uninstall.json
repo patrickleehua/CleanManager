@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "kind": "cli_request",
+  "request_id": "req_synthetic",
+  "command": "apps.uninstall.plan",
+  "output": "json",
+  "non_interactive": true,
+  "dry_run": false,
+  "params": {
+    "app_instance_id": "app_demo",
+    "include_groups": [
+      "bundle",
+      "caches_logs"
+    ]
+  }
+}

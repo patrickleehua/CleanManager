@@ -181,3 +181,19 @@ IPC 使用仅本机命名管道，显式 DACL 绑定当前用户/登录会话与
 | ARM64、最低 build、WebView2 安装策略 | 真机启动、签名、安装/升级与错误恢复 | `TC-WIN-014`、`TC-WIN-015` |
 
 以上未决项不得从竞品研究、API 文档或 Windows 开发环境的存在推导为已通过。
+
+## 已实测状态（2026-10-15，开发机 Windows 11 Enterprise 26200 x64）
+
+以下来自 `win.directory` 原型与 [运行记录](../evidence/runs/)、[设备矩阵](../evidence/device-matrix.json)；未列出的组合保持 unverified。
+
+| 能力 | 结果 | 证据 | 限制 |
+| --- | --- | --- | --- |
+| NTFS 目录扫描（普通权限上下文） | verified | `run_win_dir_tiny`、`run_win_dir_p0_10k`、`run_win_dir_denied` | 开发 shell 为提升令牌且启用了 SeBackupPrivilege/SeRestorePrivilege；CLI 启动即禁用二者，否则 `FILE_FLAG_BACKUP_SEMANTICS` 会绕过 ACL。独立非管理员账户未测 |
+| exFAT 目录扫描 | verified | `run_win_dir_exfat` | exFAT 不支持 `FileIdInfo` 与扩展目录信息，回退为 `GetFileInformationByHandle` 与 `FileIdBothDirectoryInfo`，身份标记为 weak |
+| 硬链接去重、junction/符号链接边界、中文/空格/长名与超过 260 字符路径 | 单元/集成测试通过 | `cm-platform` 测试 | 卷挂载点与 junction 同为 `IO_REPARSE_TAG_MOUNT_POINT`，统一记为 junction 边界 |
+| 压缩/稀疏文件分配量 | 测试通过 | `sparse_compressed_and_alternate_streams_report_measured_allocation` | 通过仅属性句柄的 `FileCompressionInfo` 补查；ADS 不计入逻辑大小 |
+| 卷替换与卷离线 | 测试通过（一次性 VHD） | `volume_replaced_during_scan_*`、`volume_going_offline_*` | 需 `CM_ALLOW_VHD_TESTS=1` 与提升 shell |
+| 云占位边界 | 测试通过（测试用 Cloud Files 提供方） | `cloud_placeholders_are_never_hydrated_or_populated_by_a_scan` | 扫描期间 FETCH_DATA/FETCH_PLACEHOLDERS 回调为 0；真实 OneDrive 未测，未验证提供方的目录一律记为边界不进入 |
+| `win.ntfs_enum`（实验） | unverified | 一次性 NTFS VHD 上与目录基线逐项一致（测试） | 只接受显式卷根与管理员；目录范围请求在读取前拒绝。尚无基准与真实系统卷记录 |
+| SMB 共享 | unverified | — | 未连接网络卷 |
+

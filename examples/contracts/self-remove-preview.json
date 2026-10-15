@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "kind": "self_remove_preview",
+  "request_id": "req_synthetic",
+  "remove": [
+    {
+      "component": "cli",
+      "display": "Command-line tool"
+    },
+    {
+      "component": "resident",
+      "display": "Tray component and its login entry"
+    }
+  ],
+  "keep": [
+    {
+      "data": "configuration",
+      "display": "Settings"
+    },
+    {
+      "data": "protection_list",
+      "display": "Protection list"
+    },
+    {
+      "data": "history",
+      "display": "Operation history"
+    },
+    {
+      "data": "quarantine",
+      "display": "Quarantine items"
+    }
+  ],
+  "quarantine_items": 2,
+  "quarantine_logical_bytes": "2097152",
+  "system_settings_to_restore": [
+    "display.keep_awake"
+  ],
+  "requires_interactive_confirmation": true
+}

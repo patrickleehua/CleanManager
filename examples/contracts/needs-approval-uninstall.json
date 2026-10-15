@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "needs_approval",
+  "message": "Uninstall plan needs user review",
+  "retryable": false,
+  "required_action": "Review the plan in the desktop app or with plan review",
+  "details": {
+    "plan_id": "p_v2_uninstall",
+    "operation_id": null,
+    "scope_id": null
+  }
+}

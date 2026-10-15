@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "kind": "release_info",
+  "request_id": "req_synthetic",
+  "current_version": "0.0.0-design-example",
+  "latest_version": null,
+  "release_id": null,
+  "install_method": "winget",
+  "status": "use_package_manager",
+  "reason": "Installed by a package manager",
+  "checked_at": "2026-10-14T12:00:02Z"
+}

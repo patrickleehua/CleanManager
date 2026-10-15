@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "SCN-03",
+  "run_id": "run_win_dir_denied",
+  "recorded_at": "2026-10-15T05:36:39Z",
+  "code_commit": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+  "binary_sha256": "f5642dc532aa729a7b567c3d181a8b957a5701ea23931a708ce1c2746d82dbc5",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager before scanning"
+    ]
+  },
+  "scope_digest": "c91d2a9d173f1c19054d962f9ac61fe5adacd72aa752a126dd6690daa47016b4",
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {
+    "batch_entries": 4096
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "<scratch>/denied",
+    "--store",
+    "<scratch>/store",
+    "--json"
+  ],
+  "seed": 20261014,
+  "expected": "partial, 1 skipped range with permission_required, exit 5, visible file kept",
+  "actual": "status=partial skipped_ranges=1 issues=['permission_required'] logical_bytes=2 exit=5",
+  "terminal_state": "partial",
+  "exit_code": 5,
+  "measurements": {},
+  "observer": "tools/record_windows_runs.py",
+  "limitations": [
+    "Working tree had uncommitted changes; code_commit is the base commit.",
+    "Deny ACE for Everyone; the admin token's backup privilege was disabled by the CLI."
+  ],
+  "status": "passed"
+}

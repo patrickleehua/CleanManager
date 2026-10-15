@@ -1,0 +1,37 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "example.downloads.installer-images",
+  "version": "0.1.0",
+  "status": "experimental",
+  "platforms": ["macos"],
+  "category": "user_essentials",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": { "kind": "system", "id": "example.invalid.downloads" },
+  "root_resolver": "installer_location",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": "*",
+    "extensions": ["dmg", "pkg", "zip"],
+    "require_cachedir_tag": false,
+    "archive_payload": true,
+    "max_depth": 2
+  },
+  "exclude": ["*.part"],
+  "probes": ["open_file_handle", "mounted_image"],
+  "thresholds": { "min_age_days": null, "age_basis": null, "min_size_bytes": null, "retention_days": null },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": ["trash"],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Synthetic fixture for installer images; zip files count only when they carry an installer payload.",
+    "regeneration": "Download the installer again from its original source.",
+    "offline_effect": "Reinstalling or repairing offline is not possible without the image."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

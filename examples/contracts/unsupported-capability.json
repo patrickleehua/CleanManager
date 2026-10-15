@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "unsupported",
+  "message": "Fan control is not available on this platform",
+  "retryable": false,
+  "required_action": null,
+  "details": {
+    "plan_id": null,
+    "operation_id": null,
+    "scope_id": null
+  }
+}

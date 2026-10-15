@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_manual_purge",
+    "plan_kind": "manual_selection",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "fs_delete",
+        "target": {
+          "entry_id": "e_trashed",
+          "candidate_id": null,
+          "path": {
+            "platform": "windows",
+            "display": "D:\\$Recycle.Bin\\S-1-5-21-example\\$Rexample.mov",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "RAA6AFwAJABSAGUAYwB5AGMAbABlAC4AQgBpAG4AXABTAC0AMQAtADUALQAyADEALQBlAHgAYQBtAHAAbABlAFwAJABSAGUAeABhAG0AcABsAGUALgBtAG8AdgA="
+          },
+          "identity": {
+            "volume_id": "synthetic-volume",
+            "file_id": "ntfs64:cfd281658abfe9d3",
+            "generation": null,
+            "quality": "strong",
+            "observed_at": "2026-10-14T12:00:02Z"
+          },
+          "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "logical_bytes": "1048576",
+          "allocated_bytes": "1048576"
+        },
+        "target_location": "platform_trash",
+        "must_not_follow_links": true
+      }
+    ]
+  },
+  "plan_digest": "e3f4ac57a970ec38eb56dee10d5ea5454b93cc79b21d452971b8ad1f5d3bf95f",
+  "authorization_status": "required"
+}

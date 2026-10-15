@@ -1,0 +1,63 @@
+{
+  "record": {
+    "contract": "obs/v1",
+    "scope_root": {
+      "volume_id": "synthetic-volume",
+      "file_id": "ntfs64:7d2b24cf0ab1c473",
+      "generation": null,
+      "quality": "strong",
+      "observed_at": "2026-10-14T12:00:02Z"
+    },
+    "volume_id": "synthetic-volume",
+    "entity": {
+      "volume_id": "synthetic-volume",
+      "file_id": "ntfs64:bca3685fea8acd4e",
+      "generation": "7",
+      "quality": "strong",
+      "observed_at": "2026-10-14T12:00:02Z"
+    },
+    "parent_chain": [
+      {
+        "volume_id": "synthetic-volume",
+        "file_id": "ntfs64:e47125968b3b7104",
+        "generation": null,
+        "quality": "strong",
+        "observed_at": "2026-10-14T12:00:02Z"
+      },
+      {
+        "volume_id": "synthetic-volume",
+        "file_id": "ntfs64:7d2b24cf0ab1c473",
+        "generation": null,
+        "quality": "strong",
+        "observed_at": "2026-10-14T12:00:02Z"
+      }
+    ],
+    "path": {
+      "platform": "windows",
+      "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache\\数据.bin",
+      "raw_encoding": "windows_utf16le_base64",
+      "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAEEAcABwAFwAQwBhAGMAaABlAFwAcGVuYy4AYgBpAG4A"
+    },
+    "kind": "file",
+    "logical_bytes": "1048576",
+    "allocated_bytes": null,
+    "modified": {
+      "unit": "windows_filetime_100ns",
+      "value": "134050000000000000"
+    },
+    "change_marker": null,
+    "link_count": 1,
+    "reparse_tag": 0,
+    "cloud": "not_cloud",
+    "field_sources": {
+      "logical_bytes": "handle_query",
+      "allocated_bytes": null,
+      "modified": "handle_query",
+      "change_marker": null,
+      "link_count": "handle_query",
+      "reparse_tag": "handle_query",
+      "cloud": "directory_enumeration"
+    }
+  },
+  "fingerprint_sha256": "877372037e2b15fcf15a8eaaf624bf7457e4d147e223aa3e7be4ebdd60bdc166"
+}

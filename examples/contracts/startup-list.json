@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "kind": "startup_list",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "startup_item_id": "st_demo",
+      "name": "Example Updater",
+      "source": "run_key",
+      "target": {
+        "platform": "windows",
+        "display": "C:\\Program Files\\Example App\\updater.exe",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwBcAEUAeABhAG0AcABsAGUAIABBAHAAcABcAHUAcABkAGEAdABlAHIALgBlAHgAZQA="
+      },
+      "publisher": "Example Vendor",
+      "scope": "user",
+      "state": "enabled",
+      "toggle_capability": "available",
+      "protected": false
+    },
+    {
+      "startup_item_id": "st_broken",
+      "name": "Removed Tool",
+      "source": "startup_folder",
+      "target": null,
+      "publisher": null,
+      "scope": "user",
+      "state": "broken",
+      "toggle_capability": "available",
+      "protected": false
+    }
+  ]
+}

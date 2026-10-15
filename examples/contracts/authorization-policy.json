@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "kind": "authorization_status",
+  "request_id": "req_synthetic",
+  "plan_id": "p_demo",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "status": "authorized",
+  "source": "policy",
+  "policy_id": "pol_demo",
+  "policy_version": "1",
+  "principal": "user:example",
+  "authorized_at": "2026-10-14T12:00:02Z",
+  "expires_at": "2026-10-14T12:16:00Z",
+  "quota": {
+    "window": "rolling_24h",
+    "used_bytes": "576716800",
+    "limit_bytes": "2147483648",
+    "reserved_unknown_bytes": "0",
+    "used_items": 12,
+    "limit_items": 2000
+  }
+}

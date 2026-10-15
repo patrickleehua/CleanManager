@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "windows.user-temp.stale-files@1.0.0",
+  "rule_id": "windows.user-temp.stale-files",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "system",
+    "id": "windows",
+    "name": "Windows user temporary folder"
+  },
+  "version_range": {
+    "min_inclusive": "10.0.22000",
+    "max_exclusive": null
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old top-level file is a review-only candidate"
+    ],
+    "negative": [
+      "File modified within 7 days is not a candidate",
+      "Old *.db file is blocked as a database",
+      "Nested files are not matched (max_depth 0)"
+    ]
+  },
+  "known_effects": [
+    "Files are owned by whichever program wrote them; review before removing.",
+    "Files in use are skipped at execution."
+  ],
+  "evidence_refs": [
+    "run_win_rule_user_temp_stale"
+  ]
+}

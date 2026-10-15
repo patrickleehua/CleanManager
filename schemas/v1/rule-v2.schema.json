@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cleanmanager:rule:2.0",
+  "title": "CleanManager declarative cleanup rule 2.0 (draft)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "rule_id", "version", "status", "platforms", "category", "max_tier",
+    "rebuild_class", "owner", "root_resolver", "match", "exclude", "probes", "thresholds",
+    "action_kind", "adapter_ref", "allowed_modes", "requires_admin", "protect_descendants",
+    "follow_links", "impact", "tested_registry_ref", "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "rule_id": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)+$" },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "status": { "enum": ["experimental", "verified", "enabled"] },
+    "platforms": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["windows", "macos"] }
+    },
+    "category": {
+      "enum": [
+        "system_data", "user_essentials", "trash", "app_caches", "browsers", "cloud_office",
+        "developer", "ai_tools", "virtualization", "logs", "leftovers", "firmware_backups",
+        "incomplete_downloads", "large_items", "removable_metadata"
+      ]
+    },
+    "max_tier": { "enum": ["default_selected", "review_only", "blocked"] },
+    "rebuild_class": { "enum": ["local_rebuild", "network_redownload", "not_rebuildable"] },
+    "owner": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["app", "tool", "system"] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "root_resolver": {
+      "enum": [
+        "application_cache", "app_container", "app_support", "browser_profile", "crash_reports",
+        "installer_location", "package_manager_cache", "project_artifact", "removable_volume_root",
+        "system_cache", "system_logs", "system_temp", "trash", "user_cache", "user_logs", "user_temp"
+      ]
+    },
+    "match": {
+      "type": "object", "additionalProperties": false,
+      "required": ["object_type", "relative_components", "name_glob", "extensions", "require_cachedir_tag", "archive_payload", "max_depth"],
+      "properties": {
+        "object_type": { "enum": ["file", "directory", "any"] },
+        "relative_components": {
+          "type": "array", "maxItems": 16,
+          "items": { "$ref": "#/$defs/component" }
+        },
+        "name_glob": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/name_glob" }] },
+        "extensions": {
+          "type": "array", "uniqueItems": true, "maxItems": 32,
+          "items": { "type": "string", "pattern": "^[a-z0-9]{1,16}$" }
+        },
+        "require_cachedir_tag": { "type": "boolean" },
+        "archive_payload": { "type": "boolean" },
+        "max_depth": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    "exclude": {
+      "type": "array", "maxItems": 64, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/name_glob" }
+    },
+    "probes": {
+      "type": "array", "uniqueItems": true,
+      "items": {
+        "enum": [
+          "owner_process", "open_database_handle", "open_file_handle", "incomplete_download_handle",
+          "endpoint_security_path", "mounted_image", "vcs_tracked"
+        ]
+      }
+    },
+    "thresholds": {
+      "type": "object", "additionalProperties": false,
+      "required": ["min_age_days", "age_basis", "min_size_bytes", "retention_days"],
+      "properties": {
+        "min_age_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 },
+        "age_basis": { "enum": ["modified_time", "created_time", null] },
+        "min_size_bytes": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$" }] },
+        "retention_days": { "type": ["integer", "null"], "minimum": 1, "maximum": 3650 }
+      }
+    },
+    "action_kind": { "enum": ["filesystem", "tool_adapter", "review_only_row"] },
+    "adapter_ref": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)+$" }] },
+    "allowed_modes": {
+      "type": "array", "uniqueItems": true,
+      "items": { "enum": ["trash", "quarantine", "delete"] }
+    },
+    "requires_admin": { "type": "boolean" },
+    "protect_descendants": { "const": true },
+    "follow_links": { "const": false },
+    "impact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["summary", "regeneration", "offline_effect"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "regeneration": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "offline_effect": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "tested_registry_ref": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)+@(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" }] },
+    "evidence_refs": {
+      "type": "array", "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "enabled" } } },
+      "then": { "properties": { "tested_registry_ref": { "type": "string" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["verified", "enabled"] } } },
+      "then": { "properties": { "evidence_refs": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "rebuild_class": { "enum": ["network_redownload", "not_rebuildable"] } } },
+      "then": { "properties": { "max_tier": { "enum": ["review_only", "blocked"] } } }
+    },
+    {
+      "if": { "properties": { "action_kind": { "const": "tool_adapter" } } },
+      "then": { "properties": { "adapter_ref": { "type": "string" }, "allowed_modes": { "maxItems": 0 } } },
+      "else": { "properties": { "adapter_ref": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "action_kind": { "const": "filesystem" } } },
+      "then": { "properties": { "allowed_modes": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "action_kind": { "const": "review_only_row" } } },
+      "then": { "properties": { "allowed_modes": { "maxItems": 0 }, "max_tier": { "const": "review_only" } } }
+    },
+    {
+      "if": { "properties": { "max_tier": { "const": "blocked" } } },
+      "then": { "properties": { "allowed_modes": { "maxItems": 0 } } }
+    }
+  ],
+  "$defs": {
+    "component": {
+      "type": "string", "minLength": 1, "maxLength": 255,
+      "not": { "enum": [".", ".."] },
+      "pattern": "^[^/\\\\:\\u0000*?\\[\\]]+$"
+    },
+    "name_glob": {
+      "type": "string", "minLength": 1, "maxLength": 128,
+      "pattern": "^[A-Za-z0-9 ._@+()~-]*[*?]?[A-Za-z0-9 ._@+()~*?-]*$",
+      "not": { "anyOf": [{ "pattern": "\\*\\*" }, { "pattern": "\\.\\." }] }
+    }
+  }
+}

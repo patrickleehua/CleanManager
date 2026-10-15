@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "kind": "scan_result",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "revision": 1,
+  "backend": "portable_walk",
+  "status": "interrupted",
+  "completeness": "partial_scope",
+  "started_at": "2026-10-14T12:00:00Z",
+  "finished_at": "2026-10-14T12:00:02Z",
+  "entries_seen": 12,
+  "skipped_ranges": 1,
+  "logical_bytes": "104857600",
+  "allocated_bytes": null,
+  "unknown_size_count": 1,
+  "issues": [
+    {
+      "code": "permission_required",
+      "scope_display": "synthetic protected subtree",
+      "message": "Synthetic access denial"
+    },
+    {
+      "code": "host_exited",
+      "scope_display": "scan host",
+      "message": "Hosting process exited before a terminal record"
+    }
+  ]
+}

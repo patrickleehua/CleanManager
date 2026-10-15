@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "kind": "quarantine_list",
+  "request_id": "req_synthetic",
+  "page_size": 50,
+  "next_cursor": null,
+  "total_logical_bytes": "2097152",
+  "items": [
+    {
+      "quarantine_id": "q_demo",
+      "plan_id": "p_demo",
+      "operation_id": "op_demo",
+      "original_path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\report.cache",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHIAZQBwAG8AcgB0AC4AYwBhAGMAaABlAA=="
+      },
+      "quarantined_path": {
+        "platform": "windows",
+        "display": "C:\\.cm-quarantine\\q_demo",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwALgBjAG0ALQBxAHUAYQByAGEAbgB0AGkAbgBlAFwAcQBfAGQAZQBtAG8A"
+      },
+      "logical_bytes": "1048576",
+      "quarantined_at": "2026-10-14T12:00:02Z",
+      "retention_reminder_at": "2026-11-13T12:00:02Z",
+      "state": "recoverable",
+      "restore_capability": "available",
+      "metadata_restored": [
+        "timestamps",
+        "attributes"
+      ]
+    },
+    {
+      "quarantine_id": "q_conflict",
+      "plan_id": "p_demo",
+      "operation_id": "op_demo",
+      "original_path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\notes.cache",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAG4AbwB0AGUAcwAuAGMAYQBjAGgAZQA="
+      },
+      "quarantined_path": {
+        "platform": "windows",
+        "display": "C:\\.cm-quarantine\\q_conflict",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwALgBjAG0ALQBxAHUAYQByAGEAbgB0AGkAbgBlAFwAcQBfAGMAbwBuAGYAbABpAGMAdAA="
+      },
+      "logical_bytes": "1048576",
+      "quarantined_at": "2026-10-14T12:00:02Z",
+      "retention_reminder_at": "2026-11-13T12:00:02Z",
+      "state": "target_conflict",
+      "restore_capability": "available",
+      "metadata_restored": []
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "test_id": "ANA-02",
+  "run_id": "run_win_rule_user_temp_stale",
+  "recorded_at": "2026-10-15T05:50:30Z",
+  "code_commit": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+  "binary_sha256": "0fe41c0536f643567f55d3b59413b61ad137102c7ed4362ac21d871f0f1a227d",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/windows.user-temp.stale-files.json"
+  ],
+  "seed": null,
+  "expected": "Only top-level files older than 7 days are candidates; old.tmp is review-only, an old database is blocked, new and nested files are not candidates",
+  "actual": "candidates=['cache.db', 'old.tmp'] old.tmp.risk=medium cache.db.risk=blocked",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "candidate_count": 2
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Controlled TEMP fixture through the real resolver override; the user's real TEMP was not scanned."
+  ],
+  "status": "passed"
+}

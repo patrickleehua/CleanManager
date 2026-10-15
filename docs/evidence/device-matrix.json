@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-10-15T00:00:00Z",
+  "devices": [
+    {
+      "device_id": "dev_win11_x64_primary",
+      "role": "Windows 11 x64 priority device",
+      "expected": {
+        "platform": "windows",
+        "os": "Windows 11",
+        "architecture": "x64",
+        "filesystems": [
+          "NTFS",
+          "exFAT",
+          "SMB"
+        ]
+      },
+      "actual": {
+        "platform": "windows",
+        "os": "Microsoft Windows 11 Enterprise",
+        "build": "10.0.26200",
+        "architecture": "x64",
+        "cpu": "AMD Ryzen 7 8845H",
+        "filesystems": [
+          "NTFS",
+          "exFAT (64 MiB disposable VHD)"
+        ],
+        "observed_at": "2026-10-15T00:00:00Z",
+        "notes": [
+          "Development shell runs elevated with SeBackupPrivilege/SeRestorePrivilege enabled; cleanmanager disables both before scanning. A separate non-admin account has not been tested.",
+          "No SMB share attached; network volumes untested."
+        ]
+      }
+    },
+    {
+      "device_id": "dev_mac_apple_silicon_primary",
+      "role": "Apple Silicon Mac priority device",
+      "expected": {
+        "platform": "macos",
+        "os": "macOS (minimum frozen at G0)",
+        "architecture": "arm64",
+        "filesystems": [
+          "APFS"
+        ]
+      },
+      "actual": null
+    },
+    {
+      "device_id": "dev_win11_arm64",
+      "role": "Additional matrix: Windows on ARM64",
+      "expected": {
+        "platform": "windows",
+        "os": "Windows 11",
+        "architecture": "arm64",
+        "filesystems": [
+          "NTFS"
+        ]
+      },
+      "actual": null
+    },
+    {
+      "device_id": "dev_mac_intel",
+      "role": "Additional matrix: Intel Mac",
+      "expected": {
+        "platform": "macos",
+        "os": "macOS",
+        "architecture": "x64",
+        "filesystems": [
+          "APFS"
+        ]
+      },
+      "actual": null
+    }
+  ],
+  "claims": [
+    {
+      "claim": "scan.win.directory.ntfs.ordinary_permissions",
+      "platform": "windows",
+      "state": "verified",
+      "run_ids": [
+        "run_win_dir_tiny",
+        "run_win_dir_p0_10k",
+        "run_win_dir_denied"
+      ]
+    },
+    {
+      "claim": "scan.win.directory.exfat",
+      "platform": "windows",
+      "state": "verified",
+      "run_ids": [
+        "run_win_dir_exfat"
+      ]
+    },
+    {
+      "claim": "scan.win.directory.smb",
+      "platform": "windows",
+      "state": "unverified",
+      "run_ids": []
+    },
+    {
+      "claim": "scan.win.directory.non_admin_account",
+      "platform": "windows",
+      "state": "unverified",
+      "run_ids": []
+    },
+    {
+      "claim": "scan.win.ntfs_enum",
+      "platform": "windows",
+      "state": "unverified",
+      "run_ids": []
+    },
+    {
+      "claim": "scan.read_only_baseline",
+      "platform": "macos",
+      "state": "unverified",
+      "run_ids": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+[package]
+name = "cm-cli"
+description = "Standalone CleanManager command-line entry point (no GUI dependency)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cleanmanager"
+path = "src/main.rs"
+
+[dependencies]
+cm-core.workspace = true
+cm-platform.workspace = true
+cm-store = { path = "../cm-store" }
+cm-app = { path = "../cm-app" }
+sha2.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

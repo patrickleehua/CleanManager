@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "example.browser.code-cache@0.1.0",
+  "rule_id": "example.browser.code-cache",
+  "rule_version": "0.1.0",
+  "synthetic": true,
+  "subject": { "kind": "app", "id": "example.invalid.fixture-browser", "name": "Fixture Browser" },
+  "version_range": { "min_inclusive": "1.0", "max_exclusive": "2.0" },
+  "platforms": [
+    { "platform": "windows", "os_versions": ["synthetic"], "architectures": ["x64"] }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": { "positive": ["fixture.code-cache.present"], "negative": ["fixture.code-cache.browser-running"] },
+  "known_effects": ["Synthetic entry; demonstrates registry shape only and cannot back an enabled rule."],
+  "evidence_refs": ["synthetic:schema-example"]
+}

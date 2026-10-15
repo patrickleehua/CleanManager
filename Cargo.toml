@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+# The Tauri desktop app is its own workspace (own Cargo.lock) so CLI builds never pull it in.
+exclude = ["apps/desktop"]
+# The desktop host (apps/desktop) is intentionally not a default member: building or
+# testing the CLI must never pull in the WebView/Tauri lifecycle (CLI-01).
+members = ["crates/cm-core", "crates/cm-platform", "crates/cm-store", "crates/cm-app", "crates/cm-cli", "crates/cm-fixtures"]
+default-members = ["crates/cm-core", "crates/cm-platform", "crates/cm-store", "crates/cm-app", "crates/cm-cli", "crates/cm-fixtures"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+cm-core = { path = "crates/cm-core" }
+cm-platform = { path = "crates/cm-platform" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+base64 = "0.22.1"
+thiserror = "2.0.17"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

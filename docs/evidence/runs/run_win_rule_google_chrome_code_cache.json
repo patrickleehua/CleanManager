@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "ANA-01",
+  "run_id": "run_win_rule_google_chrome_code_cache",
+  "recorded_at": "2026-10-15T05:50:30Z",
+  "code_commit": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+  "binary_sha256": "0fe41c0536f643567f55d3b59413b61ad137102c7ed4362ac21d871f0f1a227d",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/google.chrome.code-cache.json"
+  ],
+  "seed": null,
+  "expected": "Google Chrome 155.0.8059.41: headless throwaway profile creates Default\\Code Cache; preview matches only that directory (risk low); after removal the cache is recreated and the page still renders",
+  "actual": "code_cache_created=True candidates=1 matched=1 risk=low regenerated_after_removal=True page_rendered=True",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "app_version": "155.0.8059.41",
+    "candidate_count": 1,
+    "code_cache_bytes": "466"
+  },
+  "observer": "tools/validate_rules_windows.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Throwaway --user-data-dir; the user's real profile was not scanned or modified.",
+    "Running-browser skip is an execution-time probe (owner_process), not covered here."
+  ],
+  "status": "passed"
+}

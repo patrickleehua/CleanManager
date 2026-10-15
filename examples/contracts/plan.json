@@ -26,7 +26,7 @@
         },
         "identity": {
           "volume_id": "synthetic-volume",
-          "file_id": "synthetic-file",
+          "file_id": "ntfs64:3b9c358f36f0a31b",
           "generation": null,
           "quality": "strong",
           "observed_at": "2026-10-14T12:00:02Z"
@@ -38,6 +38,6 @@
       }
     ]
   },
-  "plan_digest": "bf78331204805b4536d9fdae3b5dad7ea02bb39d9adef558d7bc00af43fc25a2",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
   "authorization_status": "required"
 }
