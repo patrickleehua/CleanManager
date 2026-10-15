@@ -583,13 +583,18 @@ fn run_system_tool(exe: &str, args: &[&str], timeout: Duration) -> Result<i32, S
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("{exe} did not start: {e}"))?;
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(s)) => return Ok(s.code().unwrap_or(-1)),
+            Ok(Some(s)) => {
+                cm_core::debug_trace!("process", "{exe} {args:?} exit={:?} in {}ms", s.code(), started.elapsed().as_millis());
+                return Ok(s.code().unwrap_or(-1));
+            }
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                cm_core::debug_trace!("process", "{exe} {args:?} timed out after {}ms; ended", started.elapsed().as_millis());
                 return Err(format!("{exe} did not finish within {} s", timeout.as_secs()));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(250)),

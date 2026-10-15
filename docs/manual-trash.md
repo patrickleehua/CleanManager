@@ -2,6 +2,8 @@
 
 状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现，其中 6.2（回收站/废纸篓移动与 D6 竞态夹具）因 macOS 未实现而未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、命令 `trash`。macOS 一侧未实现，`trash` 在 macOS 返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
+默认关闭（设计 D15）：手选移入回收站尚未通过门禁 G1，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 ## 能做什么，不能做什么
 
 - 只能把**已发布扫描中的条目**（条目 ID，不接受路径）移到系统回收站。计划种类是 `manual_selection`，动作只有原位 `fs_trash`；不能改成隔离或永久删除（MTR-01）。

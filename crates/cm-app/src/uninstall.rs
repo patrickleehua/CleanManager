@@ -11,6 +11,10 @@
 //!   default-selected objects (caches and logs) plus objects named explicitly by id; kept, blocked and manual objects
 //!   are never planned. [`create_restore_plan`] puts deleted keys and removed startup values back where nothing was
 //!   recreated since.
+//! - UNI-11: one stage-1 plan may hold several applications (`create_uninstall_batch`). Each keeps its own close
+//!   request and uninstaller (its uninstaller waits only for its own close request), its own outcome
+//!   ([`app_outcomes`]) and its own leftover review; one that fails, is skipped or went stale stops nothing else, and
+//!   its leftovers are never reviewed or removed. Protected classes are refused per application, as for one.
 
 use cm_core::plan::v2::{
     ActionMeta, AppQuitAction, ExecutableRef, HeaderInput, NO_RULES_DIGEST, PlanAction, PlanKind, PlanV2, QuitForce, RegistryBackupDeleteAction, RegistryRestoreAction,
@@ -66,8 +70,13 @@ pub fn run_action(ua: Option<&dyn UninstallActions>, s: &Step<'_>) -> ActionResu
     match (a, meta) {
         (PlanAction::AppQuit(q), Some(UninstallMeta::App { identity, .. })) => quit(ua, id, q, identity),
         (PlanAction::ToolAdapter(t), Some(UninstallMeta::App { identity, record, adapter, signer })) => {
-            // UNI-02: nothing is uninstalled unless the app quit first.
-            let quit_ok = s.plan.body.items[..s.index].iter().zip(s.prior).filter(|(p, _)| matches!(p, PlanAction::AppQuit(_))).all(|(_, r)| r.status == ActionStatus::Succeeded);
+            // UNI-02: nothing is uninstalled unless the app quit first. UNI-11: only this app's own close request counts;
+            // another application of the same batch that did not quit does not stop this one.
+            let quit_ok = s.plan.body.items[..s.index]
+                .iter()
+                .zip(s.prior)
+                .filter(|(p, _)| matches!(p, PlanAction::AppQuit(q) if q.app_instance_id == identity.instance_id))
+                .all(|(_, r)| r.status == ActionStatus::Succeeded);
             if !quit_ok {
                 return res(id, ActionStatus::Skipped, "app_still_running", "the application did not quit (or its state is unknown); nothing was uninstalled or deleted");
             }
@@ -206,18 +215,118 @@ impl From<cm_store::StoreError> for Refused {
     }
 }
 
-/// The stage-1 identity of a finished uninstall operation.
-pub fn stage_one(stores: &Stores, operation_id: &str) -> Result<(PlanV2, AppIdentity, Option<OperationReport>), Refused> {
+/// Most applications in one uninstall plan (UNI-11).
+pub const MAX_BATCH: usize = 20;
+
+/// Action id of the `n`-th application's close request or uninstaller in a stage-1 plan (UNI-11). The first keeps the
+/// single-uninstall ids (`q0000000`, `u0000001`); the n-th is `u{n:03}0000` / `u{n:03}0001`, so ids sort in plan order
+/// (plan/v2 actions are ordered by `action_id`).
+pub fn batch_action_id(n: usize, uninstaller: bool) -> String {
+    match (n, uninstaller) {
+        (0, false) => "q0000000".into(),
+        (_, false) => format!("u{n:03}0000"),
+        (_, true) => format!("u{n:03}0001"),
+    }
+}
+
+/// One application of a stage-1 plan (UNI-11): its identity, the digest of its record as planned and its actions
+/// (close request, uninstaller) in plan order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedApp {
+    pub identity: AppIdentity,
+    pub record_digest: String,
+    pub action_ids: Vec<String>,
+}
+
+/// The applications of a stage-1 plan in plan order; empty for any other plan (leftovers, restores).
+pub fn planned_apps(plan: &PlanV2) -> Vec<PlannedApp> {
+    let mut out: Vec<PlannedApp> = Vec::new();
+    if plan.body.plan_kind != PlanKind::Uninstall {
+        return out;
+    }
+    for (a, m) in plan.body.items.iter().zip(&plan.meta) {
+        let Some(UninstallMeta::App { identity, record, .. }) = &m.uninstall else { continue };
+        match out.iter_mut().find(|p| p.identity.instance_id == identity.instance_id) {
+            Some(p) => p.action_ids.push(a.action_id().to_owned()),
+            None => out.push(PlannedApp { identity: identity.clone(), record_digest: record.digest(), action_ids: vec![a.action_id().to_owned()] }),
+        }
+    }
+    out
+}
+
+/// How one application of a stage-1 operation ended (UNI-11: results are reported per application).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AppOutcome {
+    pub app_instance_id: String,
+    pub name: String,
+    /// `completed`, `partial` (the uninstaller succeeded but something remains or a restart is needed), `failed`,
+    /// `skipped`, `not_started`, `unknown`, or `pending` while the operation has no report.
+    pub status: &'static str,
+    /// Code and message of the step that decided it: the first step of this app that did not succeed, else its uninstaller.
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub action_ids: Vec<String>,
+    /// Its uninstaller ran and succeeded. Only then are its leftovers reviewed; a failed, skipped or stale uninstall
+    /// keeps everything of that app.
+    pub leftovers_reviewable: bool,
+}
+
+/// Per-application outcomes of a stage-1 plan, in plan order (`report` `None`: not finished).
+pub fn app_outcomes(plan: &PlanV2, report: Option<&OperationReport>) -> Vec<AppOutcome> {
+    planned_apps(plan)
+        .into_iter()
+        .map(|app| {
+            let result = |id: &str| report.and_then(|r| r.items.iter().find(|i| i.action_id == id));
+            let uninstaller = app.action_ids.iter().find(|id| plan.body.items.iter().any(|a| a.action_id() == id.as_str() && matches!(a, PlanAction::ToolAdapter(_))));
+            let run = uninstaller.and_then(|id| result(id));
+            let first_problem = app.action_ids.iter().filter_map(|id| result(id)).find(|r| r.status != ActionStatus::Succeeded);
+            let decisive = first_problem.or(run);
+            let status = match (report, run) {
+                (None, _) => "pending",
+                (Some(_), None) => "unknown",
+                (Some(_), Some(r)) => match r.status {
+                    ActionStatus::Succeeded if cm_core::uninstall::PARTIAL_CODES.contains(&r.code.as_str()) => "partial",
+                    ActionStatus::Succeeded => "completed",
+                    ActionStatus::Failed => "failed",
+                    ActionStatus::Skipped => "skipped",
+                    ActionStatus::NotStarted => "not_started",
+                    ActionStatus::Unknown => "unknown",
+                },
+            };
+            AppOutcome {
+                app_instance_id: app.identity.instance_id.clone(),
+                name: app.identity.name.clone(),
+                status,
+                code: decisive.map(|r| r.code.clone()),
+                message: decisive.map(|r| r.message.clone()),
+                action_ids: app.action_ids,
+                leftovers_reviewable: run.is_some_and(|r| r.status == ActionStatus::Succeeded),
+            }
+        })
+        .collect()
+}
+
+/// One refusal for a whole batch: the single refusal as it is, or every application's reason (UNI-11).
+pub fn batch_refusal(refused: Vec<(String, Refused)>) -> Refused {
+    if refused.len() == 1 {
+        return refused.into_iter().next().map(|(_, r)| r).expect("one refusal");
+    }
+    let same = refused.windows(2).all(|w| w[0].1.code == w[1].1.code);
+    let code = if same { refused.first().map(|(_, r)| r.code.clone()).unwrap_or_else(|| "invalid_argument".into()) } else { "invalid_argument".into() };
+    let settings_uri = refused.iter().find_map(|(_, r)| r.settings_uri.clone());
+    let reasons: Vec<String> = refused.into_iter().map(|(who, r)| format!("{who}: {}", r.message)).collect();
+    Refused { code, message: format!("none of the selected applications can be uninstalled here: {}", reasons.join("; ")), settings_uri }
+}
+
+/// The stage-1 applications of a finished (or running) uninstall operation.
+pub fn stage_one(stores: &Stores, operation_id: &str) -> Result<(PlanV2, Vec<PlannedApp>, Option<OperationReport>), Refused> {
     let plan = stores.audit.load_plan_v2(&stores.audit.operation_plan(operation_id)?)?;
-    let identity = plan.meta.iter().find_map(|m| match &m.uninstall {
-        Some(UninstallMeta::App { identity, .. }) => Some(identity.clone()),
-        _ => None,
-    });
-    let Some(identity) = identity.filter(|_| plan.body.plan_kind == PlanKind::Uninstall) else {
+    let apps = planned_apps(&plan);
+    if apps.is_empty() {
         return Err(Refused::new("invalid_argument", format!("operation {operation_id} is not an application uninstall")));
-    };
+    }
     let report: Option<OperationReport> = stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str(&j).ok());
-    Ok((plan, identity, report))
+    Ok((plan, apps, report))
 }
 
 /// Freeze the recorded backups of an uninstall-leftovers operation into a `recovery` plan (keys and startup values).
@@ -289,10 +398,91 @@ mod win {
         pub estimate: BTreeMap<Group, usize>,
     }
 
+    /// One application accepted into a batch: its record, its actions and its (non-binding) leftover estimate.
+    pub struct BatchApp {
+        pub record: UninstallRecord,
+        pub action_ids: Vec<String>,
+        pub estimate: BTreeMap<Group, usize>,
+    }
+
+    /// One application refused exactly as a single uninstall of it would be (UNI-10/11); the others are unaffected.
+    pub struct BatchRefusal {
+        pub app_instance_id: String,
+        pub name: Option<String>,
+        pub refused: Refused,
+    }
+
+    /// A stage-1 plan for several applications (UNI-11) and the applications that were refused.
+    pub struct StageOneBatch {
+        pub plan: PlanV2,
+        pub apps: Vec<BatchApp>,
+        pub refused: Vec<BatchRefusal>,
+    }
+
     /// Stage 1 (UNI-01/02/03/10): `app_quit` + verified `tool_adapter` for one instance; `end_running` is the separately
     /// reviewed variant that may end processes after a person confirms it at apply time.
     pub fn create_uninstall_plan(stores: &Stores, env: &UninstallEnv, instance_id: &str, end_running: bool, plan_id: &str, now: i64, policy_digest: &str) -> Result<StageOne, Refused> {
+        let mut b = create_uninstall_batch(stores, env, &[instance_id.to_owned()], end_running, plan_id, now, policy_digest)?;
+        let app = b.apps.remove(0);
+        Ok(StageOne { plan: b.plan, record: app.record, estimate: app.estimate })
+    }
+
+    /// Stage 1 for several instances in one plan (UNI-11). Each application gets its own close request and verified
+    /// uninstaller, checked exactly as for a single uninstall; a refused application (protected class, unverifiable
+    /// route, unsigned program…) is reported and left out without affecting the others. Only when every one is refused
+    /// is the whole request refused.
+    pub fn create_uninstall_batch(
+        stores: &Stores, env: &UninstallEnv, instance_ids: &[String], end_running: bool, plan_id: &str, now: i64, policy_digest: &str,
+    ) -> Result<StageOneBatch, Refused> {
+        if instance_ids.is_empty() {
+            return Err(Refused::new("invalid_argument", "name at least one application instance"));
+        }
+        if instance_ids.len() > MAX_BATCH {
+            return Err(Refused::new("invalid_argument", format!("at most {MAX_BATCH} applications in one uninstall plan")));
+        }
+        for (i, id) in instance_ids.iter().enumerate() {
+            if instance_ids[..i].contains(id) {
+                return Err(Refused::new("invalid_argument", format!("{id} is named twice")));
+            }
+        }
         let (all, _) = records(env);
+        let mut items = Vec::new();
+        let mut meta = Vec::new();
+        let mut apps = Vec::new();
+        let mut refused = Vec::new();
+        for id in instance_ids {
+            match app_actions(&all, env, id, end_running, apps.len()) {
+                Ok((rec, identity, acts)) => {
+                    let action_ids = acts.iter().map(|(a, _)| a.action_id().to_owned()).collect();
+                    for (a, m) in acts {
+                        items.push(a);
+                        meta.push(m);
+                    }
+                    // Estimate only (D7): what would remain if the uninstaller removed nothing else; never part of the plan.
+                    let others: Vec<_> = installed_apps(&all).into_iter().filter(|a| a.instance_id != rec.instance_id).collect();
+                    let mut estimate = BTreeMap::new();
+                    for l in discover(env, &DiscoveryInput { identity: &identity, installed: &others, startup: &[] }) {
+                        *estimate.entry(l.group).or_insert(0) += 1;
+                    }
+                    apps.push(BatchApp { record: rec, action_ids, estimate });
+                }
+                Err(r) => refused.push(BatchRefusal { app_instance_id: id.clone(), name: all.iter().find(|x| &x.instance_id == id).map(|x| x.name.clone()), refused: r }),
+            }
+        }
+        if apps.is_empty() {
+            return Err(batch_refusal(refused.into_iter().map(|b| (b.name.unwrap_or(b.app_instance_id), b.refused)).collect()));
+        }
+        let header = HeaderInput {
+            plan_id, plan_kind: PlanKind::Uninstall, created_unix: now, scope_id: None, scan_id: None, scan_revision: None, rule_set_digest: NO_RULES_DIGEST, policy_digest,
+        };
+        let plan = cm_core::plan::v2::build(&header, items, meta).map_err(|e| Refused::new("internal_error", e.to_string()))?;
+        stores.audit.save_plan_v2(&plan)?;
+        Ok(StageOneBatch { plan, apps, refused })
+    }
+
+    /// The two stage-1 actions of one application (the `n`-th of its plan), after its route, program and signer were verified.
+    #[allow(clippy::type_complexity)]
+    fn app_actions(all: &[UninstallRecord], env: &UninstallEnv, instance_id: &str, end_running: bool, n: usize) -> Result<(UninstallRecord, AppIdentity, Vec<(PlanAction, ActionMeta)>), Refused> {
         let Some(rec) = all.iter().find(|r| r.instance_id == instance_id).cloned() else {
             return Err(Refused::new("invalid_argument", format!("no installed application {instance_id}; run `cleanmanager apps uninstall list`")));
         };
@@ -311,12 +501,12 @@ mod win {
         let app_meta = UninstallMeta::App { identity: identity.clone(), record: Box::new(rec.clone()), adapter: choice.clone(), signer };
         let items = vec![
             PlanAction::AppQuit(AppQuitAction {
-                action_id: "q0000000".into(), app_instance_id: rec.instance_id.clone(),
+                action_id: batch_action_id(n, false), app_instance_id: rec.instance_id.clone(),
                 app_identity: rec.install_location.clone().or_else(|| rec.package_full_name.clone()).unwrap_or_else(|| rec.name.clone()),
                 force: if end_running { QuitForce::AskUser } else { QuitForce::Never },
             }),
             PlanAction::ToolAdapter(ToolAdapterAction {
-                action_id: "u0000001".into(), adapter_id: choice.kind.adapter_id().into(), adapter_version: ADAPTER_VERSION.into(),
+                action_id: batch_action_id(n, true), adapter_id: choice.kind.adapter_id().into(), adapter_version: ADAPTER_VERSION.into(),
                 executable: ExecutableRef { path: RawPath::windows(choice.program.encode_utf16().collect()).map_err(|e| Refused::new("unsupported", e.to_string()))?, sha256: sha },
                 argv: choice.argv.clone(), preview_digest: adapter_digest(&rec, &choice), timeout_seconds: UNINSTALLER_TIMEOUT_SECONDS,
             }),
@@ -325,47 +515,76 @@ mod win {
             ActionMeta { note: Some(format!("quit {} (close request{})", rec.name, if end_running { "; may end it after you confirm" } else { "" })), uninstall: Some(app_meta.clone()), ..Default::default() },
             ActionMeta { note: Some(choice.display.clone()), uninstall: Some(app_meta), ..Default::default() },
         ];
-        let header = HeaderInput {
-            plan_id, plan_kind: PlanKind::Uninstall, created_unix: now, scope_id: None, scan_id: None, scan_revision: None, rule_set_digest: NO_RULES_DIGEST, policy_digest,
-        };
-        let plan = cm_core::plan::v2::build(&header, items, meta).map_err(|e| Refused::new("internal_error", e.to_string()))?;
-        stores.audit.save_plan_v2(&plan)?;
-        // Estimate only (D7): what would remain if the uninstaller removed nothing else; never part of the plan.
-        let others: Vec<_> = installed_apps(&all).into_iter().filter(|a| a.instance_id != rec.instance_id).collect();
-        let mut estimate = BTreeMap::new();
-        for l in discover(env, &DiscoveryInput { identity: &identity, installed: &others, startup: &[] }) {
-            *estimate.entry(l.group).or_insert(0) += 1;
-        }
-        Ok(StageOne { plan, record: rec, estimate })
+        Ok((rec, identity, items.into_iter().zip(meta).collect()))
     }
 
-    /// The grouped, read-only leftover preview of a finished stage-1 operation (UNI-04/05/07/09).
-    pub fn leftovers(stores: &Stores, env: &UninstallEnv, operation_id: &str) -> Result<(AppIdentity, Vec<Leftover>, Vec<String>), Refused> {
-        let (plan, identity, report) = stage_one(stores, operation_id)?;
-        if report.is_none() {
+    /// The leftover review of one application of a stage-1 operation (UNI-04/05/07/09/11).
+    pub struct AppLeftovers {
+        pub outcome: AppOutcome,
+        pub identity: AppIdentity,
+        /// Empty when its uninstaller did not succeed: nothing of an application that is still installed is a leftover.
+        pub items: Vec<Leftover>,
+        pub external_references: Vec<String>,
+    }
+
+    /// The grouped, read-only leftover preview of a finished stage-1 operation, per application in plan order.
+    /// Applications whose uninstaller failed, was skipped or did not run keep everything (no items); an object claimed
+    /// by two applications of the batch is listed once, under the first.
+    pub fn leftovers_by_app(stores: &Stores, env: &UninstallEnv, operation_id: &str) -> Result<Vec<AppLeftovers>, Refused> {
+        let (plan, apps, report) = stage_one(stores, operation_id)?;
+        let Some(report) = report else {
             return Err(Refused::new("invalid_argument", format!("operation {operation_id} has not finished; leftovers are reviewed after the uninstaller ran")));
-        }
-        let planned = plan.meta.iter().find_map(|m| match &m.uninstall {
-            Some(UninstallMeta::App { record, .. }) => Some(record.digest()),
-            _ => None,
-        });
+        };
+        let outcomes = app_outcomes(&plan, Some(&report));
         let (all, _) = records(env);
-        // The registration exactly as it was before the uninstaller is a leftover of it, not a reinstall; a changed or
-        // new registration of the same app is `app_reappeared` and keeps everything.
-        let live: Vec<UninstallRecord> = all.into_iter().filter(|r| !(r.instance_id == identity.instance_id && Some(r.digest()) == planned)).collect();
+        // The registration exactly as it was before a successful uninstaller is a leftover of it, not a reinstall; a
+        // changed or new registration of the same app is `app_reappeared` and keeps everything. An application of the
+        // batch whose uninstaller did not succeed is still installed and protects what it shares.
+        let gone: Vec<(&str, &str)> =
+            apps.iter().zip(&outcomes).filter(|(_, o)| o.leftovers_reviewable).map(|(a, _)| (a.identity.instance_id.as_str(), a.record_digest.as_str())).collect();
+        let live: Vec<UninstallRecord> = all.into_iter().filter(|r| !gone.iter().any(|(i, d)| r.instance_id == *i && r.digest() == *d)).collect();
         let installed = installed_apps(&live);
         let (startup, _) = cm_platform::windows::startup::inventory_with(&env.startup_env());
-        let out = discover(env, &DiscoveryInput { identity: &identity, installed: &installed, startup: &startup });
-        let refs = cm_platform::windows::uninstall::external_references(env, &identity);
-        Ok((identity, out, refs))
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = Vec::new();
+        for (app, outcome) in apps.into_iter().zip(outcomes) {
+            let (items, refs) = if outcome.leftovers_reviewable {
+                let items: Vec<Leftover> = discover(env, &DiscoveryInput { identity: &app.identity, installed: &installed, startup: &startup }).into_iter().filter(|l| seen.insert(l.object_id.clone())).collect();
+                (items, cm_platform::windows::uninstall::external_references(env, &app.identity))
+            } else {
+                (vec![], vec![])
+            };
+            out.push(AppLeftovers { outcome, identity: app.identity, items, external_references: refs });
+        }
+        Ok(out)
     }
 
-    /// Stage 2: freeze default-selected leftovers plus explicitly named objects into a separately reviewed `uninstall` plan.
+    /// Why an operation has nothing to review: every application's uninstaller failed, was skipped or did not run.
+    pub fn none_reviewable(operation_id: &str, apps: &[AppLeftovers]) -> Option<Refused> {
+        if apps.iter().any(|a| a.outcome.leftovers_reviewable) {
+            return None;
+        }
+        let why: Vec<String> = apps.iter().map(|a| format!("{} ({}{})", a.outcome.name, a.outcome.status, a.outcome.code.as_deref().map(|c| format!(": {c}")).unwrap_or_default())).collect();
+        Some(Refused::new(
+            "invalid_argument",
+            format!("the uninstall in operation {operation_id} did not complete for {}; its leftovers are not reviewed or removed while the application is still installed", why.join(", ")),
+        ))
+    }
+
+    /// Stage 2: freeze default-selected leftovers plus explicitly named objects into a separately reviewed `uninstall`
+    /// plan; with a batch, of every application whose uninstaller succeeded (UNI-11).
     #[allow(clippy::too_many_arguments)]
     pub fn create_leftovers_plan(
         stores: &Stores, env: &UninstallEnv, operation_id: &str, extra: &[String], exclude: &[String], host: &HostRef, plan_id: &str, now: i64, policy_digest: &str,
     ) -> Result<(PlanV2, Vec<Leftover>), Refused> {
-        let (_, all) = leftovers(stores, env, operation_id).map(|(i, l, _)| (i, l))?;
+        let by_app = leftovers_by_app(stores, env, operation_id)?;
+        if let Some(r) = none_reviewable(operation_id, &by_app) {
+            return Err(r);
+        }
+        let batch = by_app.len() > 1;
+        // Which application each object belongs to (shown in review when the operation had several).
+        let owner: BTreeMap<String, String> = by_app.iter().flat_map(|a| a.items.iter().map(|l| (l.object_id.clone(), a.identity.name.clone()))).collect();
+        let all: Vec<Leftover> = by_app.into_iter().flat_map(|a| a.items).collect();
         // UNI-05: a person may clear preselected caches/logs; only preselected objects can be excluded.
         for x in exclude {
             if !all.iter().any(|l| &l.object_id == x && l.selected) {
@@ -398,11 +617,16 @@ mod win {
         let (startup, _) = cm_platform::windows::startup::inventory_with(&startup_env);
         let ws = WindowsUninstall::non_interactive(env.clone());
         for (n, l) in chosen.iter().enumerate() {
+            // UNI-11: with several applications every note starts with the application it belongs to (text for people).
+            let app = |s: String| match owner.get(&l.object_id).filter(|_| batch) {
+                Some(name) => format!("{name} · {s}"),
+                None => s,
+            };
             match &l.binding {
                 Binding::Path { path } => {
                     for (a, m) in file_actions(stores, env, host, plan_id, n, path, &guard, now, policy_digest)? {
                         items.push(a);
-                        meta.push(ActionMeta { note: Some(format!("{:?}: {}", l.group, l.display)), ..m });
+                        meta.push(ActionMeta { note: Some(app(format!("{:?}: {}", l.group, l.display))), ..m });
                     }
                 }
                 Binding::Registry { location } => {
@@ -411,7 +635,7 @@ mod win {
                         action_id: format!("k{n:07}"), hive: location.hive, key_path: location.key_path.clone(), value_name: None, owner_evidence: l.evidence.join("; "),
                         backup_required: true, observed_sha256: Some(key_digest(location, &tree)),
                     }));
-                    meta.push(ActionMeta { note: Some(location.display()), uninstall: Some(UninstallMeta::RegistryKey { location: location.clone() }), ..Default::default() });
+                    meta.push(ActionMeta { note: Some(app(location.display())), uninstall: Some(UninstallMeta::RegistryKey { location: location.clone() }), ..Default::default() });
                 }
                 Binding::Startup { startup_item_id } => {
                     let item = startup.iter().find(|s| &s.item_id == startup_item_id).ok_or_else(|| Refused::new("conflict", format!("{} changed; list leftovers again", l.display)))?;
@@ -423,7 +647,7 @@ mod win {
                         action_id: format!("s{n:07}"), startup_item_id: item.item_id.clone(), source: item.source, operation: StartupOperation::RemoveWithBackup, scope: item.scope,
                         definition: Some(item.definition.clone()), observed_sha256: Some(cm_core::startup::observation_digest(&loc, &obs)), backup_id: None,
                     }));
-                    meta.push(ActionMeta { startup: Some(loc), note: Some(item.name.clone()), ..Default::default() });
+                    meta.push(ActionMeta { startup: Some(loc), note: Some(app(item.name.clone())), ..Default::default() });
                 }
                 Binding::Manual { .. } => {}
             }

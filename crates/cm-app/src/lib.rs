@@ -3,6 +3,7 @@
 
 pub mod diag;
 pub mod execute;
+pub mod features;
 pub mod insights;
 pub mod maintenance;
 pub mod plans;

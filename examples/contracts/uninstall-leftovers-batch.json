@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "kind": "uninstall_leftovers",
+  "request_id": "req_synthetic",
+  "operation_id": "op_batch",
+  "app": null,
+  "groups": [
+    {
+      "group": "caches_logs",
+      "items": [
+        {
+          "object_id": "lo_toolcache",
+          "kind": "directory",
+          "group": "caches_logs",
+          "display": "C:\\Users\\Example\\AppData\\Local\\Example Tool\\Cache",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": null,
+          "tier": "default_selected",
+          "selected": true,
+          "warnings": [],
+          "logical_bytes": "2097152",
+          "note": null,
+          "requires_admin": false,
+          "action": "fs_trash",
+          "guidance": null
+        }
+      ]
+    }
+  ],
+  "default_selected": 1,
+  "external_references": [],
+  "apps": [
+    {
+      "app": {
+        "app_instance_id": "app_demo",
+        "name": "Example App",
+        "publisher": "Example Vendor Ltd.",
+        "source": "registry_uninstall"
+      },
+      "status": "failed",
+      "code": "uninstaller_failed",
+      "message": "uninstaller exited with code 1603 after 5120 ms",
+      "leftovers_reviewable": false,
+      "groups": [],
+      "default_selected": 0,
+      "external_references": []
+    },
+    {
+      "app": {
+        "app_instance_id": "app_tool",
+        "name": "Example Tool",
+        "publisher": null,
+        "source": "registry_uninstall"
+      },
+      "status": "completed",
+      "code": "done",
+      "message": "uninstaller exited with code 0 after 8410 ms",
+      "leftovers_reviewable": true,
+      "groups": [
+        {
+          "group": "caches_logs",
+          "items": [
+            {
+              "object_id": "lo_toolcache",
+              "kind": "directory",
+              "group": "caches_logs",
+              "display": "C:\\Users\\Example\\AppData\\Local\\Example Tool\\Cache",
+              "evidence": [
+                "%APPDATA%\\ExampleApp matches the product name"
+              ],
+              "marker": null,
+              "tier": "default_selected",
+              "selected": true,
+              "warnings": [],
+              "logical_bytes": "2097152",
+              "note": null,
+              "requires_admin": false,
+              "action": "fs_trash",
+              "guidance": null
+            }
+          ]
+        }
+      ],
+      "default_selected": 1,
+      "external_references": []
+    }
+  ]
+}

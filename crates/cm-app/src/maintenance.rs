@@ -163,6 +163,8 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
         }
     };
 
+    cm_core::debug_trace!("maintenance", "tasks={} admin_tasks={} already_admin={} elevation={elevation:?}", plan.body.items.len(), admin.len(), b.is_admin);
+
     // 3. Run in plan order, journaling each action.
     let expires = parse_utc(&plan.body.expires_at).unwrap_or(i64::MIN);
     let mut runs: Vec<TaskRun> = Vec::with_capacity(plan.body.items.len());
@@ -208,6 +210,7 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
             }
         };
         let ar = action_result(id, &run);
+        cm_core::debug_trace!("maintenance.task", "{id} task={} outcome={:?} code={} elevated={}", run.task_id, run.outcome, run.code, run.elevated);
         let status = serde_json::to_value(ar.status).expect("status serializes");
         stores.audit.record_result(&operation_id, id, status.as_str().expect("string"), &serde_json::to_string(&ar).expect("result serializes"), &at())?;
         results.push(ar);

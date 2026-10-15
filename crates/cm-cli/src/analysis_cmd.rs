@@ -99,6 +99,24 @@ fn roots_for(rules: &[Rule], volume: Option<PathBuf>) -> (Vec<cm_core::analysis:
     }
 }
 
+/// Cleanable-directory hints (DIN-05) for one entries page: only real directories, probed live
+/// and read-only. Without a usable rule pack the catalog basis is simply unavailable.
+pub fn entry_hints(items: &[cm_store::index::EntryItem], store_dir: &Path) -> Vec<Option<cm_core::cleanable::CleanableHint>> {
+    let dirs: Vec<Option<&cm_core::path::RawPath>> =
+        items.iter().map(|i| (i.kind == cm_core::model::ObjectKind::Directory && i.boundary.is_none()).then_some(&i.path)).collect();
+    if dirs.iter().all(Option::is_none) {
+        return vec![None; items.len()];
+    }
+    let caches = match load_rules(&default_rules_dir()) {
+        #[cfg(windows)]
+        Ok(rules) => cm_platform::cleanable::cache_locations_with(&rules.rules, &resolver_env(None).0),
+        #[cfg(not(windows))]
+        Ok(rules) => cm_platform::cleanable::cache_locations(&rules.rules),
+        Err(_) => Vec::new(),
+    };
+    cm_platform::cleanable::page_hints(&dirs, Some(store_dir), &caches)
+}
+
 /// Installed owner versions for the registry verdicts; unknown owners are simply absent.
 pub fn installed_versions(rules: &[Rule]) -> BTreeMap<String, String> {
     #[cfg(windows)]

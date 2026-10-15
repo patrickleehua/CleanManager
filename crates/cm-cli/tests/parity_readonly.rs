@@ -1,10 +1,25 @@
 //! Read-only parity commands (`startup list`, `status`, `insights`, `apps list` and `apps uninstall list`): one clean JSON record (or JSONL stream), no
 //! side effects, unknown values as null with a reason. Structure only: real values differ between machines.
 
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// D15: these tools are off by default. One scratch store with experimental features turned on, the way a person
+/// opts in, instead of the real per-user store.
+fn store() -> &'static PathBuf {
+    static STORE: OnceLock<PathBuf> = OnceLock::new();
+    STORE.get_or_init(|| {
+        let p = std::env::temp_dir().join(format!("cm-cli-parity-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        let o = Command::new(env!("CARGO_BIN_EXE_cleanmanager")).args(["experimental", "--state", "on", "--json"]).env("CM_STORE_DIR", &p).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+        p
+    })
+}
 
 fn run(args: &[&str]) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cleanmanager")).args(args).output().expect("binary runs");
+    let out = Command::new(env!("CARGO_BIN_EXE_cleanmanager")).args(args).env("CM_STORE_DIR", store()).output().expect("binary runs");
     (out.status.code().unwrap_or(-1), String::from_utf8(out.stdout).expect("stdout is UTF-8"))
 }
 
@@ -78,6 +93,39 @@ fn status_stream_is_jsonl_with_increasing_sample_times() {
     assert_eq!(lines.len(), 2);
     assert!(lines.iter().all(|l| l["kind"] == "status_snapshot"));
     assert!(lines[1]["sampled_at"].as_str() >= lines[0]["sampled_at"].as_str());
+    for l in &lines {
+        assert_network_totals(l);
+    }
+}
+
+/// STS-07: the total is the sum of the counted interfaces only; loopback is never listed; tunnel and virtual adapters
+/// are listed separately; the double-count flag is set exactly when an unknown interface is counted.
+#[cfg(windows)]
+fn assert_network_totals(v: &serde_json::Value) {
+    let n = &v["network"];
+    assert!(n.is_object(), "status_snapshot carries network totals on Windows: {v}");
+    assert!(matches!(n["classification"].as_str(), Some("interface_type" | "unavailable")));
+    let counted = n["counted"].as_array().unwrap();
+    let separate = n["separate"].as_array().unwrap();
+    let sum: f64 = counted.iter().map(|i| i["received_bytes_per_sec"].as_f64().unwrap()).sum();
+    assert!((sum - n["received_bytes_per_sec"].as_f64().unwrap()).abs() < 1e-6);
+    assert!(counted.iter().all(|i| matches!(i["class"].as_str(), Some("physical" | "unknown"))));
+    assert!(separate.iter().all(|i| matches!(i["class"].as_str(), Some("tunnel" | "virtual"))));
+    assert_eq!(n["may_double_count"], n["classification"] == "unavailable" || counted.iter().any(|i| i["class"] == "unknown"));
+    assert!(n["loopback_excluded"].is_u64());
+    let total = v["metrics"].as_array().unwrap().iter().find(|m| m["name"] == "network.received_bytes_per_sec").unwrap();
+    assert_eq!(total["value"], n["received_bytes_per_sec"]);
+    assert_eq!(total["reason"], n["note"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn status_snapshot_reports_deduplicated_network_totals() {
+    let (code, out) = run(&["status", "--json"]);
+    assert_eq!(code, 0);
+    let v = single(&out);
+    assert_network_totals(&v);
+    assert_eq!(v["network"]["classification"], "interface_type", "the IP Helper interface table is readable on Windows");
 }
 
 #[cfg(windows)]

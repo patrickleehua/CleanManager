@@ -1,6 +1,6 @@
 // IPC shapes (mirrors src-tauri/src/dto.rs). Byte counts are decimal strings or null.
 
-import type { UpdateRouted } from './suiteTypes';
+import type { AppOutcome, UninstallPlanCreated, UpdateRouted } from './suiteTypes';
 
 export type ScanState = 'created' | 'running' | 'stopping' | 'completed' | 'partial' | 'cancelled' | 'failed' | 'interrupted';
 export type ObjectKind = 'file' | 'directory' | 'symlink' | 'reparse' | 'other';
@@ -37,6 +37,17 @@ export interface Capabilities {
   rules_problem: string | null;
   rule_count: number | null;
   principal: string;
+  /** D15: capabilities whose release gate has not passed are off unless this is on (设置 › 实验功能). */
+  experimental_features: boolean;
+  /** One row per gated capability: its release gate, whether it passed and whether it is on here. */
+  gates: GateRow[];
+}
+
+export interface GateRow {
+  capability: string;
+  gate: string;
+  gate_passed: boolean;
+  enabled: boolean;
 }
 
 export interface RootOffer {
@@ -115,6 +126,18 @@ export interface Entry {
   boundary: 'symlink' | 'junction' | 'mount_point' | 'other_volume' | 'cloud_provider' | 'own_store' | null;
   identity_quality: 'strong' | 'weak';
   link_count: number | null;
+  /** DIN-05: read-only "cleanable by hand" hint on a listed directory; absent or null = none confirmed. */
+  cleanable_hint?: CleanableHint | null;
+}
+
+/** The verified evidence behind a cleanable hint and the review flow it leads to (never a selection). */
+export interface CleanableHint {
+  basis: 'build_artifact' | 'catalog_rule' | 'cachedir_tag';
+  /** `purge.<artifact>` or the catalog rule; null for a cache tag. */
+  rule_id: string | null;
+  /** Owner markers found, the rule's location, or the tag file. */
+  detail: string;
+  flow: 'purge' | 'manual_trash';
 }
 
 export interface EntriesPage {
@@ -331,6 +354,8 @@ export interface PlanDetail {
 export interface KindDetail {
   stage?: 'uninstall' | 'leftovers';
   app?: { name: string; publisher: string | null; version: string | null; source: string; adapter: string; signer: string | null } | null;
+  /** UNI-11: every application of an uninstall plan, in plan order, with the actions bound to it. */
+  apps?: { app_instance_id: string; name: string; publisher: string | null; version: string | null; source: string; adapter: string; signer: string | null; action_ids: string[] }[];
   may_end_processes?: boolean;
   registry_keys?: number;
   admin_tasks?: number;
@@ -338,6 +363,9 @@ export interface KindDetail {
   noted?: {
     app_name?: string;
     leftover_estimate?: Record<string, number>;
+    /** UNI-11: per application, and the applications refused (not in the plan). */
+    apps?: UninstallPlanCreated['apps'];
+    refused?: UninstallPlanCreated['refused'];
     operation_id?: string;
     routed?: UpdateRouted[];
     pid?: number;
@@ -438,6 +466,8 @@ export interface Operation {
   volume_free_after_bytes: string | null;
   observed_free_delta_bytes: string | null;
   needs_reconcile: boolean;
+  /** UNI-11: each application's own result of a stage-1 uninstall (empty for other plans). */
+  uninstall_apps?: AppOutcome[];
 }
 
 export type ItemStatus = 'succeeded' | 'skipped' | 'failed' | 'not_started' | 'unknown' | 'in_flight' | 'pending';
@@ -744,6 +774,28 @@ export interface StatusSnapshot {
   diagnosis?: { code: string; message: string; link: string | null } | null;
   /** STS-05: sustained-CPU alerts raised with this sample (only while alerts are on). */
   alerts?: CpuAlert[];
+  /** STS-07: totals over physical interfaces; tunnel and virtual adapters listed apart. */
+  network?: NetworkTotals;
+}
+
+export type InterfaceClass = 'physical' | 'tunnel' | 'virtual' | 'unknown';
+
+export interface InterfaceRate {
+  name: string;
+  class: InterfaceClass;
+  received_bytes_per_sec: number;
+  sent_bytes_per_sec: number;
+}
+
+export interface NetworkTotals {
+  classification: 'interface_type' | 'unavailable';
+  received_bytes_per_sec: number;
+  sent_bytes_per_sec: number;
+  may_double_count: boolean;
+  counted: InterfaceRate[];
+  separate: InterfaceRate[];
+  loopback_excluded: number;
+  note: string;
 }
 
 export interface CpuAlert {

@@ -75,3 +75,45 @@ fn real_snapshot_declares_availability() {
     let s2 = sampler.sample();
     assert!(s2.sampled_at >= s.sampled_at);
 }
+
+/// STS-07: rates come from counter differences; an interface new since the last reading or whose counters reset has
+/// no rate for the interval; classification follows the reported type and hardware flag.
+#[test]
+fn interface_rates_difference_counters_and_classify() {
+    use cm_core::status::network::{InterfaceClass, InterfaceFacts};
+    let row = |luid: u64, name: &str, if_type: u32, tunnel_type: u32, hardware: bool, received: u64, sent: u64| IfRow {
+        luid,
+        name: name.into(),
+        facts: InterfaceFacts { if_type, tunnel_type, hardware: Some(hardware) },
+        received,
+        sent,
+    };
+    let prev: BTreeMap<u64, (u64, u64)> = [(1, (1_000, 500)), (2, (0, 0)), (3, (10, 10)), (4, (9_999, 9_999))].into_iter().collect();
+    let rows = [
+        row(1, "Wi-Fi", 71, 0, true, 3_000, 1_500),
+        row(2, "vEthernet (WSL)", 6, 0, false, 200, 100),
+        row(3, "Teredo", 131, 14, false, 10, 10),
+        row(4, "reset", 6, 0, true, 5, 5),
+        row(5, "new", 6, 0, true, 50, 50),
+    ];
+    let r = interface_rates(&prev, &rows, 2.0);
+    let got: Vec<(&str, InterfaceClass, f64, f64)> = r.iter().map(|x| (x.name.as_str(), x.class, x.received_bytes_per_sec, x.sent_bytes_per_sec)).collect();
+    assert_eq!(got, [("Wi-Fi", InterfaceClass::Physical, 1_000.0, 500.0), ("vEthernet (WSL)", InterfaceClass::Virtual, 100.0, 50.0), ("Teredo", InterfaceClass::Tunnel, 0.0, 0.0)]);
+    assert!(interface_rates(&prev, &rows, 0.0).is_empty());
+}
+
+/// Real machine: the interface table is readable and the snapshot carries classified network totals.
+#[test]
+fn real_snapshot_classifies_interfaces() {
+    let rows = interface_table().expect("GetIfTable2 is readable");
+    for r in &rows {
+        eprintln!("if {:?} type={} tunnel={} hardware={:?} -> {:?}", r.name, r.facts.if_type, r.facts.tunnel_type, r.facts.hardware, cm_core::status::network::classify(&r.facts));
+    }
+    let s = Sampler::new().sample();
+    let n = s.network.as_ref().expect("network totals are sampled");
+    assert_eq!(n.classification, cm_core::status::network::Classification::InterfaceType);
+    let total = s.metrics.iter().find(|m| m.name == "network.received_bytes_per_sec").and_then(|m| m.value).unwrap();
+    assert_eq!(total, n.received_bytes_per_sec);
+    assert!(n.separate.iter().all(|i| matches!(i.class, cm_core::status::network::InterfaceClass::Tunnel | cm_core::status::network::InterfaceClass::Virtual)));
+    eprintln!("{:#}", s.to_wire()["network"]);
+}

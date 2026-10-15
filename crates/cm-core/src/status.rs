@@ -6,8 +6,11 @@
 //!   Its only input is the metric list: cleanup candidates, scan results or plans cannot change it.
 //! - STS-03: one diagnosis line, chosen by a fixed priority; `normal` when nothing crosses a threshold.
 //! - STS-06: stream records keep the time they were sampled; a repeated (not re-sampled) record is `stale`.
+//! - STS-07: network totals exclude loopback and list tunnel/virtual adapters separately ([`network`]).
 
 use serde::{Deserialize, Serialize};
+
+pub mod network;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -230,13 +233,20 @@ pub struct StatusSnapshot {
     pub metrics: Vec<Metric>,
     pub health: Health,
     pub diagnoses: Vec<Diagnosis>,
+    /// STS-07: per-interface rates and the deduplicated total; `None` when the sampler has no network data.
+    pub network: Option<network::NetworkTotals>,
 }
 
 impl StatusSnapshot {
     pub fn new(sampled_at: String, metrics: Vec<Metric>, top: Option<&TopProcess>) -> Self {
         let health = health(&metrics);
         let diagnoses = diagnoses(&metrics, top);
-        StatusSnapshot { sampled_at, stale: false, metrics, health, diagnoses }
+        StatusSnapshot { sampled_at, stale: false, metrics, health, diagnoses, network: None }
+    }
+
+    pub fn with_network(mut self, network: Option<network::NetworkTotals>) -> Self {
+        self.network = network;
+        self
     }
 
     pub fn to_wire(&self) -> serde_json::Value {
@@ -248,13 +258,17 @@ impl StatusSnapshot {
             .iter()
             .map(|d| serde_json::json!({"dimension": d.dimension, "metric": d.metric, "value": d.value, "full_score_at": d.full_score_at, "zero_score_at": d.zero_score_at, "score": d.score}))
             .collect();
-        serde_json::json!({
+        let mut wire = serde_json::json!({
             "sampled_at": self.sampled_at,
             "stale": self.stale,
             "metrics": self.metrics,
             "health": {"score": self.health.score, "weights": weights, "lowered_by": self.health.lowered_by, "dimensions": dims},
             "diagnosis": diagnosis(&self.diagnoses),
-        })
+        });
+        if let (Some(n), Some(o)) = (&self.network, wire.as_object_mut()) {
+            o.insert("network".into(), serde_json::to_value(n).expect("network totals serialize"));
+        }
+        wire
     }
 }
 
@@ -412,6 +426,18 @@ mod tests {
         t.offer(StatusSnapshot::new("2026-10-15T08:00:05Z".into(), healthy(), None));
         let c = t.tick().unwrap();
         assert_eq!((c.sampled_at.as_str(), c.stale), ("2026-10-15T08:00:05Z", false));
+    }
+
+    #[test]
+    fn network_is_on_the_wire_only_when_sampled() {
+        use network::{Classification, InterfaceClass, InterfaceRate, NetworkTotals};
+        let s = StatusSnapshot::new("2026-10-15T08:00:00Z".into(), healthy(), None);
+        assert!(s.to_wire().get("network").is_none());
+        let n = NetworkTotals::from_rates(Classification::InterfaceType, vec![InterfaceRate { name: "Ethernet".into(), class: InterfaceClass::Physical, received_bytes_per_sec: 3.0, sent_bytes_per_sec: 1.0 }]);
+        let w = s.with_network(Some(n)).to_wire();
+        assert_eq!(w["network"]["received_bytes_per_sec"], 3.0);
+        assert_eq!(w["network"]["may_double_count"], false);
+        assert_eq!(w["network"]["loopback_excluded"], 0);
     }
 
     #[test]

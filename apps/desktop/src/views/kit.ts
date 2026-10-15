@@ -320,16 +320,17 @@ function readinessDialog(op: ReadinessOp, label: string, gaps: ReadinessCheck[],
 // ---------------------------------------------------------------------------------------------
 // Capability pages (GUI-08): a feature that is not here yet keeps its place and explains itself
 
-export type GateState = 'in_progress' | 'not_applicable' | 'experimental' | 'cli_only';
+export type GateState = 'in_progress' | 'not_applicable' | 'experimental' | 'cli_only' | 'off';
 
 export const GATE_LABEL: Record<GateState, string> = {
   in_progress: '已规格 · 开发中',
   not_applicable: '此平台不适用',
   experimental: '实验',
   cli_only: '仅命令行',
+  off: '默认关闭',
 };
 
-const GATE_TONE: Record<GateState, Tone> = { in_progress: 'busy', not_applicable: 'muted', experimental: 'warn', cli_only: 'good' };
+const GATE_TONE: Record<GateState, Tone> = { in_progress: 'busy', not_applicable: 'muted', experimental: 'warn', cli_only: 'good', off: 'muted' };
 
 export interface CapabilityOpts {
   id: string;
@@ -368,12 +369,38 @@ export function capabilityPage(o: CapabilityOpts): HTMLElement {
         h('p', {}, o.why),
         o.safety?.length ? h('h3', {}, '上线后仍然遵守') : null,
         o.safety?.length ? h('ul', { class: 'cap-list-plain small' }, ...o.safety.map((s) => h('li', {}, s))) : null,
-        o.cli?.length ? h('h3', {}, '现在可以在终端中使用') : null,
+        o.cli?.length ? h('h3', {}, o.gate === 'off' ? '在终端中开启' : '现在可以在终端中使用') : null,
         ...(o.cli ?? []).map((c) => copyField(c.label, c.command)),
         o.actions?.length ? h('div', { class: 'card-actions' }, ...o.actions) : null,
       ),
     ),
   );
+}
+
+export interface GateOffOpts {
+  /** The page id; the explanatory page uses `${id}-title`. */
+  id: string;
+  title: string;
+  capability: string;
+  gate: string;
+  does: string[];
+  /** Opens 设置 › 实验功能. */
+  openSettings: () => void;
+}
+
+/** D15: a section whose capability has not passed its release gate is off here; it keeps its place and says why. */
+export function gateOffPage(o: GateOffOpts): HTMLElement {
+  return capabilityPage({
+    id: o.id,
+    title: o.title,
+    gate: 'off',
+    does: o.does,
+    why: `这项功能尚未通过发布门禁 ${o.gate}：还没有两个平台的真机验收证据。按照发布规则，未通过门禁的功能默认关闭，不在这台电脑上读取或更改任何东西。如果只是想在这台电脑上评估，可以在“设置 › 实验功能”中开启；开启不代表它已通过验收，每项更改仍然需要你审阅计划。`,
+    spec: o.capability,
+    gateName: o.gate,
+    cli: [{ label: '开启实验功能（与桌面端共用同一设置）', command: 'cleanmanager experimental --state on' }],
+    actions: [h('button', { type: 'button', class: 'primary', 'data-open-experimental': '', onclick: o.openSettings }, '打开实验功能设置')],
+  });
 }
 
 // ---------------------------------------------------------------------------------------------

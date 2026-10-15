@@ -185,6 +185,11 @@ def semantics(value):
         assert sum(value["health"]["weights"].values()) == 100, "health weights must sum to 100"
         for d in value["health"]["dimensions"]:
             assert (d["value"] is None) == (d["score"] is None), "an unknown dimension has no score, never 0"
+        net = value.get("network")
+        if net is not None:
+            assert abs(sum(i["received_bytes_per_sec"] for i in net["counted"]) - net["received_bytes_per_sec"]) < 1e-6, "network total is the counted interfaces only"
+            assert abs(sum(i["sent_bytes_per_sec"] for i in net["counted"]) - net["sent_bytes_per_sec"]) < 1e-6, "network total is the counted interfaces only"
+            assert net["may_double_count"] == (net["classification"] == "unavailable" or any(i["class"] == "unknown" for i in net["counted"])), "an unclassified total must say it may double count"
     elif kind == "insight_list":
         for i in value["items"]:
             assert (i["logical_bytes"] is None) == (i["size_basis"] == "not_measured"), "unknown size must be null with basis not_measured"

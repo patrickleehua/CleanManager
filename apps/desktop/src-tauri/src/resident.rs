@@ -50,6 +50,8 @@ pub struct Seen {
 }
 
 pub struct Resident {
+    /// The shared store: settings live here, and the experimental-features switch (D15) is read from it.
+    store_dir: Option<PathBuf>,
     settings_path: Option<PathBuf>,
     pub settings: Mutex<ResidentSettings>,
     sampling: Mutex<Option<ResidentLoop>>,
@@ -85,6 +87,7 @@ impl Resident {
         let settings_path = store_dir.map(|d| d.join(cm_core::resident::SETTINGS_FILE));
         let settings = load(settings_path.as_deref());
         Resident {
+            store_dir: store_dir.map(Path::to_path_buf),
             settings_path,
             settings: Mutex::new(settings),
             sampling: Mutex::new(None),
@@ -155,6 +158,33 @@ impl Resident {
 
     pub fn startup_entry(&self) -> Option<String> {
         self.store.read().ok().flatten()
+    }
+
+    /// D15: the resident utilities run only while their capability is on (gate G4 passed or experimental features on).
+    pub fn allowed(&self) -> bool {
+        cm_app::features::enabled(self.store_dir.as_deref(), "resident.utilities")
+    }
+
+    /// Experimental features turned off: stop everything the resident utilities hold, as turning the tray off does —
+    /// sampling, battery alerts, the startup value — and release any keep-awake request. Settings are saved off.
+    pub fn stop_all(&self) -> Result<TurnOffReport, String> {
+        let off = ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, ..lock(&self.settings).clone() };
+        let report = self.apply(off, || Err("not starting".into()))?.unwrap_or(TurnOffReport { sampling_stopped: false, startup_value_removed: false, startup_error: None });
+        #[cfg(windows)]
+        if let Some(mut k) = lock(&self.keep_awake).take() {
+            k.release();
+        }
+        Ok(report)
+    }
+}
+
+/// [`Resident::stop_all`] plus the tray icon. Fails when the startup value could not be removed.
+pub fn turn_off_all(app: &AppHandle, r: &Resident) -> Result<(), String> {
+    let report = r.stop_all()?;
+    remove_tray(app);
+    match report.startup_error {
+        Some(e) => Err(format!("the resident utilities stopped, but their startup value could not be removed: {e}")),
+        None => Ok(()),
     }
 }
 
@@ -337,6 +367,15 @@ pub fn hide_on_close(app: &AppHandle) -> bool {
 
 /// Setup: reconcile the startup value, start the tray if it is on, and hide the window when started tray-only.
 pub fn setup(app: &AppHandle, r: &Arc<Resident>) {
+    // D15: with the capability off (e.g. turned off from the CLI), nothing starts and a leftover startup value goes.
+    if !r.allowed() {
+        let s = lock(&r.settings).clone();
+        if s.tray || s.battery_alerts || r.startup_entry().is_some() {
+            let _ = r.stop_all();
+        }
+        show_main(app);
+        return;
+    }
     let _ = r.reconcile_startup();
     let settings = lock(&r.settings).clone();
     let tray_ok = settings.tray && r.apply(settings, || start_tray(app, r)).is_ok() && r.sampling_running();
@@ -670,6 +709,30 @@ mod tests {
         assert_eq!(r.startup_entry(), None);
         let s = status_of(None, &r);
         assert!(!s.tray.enabled && !s.tray.sampling && !s.tray.icon_shown && s.tray.startup_command.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// D15: the resident utilities are off until experimental features are on; turning them off stops everything,
+    /// removes the startup value and saves the settings off, as turning the tray off does.
+    #[test]
+    fn turning_experimental_features_off_stops_every_resident_utility() {
+        let dir = temp("experimental");
+        let r = Resident::new(Some(&dir), Box::new(Mem(Mutex::new(None))), "cm.exe".into());
+        assert!(!r.allowed(), "off by default");
+        cm_app::features::set_experimental(&dir, true).unwrap();
+        assert!(r.allowed());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let on = ResidentSettings { tray: true, start_at_login: true, battery_alerts: true, battery_threshold: 30 };
+        r.apply(on, counting(&calls)).unwrap();
+        assert!(r.sampling_running() && r.startup_entry().is_some());
+
+        cm_app::features::set_experimental(&dir, false).unwrap();
+        assert!(!r.allowed());
+        let report = r.stop_all().unwrap();
+        assert!(report.sampling_stopped && report.startup_value_removed && report.startup_error.is_none());
+        assert!(!r.sampling_running() && r.startup_entry().is_none());
+        let saved = ResidentSettings::parse(&std::fs::read_to_string(dir.join("resident.json")).unwrap());
+        assert_eq!(saved, ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, battery_threshold: 30 });
         let _ = std::fs::remove_dir_all(&dir);
     }
 

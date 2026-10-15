@@ -10,6 +10,8 @@
 
 产品行为以 [OpenSpec 提案](openspec/changes/define-cleanmanager-mvp/proposal.md)、设计、能力 specs 与任务为验收规划；九项首版能力之外的 AI 诊断是独立可选扩展，不阻塞 G0/G1/G2。对标 Mole 全部功能（清理目录、构建产物、安装包、手选回收站、卸载/更新/启动项、维护、状态、托盘工具）的规划见变更 `add-mole-parity-suite`，按 G1–G4 门禁验收。目前其中多数能力的 Windows 部分已实现但未验收；macOS 部分、常驻/特权工具与各门禁仍待完成。逐项状态见 [对标完成度复核](openspec/changes/add-mole-parity-suite/parity-review.md)。
 
+这些对标工具**默认关闭**（设计 D15“单项未通过则该能力关闭”）：未通过门禁时，CLI 命令组与对应种类计划的审阅/执行返回 `unsupported` 并说明门禁，桌面端的分区保留在原位但只显示说明页。只为在本机评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置；关闭时常驻工具随之停止）；开启后能力仍报告为 `unverified`，不算已发布。命令与能力的对应见 [CLI 协议](docs/cli-protocol.md) 的“实验功能”。
+
 建议技术路线：**Rust library + 原生平台后端 + SQLite + 独立 Rust CLI + Tauri 2/TypeScript GUI**。终端交互与 MCP 后续复用同一核心，不再实现另一套清理逻辑。
 
 ```mermaid
@@ -53,7 +55,7 @@ cleanmanager capabilities --json                 # 冒烟：一条 capabilities 
 - 诊断：`cleanmanager doctor --format text` 输出脱敏的只读报告，`--export FILE` 预览后经终端确认才写出，可附在问题反馈中。
 - Agent：把 [skills/cleanmanager](skills/cleanmanager/SKILL.md) 复制到 `~/.claude/skills/`（或 Codex 的技能目录），或导入打包件 `skills/dist/cleanmanager.skill`（`python -I tools/package_skill.py` 重新生成）。
 
-最短的只读到计划流程（任何删除都要先由人在终端审阅批准）：
+最短的只读到计划流程（任何删除都要先由人在终端审阅批准）。`clean` 属于尚未通过门禁 G1 的清理目录工具，默认关闭，评估时先运行 `cleanmanager experimental --state on`：
 
 ```text
 cleanmanager scan --root "%LOCALAPPDATA%\Temp" --json

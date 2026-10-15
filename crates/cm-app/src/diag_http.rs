@@ -61,6 +61,7 @@ fn agent(timeout: Duration) -> ureq::Agent {
 /// One HTTP exchange. `body: None` sends a GET (connectivity probe, no file data).
 fn exchange(url: &str, headers: &[(String, String)], body: Option<&str>, timeout: Duration, secret: Option<&Secret>) -> Result<(u16, Vec<u8>), Failure> {
     let a = agent(timeout);
+    let started = std::time::Instant::now();
     let result = match body {
         Some(b) => {
             let mut r = a.post(url);
@@ -77,8 +78,15 @@ fn exchange(url: &str, headers: &[(String, String)], body: Option<&str>, timeout
             r.call()
         }
     };
-    let resp = result.map_err(|e| transport_failure(&e, secret))?;
+    // URL without query, method, status and timing only: never headers (they carry the key) or bodies.
+    let shown = url.split(['?', '#']).next().unwrap_or_default();
+    let resp = result.map_err(|e| {
+        let f = transport_failure(&e, secret);
+        cm_core::debug_trace!("http", "{} {shown} failed after {}ms: {:?}", if body.is_some() { "POST" } else { "GET" }, started.elapsed().as_millis(), f.code);
+        f
+    })?;
     let status = resp.status().as_u16();
+    cm_core::debug_trace!("http", "{} {shown} status={status} in {}ms", if body.is_some() { "POST" } else { "GET" }, started.elapsed().as_millis());
     let bytes = resp.into_body().with_config().limit(MAX_RESPONSE_BYTES).read_to_vec().map_err(|e| transport_failure(&e, secret))?;
     Ok((status, bytes))
 }

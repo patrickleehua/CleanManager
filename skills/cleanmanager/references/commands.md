@@ -158,7 +158,10 @@ cleanmanager apps uninstall restore --operation <OPERATION_ID> --json          #
 
 ```text
 cleanmanager doctor --json                                    # doctor_report, redacted (no user names, no credentials)
+cleanmanager scan --root "<PATH>" --json --non-interactive --debug   # same scan_result on stdout; a human-readable trace (phases, backend, skip reasons, exit codes) on stderr
 cleanmanager doctor --export "<PATH>" --json                  # preview only; the file is written after the person confirms in a terminal
 cleanmanager completion print powershell --format text        # completion script for eval/source
 cleanmanager completion install bash --json                   # preview of the profile change; nothing written
 ```
+
+`--debug` is accepted by every command and only adds a trace on stderr for troubleshooting (when the user reports a problem): stdout records, exit codes and every decision stay identical. Never parse the trace or branch on it, and never paste it anywhere without the user's consent; it carries no keys, but it does name paths (home shown as `~`).

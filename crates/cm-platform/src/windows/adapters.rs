@@ -130,11 +130,13 @@ pub(crate) fn run_bounded(exe: &Path, args: &[OsString], cwd: &Path, timeout: Du
     let Some(status) = status else {
         let _ = child.kill();
         let _ = child.wait();
+        cm_core::debug_trace!("process", "\"{}\" timed out after {}ms; ended", exe.display(), timeout.as_millis());
         let (output, total) = out.join().unwrap_or_default();
         return Err(RunError::Timeout { output, total });
     };
     let (stdout, stdout_total) = out.join().unwrap_or_default();
     let (stderr, stderr_total) = err.join().unwrap_or_default();
+    cm_core::debug_trace!("process", "\"{}\" exit={:?} stdout_bytes={stdout_total} stderr_bytes={stderr_total}", exe.display(), status.code());
     Ok(Ran { exit: status.code(), stdout, stdout_total, stderr, stderr_total })
 }
 

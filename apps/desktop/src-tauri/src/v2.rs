@@ -122,9 +122,30 @@ fn kind_detail(s: &AppState, plan: &PlanV2) -> Option<serde_json::Value> {
                 })),
                 _ => None,
             });
+            // UNI-11: every application of a batch, in plan order, with the actions bound to it (review groups by them).
+            let apps: Vec<serde_json::Value> = cm_app::uninstall::planned_apps(plan)
+                .into_iter()
+                .map(|a| {
+                    let (adapter, signer) = plan
+                        .meta
+                        .iter()
+                        .find_map(|m| match &m.uninstall {
+                            Some(cm_core::uninstall::UninstallMeta::App { identity, adapter, signer, .. }) if identity.instance_id == a.identity.instance_id => {
+                                Some((adapter.display.clone(), signer.clone()))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    json!({
+                        "app_instance_id": a.identity.instance_id, "name": a.identity.name, "publisher": a.identity.publisher, "version": a.identity.version,
+                        "source": a.identity.source, "adapter": adapter, "signer": signer, "action_ids": a.action_ids,
+                    })
+                })
+                .collect();
             json!({
                 "stage": if runs_uninstaller(plan) { "uninstall" } else { "leftovers" },
                 "app": app,
+                "apps": apps,
                 "may_end_processes": may_end_processes(plan),
                 "registry_keys": b.items.iter().filter(|a| matches!(a, PlanAction::RegistryBackupDelete(_))).count(),
                 "noted": noted,
@@ -295,7 +316,7 @@ pub fn item_rows(plan: &PlanV2) -> Vec<PlanItemDto> {
                 PlanAction::AppQuit(q) => {
                     let name = uninstall_app(m).map(|i| i.name.clone()).unwrap_or_else(|| q.app_identity.clone());
                     let mut row = base(name, q.app_identity.clone(), "app_quit", None);
-                    row.detail = Some(json!({"force": q.force}));
+                    row.detail = Some(json!({"force": q.force, "app_instance_id": q.app_instance_id}));
                     row
                 }
                 PlanAction::ToolAdapter(t) if kind == PlanKind::Update => {
@@ -322,6 +343,7 @@ pub fn item_rows(plan: &PlanV2) -> Vec<PlanItemDto> {
                         "adapter_id": t.adapter_id,
                         "program": t.executable.path.display(),
                         "timeout_seconds": t.timeout_seconds,
+                        "app_instance_id": uninstall_app(m).map(|i| i.instance_id.clone()),
                     }));
                     row
                 }
@@ -601,6 +623,8 @@ mod tests {
         assert_eq!(rows[0].name, "Tools");
         assert_eq!(rows[0].detail.as_ref().unwrap()["force"], "never");
         assert_eq!(rows[1].path_display, "Tools uninstaller");
+        // UNI-11: review rows name the application they belong to, so a batch is reviewed application by application.
+        assert_eq!((rows[0].detail.as_ref().unwrap()["app_instance_id"].as_str(), rows[1].detail.as_ref().unwrap()["app_instance_id"].as_str()), (Some("app_x"), Some("app_x")));
 
         let forced = build(&header(PlanKind::Uninstall), vec![quit(QuitForce::AskUser), adapter()], meta()).unwrap();
         assert!(may_end_processes(&forced), "the --end-running variant stays with the terminal");

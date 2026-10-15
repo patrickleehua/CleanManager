@@ -209,6 +209,12 @@ fn manual_trash_plan_is_reviewed_like_any_plan() {
     assert!(ins.trashable, "{:?}", ins.refusal);
     assert_eq!((ins.name.as_str(), ins.files, ins.logical_bytes.as_deref()), ("old", 1, Some("300")));
     let plan_id = crate::suite::win::trash_plan(&s, "s_mtr", &[entry]).unwrap().plan_id;
+    // D15: approving or applying a manual_selection plan needs trash.manual on (experimental features, off by default).
+    let off = crate::gate::require_plan(&s, &plan_id).unwrap_err();
+    assert_eq!((off.code, off.reason), (cm_core::error::ErrorCode::Unsupported, "experimental_off"));
+    assert!(off.message.contains("trash.manual") && off.message.contains("G1"), "{}", off.message);
+    cm_app::features::set_experimental(&store, true).unwrap();
+    crate::gate::require_plan(&s, &plan_id).unwrap();
     s.with_stores(|st| {
         let d = cleanup::detail(&s, st, &plan_id)?;
         assert_eq!((d.kind, d.mode, d.plan_kind_v2.as_deref(), d.requires_admin, d.catalog), ("manual_trash", Some(Mode::Trash), Some("manual_selection"), false, None));

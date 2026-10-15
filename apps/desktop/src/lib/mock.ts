@@ -10,6 +10,7 @@ import { mockOps } from './mockOps';
 import { mockSoftware } from './mockSoftware';
 import { mockSuite } from './mockSuite';
 import type {
+  CleanableHint,
   Entry,
   EntriesPage,
   EntriesQuery,
@@ -33,6 +34,8 @@ interface Node {
   unknownDesc: number;
   boundary?: Entry['boundary'];
   skipped?: number;
+  /** DIN-05 preview: the hint the host would attach after verifying the signature. */
+  hint?: CleanableHint;
 }
 
 const KiB = 1024n;
@@ -66,9 +69,10 @@ function buildTree(rootName: string): Map<number, Node> {
   add(videos, 'clip-short.mp4', 'file', 210n * MiB);
   const projects = add(root, 'Projects', 'directory');
   const app = add(projects, 'storefront', 'directory');
-  const nm = add(app, 'node_modules', 'directory');
+  add(app, 'package.json', 'file', 2_310n);
+  const nm = add(app, 'node_modules', 'directory', null, { hint: { basis: 'build_artifact', rule_id: 'purge.node-modules', detail: 'package.json', flow: 'purge' } });
   for (let i = 0; i < 1400; i++) add(nm, `pkg-${String(i).padStart(4, '0')}.tgz`, 'file', BigInt(Math.floor(r() * 9_000_000) + 2_000));
-  add(app, 'target', 'directory');
+  add(app, 'target', 'directory', null, { hint: { basis: 'cachedir_tag', rule_id: null, detail: 'CACHEDIR.TAG', flow: 'manual_trash' } });
   add(app, 'README.md', 'file', 8_412n);
   add(app, 'design-assets.psd', 'file', 1n * GiB + 220n * MiB);
   const ml = add(projects, 'models', 'directory');
@@ -129,10 +133,29 @@ function toEntry(nodes: Map<number, Node>, n: Node): Entry {
     boundary: n.boundary ?? null,
     identity_quality: 'strong',
     link_count: null,
+    cleanable_hint: n.kind === 'directory' && !n.boundary ? (n.hint ?? null) : null,
   };
 }
 
 const err = (code: string, reason: string, message: string): IpcError => ({ code, reason, message });
+
+/** The host's gate table (cm_core::capability::GATED); no gate has passed. */
+const MOCK_GATES: [string, string][] = [
+  ['clean.catalog', 'G1'],
+  ['purge.artifacts', 'G1'],
+  ['installer.cleanup', 'G1'],
+  ['trash.manual', 'G1'],
+  ['insights.overview', 'G1'],
+  ['apps.uninstall', 'G3'],
+  ['apps.updates', 'G3'],
+  ['startup.toggle', 'G3'],
+  ['maintenance.run', 'G3'],
+  ['status.metrics', 'G3'],
+  ['process.end', 'G3'],
+  ['resident.utilities', 'G4'],
+  ['lifecycle.self_update', 'G3'],
+  ['diag.ai', 'AID'],
+];
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function mockBackend(): Backend {
@@ -143,6 +166,10 @@ export function mockBackend(): Backend {
   scans.set('s_preview_1', { state: 'partial', seen: nodes.size, cancel: false, started: '2026-10-15T01:12:00Z', finished: '2026-10-15T01:12:41Z', root: ROOT });
   let counter = 1;
   let offerCounter = 0;
+  // D15: gated tools are off until 设置 › 实验功能 is turned on (the preview starts where a new install starts).
+  let experimental = false;
+  const gateRows = () =>
+    MOCK_GATES.map(([capability, gate]) => ({ capability, gate, gate_passed: false, enabled: experimental }));
 
   const summaryOf = (ids: number[]): Summary => {
     let known = 0n;
@@ -306,7 +333,14 @@ export function mockBackend(): Backend {
         rules_problem: null,
         rule_count: 3,
         principal: 'user:DESKTOP\\Lin',
+        experimental_features: experimental,
+        gates: gateRows(),
       };
+    },
+    async setExperimentalFeatures(enabled) {
+      await delay(150);
+      experimental = enabled;
+      return this.capabilities();
     },
     async listScanRoots() {
       await delay(250);

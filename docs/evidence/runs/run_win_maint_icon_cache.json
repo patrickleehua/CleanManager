@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "test_id": "MNT-03",
+  "run_id": "run_win_maint_icon_cache",
+  "recorded_at": "2026-10-15T15:30:07Z",
+  "code_commit": "e6d0ca3a4492fdfcadca1045255e9ca8431e6a24",
+  "binary_sha256": "9a1e45796663019258d93237ad1db0a86fbcde1df3cc6b132e800f1567aa4abd",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.maintenance",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "plan",
+    "apply",
+    "mp_5e78_18debd87af0989b8"
+  ],
+  "seed": null,
+  "expected": "windows.icon-cache-rebuild@1.0.0 removes iconcache_*/thumbcache_* files it can open exclusively; files in use are left and reported as attention",
+  "actual": "outcome=attention code=partly_in_use reason=removed 19 cache files (1.0 MiB); 11 in use by Explorer were left alone (sign out and back in, then run again)",
+  "terminal_state": "completed",
+  "exit_code": 5,
+  "measurements": {
+    "plan_id": "mp_5e78_18debd87af0989b8",
+    "operation_id": "op_d866773d2cf7ad53",
+    "elevation": "already_elevated",
+    "plan_tasks": [
+      "windows.shell-restart",
+      "windows.icon-cache-rebuild",
+      "windows.trim-when-due"
+    ]
+  },
+  "observer": "agent (parity 14.2 evidence, run at the user's request on 2026-10-15)",
+  "limitations": [
+    "Working tree differs from code_commit only by a release-build warning fix in crates/cm-cli/src/update_self.rs (no behaviour change).",
+    "Release build of cleanmanager.exe; the shell was elevated, so the administrator task (TRIM) ran in-process (elevation=already_elevated), not through the UAC worker.",
+    "The plan was approved through the real interactive terminal review (plan review in its own console window, approval code typed into it); no receipt was written directly.",
+    "exit_code 5 is the plan-level partial result because two tasks ended as attention."
+  ],
+  "status": "passed"
+}

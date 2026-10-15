@@ -33,3 +33,14 @@ CLI SHALL 为清理目录、构建产物、安装包、手选回收站、空间�
 #### Scenario: A user asks the agent to free space
 - **WHEN** 用户只要求释放空间
 - **THEN** Agent 运行清理预览并汇报，不主动发起卸载、维护或启动项变更
+
+### Requirement: CLI-14 Diagnostic trace on request
+全局 `--debug` SHALL 把诊断轨迹（阶段与耗时、所选扫描/执行后端、跳过与降级原因、外部进程退出码）逐行写到标准错误；标准输出的机器记录 SHALL 与不带 `--debug` 时完全相同。轨迹 SHALL 不含密钥、AI 提供方凭据或授权回执内容；未指定 `--debug` 时不输出轨迹。`--debug` SHALL 不改变选择、授权或执行。
+
+#### Scenario: A scan runs with --debug
+- **WHEN** 调用方以 `--json --debug` 运行扫描
+- **THEN** 标准输出仍是同一条 `scan_result` 记录，标准错误含阶段耗时与所选后端
+
+#### Scenario: A debug trace never carries secrets
+- **WHEN** 已配置 AI 诊断密钥时以 `--debug` 运行诊断命令
+- **THEN** 标准错误只说明密钥是否存在，不含密钥本身

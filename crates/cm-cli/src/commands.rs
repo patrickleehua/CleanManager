@@ -20,6 +20,10 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
     if let Err(msg) = p.check_selection_widening() {
         return fail(req, ErrorCode::InvalidArgument, &msg, p.format);
     }
+    // D15: a capability whose release gate has not passed refuses before any work unless experimental features are on.
+    if let Err(code) = crate::features_cmd::guard(req, &p) {
+        return code;
+    }
     // LIF-01: write commands hold the lifecycle lock shared, so no update swaps files under them.
     let _lifecycle = match crate::self_cmd::write_guard(req, &p) {
         Ok(g) => g,
@@ -27,7 +31,8 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
     };
     let words: Vec<&str> = p.words.iter().map(String::as_str).collect();
     let result = match words.as_slice() {
-        ["capabilities"] => p.allow(&[], &[]).map(|_| capabilities(req, &p)),
+        ["capabilities"] => p.allow(&["store"], &[]).map(|_| capabilities(req, &p)),
+        ["experimental"] => p.allow(&["store", "state"], &[]).map(|_| crate::features_cmd::experimental(req, &p)),
         ["scan"] => p.allow(&["root", "store", "timeout", "host-scan-id"], &["detach"]).map(|_| crate::scan_cmd::scan(req, &p)),
         ["scan", "show", id] => p.allow(&["store"], &[]).map(|_| crate::scan_cmd::scan_show(req, &p, id)),
         ["scan", "wait", id] => p.allow(&["store", "timeout"], &[]).map(|_| crate::scan_cmd::scan_wait(req, &p, id)),
@@ -126,7 +131,9 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
 
 fn capabilities(req: &str, p: &Parsed) -> ExitCode {
     let host = cm_platform::host();
-    emit(&capabilities_record(req, host.platform(), &host.capabilities()), p.format);
+    let mut caps = host.capabilities();
+    cm_app::features::apply_to(store_dir(p).as_deref(), &mut caps);
+    emit(&capabilities_record(req, host.platform(), &caps), p.format);
     ExitCode::SUCCESS
 }
 

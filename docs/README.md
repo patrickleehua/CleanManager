@@ -62,7 +62,7 @@ JSON Schema 负责已定义字段的机器形状；CLI 文档负责参数和输�
 | 设计、任务、协议样例与文档一致性 | 本轮交付，具体校验数以结果文件为准 |
 | Mole 风格 HTML 原型与 AI 诊断交互 | 已设计并检查浏览器演示；未连接真实模型/CLI/本机操作 |
 | Rust 扫描器、桌面、CLI、授权与清理执行器 | Windows 11 x64 已实现，经单机自动化测试与本机运行记录检验；macOS 后端未实现 |
-| Mole 对标能力（`add-mole-parity-suite`） | 多数 Windows 部分已实现，没有一项通过门禁；逐项状态见 [对标完成度复核](../openspec/changes/add-mole-parity-suite/parity-review.md) |
+| Mole 对标能力（`add-mole-parity-suite`） | 多数 Windows 部分已实现，没有一项通过门禁，因此默认关闭，只能用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”为本机评估开启；逐项状态见 [对标完成度复核](../openspec/changes/add-mole-parity-suite/parity-review.md) |
 | Windows/macOS 真机产品验收（G0–G4）、CI 实际运行、性能比较、签名发布 | 尚未通过；见两个 OpenSpec 变更的 tasks 与验证计划 |
 
 下一步以两个 OpenSpec 变更 tasks 中未勾选的任务为准：macOS 后端、CI 实际运行、真机门禁记录与签名发布。能否达到 WizTree 的速度，由同口径实测决定。

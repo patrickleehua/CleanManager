@@ -9,7 +9,8 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { words } from '../lib/platform';
-import type { CpuAlert, Insight, InsightsList, IpcError, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
+import { DEFAULT_PREFS, PANEL_LABEL, REFRESH_SECONDS, type StatusPanel, type StatusPrefs, layoutRows, loadPrefs, movePanel, sanitize, savePrefs, setShown } from '../lib/statusPrefs';
+import type { CpuAlert, Insight, InsightsList, IpcError, NetworkTotals, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
 import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
 import { atLeast, capabilityPage, ensureReady, noticeLine, selectionBar, sumSizes, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, type Tone } from './parts';
@@ -487,8 +488,6 @@ export function alertText(a: CpuAlert): string {
 // ---------------------------------------------------------------------------------------------
 // 状态 › 系统状态
 
-const REFRESH_MS = 3000;
-
 function metric(s: StatusSnapshot, name: string): StatusMetric | undefined {
   return s.metrics?.find((m) => m.name === name);
 }
@@ -522,6 +521,16 @@ const DIAGNOSIS_LABEL: Record<string, string> = {
   heavy_io: '磁盘持续繁忙',
 };
 
+const NET_CLASS_WORD: Record<string, string> = { physical: '物理网卡', tunnel: '隧道', virtual: '虚拟网卡', unknown: '无法分类' };
+
+/** What the network total covers, in words (STS-07). */
+export function networkScope(n: NetworkTotals): string {
+  if (n.classification === 'unavailable') return '无法区分网卡类型：合计是所有网卡之和，隧道或虚拟交换机的流量可能被重复计算。';
+  if (n.may_double_count) return '合计包含无法分类的网卡，隧道或虚拟交换机的流量可能被重复计算。';
+  const loop = n.loopback_excluded ? '，已排除回环' : '';
+  return `合计只计物理网卡${loop}；隧道和虚拟网卡单独列出，不计入合计。`;
+}
+
 export class StatusPage implements PageLike {
   el: HTMLElement;
   private body: HTMLElement;
@@ -532,6 +541,10 @@ export class StatusPage implements PageLike {
   private gate = new RequestGate();
   private timer: number | null = null;
   private paused = false;
+  /** STS-07: panel visibility and order and the refresh interval, kept across sessions. */
+  private prefs: StatusPrefs = loadPrefs();
+  private prefsOpen = false;
+  private prefsNote: string | null = null;
 
   constructor(private app: App) {
     this.body = h('div', {});
@@ -550,7 +563,7 @@ export class StatusPage implements PageLike {
 
   private schedule(): void {
     this.stop();
-    if (!this.paused) this.timer = window.setInterval(() => void this.sample(), REFRESH_MS);
+    if (!this.paused) this.timer = window.setInterval(() => void this.sample(), this.prefs.refreshSeconds * 1000);
   }
 
   private stop(): void {
@@ -576,12 +589,27 @@ export class StatusPage implements PageLike {
     if (this.app.store.state.page === 'status') this.update();
   }
 
+  private setPrefs(next: StatusPrefs, said: string): void {
+    const refreshChanged = next.refreshSeconds !== this.prefs.refreshSeconds;
+    // The process sort belongs to the process page: keep whatever it stored meanwhile.
+    this.prefs = sanitize({ ...next, processSort: loadPrefs().processSort });
+    this.prefsNote = savePrefs(this.prefs) ? null : '这台电脑不允许保存显示设置；本次打开期间仍然生效。';
+    if (refreshChanged) this.schedule();
+    this.app.announce(said);
+    this.update();
+  }
+
   private render(): void {
     const s = this.snap;
     const pause = h('button', { type: 'button', id: 'status-pause', 'aria-pressed': this.paused ? 'true' : 'false' }, this.paused ? '继续刷新' : '暂停刷新');
     pause.addEventListener('click', () => {
       this.paused = !this.paused;
       this.schedule();
+      this.update();
+    });
+    const customize = h('button', { type: 'button', id: 'status-prefs-toggle', 'aria-expanded': this.prefsOpen ? 'true' : 'false', 'aria-controls': 'status-prefs' }, icon('settings'), '显示设置');
+    customize.addEventListener('click', () => {
+      this.prefsOpen = !this.prefsOpen;
       this.update();
     });
     if (s && !s.supported) {
@@ -593,9 +621,10 @@ export class StatusPage implements PageLike {
       pageHead({
         id: 'status-title',
         title: '系统状态',
-        meta: s?.sampled_at ? [`采样于 ${formatTime(s.sampled_at)}`, s.stale ? '数据已过期' : this.paused ? '已暂停' : `每 ${REFRESH_MS / 1000} 秒刷新`] : [],
-        actions: [pause],
+        meta: s?.sampled_at ? [`采样于 ${formatTime(s.sampled_at)}`, s.stale ? '数据已过期' : this.paused ? '已暂停' : `每 ${this.prefs.refreshSeconds} 秒刷新`] : [],
+        actions: [customize, pause],
       }),
+      this.prefsOpen ? this.prefsPanel() : null,
       errorLine(this.error),
       ...this.alerts.map((x, i) =>
         h(
@@ -609,73 +638,166 @@ export class StatusPage implements PageLike {
     );
   }
 
+  private prefsPanel(): HTMLElement {
+    const p = this.prefs;
+    const refresh = h(
+      'fieldset',
+      { class: 'seg' },
+      h('legend', { class: 'sr-only' }, '刷新间隔'),
+      ...REFRESH_SECONDS.map((sec) => {
+        const input = h('input', { type: 'radio', name: 'status-refresh', id: `status-refresh-${sec}`, value: String(sec) }) as HTMLInputElement;
+        input.checked = p.refreshSeconds === sec;
+        input.addEventListener('change', () => this.setPrefs({ ...p, refreshSeconds: sec }, `改为每 ${sec} 秒刷新`));
+        return h('label', { for: `status-refresh-${sec}` }, input, h('span', {}, `${sec} 秒`));
+      }),
+    );
+    const shownCount = p.order.length - p.hidden.length;
+    const rows = p.order.map((panel, i) => {
+      const shown = !p.hidden.includes(panel);
+      const box = h('input', { type: 'checkbox', id: `status-show-${panel}` }) as HTMLInputElement;
+      box.checked = shown;
+      // At least one panel stays visible, so the page never turns blank.
+      box.disabled = shown && shownCount === 1;
+      box.addEventListener('change', () => this.setPrefs(setShown(p, panel, box.checked), `${box.checked ? '显示' : '隐藏'}${PANEL_LABEL[panel]}`));
+      const move = (delta: -1 | 1) => {
+        const id = `status-${delta < 0 ? 'up' : 'down'}-${panel}`;
+        const edge = delta < 0 ? i === 0 : i === p.order.length - 1;
+        const b = h('button', { type: 'button', class: 'icon-btn small-btn', id, disabled: edge, 'aria-label': `${PANEL_LABEL[panel]}${delta < 0 ? '上移' : '下移'}`, title: delta < 0 ? '上移' : '下移' }, icon(delta < 0 ? 'up' : 'down'));
+        b.addEventListener('click', () => {
+          const next = movePanel(p, panel, delta);
+          this.setPrefs(next, `${PANEL_LABEL[panel]}移到第 ${next.order.indexOf(panel) + 1} 位`);
+          // At the new edge this button is disabled; keep focus on the row's other move button.
+          const now = document.getElementById(id) as HTMLButtonElement | null;
+          if (now?.disabled) document.getElementById(`status-${delta < 0 ? 'down' : 'up'}-${panel}`)?.focus();
+        });
+        return b;
+      };
+      return h(
+        'li',
+        { 'data-shown': shown ? 'yes' : 'no' },
+        h('label', { class: 'pref-panel', for: `status-show-${panel}` }, box, h('span', {}, PANEL_LABEL[panel])),
+        h('span', { class: 'pref-move' }, move(-1), move(1)),
+      );
+    });
+    const reset = h('button', { type: 'button', class: 'quiet', id: 'status-prefs-reset' }, '恢复默认');
+    reset.addEventListener('click', () => this.setPrefs({ ...DEFAULT_PREFS }, '显示设置已恢复默认'));
+    return h(
+      'section',
+      { class: 'panel status-prefs', id: 'status-prefs', 'aria-labelledby': 'status-prefs-title' },
+      h('div', { class: 'panel-head' }, h('h2', { id: 'status-prefs-title' }, '显示设置'), reset),
+      h('div', { class: 'pref-grid' }, h('div', {}, h('h3', {}, '面板与顺序'), h('ol', { class: 'pref-panels' }, ...rows)), h('div', {}, h('h3', {}, '刷新间隔'), refresh, h('p', { class: 'muted small' }, '进程列表的排序在“进程”页选择，也会记住。'))),
+      this.prefsNote ? noticeLine(this.prefsNote, 'warn') : h('p', { class: 'muted small' }, '设置只保存在这台电脑的本应用中，下次打开时按上次的样子显示。'),
+    );
+  }
+
   private view(s: StatusSnapshot): HTMLElement {
+    const build: Record<StatusPanel, () => HTMLElement> = { health: () => this.healthPanel(s), metrics: () => this.metricsPanel(s), network: () => this.networkPanel(s) };
+    return h('div', { class: 'status-layout' }, ...layoutRows(this.prefs).map((r) => h('div', { class: 'status-row', 'data-shape': r.shape }, ...r.panels.map((x) => build[x]()))));
+  }
+
+  private healthPanel(s: StatusSnapshot): HTMLElement {
     const hl = s.health;
+    const diag = s.diagnosis;
+    return h(
+      'section',
+      { class: 'panel health', 'aria-labelledby': 'health-title' },
+      h('h2', { id: 'health-title' }, '健康分'),
+      h('p', { class: 'health-score num' }, hl?.score === null || hl?.score === undefined ? '—' : String(hl.score), h('small', {}, '/ 100')),
+      h('p', { class: 'muted small' }, '只反映当前的负载、空间与温度，不代表需要清理。'),
+      hl
+        ? h(
+            'ul',
+            { class: 'dims' },
+            ...hl.dimensions.map((d) => {
+              const bar = h('span', { class: 'dim-bar' }, h('span', { class: 'dim-fill' }));
+              (bar.firstChild as HTMLElement).style.width = `${d.score ?? 0}%`;
+              return h(
+                'li',
+                { 'data-low': d.score !== null && d.score < 60 ? 'yes' : 'no' },
+                h('span', { class: 'dim-label' }, DIMENSION_LABEL[d.dimension] ?? d.dimension, h('small', { class: 'muted' }, `权重 ${hl.weights[d.dimension] ?? '—'}`)),
+                bar,
+                h('span', { class: 'dim-score num' }, d.score === null ? '无数据' : String(d.score)),
+              );
+            }),
+          )
+        : null,
+      diag
+        ? h(
+            'div',
+            { class: 'notice warn diag-line' },
+            h('span', {}, DIAGNOSIS_LABEL[diag.code] ?? diag.message),
+            diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, '去分析磁盘') : null,
+          )
+        : null,
+    );
+  }
+
+  private metricsPanel(s: StatusSnapshot): HTMLElement {
     const tile = (label: string, name: string, extra?: string | null) => {
       const m = metric(s, name);
       return h('li', { class: 'mtile', 'data-available': m && m.availability === 'available' ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, label), h('span', { class: 'mtile-value num' }, valueText(m)), h('span', { class: 'mtile-note muted' }, m && m.availability !== 'available' ? (m.reason ?? '不可用') : (extra ?? '')));
     };
     const memTotal = metric(s, 'memory.total_bytes');
     const diskTotal = metric(s, 'disk.system.total_bytes');
-    const net = (s.metrics ?? []).filter((m) => m.name.startsWith('network.if.') && m.name.endsWith('received_bytes_per_sec'));
-    const diag = s.diagnosis;
     return h(
-      'div',
-      { class: 'status-layout' },
+      'section',
+      { class: 'panel metrics', 'aria-labelledby': 'metrics-title' },
+      h('h2', { id: 'metrics-title' }, '指标'),
       h(
-        'section',
-        { class: 'panel health', 'aria-labelledby': 'health-title' },
-        h('h2', { id: 'health-title' }, '健康分'),
-        h('p', { class: 'health-score num' }, hl?.score === null || hl?.score === undefined ? '—' : String(hl.score), h('small', {}, '/ 100')),
-        h('p', { class: 'muted small' }, '只反映当前的负载、空间与温度，不代表需要清理。'),
-        hl
-          ? h(
-              'ul',
-              { class: 'dims' },
-              ...hl.dimensions.map((d) => {
-                const bar = h('span', { class: 'dim-bar' }, h('span', { class: 'dim-fill' }));
-                (bar.firstChild as HTMLElement).style.width = `${d.score ?? 0}%`;
-                return h(
-                  'li',
-                  { 'data-low': d.score !== null && d.score < 60 ? 'yes' : 'no' },
-                  h('span', { class: 'dim-label' }, DIMENSION_LABEL[d.dimension] ?? d.dimension, h('small', { class: 'muted' }, `权重 ${hl.weights[d.dimension] ?? '—'}`)),
-                  bar,
-                  h('span', { class: 'dim-score num' }, d.score === null ? '无数据' : String(d.score)),
-                );
-              }),
-            )
-          : null,
-        diag
-          ? h(
-              'div',
-              { class: 'notice warn diag-line' },
-              h('span', {}, DIAGNOSIS_LABEL[diag.code] ?? diag.message),
-              diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, '去分析磁盘') : null,
-            )
-          : null,
+        'ul',
+        { class: 'mtiles' },
+        tile('处理器', 'cpu.total_percent', metric(s, 'cpu.logical_count') ? `${metric(s, 'cpu.logical_count')!.value} 个逻辑处理器` : null),
+        tile('内存已用', 'memory.used_percent', memTotal?.value ? `共 ${valueText(memTotal)}，可用 ${valueText(metric(s, 'memory.available_bytes'))}` : null),
+        tile('系统盘可用', 'disk.system.free_bytes', diskTotal?.value ? `${valueText(metric(s, 'disk.system.free_percent'))}，共 ${valueText(diskTotal)}` : null),
+        tile('磁盘繁忙', 'disk.busy_percent', `读 ${valueText(metric(s, 'disk.read_bytes_per_sec'))} · 写 ${valueText(metric(s, 'disk.write_bytes_per_sec'))}`),
+        tile('最高温度', 'thermal.max_zone_celsius'),
+        tile('显卡温度', 'gpu.temperature_celsius'),
+        tile('电量', 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? '正在使用电源' : '使用电池'),
+        tile('电池健康', 'battery.health_percent', '相对设计容量'),
       ),
+      h('p', { class: 'muted small' }, '不可用的指标会写明原因，从不显示为 0。'),
+    );
+  }
+
+  private networkPanel(s: StatusSnapshot): HTMLElement {
+    const n = s.network;
+    const head = h('h2', { id: 'network-title' }, '网络');
+    if (!n) {
+      const m = metric(s, 'network.received_bytes_per_sec');
+      return h('section', { class: 'panel network', 'aria-labelledby': 'network-title' }, head, h('p', { class: 'muted small' }, m?.reason ?? '这次采样没有网络数据。'));
+    }
+    const rate = (v: number) => `${formatBytes(BigInt(Math.round(v)))}/s`;
+    const row = (i: { name: string; class: string; received_bytes_per_sec: number; sent_bytes_per_sec: number }) =>
+      h('tr', {}, h('td', { class: 'col-object' }, h('span', { class: 'obj-name' }, i.name)), h('td', { class: 'small' }, NET_CLASS_WORD[i.class] ?? i.class), h('td', { class: 'col-num-s num' }, rate(i.received_bytes_per_sec)), h('td', { class: 'col-num-s num' }, rate(i.sent_bytes_per_sec)));
+    const table = (caption: string, items: typeof n.counted) =>
       h(
-        'section',
-        { class: 'panel metrics', 'aria-labelledby': 'metrics-title' },
-        h('h2', { id: 'metrics-title' }, '指标'),
+        'div',
+        { class: 'table-wrap' },
         h(
-          'ul',
-          { class: 'mtiles' },
-          tile('处理器', 'cpu.total_percent', metric(s, 'cpu.logical_count') ? `${metric(s, 'cpu.logical_count')!.value} 个逻辑处理器` : null),
-          tile('内存已用', 'memory.used_percent', memTotal?.value ? `共 ${valueText(memTotal)}，可用 ${valueText(metric(s, 'memory.available_bytes'))}` : null),
-          tile('系统盘可用', 'disk.system.free_bytes', diskTotal?.value ? `${valueText(metric(s, 'disk.system.free_percent'))}，共 ${valueText(diskTotal)}` : null),
-          tile('磁盘繁忙', 'disk.busy_percent', `读 ${valueText(metric(s, 'disk.read_bytes_per_sec'))} · 写 ${valueText(metric(s, 'disk.write_bytes_per_sec'))}`),
-          tile('最高温度', 'thermal.max_zone_celsius'),
-          tile('显卡温度', 'gpu.temperature_celsius'),
-          tile('电量', 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? '正在使用电源' : '使用电池'),
-          tile('电池健康', 'battery.health_percent', '相对设计容量'),
-          ...net.slice(0, 2).map((m) => {
-            const name = m.name.slice('network.if.'.length, -'.received_bytes_per_sec'.length);
-            return tile(`网络 ${name}`, m.name, `上传 ${valueText(metric(s, `network.if.${name}.sent_bytes_per_sec`))}`);
-          }),
+          'table',
+          { class: 'data-table net-table' },
+          h('caption', { class: 'sr-only' }, caption),
+          h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, '网卡'), h('th', { scope: 'col' }, '类型'), h('th', { scope: 'col', class: 'col-num-s' }, '下载'), h('th', { scope: 'col', class: 'col-num-s' }, '上传'))),
+          h('tbody', {}, ...items.map(row)),
         ),
-        h('p', { class: 'muted small' }, '不可用的指标会写明原因，从不显示为 0。'),
+      );
+    const active = n.separate.filter((i) => i.received_bytes_per_sec > 0 || i.sent_bytes_per_sec > 0);
+    const idle = n.separate.filter((i) => !active.includes(i));
+    return h(
+      'section',
+      { class: 'panel network', 'aria-labelledby': 'network-title' },
+      head,
+      h(
+        'ul',
+        { class: 'mtiles' },
+        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? '下载合计（可能重复）' : '下载合计'), h('span', { class: 'mtile-value num' }, rate(n.received_bytes_per_sec))),
+        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? '上传合计（可能重复）' : '上传合计'), h('span', { class: 'mtile-value num' }, rate(n.sent_bytes_per_sec))),
       ),
+      n.may_double_count ? noticeLine(networkScope(n), 'warn') : h('p', { class: 'muted small' }, networkScope(n)),
+      n.counted.length ? table('计入合计的网卡', n.counted) : h('p', { class: 'muted small' }, '没有正在工作的物理网卡。'),
+      n.separate.length ? h('h3', { class: 'net-sub' }, '单独列出，不计入合计') : null,
+      active.length ? table('隧道与虚拟网卡', active) : null,
+      idle.length ? h('p', { class: 'muted small' }, `另有 ${idle.length} 个当前无流量：${idle.map((i) => `${i.name}（${NET_CLASS_WORD[i.class] ?? i.class}）`).join('、')}`) : null,
     );
   }
 }

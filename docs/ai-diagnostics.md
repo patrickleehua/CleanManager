@@ -2,6 +2,8 @@
 
 更新：2026-10-15。本文记录 OpenSpec 任务 15.1–15.8 的实现（15.4 的受约束 CLI 适配已实现，但 Win/Mac 模式证据未补齐，任务未勾选；其余已勾选）：契约、证据包、提供方与凭据、CLI 适配、结果校验、交接、桌面与 CLI 入口，以及在本机（Windows 11 x64）实际核验过的内容。产品设计见 [AI 清理诊断扩展设计](ai-cleanup-diagnostics.md)，行为要求见 [AID-01–13](../openspec/changes/define-cleanmanager-mvp/specs/ai-cleanup-diagnostics/spec.md)。15.9（真机 Mac 与全部适配模式的发布验收）尚未进行。
 
+默认关闭（设计 D15）：AI 诊断尚未通过门禁 AID，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 ## 分层
 
 | 层 | 位置 | 职责 |

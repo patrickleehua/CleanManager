@@ -17,8 +17,8 @@
 | 范围 | 已实现(Windows) | 部分 | 待 macOS/真机/CI/签名 | 不采用 | 合计 |
 | --- | --- | --- | --- | --- | --- |
 | 功能矩阵 #1–#32（#25 拆为 25a/25b） | 14 | 6 | 11 | 2 | 33 |
-| Windows 分支 W1–W19 | 10 | 6 | 3 | 0 | 19 |
-| 新补登 N1–N16 | 3 | 6 | 2 | 5 | 16 |
+| Windows 分支 W1–W19 | 11 | 6 | 2 | 0 | 19 |
+| 新补登 N1–N16 | 7 | 0 | 3 | 6 | 16 |
 
 ## 功能矩阵复核（#1–#32）
 
@@ -44,7 +44,7 @@
 | 18 | Windows 卸载（供应商卸载器、MSI/商店/Scoop、残留、注册表备份） | UNI-02..10 | 已实现(Windows) | 9.2–9.8；app-uninstall.md；`uninstall_flow.rs` | 来源适配属于 9.1（未勾选，因含 macOS 部分）；没有在测试中移除过真实的 MSIX 包；G3 18.3 未通过 |
 | 19 | 更新（Sparkle/App Store/Homebrew/Electron；winget） | app-updates | 待 macOS | 10.2、10.3；[app-updates.md](../../../docs/app-updates.md)（winget/商店/Scoop/自更新应用检测） | 10.1 未勾选（macOS 通道）；18.3 |
 | 20 | 启动项开关、备份后删除失效项 | startup-items | 部分 | 11.2、11.3；[startup-items.md](../../../docs/startup-items.md) | 11.1 未勾选。Windows 的计划任务与商店启动任务没有开关（`unverified`，D9 规划的任务计划程序启停未实现）；macOS SM/launchd 未实现 |
-| 21 | `mo optimize` 任务、六种结果、一次 sudo、性能诊断 | system-maintenance | 待 真机/macOS | 13.1、14.1、14.4；[system-maintenance.md](../../../docs/system-maintenance.md)；[privilege-boundary.md](../../../docs/privilege-boundary.md) | 14.2 未勾选（TRIM、图标缓存、Shell 重启三项只有探测，没有真机 applied/attention 记录；真实 UAC 路径没有记录）；14.3 未勾选（macOS）；未入首批的 macOS 任务见 N15 |
+| 21 | `mo optimize` 任务、六种结果、一次 sudo、性能诊断 | system-maintenance | 待 真机/macOS | 13.1、14.1、14.4；[system-maintenance.md](../../../docs/system-maintenance.md)；[privilege-boundary.md](../../../docs/privilege-boundary.md) | 14.2 已勾选（五项任务都有真机记录：TRIM applied，图标缓存与 Shell 重启 attention）；真实 UAC 路径没有记录；14.3 未勾选（macOS）；未入首批的 macOS 任务见 N15 |
 | 22 | 不做注册表优化、关服务、精简 | MNT-05 | 已实现(Windows) | 14.4（禁止项清单，`optimize list --search` 只返回原因） | — |
 | 23 | `mo status` 指标、健康分、诊断行、高 CPU 告警、`--json/--watch` | system-status | 部分 | 12.2、12.4；system-status.md“状态流” | 12.1 未勾选：缺 OEM 可得性真机记录；Windows 温度、SMART、风扇默认 unavailable（W16）；macOS 未实现 |
 | 24 | 进程排序/置顶/用途解释 | STS-04 | 已实现(Windows) | 12.3；system-status.md“进程列表” | — |
@@ -75,7 +75,7 @@
 | W11 | 默认可恢复模式 | 已实现(Windows) | 4.4、MVP 9.4、6.1 |
 | W12 | 占用检测、长路径、删除历史 | 已实现(Windows) | 3.2、6.4、MVP 4.2、10.3 |
 | W13 | 卸载：注册项、AppX、MSI | 已实现(Windows) | 9.2–9.6；来源适配属于 9.1（未勾选，见 #18） |
-| W14 | 维护：TRIM、DNS、DISM（ARP 不纳入） | 待 真机 | 14.2 未勾选（见 #21）；`sfc /scannow` 等修复动作不纳入（D10：只读检查，不自动修复） |
+| W14 | 维护：TRIM、DNS、DISM（ARP 不纳入） | 已实现(Windows) | 14.2 已勾选（见 #21）；`sfc /scannow` 等修复动作不纳入（D10：只读检查，不自动修复） |
 | W15 | analyze 受保护根、`\\?\`/UNC/GLOBALROOT 规范化 | 待 CI | 2.1 已勾选；语料与 CI 属 2.2，未勾选 |
 | W16 | 状态：无 SMART/温度，健康分权重 | 部分 | 12.2 已勾选（公开权重）；12.1 未勾选 |
 | W17 | purge 近期过滤、可恢复模式 | 已实现(Windows) | 4.4 |
@@ -89,30 +89,30 @@
 | # | Mole 功能（来源） | 归属 | 状态 | 依据 / 说明 |
 | --- | --- | --- | --- | --- |
 | N1 | 无参数交互主菜单与 TUI 键盘导航（`mole` `interactive_main_menu`、`lib/ui/*`） | 本变更范围外 | 不采用 | MVP tasks“Workflow follow-up”：TUI/MCP 另建 proposal；本产品以桌面端与 CLI 文本输出代替 |
-| N2 | `--debug` 详细日志（`lib/core/help.sh`） | product-lifecycle LIF-04 | 部分 | Doctor 报告（17.4）与操作日志可用于排查；CLI 没有 `--debug` 详细模式，规格中也没有取舍记录，需补记 |
+| N2 | `--debug` 详细日志（`lib/core/help.sh`） | agent-cli CLI-14 | 已实现(Windows) | 8.4；design D16；`--debug` 轨迹只写标准错误、经 Doctor 脱敏，`crates/cm-cli/tests/debug_trace.rs` 证明标准输出逐字节不变、密钥不出现 |
 | N3 | `mo uninstall --permanent` 绕过废纸篓 | app-uninstall | 不采用 | design D1：`uninstall` 计划种类不含 `fs_delete`，残留只进回收站或隔离区 |
-| N4 | 一次卸载多个应用（`mo uninstall slack zoom`、`lib/uninstall/batch.sh`） | app-uninstall | 部分 | `apps uninstall plan create --instance` 每次只建一个实例的计划；UPD-03 有批量更新，卸载没有批量要求，也没有取舍记录，需补记 |
+| N4 | 一次卸载多个应用（`mo uninstall slack zoom`、`lib/uninstall/batch.sh`） | app-uninstall UNI-11 | 已实现(Windows) | 9.9；design D16；`apps uninstall plan create` 可重复 `--instance`（≤20），桌面多选，按应用分组审阅与逐应用结果；`crates/cm-cli/tests/uninstall_batch.rs`（一个失败另一个完成、受保护类被拒） |
 | N5 | 识别 Steam 生成的启动器 `.app`（`lib/uninstall/steam.sh`） | app-uninstall UNI-01 | 待 macOS | 只出现在 macOS；按 UNI-01，不支持的来源应给出能力说明（9.1 未勾选） |
 | N6 | `mo purge --yes` 非交互确认删除 | agent-cli CLI-12 | 不采用 | CLI-12 与 8.2（已勾选）：移除任何类似 `--yes` 的授权语义，非交互调用不扩大选择 |
 | N7 | `mo purge --paths` 自定义扫描根 | PUR-01 | 已实现(Windows) | 4.1；`purge roots add\|remove`（cli-protocol.md） |
 | N8 | `mo analyze --json` 与 `scan_status` 完整性 | MVP CLI-02/06、SCN-03 | 已实现(Windows) | MVP 2.3、12.1：`scan_result` 区分 verified_scope/partial_scope，未知不写 0 |
-| N9 | analyze 中“可手动清理”目录标记（`cmd/analyze/cleanable.go`，CACHEDIR.TAG 等） | MVP cleanup-analysis、PUR-02 | 部分 | CACHEDIR.TAG 等缓存签名用作 purge 证据（4.2）；规格没有要求在磁盘视图上标记“可手动清理”，需补记 |
-| N10 | 安装渠道与更新通道：`install.sh` 指定版本、`mo update --nightly`、Homebrew、Nix flake、启动时检查新版本 | product-lifecycle LIF-01、MVP 14.1 | 待 签名 | 包管理器安装检测已实现（17.1）；没有签名发行包与公开渠道（MVP 14.1/14.2）。nightly 通道与启动时自动检查都不在规格中，需补记（UPD-04 的“用户触发才联网”原则可作依据） |
-| N11 | Raycast/Alfred 快速启动器（`scripts/setup-quick-launchers.sh`） | agent-cli CLI-01 | 部分 | 独立 CLI 可以被任何启动器调用；但没有集成脚本，也没有取舍记录，需补记采用或不采用 |
+| N9 | analyze 中“可手动清理”目录标记（`cmd/analyze/cleanable.go`，CACHEDIR.TAG 等） | disk-insights DIN-05 | 已实现(Windows) | 7.4；design D16；`entries list` 与桌面磁盘视图的 `cleanable_hint`（构建产物签名、目录规则、CACHEDIR.TAG），只读、不预选，保护优先；`crates/cm-cli/tests/cleanable_hints.rs` |
+| N10 | 安装渠道与更新通道：`install.sh` 指定版本、`mo update --nightly`、Homebrew、Nix flake、启动时检查新版本 | product-lifecycle LIF-01、MVP 14.1 | 待 签名 | design D16 已补记：指定版本随签名发行包提供（MVP 14.1/14.2），包管理器渠道在签名发行后另行提交；nightly 不采用（只发布签名版本化通道），启动时自动检查不采用（UPD-04） |
+| N11 | Raycast/Alfred 快速启动器（`scripts/setup-quick-launchers.sh`） | agent-cli CLI-01 | 不采用 | design D16：启动器脚本是第三方扩展格式，任何启动器都可直接调用 `cleanmanager`，随附 Skill（CLI-13）是集成面 |
 | N12 | 随附 Agent Skill（`.claude/skills/mole`） | agent-cli CLI-13 | 已实现(Windows) | 8.3、MVP 12.4；`skills/cleanmanager` |
-| N13 | status 细节：代理/隧道流量去重、僵尸进程计数、显示偏好持久化（`cmd/status/*`、`prefs.go`） | STS-01/04 | 部分 | 12.1 未勾选；这些字段不在 `status_snapshot` 的规格要求中 |
+| N13 | status 细节：代理/隧道流量去重、僵尸进程计数、显示偏好持久化（`cmd/status/*`、`prefs.go`） | system-status STS-07 | 已实现(Windows) | 12.5；design D16；网络合计排除回环、隧道/虚拟适配器单列（本机 WSL vEthernet 与第三方隧道驱动单列）；状态页显示偏好跨会话保留。僵尸进程计数仅 macOS，随 12.1 |
 | N14 | status 中的吉祥物动画（README“toggle the cat”） | desktop-management GUI-11 | 不采用 | design D14 与 GUI-11：不使用对标产品的形象，使用原创视觉 |
-| N15 | 未入首批的 macOS 维护任务：SQLite VACUUM（Mail/Safari/Messages）、阻止网络卷写 `.DS_Store`、清除旧调优覆盖、网络栈/ARP 刷新、用户目录权限修复、Spotlight 重建与孤立规则、periodic 脚本、共享文件列表修复（`lib/optimize/catalog.sh`） | system-maintenance MNT-01 | 部分 | ARP 按 W14 不纳入首批；其余任务 D10 没有列入，也没有记录不采用的理由，需补记（14.3 未勾选） |
+| N15 | 未入首批的 macOS 维护任务：SQLite VACUUM（Mail/Safari/Messages）、阻止网络卷写 `.DS_Store`、清除旧调优覆盖、网络栈/ARP 刷新、用户目录权限修复、Spotlight 重建与孤立规则、periodic 脚本、共享文件列表修复（`lib/optimize/catalog.sh`） | system-maintenance MNT-01 | 待 macOS | design D16 已补记：采用网络卷不写 `.DS_Store` 与指定卷 Spotlight 重建（14.5，需真 Mac）；SQLite VACUUM、旧调优覆盖、ARP、权限修复、periodic、共享文件列表不采用并写明理由 |
 | N16 | 清除 Gatekeeper 下载记录、通知数据库、CoreDuet 使用数据（`lib/optimize/catalog.sh`） | system-maintenance | 不采用 | design Non-Goals：不提供隐私痕迹重置 |
 
 ## 仍受阻的行（按阻塞门槛）
 
 - **macOS 实现与真 Mac 实测**：#1（3.5/3.8）、#3、#8、#13（6.2）、#15（7.2）、#16（MVP 5.3）、#17（9.1、MVP 11.2）、#19（10.1）、#20（11.1）、#21（14.3）、#25b（13.2、15.3）、#26（15.4）、N5；以及 MVP 5.x/6.x 的 G0 macOS 后端。
-- **Windows 真机记录**：#21/W14（14.2：三项维护任务的 applied/attention 记录、真实 UAC 路径）、#23/W16（12.1：OEM 指标可得性）、#8（可移动卷）、#18/W19（真实 MSIX 与供应商卸载器、注册表恢复，18.3）。
+- **Windows 真机记录**：#21（真实 UAC 路径）、#23/W16（12.1：OEM 指标可得性）、#8（可移动卷）、#18/W19（真实 MSIX 与供应商卸载器、注册表恢复，18.3）。
 - **CI**：#10/W15（2.2、MVP 1.5：工作流已有，但未实际运行）。
 - **签名与发布**：#28、W18、N10（MVP 14.1/14.2，没有签名发行包与发布密钥）。
 - **Windows 功能缺口**：#1/W7（回收站类目、传递优化）、#4/W5（所属工具执行通道）、#3（AI 工具缓存规则与会话逐条确认入口）、#20（计划任务启停）、W3/W4（更多浏览器与 GPU 厂商）、#25a（15.1/15.2 正在实现）。
-- **需要用 `/opsx:update` 补记取舍**（已有归属，但没有取舍理由）：N2、N4、N9、N10（nightly/自动检查）、N11、N13、N15。
+- **取舍已补记**（2026-10-16，design D16）：N2、N4、N9、N13 采用并已在 Windows 实现（8.4、9.9、7.4、12.5）；N10 部分采用（nightly 与启动时检查不采用）；N11 不采用；N15 部分采用（14.5 待真 Mac）。
 - **门禁验收**：G1 18.1、G2 18.2（及 MVP 13.6 无障碍）、G3 18.3、G4 18.4 都未完成，所以本文中没有一行可以标为“已发布”。
 
 ## 对外文案审计（2026-10-15）
@@ -140,6 +140,7 @@
 
 ## 18.5 验收判断
 
-- **“不存在无归属的 Mole 功能”**：基本满足。矩阵 33 行、W1–W19 与新补登的 N1–N16 都有能力归属和状态。但 N2、N4、N9、N10、N11、N13、N15 只有归属，没有在 design/specs 中写下采用或不采用的理由，需要用 `/opsx:update` 补记后才算完全闭合。
+- **“不存在无归属的 Mole 功能”**：满足。矩阵 33 行、W1–W19 与新补登的 N1–N16 都有能力归属和状态；原先只有归属的 N2、N4、N9、N10、N11、N13、N15 已在 design D16 写明采用或不采用的理由（2026-10-16 补记）。
 - **“对外文案只宣称已通过门禁的能力”**：经本次修订，README 与 `docs/` 中能找到的说法都已标明“仅 Windows / 未勾选任务 / 门禁未通过”。不过没有任何能力通过门禁，所以严格说没有能力可以“宣称已发布”；`capabilities` 输出也还没有列出对标能力的状态项。
+- **补记：未通过门禁即关闭（D15）**：快照之后实现了设计 D15 的“关闭”。每项对标能力在 `cm_core::capability::GATED` 登记门禁与 `gate_passed`（全部为 false）；未通过的能力默认关闭：CLI 命令组与对应种类 `plan/v2` 的审阅/执行返回 `unsupported` 并写明门禁与开启方法，`capabilities` 把它们报告为 `unsupported`（“off until gate Gx passes; experimental features are disabled”），桌面端分区保留原位但只显示说明页，宿主命令同样拒绝。原先桌面工具顶部只标“实验 · Gx 未通过”而功能照常可用，现在这个标记只在用户显式打开“实验功能”（`cleanmanager experimental --state on` 或“设置 › 实验功能”，两端共用、默认关闭）后出现，此时能力仍为 `unverified`，从不为 `available`；关闭开关会停止常驻工具并删除其登录项。上文所说“`capabilities` 没有列出对标能力”与“未通过能力在能力矩阵为不可用”的差距由此补上。
 - **结论**：本次复核按 2026-10-15 快照完成，但 18.5 还不应勾选。它的验收前提（每行标为“已发布 / 关闭原因 / 不采用”）要等 18.1–18.4 的门禁结果出来才能成立；目前只能标为“已实现(Windows) / 部分 / 待门槛 / 不采用”。门禁完成后，应以本文为底稿再做一次复核。

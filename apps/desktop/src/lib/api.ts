@@ -70,6 +70,8 @@ import type {
 
 export interface Backend extends DiagBackend, ResidentBackend {
   capabilities(): Promise<Capabilities>;
+  /** Turn experimental features on or off (shared with the CLI); off also stops the resident utilities. */
+  setExperimentalFeatures(enabled: boolean): Promise<Capabilities>;
   listScanRoots(): Promise<RootOffer[]>;
   chooseFolder(): Promise<RootOffer | null>;
   recentScans(): Promise<RecentScan[]>;
@@ -128,7 +130,8 @@ export interface Backend extends DiagBackend, ResidentBackend {
   revealEntry(scanId: string, entryId: string): Promise<boolean>;
   // 软件 › 卸载 / 更新, 优化, 状态 › 进程, 空间洞察 overview. Changes are stored plans only.
   uninstallList(): Promise<UninstallList>;
-  uninstallPlan(appInstanceId: string): Promise<UninstallPlanCreated>;
+  /** UNI-11: one plan for one or several applications. */
+  uninstallPlan(appInstanceIds: string[]): Promise<UninstallPlanCreated>;
   uninstallLeftovers(operationId: string): Promise<Leftovers>;
   uninstallLeftoversPlan(operationId: string, objectIds: string[]): Promise<{ plan_id: string }>;
   uninstallRestorePlan(operationId: string): Promise<{ plan_id: string }>;
@@ -181,6 +184,7 @@ async function tauriBackend(): Promise<Backend> {
   return {
     preview: false,
     capabilities: () => call('capabilities'),
+    setExperimentalFeatures: (enabled) => call('set_experimental_features', { enabled }),
     listScanRoots: () => call('list_scan_roots'),
     chooseFolder: () => call('choose_folder'),
     recentScans: () => call('recent_scans'),
@@ -231,7 +235,7 @@ async function tauriBackend(): Promise<Backend> {
     readiness: (operation) => call('readiness', { operation }),
     revealEntry: (scan_id, entry_id) => call('reveal_entry', { scan_id, entry_id }),
     uninstallList: () => call('uninstall_list'),
-    uninstallPlan: (app_instance_id) => call('uninstall_plan', { app_instance_id }),
+    uninstallPlan: (app_instance_ids) => call('uninstall_plan', { app_instance_ids }),
     uninstallLeftovers: (operation_id) => call('uninstall_leftovers', { operation_id }),
     uninstallLeftoversPlan: (operation_id, object_ids) => call('uninstall_leftovers_plan', { operation_id, object_ids }),
     uninstallRestorePlan: (operation_id) => call('uninstall_restore_plan', { operation_id }),

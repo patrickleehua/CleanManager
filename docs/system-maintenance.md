@@ -1,6 +1,8 @@
 # 系统维护
 
-对应 `add-mole-parity-suite` 的 MNT-01..07、PRT-06 与任务 14.1/14.2/14.4（Windows）。14.1、14.4 已勾选；14.2 的五项 Windows 任务都已实现，但其中三项还没有真机执行记录（见文末“实测记录”），所以未勾选。整体未通过 G3 门禁（任务 18.3），没有发布。macOS 首批任务（14.3）尚未实现：本构建在 macOS 上目录为空，`optimize plan create` 无可选任务。
+对应 `add-mole-parity-suite` 的 MNT-01..07、PRT-06 与任务 14.1/14.2/14.4（Windows）。14.1、14.2、14.4 已勾选：五项 Windows 任务都有 Windows 11 真机执行记录（见文末“实测记录”）。整体未通过 G3 门禁（任务 18.3），没有发布。macOS 首批任务（14.3）尚未实现：本构建在 macOS 上目录为空，`optimize plan create` 无可选任务。
+
+默认关闭（设计 D15）：系统维护尚未通过门禁 G3，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
 维护不是“一键加速”。目录中每项任务是核心内的固定实现，说明解决什么问题、影响什么、是否需要管理员、何时适用；执行前先只读探测，执行后逐项报告真实结果。产品不承诺任何百分比提升。
 
@@ -94,5 +96,8 @@ Windows 11 企业版 10.0.26200 x64 上的真实记录见 [维护实测汇总](e
 
 - `windows.dns-flush`：applied（`flushed`）。
 - `windows.image-health-check`：unchanged（`healthy`），与 `Dism.exe /Online /Cleanup-Image /CheckHealth` 的输出一致。
-- `windows.trim-when-due`、`windows.icon-cache-rebuild`、`windows.shell-restart`：只记录了只读探测（TRIM 到期：卷从未优化；缓存 30 个文件、11 个占用；两个宿主在运行）。这三项动作未在真实用户配置上执行，真机 applied/attention 记录待人工补充。
+- `windows.trim-when-due`：applied（`retrimmed`，C:、D:、E: 三个从未优化的 SSD 卷）。
+- `windows.icon-cache-rebuild`：attention（`partly_in_use`）：删除 19 个未占用的缓存文件（1.0 MiB），Explorer 占用的 11 个保留，提示注销后重试。
+- `windows.shell-restart`：attention（`did_not_close`）：本机 StartMenuExperienceHost 与 SearchHost 都拒绝 Restart Manager 的无强制关闭，任务没有强制结束它们，提示注销后重新登录。也就是说在这台设备上该任务不能达成目的，只能如实报告；是否允许强制结束这两个系统宿主属于 D10 的取舍，当前不改变。
+- 三项在同一份计划中执行（`run_win_maint_trim`、`run_win_maint_icon_cache`、`run_win_maint_shell_restart`），计划经真实终端审阅批准（在独立控制台中输入审阅码），没有直接写入回执；Shell 已提权，所以 TRIM 在进程内执行，真实 UAC 路径仍没有记录。
 - 自动化测试只在临时目录上执行缓存删除，任务一律脚本化，从不重启真实的 Shell 宿主、不刷新真实缓存、不触发 UAC。

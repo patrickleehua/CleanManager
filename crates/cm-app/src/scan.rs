@@ -102,6 +102,16 @@ pub const TIMEOUT_ISSUE: &str = "timeout";
 
 /// `run_scan_with_progress` plus a start notification and an optional wait budget.
 pub fn run_scan_hooked(index: &IndexStore, backend: &dyn ScanBackend, request: &ScanRequest, options: &ScanOptions, hooks: &ScanHooks<'_>) -> Result<ScanOutcome, cm_store::StoreError> {
+    cm_core::debug_trace!(
+        "scan",
+        "scan_id={} root=\"{}\" backend={} batch_entries={} deadline={}",
+        request.scan_id,
+        request.root.display(),
+        backend.name(),
+        options.batch_entries,
+        hooks.deadline.map(|d| format!("{}ms", d.saturating_duration_since(Instant::now()).as_millis())).unwrap_or_else(|| "none".into())
+    );
+    let begin = cm_core::trace::span("scan.begin");
     let revision = index.begin_scan(&ScanInit {
         scan_id: request.scan_id.clone(),
         scope_id: request.scope_id.clone(),
@@ -110,6 +120,7 @@ pub fn run_scan_hooked(index: &IndexStore, backend: &dyn ScanBackend, request: &
         host: request.host.clone(),
         started_at: now_utc(),
     })?;
+    drop(begin);
     if let Some(started) = hooks.started {
         started(&request.scan_id);
     }
@@ -121,7 +132,25 @@ pub fn run_scan_hooked(index: &IndexStore, backend: &dyn ScanBackend, request: &
         deadline: hooks.deadline,
         timed_out: false,
     };
+    let walk = cm_core::trace::span("scan.walk");
     let mut report = backend.scan(&request.root, &mut sink, options);
+    drop(walk);
+    cm_core::debug_trace!(
+        "scan.walk",
+        "backend={} reason=\"{}\" state={:?} entries={} skipped_ranges={} boundaries={} elevated_read={:?} stopping={} timed_out={}",
+        report.backend,
+        report.backend_reason,
+        report.state,
+        report.entries,
+        report.skipped_ranges,
+        report.boundaries,
+        report.elevated_read,
+        sink.stopping,
+        sink.timed_out
+    );
+    for issue in &report.issues {
+        cm_core::debug_trace!("scan.walk", "issue code={} scope=\"{}\" message=\"{}\"", issue.code, issue.scope_display, issue.message);
+    }
     // A cancel observed during the last batch still ends as cancelled, never completed.
     if sink.stopping && report.state == ScanState::Completed {
         report.state = ScanState::Cancelled;
@@ -133,8 +162,11 @@ pub fn run_scan_hooked(index: &IndexStore, backend: &dyn ScanBackend, request: &
             message: "the wait budget (--timeout) ran out; the scan stopped at a safe boundary, confirmed rows are kept and nothing was rolled back".into(),
         });
     }
+    let publish = cm_core::trace::span("scan.publish");
     index.record_report(&request.scan_id, &report)?;
     let state = index.publish(&request.scan_id, revision, report.state, &now_utc())?;
+    drop(publish);
+    cm_core::debug_trace!("scan", "published state={state:?} (backend reported {:?})", report.state);
     Ok(ScanOutcome { scan_id: request.scan_id.clone(), state, report })
 }
 

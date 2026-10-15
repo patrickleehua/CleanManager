@@ -43,11 +43,14 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         Some(Err(e)) => (Some(false), Some(e.clone())),
     };
     let rules = crate::rules::load(s.rules_dir.as_deref());
+    let store = s.store_dir.as_deref();
+    let mut capabilities = host.capabilities();
+    cm_app::features::apply_to(store, &mut capabilities);
     Ok(CapabilitiesDto {
         platform: host.platform(),
         engine_version: cm_core::ENGINE_VERSION,
         schema_version: cm_core::SCHEMA_VERSION,
-        capabilities: host.capabilities(),
+        capabilities,
         store_dir_display: s.store_dir.as_deref().map(display_of),
         store_problem: s.startup.store_problem.clone(),
         bypass_privileges_disabled: disabled,
@@ -60,6 +63,8 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         rules_problem: rules.as_ref().err().cloned(),
         rule_count: rules.as_ref().ok().map(|r| r.rules.len()),
         principal: cm_core::authz::current_principal(),
+        experimental_features: cm_app::features::load(store).experimental_features,
+        gates: cm_app::features::rows(store),
     })
 }
 
@@ -290,24 +295,36 @@ pub async fn list_entries(state: St<'_>, query: ListEntriesArgs) -> IpcResult<En
     let s = state.inner().clone();
     blocking(move || {
         let q = entry_query(&query)?;
-        s.with_index(|idx| {
-            let page = idx.list_entries(&q)?;
-            Ok(EntriesPageDto {
-                scan_id: page.scan_id,
-                scope_id: page.scope_id,
-                revision: page.revision,
-                sort: page.sort,
-                kind: page.filter.kind,
-                name_contains: page.filter.name_contains,
-                parent_entry_id: page.filter.parent_entry_id.map(|p| p.to_string()),
-                page_size: page.page_size,
-                items: page.items.iter().map(EntryDto::from_item).collect(),
-                next_cursor: page.next_cursor,
-                unknown_size_items: page.unknown_size_items,
-            })
+        let page = s.with_index(|idx| Ok(idx.list_entries(&q)?))?;
+        // Probed after the index is released: the page's directories only, never the whole scan.
+        let hints = page_hints(&s, &page.items);
+        Ok(EntriesPageDto {
+            scan_id: page.scan_id,
+            scope_id: page.scope_id,
+            revision: page.revision,
+            sort: page.sort,
+            kind: page.filter.kind,
+            name_contains: page.filter.name_contains,
+            parent_entry_id: page.filter.parent_entry_id.map(|p| p.to_string()),
+            page_size: page.page_size,
+            items: page.items.iter().zip(hints).map(|(i, cleanable_hint)| EntryDto { cleanable_hint, ..EntryDto::from_item(i) }).collect(),
+            next_cursor: page.next_cursor,
+            unknown_size_items: page.unknown_size_items,
         })
     })
     .await
+}
+
+/// DIN-05 read-only "cleanable by hand" hints for one page: real directories only (links and
+/// boundaries never), probed live; protection and unconfirmed evidence suppress them.
+pub fn page_hints(s: &AppState, items: &[cm_store::index::EntryItem]) -> Vec<Option<cm_core::cleanable::CleanableHint>> {
+    let dirs: Vec<Option<&cm_core::path::RawPath>> =
+        items.iter().map(|i| (i.kind == cm_core::model::ObjectKind::Directory && i.boundary.is_none()).then_some(&i.path)).collect();
+    if dirs.iter().all(Option::is_none) {
+        return vec![None; items.len()];
+    }
+    let caches = crate::rules::load(s.rules_dir.as_deref()).map(|r| cm_platform::cleanable::cache_locations(&r.rules)).unwrap_or_default();
+    cm_platform::cleanable::page_hints(&dirs, s.store_dir.as_deref(), &caches)
 }
 
 /// Running total of the children not drawn as tiles. u128 cannot overflow for any realistic

@@ -31,6 +31,7 @@ import type { Page } from '../lib/store';
 import { LEFTOVER_GROUP, ROUTE_WORD, TASK_WORDS } from '../lib/suiteWords';
 import { noticeLine, stageSteps } from './kit';
 import { UNINSTALL_STEPS } from './uninstall';
+import { rowsByApp } from './uninstallBatch';
 
 const STARTUP_EXPLAIN = {
   effect: '只修改系统的启用记录（与任务管理器中的“启动应用”相同），不删除程序、快捷方式或它的设置。',
@@ -62,6 +63,9 @@ function kindVerb(d: PlanDetail, items: PlanItem[]): { verb: string; run: string
     case 'startup_restore':
       return { verb: `还原启动项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
     case 'uninstall': {
+      const apps = d.kind_detail?.apps ?? [];
+      if (apps.length > 1)
+        return { verb: `卸载 ${apps.length} 个应用：逐个先请它退出，再运行它自己的卸载程序`, run: `执行：卸载 ${apps.length} 个应用`, permanent: false };
       const name = d.kind_detail?.app?.name ?? items[0]?.name ?? '应用';
       return { verb: `卸载“${name}”：先请它退出，再运行它自己的卸载程序`, run: `执行：卸载 ${name}`, permanent: false };
     }
@@ -406,7 +410,15 @@ export class PlanPage {
       fact('权限', `${d.kind_detail.admin_tasks} 项需要${words().admin}`, h('small', {}, d.kind_detail.is_admin ? 'CleanManager 已以管理员身份运行，这些任务直接执行。' : '执行开始、任何任务运行之前，Windows 会询问一次；只授权这份计划中的这些任务。拒绝只跳过它们，其余照常运行。'));
     else if (d.requires_admin) fact('权限', `需要${words().admin}`, h('small', {}, 'CleanManager 不会自动提权；没有管理员权限时执行会被拒绝，不会部分修改。'));
     const kd = d.kind_detail;
-    if (d.kind === 'uninstall' && kd?.app) {
+    const batch = d.kind === 'uninstall' && (kd?.apps?.length ?? 0) > 1 ? kd!.apps! : null;
+    if (batch) {
+      // UNI-11: several applications, each with its own close request, uninstaller and result.
+      fact('应用', `${batch.length} 个`, h('small', {}, batch.map((a) => a.name).join('、')));
+      fact('卸载方式', '各自的卸载程序', h('small', {}, '每个应用执行前再核验一次它的卸载登记、程序文件摘要与签名者；一个应用失败或被跳过，不影响其他应用。'));
+      const est = kd?.noted?.leftover_estimate;
+      if (est && Object.keys(est).length)
+        fact('可能留下', Object.entries(est).map(([g, n]) => `${LEFTOVER_GROUP[g]?.title ?? g} ${n}`).join('，'), h('small', {}, '这是所有应用合计的估计，不在这份计划里，也不被授权；卸载后在第 2 步按应用单独审阅。'));
+    } else if (d.kind === 'uninstall' && kd?.app) {
       fact('应用', kd.app.name, h('small', {}, [kd.app.publisher, kd.app.version ? `版本 ${kd.app.version}` : null].filter(Boolean).join(' · ')));
       fact('卸载方式', kd.app.adapter, h('small', {}, kd.app.signer ? `签名者 ${kd.app.signer}，执行前再核验一次程序文件的摘要与签名` : '执行前再核验一次程序文件的摘要'));
       const est = kd.noted?.leftover_estimate;
@@ -461,6 +473,9 @@ export class PlanPage {
       lines.push('不包含任何残留：卸载后留下的文件、注册表项和启动项在第 2 步单独审阅，单独批准。');
       lines.push('不会强制结束应用。应用没有退出时，卸载程序不运行，也不删除任何东西。');
       lines.push('执行前再次核对卸载登记、程序文件的摘要和签名者；有任何变化就跳过。');
+      if ((d.kind_detail?.apps?.length ?? 0) > 1) lines.push('一个应用没有退出、卸载失败或已变化时只跳过它自己；其余应用照常执行，结果逐个报告。卸载没有完成的应用，它的残留不会进入第 2 步。');
+      const refused = d.kind_detail?.noted?.refused ?? [];
+      if (refused.length) lines.push(`你选择的 ${refused.length} 个应用不在计划中，与单独卸载时一样被拒绝：${refused.map((r) => `${r.name ?? r.app_instance_id}（${r.message}）`).join('；')}。`);
     } else if (d.kind === 'uninstall_leftovers') {
       lines.push('只包含你在残留审阅中选中的对象；保留、已阻止和需要手动处理的对象不在其中。');
       lines.push('文件夹只移走其中的内容，空文件夹保留；对象已变化、正被占用或受保护时跳过。');
@@ -507,7 +522,7 @@ export class PlanPage {
       return null;
     };
     const nameOf = (i: PlanItem): string => (i.item_kind === 'maintenance_task' ? (TASK_WORDS[String(i.detail?.task_id ?? '')]?.title ?? i.name) : i.name);
-    const rows = this.items.map((i) =>
+    const rowOf = (i: PlanItem) =>
       h(
         'tr',
         {},
@@ -521,26 +536,33 @@ export class PlanPage {
           i.detail?.command ? h('span', { class: 'obj-reason muted' }, h('code', {}, String(i.detail.command))) : null,
         ),
         toggles ? null : h('td', { class: 'col-size num', title: SIZED.has(i.item_kind) ? formatExactBytes(parseBytes(i.logical_bytes)) : '' }, SIZED.has(i.item_kind) ? formatBytes(i.logical_bytes) : '—'),
-      ),
-    );
+      );
+    const table =(items: PlanItem[], caption: string) =>
+      h(
+        'div',
+        { class: 'table-wrap' },
+        h(
+          'table',
+          { class: 'data-table' },
+          h('caption', { class: 'sr-only' }, caption),
+          h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-id' }, '动作'), h('th', { scope: 'col' }, '对象'), toggles ? null : h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'))),
+          h('tbody', {}, ...items.map(rowOf)),
+        ),
+      );
+    // UNI-11: an uninstall plan for several applications is reviewed application by application.
+    const apps = d.kind === 'uninstall' ? (d.kind_detail?.apps ?? []) : [];
+    const body =
+      apps.length > 1
+        ? rowsByApp(this.items, apps).flatMap((g, n) =>
+            g.items.length ? [h('h3', { id: `items-app-${n}` }, `${n + 1}. ${g.name}`, h('span', { class: 'muted small' }, `（${g.items.length} 个动作）`)), table(g.items, `${g.name} 的动作`)] : [],
+          )
+        : [table(this.items, '计划中的全部动作')];
     return h(
       'section',
       { class: 'panel items-panel', 'aria-labelledby': 'items-title' },
       h('h2', { id: 'items-title' }, `完整清单（${groupDigits(d.item_count)} 项）`),
-      h('p', { class: 'muted small' }, '按计划顺序列出每一个动作。这里就是将被处理的全部对象，没有隐藏项。'),
-      this.items.length
-        ? h(
-            'div',
-            { class: 'table-wrap' },
-            h(
-              'table',
-              { class: 'data-table' },
-              h('caption', { class: 'sr-only' }, '计划中的全部动作'),
-              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-id' }, '动作'), h('th', { scope: 'col' }, '对象'), toggles ? null : h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'))),
-              h('tbody', {}, ...rows),
-            ),
-          )
-        : h('p', { class: 'muted small', role: 'status' }, this.itemsLoading ? '正在加载清单…' : '清单为空。'),
+      h('p', { class: 'muted small' }, apps.length > 1 ? `按应用分组，按计划顺序执行：${apps.length} 个应用各自退出、各自卸载。这里就是将被处理的全部对象，没有隐藏项。` : '按计划顺序列出每一个动作。这里就是将被处理的全部对象，没有隐藏项。'),
+      this.items.length ? h('div', {}, ...body) : h('p', { class: 'muted small', role: 'status' }, this.itemsLoading ? '正在加载清单…' : '清单为空。'),
       errorLine(this.itemsError),
       this.itemsNext
         ? h('button', { type: 'button', class: 'quiet more', id: 'plan-items-more', disabled: this.itemsLoading, onclick: () => void this.loadItems(true) }, this.itemsLoading ? '正在加载…' : `显示更多（已显示 ${this.items.length} / ${this.itemsTotal}）`)

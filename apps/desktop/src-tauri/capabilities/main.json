@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "CleanManager host commands for the main window. No shell, fs, opener or dialog permissions are exposed to the WebView; folder picking (scan roots, purge roots) happens in Rust and returns an opaque token or root id. No command accepts a filesystem path or a plan body: plans, operations, quarantine items and policies are named by store-issued ids, and approval needs a host-issued review token plus the typed digest prefix. Software, maintenance and process commands take app, operation, leftover, task, download-item ids or a PID; every change they make is a stored plan pending the same review, and open_system_page opens only Settings › Apps or the Store's updates page. AI diagnosis commands take scan/entry/preview/diagnosis ids only; provider keys are entered in the system credential prompt and never cross IPC. Resident utilities (状态 › 常驻工具) read status, privacy and battery state; their only writes are CleanManager's resident.json, the CleanManager-owned HKCU Run value CleanManager.Resident (opt-in, removed when the tray is turned off), a temporary keep-awake power request and the time-limited clean-screen window.",
+  "description": "CleanManager host commands for the main window. No shell, fs, opener or dialog permissions are exposed to the WebView; folder picking (scan roots, purge roots) happens in Rust and returns an opaque token or root id. No command accepts a filesystem path or a plan body: plans, operations, quarantine items and policies are named by store-issued ids, and approval needs a host-issued review token plus the typed digest prefix. Software, maintenance and process commands take app, operation, leftover, task, download-item ids or a PID; every change they make is a stored plan pending the same review, and open_system_page opens only Settings › Apps or the Store's updates page. AI diagnosis commands take scan/entry/preview/diagnosis ids only; provider keys are entered in the system credential prompt and never cross IPC. Resident utilities (状态 › 常驻工具) read status, privacy and battery state; their only writes are CleanManager's resident.json, the CleanManager-owned HKCU Run value CleanManager.Resident (opt-in, removed when the tray is turned off), a temporary keep-awake power request and the time-limited clean-screen window. Release gates (D15): every command of a capability whose gate has not passed is refused before it runs unless experimental features are on; set_experimental_features writes only CleanManager's features.json, and turning it off stops the resident utilities and removes their startup value.",
   "local": true,
   "windows": [
     "main"
@@ -10,6 +10,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-capabilities",
+    "allow-set-experimental-features",
     "allow-list-scan-roots",
     "allow-choose-folder",
     "allow-recent-scans",

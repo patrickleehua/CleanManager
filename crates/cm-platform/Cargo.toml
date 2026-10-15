@@ -28,7 +28,9 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
     "Win32_System_Pipes", "Win32_Security_Authorization", "Win32_UI_Shell", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop",
     "Win32_System_ProcessStatus",
     # Resident utilities (RES-04): read-only device property query for Bluetooth battery levels.
-    "Win32_Devices_Properties"] }
+    "Win32_Devices_Properties",
+    # Status network totals (STS-07): interface type/flags and octet counters from the IP Helper interface table.
+    "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis"] }
 # Shell IFileOperation (recycle-bin moves) for the executor's trash action; read-only IShellLink, Task Scheduler and
 # WMI queries for the startup inventory and disk insights.
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_Storage_FileSystem",

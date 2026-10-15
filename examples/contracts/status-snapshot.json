@@ -55,5 +55,35 @@
     "code": "low_free_space",
     "message": "System volume free space is low",
     "link": "analyze"
+  },
+  "network": {
+    "classification": "interface_type",
+    "received_bytes_per_sec": 120000.0,
+    "sent_bytes_per_sec": 30000.0,
+    "may_double_count": false,
+    "counted": [
+      {
+        "name": "Wi-Fi",
+        "class": "physical",
+        "received_bytes_per_sec": 120000.0,
+        "sent_bytes_per_sec": 30000.0
+      }
+    ],
+    "separate": [
+      {
+        "name": "Example VPN",
+        "class": "tunnel",
+        "received_bytes_per_sec": 100000.0,
+        "sent_bytes_per_sec": 25000.0
+      },
+      {
+        "name": "vEthernet (WSL)",
+        "class": "virtual",
+        "received_bytes_per_sec": 0.0,
+        "sent_bytes_per_sec": 0.0
+      }
+    ],
+    "loopback_excluded": 1,
+    "note": "Physical interfaces only; loopback is excluded and tunnel or virtual adapters are listed separately, not added"
   }
 }

@@ -12,6 +12,7 @@ pub mod bytes;
 pub mod c14n;
 pub mod capability;
 pub mod catalog;
+pub mod cleanable;
 pub mod diag;
 pub mod error;
 pub mod execute;
@@ -36,6 +37,7 @@ pub mod scan;
 pub mod startup;
 pub mod status;
 pub mod time;
+pub mod trace;
 pub mod updates;
 pub mod uninstall;
 

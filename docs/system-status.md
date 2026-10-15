@@ -1,6 +1,8 @@
 # 系统状态、进程与空间洞察卡片（Windows）
 
-状态：变更 `add-mole-parity-suite` 任务 12.3（进程列表）、12.4（可选持续高占用提醒、状态流过期标记）与 7.3（概览洞察卡片、旧下载审阅）的 Windows 部分已实现；macOS 返回 `unsupported`。核心 `cm_core::{process, alerts, status, insights}`，服务 `cm_app::{processes, insights}`，平台 `windows/processes.rs`、`windows/status.rs`、`windows/insights.rs`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 12.3（进程列表）、12.4（可选持续高占用提醒、状态流过期标记）、12.5（显示偏好与网络合计去重）与 7.3（概览洞察卡片、旧下载审阅）的 Windows 部分已实现；macOS 返回 `unsupported`。核心 `cm_core::{process, alerts, status, insights}`，服务 `cm_app::{processes, insights}`，平台 `windows/processes.rs`、`windows/status.rs`、`windows/insights.rs`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+
+默认关闭（设计 D15）：系统状态与进程（G3）和空间洞察（G1）尚未通过各自的门禁，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
 ## 进程列表（STS-04）
 
@@ -33,7 +35,30 @@ cleanmanager plan apply pp_demo --json                    # 重新核对身份�
 
 `status --watch [--interval N] [--count M]` 每行一个 `status_snapshot`。采样在独立线程进行；每个输出时刻若有新完成的样本则输出它，否则（采样器变慢）再次输出上一个样本并标 `stale: true`，`sampled_at` 保持原采样时间，绝不改写为当前时间。不可得指标为 `null` 并附原因。
 
+## 网络合计去重（STS-07）
+
+- 数据来源：`GetIfTable2`（IP Helper，只读）给出每个接口的 IANA 类型、隧道类型、`HardwareInterface` 标志与收发字节计数；速率是相邻两次读数之差除以间隔。NDIS 过滤层（`FilterInterface`，与其底层网卡重复计数）和非“已连接”的接口不参与。核心分类在 `cm_core::status::network`，与平台无关。
+- 分类规则（按顺序）：类型 24（软件回环）→ `loopback`，不列出、不计入，只在 `loopback_excluded` 计数；类型 131（隧道，如 Teredo、IP-HTTPS）、类型 23（PPP，系统自带 VPN 拨号）或隧道类型非 0 → `tunnel`；类型 53（专有虚拟，如 Wintun 一类的 VPN 驱动）或驱动声明非硬件（Hyper-V/WSL `vEthernet`、虚拟交换机、Wi-Fi Direct 虚拟网卡、TAP）→ `virtual`；硬件且类型明确 → `physical`；其余（类型 1“其他”、未报告硬件标志）→ `unknown`。
+- 合计 = `counted`（`physical` 与 `unknown`）之和；`tunnel`/`virtual` 放在 `separate` 中单独显示、从不加入合计（隧道流量已以封装形式经过物理网卡，虚拟交换机流量也会经过物理网卡）。`counted` 中有 `unknown` 时 `may_double_count: true`；接口表读不到时退回 PDH `Network Interface` 求和，`classification: "unavailable"`、全部按 `unknown` 计入并标 `may_double_count: true`。`network.received_bytes_per_sec`/`network.sent_bytes_per_sec` 指标取同一合计，`reason` 即 `network.note`。
+- `status_snapshot.network` 是可选字段（契约见 `schemas/v1/protocol.schema.json`）；单次快照与 `status --watch` 的每行 JSONL 都带它。新出现或计数器回退的接口在该区间没有速率，下一次采样起计入。
+- 本机实测（Lenovo 83G6，Windows 11 26200，`cargo test -p cm-platform real_snapshot_classifies_interfaces -- --nocapture`）：`WLAN`（类型 71，硬件）→ physical，是唯一计入合计的接口；`Loopback Pseudo-Interface 1`（类型 24）→ 排除；`vEthernet (WSL (Hyper-V firewall))`、`vSwitch (WSL (Hyper-V firewall))` 与三个 `本地连接* 8/9/10`（类型 6，非硬件）→ virtual；第三方隧道驱动 `SakuraiTunnel`（类型 53，非硬件）→ virtual（按类型归为虚拟，同样单独列出）。采样时它有流量、被单独列出，合计只含 `WLAN`，`classification: interface_type`、`may_double_count: false`。本机没有类型 131/23 的活动隧道，隧道分支只由单元测试覆盖。
+
+## 显示偏好（STS-07，桌面）
+
+- “状态 › 系统状态”页的“显示设置”可以勾选显示哪些面板（健康分、指标、网络，至少保留一个）、用“上移/下移”按钮调整顺序（全部是原生复选框、单选与按钮，键盘可达；移动后焦点留在同一行，到达两端时移到另一个移动按钮），以及刷新间隔（2/3/5/10/30 秒）；“进程”页选择的排序也一并记住。
+- 保存位置与主题相同：桌面窗口的 `localStorage`（键 `cm.status.prefs`），只属于这台电脑上的本应用，不写共享存储目录，CLI 与 Agent 读不到也不受影响。每次读取都逐字段校验，损坏或未知的值回到默认；存储被阻止时本次打开仍按所选显示，并提示没有保存。两个页面各自只改自己的字段（读—改—写），互不覆盖。
+
 ## 概览洞察卡片与旧下载（DIN-03/04）
 
 - `insights overview` 输出 `insight_overview`：旧下载、虚拟机与容器、还原点与快照、休眠/分页文件、组件存储、旧 Windows 安装、更新分发缓存、开发工具缓存、AI 模型库、设备备份等卡片。每张卡片给出已知大小，或 `logical_bytes: null` 加 `size_note`（部分成员无法测量时不把部分和当总数），以及成员中最早的观测时间；`count` 对快照给出还原点数量，大小不可得时只显示数量。`link` 指向磁盘分析位置（`analyze` + 路径）、旧下载审阅或已知对象列表。桌面端调用 `cm_app::insights::overview`（输入已收集时用纯函数 `overview_wire`）。
 - `insights downloads [--older-than-days 90] [--limit 50]` 输出 `old_downloads_review`：下载目录（含 3 层子目录，不跟随链接，最多 20000 项）中修改时间早于阈值的文件，按大小排序，`selected` 恒为 `false`；处理只能走手选移入回收站（`trash`）或安装包审阅（`installer scan`），从不是默认候选。
+
+## 磁盘视图的“可手动清理”线索（DIN-05）
+
+- 目录条目可带可选字段 `cleanable_hint`（`entries list` 的 `entry_item`，桌面“分析 › 磁盘”的表格与详情）。它只在当前这一页的真实目录上计算（文件、链接、挂载点与云端边界从不带），不在扫描时计算：每个目录读一次 `CACHEDIR.TAG` 头部；名称是构建产物名时再列一次父目录；出现签名后才加载硬拒绝集合与用户保护名单。核心逻辑在 `cm_core::cleanable`，实时探测在 `cm_platform::cleanable`。
+- 依据只有三种可验证的签名，按优先顺序取第一种成立且未被保护的：
+  - `build_artifact`：与构建产物清理共用同一识别器（`cm_core::purge::project_markers`/`owned_artifact`）——产物名必须是项目根的直接子目录，且项目根里有该产物的所属标记（如 `node_modules` 旁有 `package.json`、`target` 旁有 `Cargo.toml`）；位于产物目录或点目录之内的（如嵌套依赖、`.vscode\extensions`）不算。`rule_id` 为 `purge.*`，`detail` 为找到的标记，`flow: purge`。
+  - `catalog_rule`：位于已启用、文件动作、以整个目录为目标、无年龄或大小阈值、无需管理员的目录规则所覆盖的位置之内（日志等按年龄挑文件的规则不算）。`rule_id` 为该规则，`detail` 为解析出的位置，`flow: manual_trash`。
+  - `cachedir_tag`：目录内直接有一个普通本地文件 `CACHEDIR.TAG`，开头恰为 `Signature: 8a477f597d28d172789f06886806bc55`（链接、云占位、签名不符都不算）。`flow: manual_trash`。
+- 保护优先：硬拒绝（含祖先与目录内的硬拒绝位置）、默认保护类目（含祖先与带 `.git` 的工作树）、用户保护路径会使线索消失；用户保护了对应规则时只能退到另一种成立的依据。保护名单不可读、父目录无法列出、签名读不到时一律不标记。
+- 线索只读：不预选、不生成候选或计划、不改变档位或保护判定。桌面行内显示“可手动清理”小标记（悬停提示与读屏文字给出依据），详情面板列出依据并提供入口：`purge` 打开“清理 › 构建产物”，`manual_trash` 只针对这一项打开移到回收站的审阅（与多选的手选回收站相同流程，先检查保护与占用、批准后才移动），当前选择不受影响。

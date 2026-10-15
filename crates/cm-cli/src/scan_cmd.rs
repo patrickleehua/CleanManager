@@ -168,8 +168,11 @@ pub fn scan(req: &str, p: &Parsed) -> ExitCode {
         return store_error(req, &e, p.format);
     }
     if p.flag("detach") {
+        // The background host runs without --debug: its stderr is closed, so it would trace into nothing.
+        cm_core::debug_trace!("scan", "host=detached scan_id={scan_id}");
         return detach(req, p, &stores, root_os, &scan_id, timeout);
     }
+    cm_core::debug_trace!("scan", "host=this_process scan_id={scan_id} stream={} timeout={timeout:?}", p.stream);
     let digest: String = Sha256::digest(root.raw_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
     let host = OsHostProbe.current("cli");
     let request = ScanRequest { scan_id: scan_id.clone(), scope_id: format!("scope_{digest}"), root, host };
@@ -463,6 +466,20 @@ pub fn entries_list(req: &str, p: &Parsed) -> ExitCode {
     };
     match stores.index.list_entries(&q) {
         Ok(page) => {
+            // DIN-05: read-only "cleanable by hand" hints for this page's directories (absent = none).
+            let hints = crate::analysis_cmd::entry_hints(&page.items, &stores.dir);
+            let items: Vec<serde_json::Value> = page
+                .items
+                .iter()
+                .zip(hints)
+                .map(|(item, hint)| {
+                    let mut v = json!(item);
+                    if let (Some(h), Some(obj)) = (hint, v.as_object_mut()) {
+                        obj.insert("cleanable_hint".into(), json!(h));
+                    }
+                    v
+                })
+                .collect();
             emit(
                 &record(
                     "entries_page",
@@ -474,7 +491,7 @@ pub fn entries_list(req: &str, p: &Parsed) -> ExitCode {
                         "sort": page.sort,
                         "filter": {"kind": page.filter.kind, "name_contains": name, "parent_entry_id": parent.map(|e| e.to_string())},
                         "page_size": page.page_size,
-                        "items": page.items,
+                        "items": items,
                         "next_cursor": page.next_cursor,
                         "unknown_size_items": page.unknown_size_items,
                     })),

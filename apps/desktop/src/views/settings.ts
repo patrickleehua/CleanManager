@@ -8,16 +8,37 @@ import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { formatBytes, groupDigits } from '../lib/bytes';
 import { h, keepFocus, replace } from '../lib/dom';
+import { gatedOff } from '../lib/nav';
+import { words } from '../lib/platform';
 import { ERROR_HINT, formatTime } from '../lib/format';
-import type { IpcError, Policy, ProtectionItem, ProtectionList } from '../lib/types';
+import type { GateRow, IpcError, Policy, ProtectionItem, ProtectionList } from '../lib/types';
 import { LAYER_LABEL, MATCH_LABEL, MODE_LABEL, POLICY_STATE_LABEL } from '../lib/words';
 import { DiagSettings } from './diagSettings';
 import { confirmInline, copyField, errorLine, errorText, pageHead, pill } from './parts';
 
 type Pending = { kind: 'remove'; id: string } | { kind: 'enable'; id: string } | { kind: 'revoke'; id: string } | null;
 
+/** What each gated capability is called where people meet it (D15). */
+const CAPABILITY_LABEL: Record<string, () => string> = {
+  'clean.catalog': () => '清理目录（命令行 clean）',
+  'purge.artifacts': () => '构建产物',
+  'installer.cleanup': () => '安装包',
+  'trash.manual': () => `手选${words().bin}`,
+  'insights.overview': () => '空间洞察',
+  'apps.uninstall': () => '卸载',
+  'apps.updates': () => '更新',
+  'startup.toggle': () => '启动项',
+  'maintenance.run': () => '维护任务与性能诊断',
+  'status.metrics': () => '系统状态',
+  'process.end': () => '进程',
+  'resident.utilities': () => '常驻工具',
+  'lifecycle.self_update': () => '自我更新（命令行 self update）',
+  'diag.ai': () => 'AI 诊断',
+};
+
 const SECTIONS = [
   { id: 'set-caps', label: '能力与权限' },
+  { id: 'set-experimental', label: '实验功能' },
   { id: 'set-protection', label: '保护清单' },
   { id: 'set-policies', label: '有限策略' },
   { id: 'set-data', label: '数据与 CLI' },
@@ -45,7 +66,11 @@ export class SettingsPage {
 
   activate(): void {
     void this.reload();
-    void this.diag.reload();
+    if (this.diagOn()) void this.diag.reload();
+  }
+
+  private diagOn(): boolean {
+    return !gatedOff('diag', this.app.store.state.caps?.gates);
   }
 
   update(): void {
@@ -124,7 +149,23 @@ export class SettingsPage {
       pageHead({ id: 'settings-title', title: '设置' }),
       this.saveError ? h('div', { class: 'notice warn', role: 'alert' }, h('span', {}, this.saveError)) : null,
       this.saved ? h('div', { class: 'notice', role: 'status' }, h('span', {}, this.saved)) : null,
-      h('div', { class: 'settings-layout' }, nav, h('div', { class: 'settings-main' }, this.caps(), this.protectionSection(), this.policySection(), this.dataSection(), this.diag.el)),
+      h(
+        'div',
+        { class: 'settings-layout' },
+        nav,
+        h(
+          'div',
+          { class: 'settings-main' },
+          this.caps(),
+          this.experimentalSection(),
+          this.protectionSection(),
+          this.policySection(),
+          this.dataSection(),
+          this.diagOn()
+            ? this.diag.el
+            : this.section('set-diag', 'AI 诊断（可选）', h('p', { class: 'muted' }, 'AI 诊断尚未通过发布门禁 AID，默认关闭。开启上方的实验功能后，可以在这里配置提供方。')),
+        ),
+      ),
     );
   }
 
@@ -153,6 +194,63 @@ export class SettingsPage {
       ),
       h('ul', { class: 'cap-list' }, ...c.capabilities.map((x) => h('li', {}, h('code', {}, x.name), h('span', { class: 'muted' }, capState[x.state] ?? x.state)))),
     );
+  }
+
+  /** D15: one switch for every capability whose release gate has not passed; shared with the CLI. */
+  private experimentalSection(): HTMLElement {
+    const c = this.app.store.state.caps;
+    const on = !!c?.experimental_features;
+    const toggle = h('input', { type: 'checkbox', role: 'switch', id: 'experimental-switch', disabled: this.busy || !c }) as HTMLInputElement;
+    toggle.checked = on;
+    toggle.addEventListener('change', () => void this.setExperimental(toggle.checked));
+    const rows: GateRow[] = c?.gates ?? [];
+    return this.section(
+      'set-experimental',
+      '实验功能',
+      h(
+        'p',
+        { class: 'muted' },
+        '下面这些工具还没有通过发布门禁 G1、G3、G4 或 AID：它们还没有在 Windows 和 macOS 真机上完成验收，所以默认关闭，关闭时界面只说明原因，命令行也会拒绝。开启后它们只供你在这台电脑上评估，并不因此算作已发布；每项更改仍然要由你审阅计划。关闭时会停止常驻工具（托盘、亮屏、清洁屏幕、隐私指示和电量提醒），并删除它们创建的登录启动项。',
+      ),
+      h(
+        'div',
+        { class: 'switches' },
+        h(
+          'label',
+          { class: 'switch-row', for: 'experimental-switch' },
+          toggle,
+          h('span', {}, h('b', {}, '开启实验功能'), h('span', { class: 'muted small' }, on ? '已开启：下列未通过门禁的工具可以在这台电脑上使用。' : '默认关闭：下列工具保留在原位置，打开时说明原因。')),
+        ),
+      ),
+      !c ? h('p', { class: 'muted small' }, '能力信息不可用，暂时无法更改这个设置。') : null,
+      rows.length
+        ? h(
+            'ul',
+            { class: 'cap-list', 'aria-label': '未通过门禁的工具' },
+            ...rows.map((r) =>
+              h(
+                'li',
+                {},
+                h('span', {}, CAPABILITY_LABEL[r.capability]?.() ?? r.capability, ' ', h('code', { class: 'muted small' }, r.capability)),
+                h('span', { class: 'muted' }, `门禁 ${r.gate}${r.gate_passed ? ' 已通过' : ' 未通过'}，${r.enabled ? '已开启' : '已关闭'}`),
+              ),
+            ),
+          )
+        : null,
+      copyField('命令行与桌面端共用这个设置', on ? 'cleanmanager experimental --state off' : 'cleanmanager experimental --state on'),
+    );
+  }
+
+  private async setExperimental(on: boolean): Promise<void> {
+    try {
+      await this.change(async () => {
+        const caps = await this.app.backend.setExperimentalFeatures(on);
+        this.app.store.set({ caps });
+      }, on ? '已开启实验功能' : '已关闭实验功能；未通过门禁的工具和常驻工具已停止');
+      if (on && this.diagOn()) void this.diag.reload();
+    } catch {
+      /* reported by change() */
+    }
   }
 
   private protectionSection(): HTMLElement {

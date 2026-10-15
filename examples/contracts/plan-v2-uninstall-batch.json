@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "up_batch",
+    "plan_kind": "uninstall",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "q0000000",
+        "action_type": "app_quit",
+        "app_instance_id": "app_demo",
+        "app_identity": "C:\\Program Files\\Example App",
+        "force": "never"
+      },
+      {
+        "action_type": "tool_adapter",
+        "adapter_id": "windows.registered-uninstaller",
+        "adapter_version": "1",
+        "executable": {
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Program Files\\Example App\\uninst.exe",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwBcAEUAeABhAG0AcABsAGUAIABBAHAAcABcAHUAbgBpAG4AcwB0AC4AZQB4AGUA"
+          },
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "argv": [],
+        "preview_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "timeout_seconds": 3600,
+        "action_id": "u0000001"
+      },
+      {
+        "action_id": "u0010000",
+        "action_type": "app_quit",
+        "app_instance_id": "app_tool",
+        "app_identity": "C:\\Tools\\Example Tool",
+        "force": "never"
+      },
+      {
+        "action_type": "tool_adapter",
+        "adapter_id": "windows.registered-uninstaller",
+        "adapter_version": "1",
+        "executable": {
+          "path": {
+            "platform": "windows",
+            "display": "C:\\Tools\\Example Tool\\unins000.exe",
+            "raw_encoding": "windows_utf16le_base64",
+            "raw_base64": "QwA6AFwAVABvAG8AbABzAFwARQB4AGEAbQBwAGwAZQAgAFQAbwBvAGwAXAB1AG4AaQBuAHMAMAAwADAALgBlAHgAZQA="
+          },
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "argv": [],
+        "preview_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "timeout_seconds": 3600,
+        "action_id": "u0010001"
+      }
+    ]
+  },
+  "plan_digest": "059c5225361ed5702a58df41c178ea43d6bc0fac38511399b15975faae0f9799",
+  "authorization_status": "required",
+  "leftover_estimate": {
+    "caches_logs": 3,
+    "settings": 2,
+    "bundle": 2
+  },
+  "uninstall_apps": [
+    {
+      "app_instance_id": "app_demo",
+      "name": "Example App",
+      "action_ids": [
+        "q0000000",
+        "u0000001"
+      ],
+      "leftover_estimate": {
+        "caches_logs": 2,
+        "settings": 1,
+        "bundle": 1
+      }
+    },
+    {
+      "app_instance_id": "app_tool",
+      "name": "Example Tool",
+      "action_ids": [
+        "u0010000",
+        "u0010001"
+      ],
+      "leftover_estimate": {
+        "caches_logs": 1,
+        "settings": 1,
+        "bundle": 1
+      }
+    }
+  ],
+  "uninstall_refused": [
+    {
+      "app_instance_id": "app_agent",
+      "name": "Example Endpoint Agent",
+      "code": "policy_denied",
+      "message": "Security or device-management agent: CleanManager offers no uninstall; remove it through your administrator or the vendor's official uninstall process",
+      "settings_uri": null
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "kind": "experimental_features",
+  "request_id": "req_synthetic",
+  "experimental_features": false,
+  "capabilities": [
+    {
+      "capability": "clean.catalog",
+      "gate": "G1",
+      "gate_passed": false,
+      "enabled": false
+    },
+    {
+      "capability": "maintenance.run",
+      "gate": "G3",
+      "gate_passed": false,
+      "enabled": false
+    }
+  ],
+  "note": "Capabilities whose release gate has not passed are off unless experimental features are on. They are for evaluation on this machine only; turning this on passes no gate and changes no plan review."
+}

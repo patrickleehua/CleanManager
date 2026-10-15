@@ -1249,6 +1249,7 @@ pub async fn approve_plan(state: St<'_>, plan_id: String, review_token: String, 
         let id = args::record_id("plan", &plan_id)?;
         let token = args::record_id("review", &review_token)?;
         let typed = args::confirmation(&typed_code)?;
+        crate::gate::require_plan(&s, &id)?;
         s.with_stores(|st| approve(&s, st, &id, &token, &typed))
     })
     .await

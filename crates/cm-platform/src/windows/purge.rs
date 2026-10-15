@@ -12,6 +12,7 @@ use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use cm_core::cleanable::CACHEDIR_SIGNATURE;
 use cm_core::execute::ActionTarget;
 use cm_core::path::RawPath;
 use cm_core::plan::Plan;
@@ -23,7 +24,6 @@ const ATTR_REPARSE_POINT: u32 = 0x400;
 const ATTR_OFFLINE: u32 = 0x1000;
 const ATTR_RECALL_ON_OPEN: u32 = 0x0004_0000;
 const ATTR_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-const CACHEDIR_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 /// Common project folder names under the profile and at the root of fixed drives.
 const PROFILE_DIRS: &[&str] = &["source\\repos", "Projects", "dev", "code", "src", "repos", "workspace", "GitHub", "Development", "www"];
 const DRIVE_DIRS: &[&str] = &["Projects", "dev", "code", "src", "repos", "workspace", "workplace", "GitHub"];

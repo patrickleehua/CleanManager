@@ -2,6 +2,8 @@
 
 状态：变更 `add-mole-parity-suite` 任务 3.1–3.7 的 Windows 部分已实现，任务 3.8（第 2 波）的 Windows 规则已在本机验证（见[第 2 波](#第-2-波-windows-规则)）；macOS 一侧（含 Safari、Xcode DerivedData 等）尚无实测，任务 3.5 的“每条 enabled 规则在 Windows 与 Mac 各有实测记录”在本机无法满足。类目、档位与命令形状以代码与 [CLI 协议](cli-protocol.md) 为准，本页说明“清什么、为什么是这个档位、证据在哪”。
 
+默认关闭（设计 D15）：清理目录尚未通过门禁 G1，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 ## 档位如何算出
 
 每个候选的档位只由核心的一个函数 `cm_core::catalog::compute_tier` 计算，`analyze`、`clean` 与桌面端都经由 `analysis::analyze_catalog` 得到同一结果（CAT-02）：

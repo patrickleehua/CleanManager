@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "kind": "entries_page",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "revision": 1,
+  "sort": "logical_desc",
+  "filter": {
+    "kind": "directory",
+    "name_contains": null,
+    "parent_entry_id": "e_app"
+  },
+  "page_size": 3,
+  "next_cursor": null,
+  "unknown_size_items": 0,
+  "items": [
+    {
+      "entry_id": "e_nm",
+      "parent_entry_id": "e_app",
+      "object_id": "o_e_nm",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\source\\app\\node_modules",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHMAbwB1AHIAYwBlAFwAYQBwAHAAXABuAG8AZABlAF8AbQBvAGQAdQBsAGUAcwA="
+      },
+      "kind": "directory",
+      "logical_bytes": "524288000",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong",
+      "cleanable_hint": {
+        "basis": "build_artifact",
+        "rule_id": "purge.node-modules",
+        "detail": "package.json",
+        "flow": "purge"
+      }
+    },
+    {
+      "entry_id": "e_tool",
+      "parent_entry_id": "e_app",
+      "object_id": "o_e_tool",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\source\\app\\.tool-cache",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHMAbwB1AHIAYwBlAFwAYQBwAHAAXAAuAHQAbwBvAGwALQBjAGEAYwBoAGUA"
+      },
+      "kind": "directory",
+      "logical_bytes": "41943040",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong",
+      "cleanable_hint": {
+        "basis": "cachedir_tag",
+        "rule_id": null,
+        "detail": "CACHEDIR.TAG",
+        "flow": "manual_trash"
+      }
+    },
+    {
+      "entry_id": "e_src",
+      "parent_entry_id": "e_app",
+      "object_id": "o_e_src",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\source\\app\\src",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAHMAbwB1AHIAYwBlAFwAYQBwAHAAXABzAHIAYwA="
+      },
+      "kind": "directory",
+      "logical_bytes": "2097152",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong"
+    }
+  ]
+}

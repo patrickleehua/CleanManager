@@ -167,6 +167,8 @@ fn run_in(
     let _ = writer.join();
     let stdout = reader.join().unwrap_or_default();
     let stderr = err_reader.join().unwrap_or_default();
+    // Exit code and sizes only: the CLI's output can echo the prompt, and its environment may carry credentials.
+    cm_core::debug_trace!("process", "\"{}\" exit={:?} in {}ms stdout_bytes={}", exe.display(), status.code(), start.elapsed().as_millis(), stdout.len());
     if over.load(Ordering::Acquire) {
         return Err(RunError::Failed(failure(FailureCode::OutputTooLarge, "CLI 输出超过上限，结果已丢弃。")));
     }

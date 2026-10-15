@@ -221,12 +221,17 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         Ok(s) => s,
         Err(code) => return code,
     };
+    let analysis = cm_core::trace::span("clean.analysis");
     let mut a = match run_analysis(req, p, &stores, scan_id, volume) {
         Ok(a) => a,
         Err(code) => return code,
     };
+    drop(analysis);
     // Live in-use probes (CAT-06), once here; the executor probes each item again before acting.
+    let probes = cm_core::trace::span("clean.probes");
     probe_all(&mut a.set.candidates, &mut a.catalog.facts);
+    drop(probes);
+    cm_core::debug_trace!("clean", "scan={scan_id} set={} candidates={} dry_run={dry_run} mode={mode:?}", a.set.candidate_set_id, a.set.candidates.len());
     let mut order: Vec<usize> = (0..a.set.candidates.len()).collect();
     order.sort_by(|x, y| {
         let (cx, cy) = (&a.set.candidates[*x], &a.set.candidates[*y]);
@@ -241,6 +246,9 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         let page: Vec<&Candidate> = order.iter().skip(offset).take(page_size).map(|i| &a.set.candidates[*i]).collect();
         let next = (offset + page.len() < order.len()).then(|| format!("{}:{}", a.set.candidate_set_id, offset + page.len()));
         let items: Vec<Value> = page.iter().map(|c| preview_item(c, a.catalog.facts.get(&c.candidate_id), mode)).collect();
+        for i in items.iter().filter(|i| !i["skip_reason"].is_null()) {
+            cm_core::debug_trace!("clean.skip", "{} tier={} skip_reason={}", i["object_id"], i["tier"], i["skip_reason"]);
+        }
         let chosen: Vec<&Value> = items.iter().filter(|i| i["selected_by_default"] == true).collect();
         let known: u64 = chosen.iter().filter_map(|i| i["logical_bytes"].as_str()).filter_map(|b| b.parse::<u64>().ok()).sum();
         let summary = json!({
@@ -289,6 +297,10 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
     }
     // CLI-11: rows whose observed state changed since the scan are listed as stale, never planned.
     let (selected, stale) = split_stale(&a.set.candidates, selected);
+    cm_core::debug_trace!("clean", "selected={} stale={} explicit_ids={}", selected.len(), stale.len(), p.option("candidates").is_some());
+    for s in &stale {
+        cm_core::debug_trace!("clean.skip", "{} stale reason={} detail=\"{}\"", s.object_id, s.reason, s.detail);
+    }
     if selected.is_empty() {
         return fail(req, ErrorCode::PlanStale, &format!("every selected row changed since the scan ({}); scan again and preview", stale_summary(&stale)), p.format);
     }

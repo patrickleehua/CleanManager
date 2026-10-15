@@ -2,9 +2,11 @@
 //!
 //! - `apps uninstall list` (read-only): every instance with the uninstall route this build would use, or why there is
 //!   none (capability explanation and the Settings entry; protected classes have no route at all).
-//! - `apps uninstall plan create --instance ID [--end-running]`: stage 1 (quit + verified uninstaller). `--end-running`
-//!   is the separately reviewed variant that may end still-running processes, and only after a person confirms it in a
-//!   terminal at apply time; it is refused for non-interactive callers.
+//! - `apps uninstall plan create --instance ID [--instance ID …] [--end-running]`: stage 1 (quit + verified
+//!   uninstaller), for one application or a batch in one plan (UNI-11: each application keeps its own steps and
+//!   result; refused ones are listed and left out). `--end-running` is the separately reviewed variant that may end
+//!   still-running processes, and only after a person confirms it in a terminal at apply time; it is refused for
+//!   non-interactive callers.
 //! - `apps uninstall leftovers --operation OP` (read-only grouped preview) and `apps uninstall leftovers plan create
 //!   --operation OP [--items ID,…]`: stage 2, only caches/logs by default plus objects named by id.
 //! - `apps uninstall orphans` (read-only, review_only) and `apps uninstall restore --operation OP` (recovery plan).
@@ -98,7 +100,11 @@ mod imp {
     }
 
     pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
-        let Some(instance) = p.option("instance") else { return fail(req, ErrorCode::InvalidArgument, "needs --instance APP_INSTANCE_ID", p.format) };
+        // UNI-11: `--instance` may be repeated; every application of the batch is checked exactly as on its own.
+        let instances: Vec<String> = p.values("instance").into_iter().map(str::to_owned).collect();
+        if instances.is_empty() {
+            return fail(req, ErrorCode::InvalidArgument, "needs --instance APP_INSTANCE_ID (repeat it to uninstall several applications in one plan)", p.format);
+        }
         let end_running = p.flag("end-running");
         // UNI-02: a plan that may end processes is asked for by a person in a terminal, never by an automated caller.
         if end_running && p.non_interactive() {
@@ -114,17 +120,41 @@ mod imp {
         };
         let plan_id = format!("up_{}", &req[4..]);
         let pdigest = crate::plan_cmd::current_policy_digest(&stores);
-        match cm_app::uninstall::create_uninstall_plan(&stores, &env, instance, end_running, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
-            Ok(s1) => {
-                let mut rec = crate::plan_cmd::v2_plan_record(req, &stores, &s1.plan);
-                // D7: shown in review as an estimate; the leftovers are a second, separately reviewed plan.
-                let est: serde_json::Map<String, Value> = s1.estimate.iter().map(|(g, n)| (serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default(), json!(n))).collect();
-                rec["leftover_estimate"] = Value::Object(est);
+        match cm_app::uninstall::create_uninstall_batch(&stores, &env, &instances, end_running, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+            Ok(b) => {
+                let mut rec = crate::plan_cmd::v2_plan_record(req, &stores, &b.plan);
+                // D7: shown in review as an estimate (summed over the batch); the leftovers are a second, separately
+                // reviewed plan. UNI-11: per application, its actions and estimate; refused applications are listed.
+                let mut total: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                let apps: Vec<Value> = b
+                    .apps
+                    .iter()
+                    .map(|a| {
+                        let est: serde_json::Map<String, Value> = a.estimate.iter().map(|(g, n)| (group_word(g), json!(n))).collect();
+                        for (g, n) in &a.estimate {
+                            *total.entry(group_word(g)).or_insert(0) += n;
+                        }
+                        json!({"app_instance_id": a.record.instance_id, "name": a.record.name, "action_ids": a.action_ids, "leftover_estimate": est})
+                    })
+                    .collect();
+                rec["leftover_estimate"] = json!(total);
+                rec["uninstall_apps"] = Value::Array(apps);
+                rec["uninstall_refused"] = Value::Array(
+                    b.refused
+                        .iter()
+                        .map(|x| json!({"app_instance_id": x.app_instance_id, "name": x.name, "code": x.refused.code, "message": x.refused.message, "settings_uri": x.refused.settings_uri}))
+                        .collect(),
+                );
                 emit(&rec, p.format);
-                ExitCode::SUCCESS
+                // Some applications were refused: the plan holds the others, the exit says not everything was planned.
+                ExitCode::from(if b.refused.is_empty() { cm_core::error::ExitClass::Success } else { cm_core::error::ExitClass::Partial }.code() as u8)
             }
             Err(r) => refused(req, p, &r),
         }
+    }
+
+    fn group_word(g: &cm_core::uninstall::Group) -> String {
+        serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
     }
 
     pub fn leftovers(req: &str, p: &Parsed) -> ExitCode {
@@ -137,17 +167,39 @@ mod imp {
             Ok(s) => s,
             Err(c) => return c,
         };
-        match cm_app::uninstall::leftovers(&stores, &env, op) {
-            Ok((identity, items, refs)) => {
-                let app = json!({"app_instance_id": identity.instance_id, "name": identity.name, "publisher": identity.publisher, "source": identity.source});
-                let selected = items.iter().filter(|l| l.selected).count();
-                emit(&record("uninstall_leftovers", req, fields(json!({
-                    "operation_id": op, "app": app, "groups": grouped(&items), "default_selected": selected, "external_references": refs,
-                }))), p.format);
-                ExitCode::SUCCESS
-            }
-            Err(r) => refused(req, p, &r),
+        let by_app = match cm_app::uninstall::leftovers_by_app(&stores, &env, op) {
+            Ok(a) => a,
+            Err(r) => return refused(req, p, &r),
+        };
+        // A failed, skipped or stale uninstall keeps everything of that application (UNI-11).
+        if let Some(r) = cm_app::uninstall::none_reviewable(op, &by_app) {
+            return refused(req, p, &r);
         }
+        let app_wire = |i: &cm_core::uninstall::AppIdentity| json!({"app_instance_id": i.instance_id, "name": i.name, "publisher": i.publisher, "source": i.source});
+        // Top level: every reviewable object of the operation (one application: exactly its review, as before).
+        let all: Vec<cm_core::uninstall::Leftover> = by_app.iter().flat_map(|a| a.items.iter().cloned()).collect();
+        let mut refs: Vec<String> = Vec::new();
+        for r in by_app.iter().flat_map(|a| &a.external_references) {
+            if !refs.contains(r) {
+                refs.push(r.clone());
+            }
+        }
+        let apps: Vec<Value> = by_app
+            .iter()
+            .map(|a| {
+                json!({
+                    "app": app_wire(&a.identity), "status": a.outcome.status, "code": a.outcome.code, "message": a.outcome.message,
+                    "leftovers_reviewable": a.outcome.leftovers_reviewable, "groups": grouped(&a.items), "default_selected": a.items.iter().filter(|l| l.selected).count(),
+                    "external_references": a.external_references,
+                })
+            })
+            .collect();
+        let app = if by_app.len() == 1 { app_wire(&by_app[0].identity) } else { Value::Null };
+        emit(&record("uninstall_leftovers", req, fields(json!({
+            "operation_id": op, "app": app, "groups": grouped(&all), "default_selected": all.iter().filter(|l| l.selected).count(), "external_references": refs,
+            "apps": apps,
+        }))), p.format);
+        ExitCode::SUCCESS
     }
 
     pub fn leftovers_plan(req: &str, p: &Parsed) -> ExitCode {
@@ -238,11 +290,30 @@ pub fn restore(req: &str, p: &Parsed) -> ExitCode {
     }
 }
 
+/// UNI-11: an `operation_report` of a stage-1 uninstall also reports each application's own result.
+pub fn add_app_outcomes(stores: &cm_store::Stores, report: &cm_app::execute::OperationReport, rec: &mut Value) {
+    let Ok(plan) = stores.audit.load_plan_v2(&report.plan_id) else { return };
+    let outcomes = cm_app::uninstall::app_outcomes(&plan, Some(report));
+    if !outcomes.is_empty() {
+        rec["uninstall_apps"] = json!(outcomes);
+    }
+}
+
 /// Review lines for uninstall plans (`plan review`): what runs, what may be ended, and that leftovers come separately.
+/// UNI-11: a plan for several applications is reviewed application by application.
 pub fn review_lines(plan: &cm_core::plan::v2::PlanV2) -> Vec<String> {
     use cm_core::plan::v2::{PlanAction, QuitForce};
     let mut out = Vec::new();
+    let apps = cm_app::uninstall::planned_apps(plan);
+    if apps.len() > 1 {
+        out.push(format!("{} applications, each with its own close request and uninstaller; one that fails or is skipped does not stop the others:", apps.len()));
+    }
     for (a, m) in plan.body.items.iter().zip(&plan.meta) {
+        if apps.len() > 1
+            && let Some((i, app)) = apps.iter().enumerate().find(|(_, p)| p.action_ids.first().map(String::as_str) == Some(a.action_id()))
+        {
+            out.push(format!("Application {}/{}: {} ({})", i + 1, apps.len(), app.identity.name, app.identity.instance_id));
+        }
         let note = m.note.clone().unwrap_or_default();
         out.push(match a {
             PlanAction::AppQuit(q) if q.force == QuitForce::AskUser => format!("  {}  {note}: processes still running after the close request are ENDED only if you confirm when applying", q.action_id),

@@ -100,6 +100,7 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
         (None, true) => set.candidates.iter().filter(|c| c.tier == Tier::DefaultSelected && c.allowed_modes.contains(&mode)).map(|c| c.candidate_id.clone()).collect(),
         _ => return fail(req, ErrorCode::InvalidArgument, "pass either --candidates ID,ID or --all-default-selected", p.format),
     };
+    cm_core::debug_trace!("plan", "set={set_id} scan={} mode={mode:?} candidates={} selected={} explicit_ids={}", set.scan_id, set.candidates.len(), selected.len(), p.option("candidates").is_some());
     let view = match stores.index.view(&set.scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),
@@ -119,8 +120,12 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     };
     let plan = match build_plan(&view, &set, &selected, mode, &input) {
         Ok(p) => p,
-        Err(e) => return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format),
+        Err(e) => {
+            cm_core::debug_trace!("plan", "refused: {e}");
+            return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format);
+        }
     };
+    cm_core::debug_trace!("plan", "built plan={} items={} digest={}", plan.body.plan_id, plan.body.items.len(), plan.digest);
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }

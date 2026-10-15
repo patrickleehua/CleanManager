@@ -2,13 +2,27 @@
 
 状态：变更 `add-mole-parity-suite` 任务 9.2–9.8 已勾选，9.1（来源适配）的 Windows 部分已实现，但因 macOS 来源未实现而未勾选。没有在测试中移除过真实的 MSIX 包，也未通过 G3 门禁（任务 18.3），没有发布。代码位置：核心 `cm_core::uninstall`、执行与计划 `cm_app::uninstall`、平台 `windows/uninstall.rs`、命令 `apps uninstall …`。macOS 未实现，所有 `apps uninstall` 命令在 macOS 返回 `unsupported`（不伪造废纸篓或 Homebrew 适配）。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
+默认关闭（设计 D15）：应用卸载尚未通过门禁 G3，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 ## 两段计划（D7）
 
-1. **第一段** `apps uninstall plan create --instance ID`：`uninstall` 计划只含 `app_quit`（退出请求）和一个 `tool_adapter`（按来源选择的卸载方式）。审阅时附带 `leftover_estimate`（按组计数的**估计**，不是计划对象，也不被授权）。
+1. **第一段** `apps uninstall plan create --instance ID`：`uninstall` 计划只含 `app_quit`（退出请求）和一个 `tool_adapter`（按来源选择的卸载方式）；批量时每个应用各一对（见下文 UNI-11）。审阅时附带 `leftover_estimate`（按组计数的**估计**，不是计划对象，也不被授权）。
 2. 执行后核心**重新扫描**安装目录与卸载注册项，而不是根据退出码推断；仍有剩余时结果为 `partial`（动作代码 `leftovers_remain`，消息含退出码与耗时）。
 3. **第二段** `apps uninstall leftovers --operation OP` 给出分组预览；`apps uninstall leftovers plan create --operation OP [--items ID,…]` 生成另一个 `uninstall` 计划，单独审阅、单独执行。
 
 两段都需要 `plan review`（终端人工审阅）后才能 `plan apply`；策略永远不能匹配卸载计划，非交互调用者无法批准。
+
+## 一份计划卸载多个应用（UNI-11，任务 9.9）
+
+Windows 已实现；命令形状见 [CLI 协议](cli-protocol.md)。
+
+- **选择**：CLI 重复 `--instance`（`apps uninstall plan create --instance A --instance B`，最多 20 个，同一实例重复为 `invalid_argument`）；桌面在“软件 › 卸载”中勾选多个“可卸载”的应用，选择栏显示已选数量，一次生成一份计划。受保护类与只能在系统设置中卸载的应用不能勾选。
+- **受保护类不因批量放宽（UNI-10）**：每个应用都按单独卸载时完全相同的路径核验（来源适配、程序路径/哈希/签名者、保护类）。被拒绝的应用列在 `uninstall_refused` 中、不进入计划，其余应用的计划不受影响（CLI 退出码 5）；全部被拒绝时整个请求被拒绝，单个应用时错误与以前相同。
+- **每个应用自己的阶段（D7）**：计划中每个应用各有一个 `app_quit` 和一个 `tool_adapter`，按选择顺序排列（第一个应用的动作 ID 与单独卸载相同：`q0000000`/`u0000001`，第 n 个为 `u{n:03}0000`/`u{n:03}0001`，因此动作 ID 的顺序就是执行顺序）。`plan/v2` 正文、摘要和种类规则没有改变，单应用计划仍完全有效。审阅按应用分组（CLI `plan review` 逐个列出“Application i/n”，桌面按应用分表）。
+- **互不阻塞**：某个应用的卸载程序只等待它**自己**的退出请求；一个应用没有退出、卸载程序失败、被取消或登记在计划后变化（`record_changed`）只影响它自己，其余应用照常执行。整体状态在有应用失败时为 `partial`，从不报告为全部完成。
+- **逐应用结果**：`plan apply` 与 `operations show` 的 `operation_report` 附带 `uninstall_apps`，每个应用一个 `status`（completed、partial、failed、skipped、not_started、unknown）、决定它的步骤代码与消息，以及 `leftovers_reviewable`；桌面结果页显示“逐个应用”。
+- **残留只属于卸载成功的应用**：第二段的残留预览按应用分组（`apps`），只有卸载程序成功运行的应用列出对象；卸载失败、被跳过或没有运行的应用仍然安装着，它的文件、注册表项和启动项全部保留，残留计划从不包含它们，并且它仍作为已安装实例保护与其他应用共用的数据（`shared_owner`）。同一对象被两个应用认领时只在第一个应用下出现一次。没有任何应用卸载成功时（包括单个应用的卸载程序失败），`apps uninstall leftovers` 返回 `invalid_argument` 并说明原因。批量残留计划的说明文字以应用名开头，便于按应用审阅。残留默认选择规则不变：只有缓存与日志默认选中，个人数据与设置从不预选。
+- **测试**：`crates/cm-app/src/uninstall/tests.rs`（两应用计划中一个卸载程序失败另一个完成、一个应用不退出只影响它自己、逐应用结果与整体拒绝）；端到端 `crates/cm-cli/tests/uninstall_batch.rs`（与 `uninstall_flow.rs` 相同的隔离：注册表与家目录重定向、`cmd.exe` 副本充当卸载程序，一个以退出码 3 失败；同一批中的终端安全代理被拒绝；不应用残留计划，回收站与真实卸载键不变）；桌面 `apps/desktop/src/views/uninstallBatch.test.ts`。
 
 ## 各平台支持的来源（UNI-01）
 
@@ -46,6 +60,7 @@
 cleanmanager apps uninstall list --json                                   # app_uninstall_list：每个实例的卸载方式或原因
 cleanmanager apps list --json                                             # app_list：uninstall_capability 与上一行同一判定（available/unverified/unsupported）
 cleanmanager apps uninstall plan create --instance app_0123 --json        # plan（uninstall）+ leftover_estimate
+cleanmanager apps uninstall plan create --instance app_0123 --instance app_4567 --json  # 一份计划卸载两个应用：uninstall_apps、uninstall_refused
 cleanmanager plan review up_demo                                          # 终端内审阅
 cleanmanager plan apply up_demo --json                                    # operation_report：退出码、耗时与重扫结果
 cleanmanager apps uninstall leftovers --operation op_demo --json          # uninstall_leftovers：分组、证据、标记

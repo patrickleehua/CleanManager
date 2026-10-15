@@ -507,6 +507,12 @@ th.col-size { text-align: right; }
 .probe-state[data-state='unknown'] { color: var(--warn); }
 .probe-state[data-state='not_in_use'] { color: var(--accent); }
 .row-tag { display: inline-block; font-size: 11px; font-weight: 600; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; margin-right: 6px; color: var(--muted); }
+/* DIN-05: read-only "cleanable by hand" marker in the disk table; the accent ink says "possible", never "selected". */
+.col-name .hint-tag { flex: none; margin-right: 0; line-height: 16px; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--surface); }
+.grid-row.selected .hint-tag { background: transparent; }
+.hint-entry { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.hint-entry p { margin: 0; }
+.hint-entry .card-actions { margin-top: 8px; }
 .cdetail-body { padding: 2px 4px 2px 26px; }
 .cdetail-body .facts-list { margin-top: 0; }
 .cdetail-body .card-actions { margin-top: 10px; }
@@ -937,7 +943,24 @@ kbd { font: 12px/1.2 var(--font); padding: 2px 6px; border-radius: 5px; border: 
 .guidance p { margin: 0 0 6px; }
 
 /* Status */
-.status-layout { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.status-layout { display: grid; gap: 16px; }
+/* Panels follow the saved order; a narrow panel (health) shares a row with the wide one beside it. */
+.status-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.status-row[data-shape='narrow-wide'] { grid-template-columns: minmax(0, 340px) minmax(0, 1fr); }
+.status-row[data-shape='wide-narrow'] { grid-template-columns: minmax(0, 1fr) minmax(0, 340px); }
+.status-prefs { margin-bottom: 16px; }
+.pref-grid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 12px 32px; align-items: start; margin-bottom: 10px; }
+.pref-grid h3 { margin: 0 0 8px; }
+.pref-panels { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pref-panels li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 6px 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.pref-panels li[data-shown='no'] .pref-panel span { color: var(--muted); }
+.pref-panel { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.pref-panel input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.pref-move { display: inline-flex; gap: 2px; }
+.net-sub { margin: 16px 0 6px; color: var(--muted); font-weight: 500; }
+.net-table { table-layout: fixed; }
+.net-table th:nth-child(2), .net-table td:nth-child(2) { width: 7.5em; color: var(--muted); }
+.net-table th:nth-child(n+3), .net-table td:nth-child(n+3) { width: 8.5em; }
 .health-score { font-size: 60px; font-weight: 300; letter-spacing: -0.04em; line-height: 1; margin: 4px 0 8px; }
 .health-score small { font-size: 15px; color: var(--muted); letter-spacing: 0; margin-left: 6px; font-weight: 400; }
 .dims { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
@@ -1200,7 +1223,7 @@ th.col-num-s { text-align: right; }
   .page-plan .items-panel, .page-operation .items-panel { order: 3; }
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .local-nav { position: static; display: flex; flex-wrap: wrap; }
-  .status-layout { grid-template-columns: minmax(0, 1fr); }
+  .status-row[data-shape], .pref-grid { grid-template-columns: minmax(0, 1fr); }
   .res-grid { grid-template-columns: minmax(0, 1fr); }
 }
 /* The tool shelf becomes an icon rail; names stay available to assistive tech and as tooltips. */

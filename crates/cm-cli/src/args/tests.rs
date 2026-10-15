@@ -203,6 +203,11 @@ fn format_aliases_and_errors() {
     assert_eq!(p(&["capabilities", "--lang", "zh-CN"]).unwrap().lang, Lang::ZhCn);
     assert!(p(&["scan", "show", "s1", "--store"]).unwrap_err().contains("needs a value"));
     assert!(p(&["scan", "--root", "a", "--root", "b"]).unwrap_err().contains("twice"));
+    // UNI-11: `--instance` names one more application each time; nothing else may repeat.
+    let batch = p(&["apps", "uninstall", "plan", "create", "--instance", "app_a", "--instance", "app_b"]).unwrap();
+    assert_eq!((batch.values("instance"), batch.option("instance")), (vec!["app_a", "app_b"], Some("app_a")));
+    assert_eq!(p(&["apps", "uninstall", "plan", "create", "--instance", "app_a"]).unwrap().values("instance"), ["app_a"]);
+    assert!(p(&["plan", "show", "p", "--store", "a", "--store", "b"]).unwrap_err().contains("twice"));
 }
 
 #[test]

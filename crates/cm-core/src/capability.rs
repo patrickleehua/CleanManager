@@ -32,6 +32,43 @@ impl Capability {
     }
 }
 
+/// A parity capability and the release gate (D15) it must pass before it may be on by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct GatedCapability {
+    pub capability: &'static str,
+    pub gate: &'static str,
+    /// The gate has passed with real-device evidence on both platforms. Passing a gate is this one field.
+    pub gate_passed: bool,
+}
+
+const fn gated(capability: &'static str, gate: &'static str) -> GatedCapability {
+    GatedCapability { capability, gate, gate_passed: false }
+}
+
+/// D15: "单项未通过则该能力关闭". Every capability here is off unless its gate passed or the person turned on
+/// experimental features (`cm_app::features`). None has passed.
+pub const GATED: &[GatedCapability] = &[
+    gated("clean.catalog", "G1"),
+    gated("purge.artifacts", "G1"),
+    gated("installer.cleanup", "G1"),
+    gated("trash.manual", "G1"),
+    gated("insights.overview", "G1"),
+    gated("apps.uninstall", "G3"),
+    gated("apps.updates", "G3"),
+    gated("startup.toggle", "G3"),
+    gated("maintenance.run", "G3"),
+    gated("status.metrics", "G3"),
+    gated("process.end", "G3"),
+    gated("resident.utilities", "G4"),
+    gated("lifecycle.self_update", "G3"),
+    gated("diag.ai", "AID"),
+];
+
+/// The gate entry of a capability, if it is gated.
+pub fn gate_of(capability: &str) -> Option<&'static GatedCapability> {
+    GATED.iter().find(|g| g.capability == capability)
+}
+
 /// Implemented by each platform backend; the core never assumes a capability is present.
 pub trait CapabilityProvider {
     fn platform(&self) -> Platform;
@@ -54,5 +91,16 @@ mod tests {
         .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_owned())
         .collect();
         assert_eq!(names, ["available", "permission_required", "unsupported", "unverified"]);
+    }
+
+    #[test]
+    fn no_gate_has_passed_and_names_are_unique() {
+        assert!(GATED.iter().all(|g| !g.gate_passed));
+        let mut names: Vec<&str> = GATED.iter().map(|g| g.capability).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), GATED.len());
+        assert_eq!(gate_of("process.end").map(|g| g.gate), Some("G3"));
+        assert!(gate_of("scan.win.directory").is_none());
     }
 }

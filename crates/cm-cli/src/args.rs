@@ -1,5 +1,6 @@
 //! Strict argument parsing: positional command words plus `--key value` options and flags.
-//! Unknown or repeated options are errors; nothing is guessed.
+//! Unknown or repeated options are errors (except [`REPEATABLE`] ones, which name one more object each time);
+//! nothing is guessed.
 //!
 //! [`COMMANDS`] is the declarative argument table of every command group. Shell completions are
 //! generated from it (LIF-03), and unit tests check that the dispatch in `commands.rs` accepts
@@ -15,11 +16,15 @@ use crate::Format;
 use crate::i18n::Lang;
 
 /// Options that take no value.
-const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running", "check", "add-to-path", "remove-user-data"];
+const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running", "check", "add-to-path", "remove-user-data", "debug"];
 
-/// Accepted by every command: output format, human-text language, no input waiting, no colour.
+/// Accepted by every command: output format, human-text language, no input waiting, no colour, and the
+/// stderr-only diagnostic trace (`--debug`, CLI-14) that never changes stdout or any decision.
 pub const GLOBAL_OPTIONS: &[&str] = &["format", "lang"];
-pub const GLOBAL_FLAGS: &[&str] = &["json", "non-interactive", "no-color"];
+pub const GLOBAL_FLAGS: &[&str] = &["json", "non-interactive", "no-color", "debug"];
+/// Options that may be given several times, each naming one more object (UNI-11: one uninstall plan for several
+/// applications). Every other option given twice is an error.
+pub const REPEATABLE: &[&str] = &["instance"];
 /// Internal options that are accepted but never offered by completions or documented as user flags.
 pub const HIDDEN_OPTIONS: &[&str] = &["host-scan-id"];
 
@@ -52,7 +57,8 @@ const ID: Option<&str> = Some("ID");
 
 /// Every command group and its accepted options. Add a row here when adding a dispatch arm.
 pub const COMMANDS: &[CommandSpec] = &[
-    c(&["capabilities"], None, &[], &[], "Platform, backends and capability limits", "平台、后端与能力限制"),
+    c(&["capabilities"], None, &["store"], &[], "Platform, backends and capability limits", "平台、后端与能力限制"),
+    w(&["experimental"], None, &["store", "state"], &[], "Show or set (--state on|off) experimental features: tools whose release gate has not passed (off by default)", "查看或设置（--state on|off）实验功能：尚未通过发布门禁的工具（默认关闭）"),
     c(&["scan"], None, &["root", "store", "timeout", "host-scan-id"], &["detach"], "Scan a root (read-only); --detach hosts it in a background process", "扫描指定根（只读）；--detach 由后台进程承载"),
     c(&["scan", "show"], ID, &["store"], &[], "Scan state (running) or result (terminal)", "扫描运行状态或终态结果"),
     c(&["scan", "wait"], ID, &["store", "timeout"], &[], "Wait for a scan's terminal record, at most --timeout seconds", "等待扫描终态，最多 --timeout 秒"),
@@ -86,7 +92,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     w(&["apps", "update"], None, &["store", "app"], &[], "Plan verified package-manager updates (review required)", "生成经验证的包管理器更新计划（需审阅）"),
     // Application uninstall (UNI-01..10): two separately reviewed plans; nothing runs or is deleted without review.
     c(&["apps", "uninstall", "list"], None, &[], &[], "Uninstall route per instance, or why there is none (read-only)", "各实例的卸载方式或不可卸载原因（只读）"),
-    w(&["apps", "uninstall", "plan", "create"], None, &["store", "instance"], &["end-running"], "Plan quitting and uninstalling an app (review required; --end-running only in a terminal)", "生成退出并卸载应用的计划（需审阅；--end-running 仅限终端）"),
+    w(&["apps", "uninstall", "plan", "create"], None, &["store", "instance"], &["end-running"], "Plan quitting and uninstalling apps; repeat --instance for several in one plan (review required; --end-running only in a terminal)", "生成退出并卸载应用的计划；重复 --instance 可在一份计划中卸载多个应用（需审阅；--end-running 仅限终端）"),
     c(&["apps", "uninstall", "leftovers"], None, &["store", "operation"], &[], "Grouped leftovers after an uninstall operation (read-only)", "卸载操作后的分组残留（只读）"),
     w(&["apps", "uninstall", "leftovers", "plan", "create"], None, &["store", "operation", "items", "exclude"], &[], "Plan removing leftovers: caches/logs (minus --exclude) plus --items IDs (review required)", "生成残留清理计划：缓存/日志（去掉 --exclude）及 --items 指定对象（需审阅）"),
     c(&["apps", "uninstall", "orphans"], None, &[], &[], "Leftovers of apps removed earlier (review_only, read-only)", "早先移除应用的孤立残留（仅审阅，只读）"),
@@ -189,6 +195,8 @@ pub struct Parsed {
     /// Option values exactly as received from the OS (paths may not be valid Unicode).
     pub raw_options: BTreeMap<String, OsString>,
     pub flags: Vec<String>,
+    /// Every value of a [`REPEATABLE`] option in command-line order (`options` holds the first).
+    pub repeated: BTreeMap<String, Vec<String>>,
     pub format: Format,
     /// `--format jsonl`: one compact record per line, progress records before the terminal one.
     pub stream: bool,
@@ -205,6 +213,14 @@ impl Parsed {
 
     pub fn raw_option(&self, key: &str) -> Option<&OsString> {
         self.raw_options.get(key)
+    }
+
+    /// All values of an option that may be repeated (UNI-11 `--instance`), in command-line order.
+    pub fn values(&self, key: &str) -> Vec<&str> {
+        match self.repeated.get(key) {
+            Some(v) => v.iter().map(String::as_str).collect(),
+            None => self.option(key).into_iter().collect(),
+        }
     }
 
     pub fn flag(&self, key: &str) -> bool {
@@ -264,6 +280,7 @@ pub fn parse(raw: &[OsString]) -> Result<Parsed, String> {
     let mut options = BTreeMap::new();
     let mut raw_options = BTreeMap::new();
     let mut flags = Vec::new();
+    let mut repeated: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut it = raw.iter();
     while let Some(os_arg) = it.next() {
         let arg = os_arg.to_str().ok_or("command words and option names must be valid Unicode")?;
@@ -278,6 +295,13 @@ pub fn parse(raw: &[OsString]) -> Result<Parsed, String> {
                 flags.push(key.to_owned());
             } else {
                 let value = it.next().ok_or_else(|| format!("--{key} needs a value"))?;
+                if REPEATABLE.contains(&key) {
+                    let v = value.to_string_lossy().into_owned();
+                    repeated.entry(key.to_owned()).or_default().push(v.clone());
+                    options.entry(key.to_owned()).or_insert(v);
+                    raw_options.entry(key.to_owned()).or_insert_with(|| value.clone());
+                    continue;
+                }
                 if options.insert(key.to_owned(), value.to_string_lossy().into_owned()).is_some() {
                     return Err(format!("--{key} given twice"));
                 }
@@ -305,7 +329,7 @@ pub fn parse(raw: &[OsString]) -> Result<Parsed, String> {
         // Non-TTY stdout defaults to machine output; never start an interactive UI implicitly.
         (false, None) => (if std::io::stdout().is_terminal() { Format::Text } else { Format::Json }, false),
     };
-    Ok(Parsed { words, options, raw_options, flags, format, stream, lang })
+    Ok(Parsed { words, options, raw_options, flags, repeated, format, stream, lang })
 }
 
 #[cfg(test)]

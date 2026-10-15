@@ -120,6 +120,22 @@ pub fn identity_chain(path: &cm_core::path::RawPath) -> cm_core::protect::Identi
     }
 }
 
+/// Default class of a live path as analysis classifies an indexed entry: the strongest class
+/// on the object and its ancestors (a non-reviewable class wins, else the nearest). The
+/// object's descendants are not walked. Shared by `protect check` and the disk view's hints.
+pub fn default_class(path: &Path) -> Option<cm_core::analysis::ProtectionClass> {
+    let mut found = Vec::new();
+    for (i, p) in path.ancestors().enumerate() {
+        let Some(name) = p.file_name() else { continue };
+        let meta = std::fs::symlink_metadata(p).ok();
+        // A missing ancestor is a directory by position; a missing object is classified as a file.
+        let is_dir = meta.as_ref().map_or(i > 0, |m| m.is_dir());
+        let has_git = is_dir && std::fs::symlink_metadata(p.join(".git")).is_ok();
+        found.extend(cm_core::analysis::class_of_name(&name.to_string_lossy().to_lowercase(), is_dir, has_git));
+    }
+    found.iter().copied().find(|c| !c.is_reviewable()).or_else(|| found.first().copied())
+}
+
 /// Pre-action protection check used by the executor: hard deny (by identity) → default
 /// classes → user list. Loaded once per operation; an unavailable list denies everything.
 /// `rule_refs` are the plan's `rule_id@version` references: a rule the user protected after

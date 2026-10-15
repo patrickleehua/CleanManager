@@ -130,6 +130,10 @@ def main():
         "unknown_descendants": nullable(COUNT), "link_count": nullable(COUNT),
         "boundary": nullable(enum("symlink", "junction", "mount_point", "other_volume", "cloud_provider")),
         "identity_quality": enum("strong", "weak")})
+    # DIN-05: optional read-only "cleanable by hand" hint on a directory (absent = no basis confirmed);
+    # never a selection, tier or protection decision.
+    defs["entry_item"]["properties"]["cleanable_hint"] = obj({"basis": enum("build_artifact", "catalog_rule", "cachedir_tag"),
+        "rule_id": nullable(STR), "detail": STR, "flow": enum("purge", "manual_trash")})
     defs["entries_page"] = record("entries_page", {"scan_id": STR, "scope_id": STR, "revision": COUNT,
         "sort": enum("logical_desc", "allocated_desc", "name_asc"), "filter": obj({"kind": enum("any", "file", "directory"),
             "name_contains": nullable(STR), "parent_entry_id": nullable(STR)}),
@@ -254,6 +258,16 @@ def main():
     # Uninstall stage 1 (D7): the leftovers it would probably leave, by group; an estimate only, never authorized.
     uninstall_groups = ("bundle", "caches_logs", "settings", "personal_data", "startup", "system")
     defs["plan"]["properties"]["leftover_estimate"] = {"type": "object", "propertyNames": enum(*uninstall_groups), "additionalProperties": COUNT}
+    # UNI-11: one uninstall plan for several applications: each application's actions and estimate, and the
+    # applications refused exactly as a single uninstall of them would be (left out; the others are unaffected).
+    defs["plan"]["properties"]["uninstall_apps"] = arr(obj({"app_instance_id": STR, "name": STR, "action_ids": arr(STR, 1),
+        "leftover_estimate": defs["plan"]["properties"]["leftover_estimate"]}), 1)
+    defs["plan"]["properties"]["uninstall_refused"] = arr(obj({"app_instance_id": STR, "name": nullable(STR),
+        "code": enum("invalid_argument", "policy_denied", "unsupported", "permission_required", "conflict", "io_error", "internal_error"),
+        "message": STR, "settings_uri": nullable(STR)}))
+    uninstall_app_outcome = obj({"app_instance_id": STR, "name": STR,
+        "status": enum("completed", "partial", "failed", "skipped", "not_started", "unknown", "pending"),
+        "code": nullable(STR), "message": nullable(STR), "action_ids": arr(STR, 1), "leftovers_reviewable": {"type": "boolean"}})
     defs["action_result"] = obj({"action_id": STR, "status": enum("succeeded", "skipped", "failed", "not_started", "unknown"),
         "code": STR, "message": STR, "recovery": enum("trash", "quarantine", "unavailable", "not_applicable", "unknown")})
     defs["operation_report"] = record("operation_report", {"operation_id": STR, "plan_id": STR,
@@ -265,6 +279,8 @@ def main():
         "processed_logical_bytes": UINT, "quarantined_logical_bytes": UINT, "estimated_freed_bytes": UINT,
         "volume_free_before_bytes": nullable(UINT),
         "volume_free_after_bytes": nullable(UINT), "observed_free_delta_bytes": nullable(SINT)})
+    # UNI-11: a stage-1 uninstall also reports each application's own result (optional; other plans omit it).
+    defs["operation_report"]["properties"]["uninstall_apps"] = arr(uninstall_app_outcome, 1)
     defs["error"] = record("error", {"code": enum("invalid_argument", "schema_mismatch", "needs_approval", "policy_denied",
         "permission_required", "plan_stale", "cursor_stale", "conflict", "unsupported", "io_error", "internal_error", "cancelled",
         "protection_unavailable"),
@@ -292,7 +308,10 @@ def main():
         "trash.inspect": obj({"scan_id": STR, "entry_id": STR}), "trash.list": obj({}),
         "insights.list": obj({"scan_id": nullable(STR)}),
         "apps.list": obj({"cursor": nullable(STR), "page_size": selection["page_size"]}),
-        "apps.uninstall.plan": obj({"app_instance_id": STR, "end_running": {"type": "boolean"}}),
+        # UNI-11: one application, or several in one plan (`--instance` repeated).
+        "apps.uninstall.plan": {**obj({"app_instance_id": STR, "app_instance_ids": {**arr(STR, 1), "uniqueItems": True, "maxItems": 20},
+            "end_running": {"type": "boolean"}}, ["end_running"]),
+            "oneOf": [{"required": ["app_instance_id"]}, {"required": ["app_instance_ids"]}]},
         # Parity 9.x: route list, grouped leftovers of a finished uninstall operation, their plan, orphans, key restores.
         "apps.uninstall.list": obj({}), "apps.uninstall.leftovers": obj({"operation_id": STR}),
         "apps.uninstall.leftovers_plan": obj({"operation_id": STR, "object_ids": {**arr(STR), "uniqueItems": True}}),
@@ -431,6 +450,13 @@ def main():
                 "value": nullable({"type": "number"}), "full_score_at": {"type": "number"}, "zero_score_at": {"type": "number"},
                 "score": nullable({"type": "integer", "minimum": 0, "maximum": 100})}))}),
         "diagnosis": obj({"code": STR, "message": STR, "link": nullable(STR)})})
+    # STS-07 (optional): network totals count physical interfaces only; loopback is excluded, tunnel/virtual adapters are
+    # listed separately; interfaces of unknown kind are counted and flag the total as possibly double counting.
+    net_rate = {"type": "number", "minimum": 0}
+    net_if = lambda *classes: obj({"name": STR, "class": enum(*classes), "received_bytes_per_sec": net_rate, "sent_bytes_per_sec": net_rate})
+    defs["status_snapshot"]["properties"]["network"] = obj({"classification": enum("interface_type", "unavailable"),
+        "received_bytes_per_sec": net_rate, "sent_bytes_per_sec": net_rate, "may_double_count": {"type": "boolean"},
+        "counted": arr(net_if("physical", "unknown")), "separate": arr(net_if("tunnel", "virtual")), "loopback_excluded": COUNT, "note": STR})
     defs["protection_entry"] = obj({"protection_id": STR, "layer": enum("hard_deny", "default_category", "user"),
         "match": defs["protection_entry_input"]["properties"]["match"], "display": STR, "removable": {"type": "boolean"},
         "note": nullable(STR), "added_at": nullable(TIME)})
@@ -569,12 +595,22 @@ def main():
     defs["uninstall_leftover"]["allOf"] = [
         {"if": {"properties": {"selected": {"const": True}}}, "then": {"properties": {"group": {"const": "caches_logs"}, "tier": {"const": "default_selected"}}}},
         {"if": {"required": ["marker"], "properties": {"marker": {"type": "string"}}}, "then": {"properties": {"tier": {"const": "kept"}}}}]
+    leftover_app = obj({"app_instance_id": STR, "name": STR, "publisher": nullable(STR),
+        "source": enum("registry_uninstall", "msi", "msix", "scoop", "npm_global", "unknown")})
+    leftover_groups = arr(obj({"group": enum(*uninstall_groups), "items": arr(ref("uninstall_leftover"), 1)}))
     defs["uninstall_leftovers"] = record("uninstall_leftovers", {"operation_id": nullable(STR),
-        "app": nullable(obj({"app_instance_id": STR, "name": STR, "publisher": nullable(STR),
-            "source": enum("registry_uninstall", "msi", "msix", "scoop", "npm_global", "unknown")})),
-        "groups": arr(obj({"group": enum(*uninstall_groups), "items": arr(ref("uninstall_leftover"), 1)})),
-        "default_selected": COUNT, "external_references": arr(STR)})
+        "app": nullable(leftover_app), "groups": leftover_groups, "default_selected": COUNT, "external_references": arr(STR)})
+    # UNI-11: the same review per application of the operation (optional; one entry for a single uninstall). An
+    # application whose uninstaller failed, was skipped or did not run lists no objects: it is still installed.
+    defs["uninstall_leftovers"]["properties"]["apps"] = arr(obj({"app": leftover_app,
+        "status": uninstall_app_outcome["properties"]["status"], "code": nullable(STR), "message": nullable(STR),
+        "leftovers_reviewable": {"type": "boolean"}, "groups": leftover_groups, "default_selected": COUNT, "external_references": arr(STR)}), 1)
     kinds += ["app_uninstall_list", "uninstall_leftovers"]
+    # D15: capabilities whose release gate has not passed are off unless experimental features are on.
+    defs["experimental_features"] = record("experimental_features", {"experimental_features": {"type": "boolean"},
+        "capabilities": arr(obj({"capability": STR, "gate": enum("G1", "G2", "G3", "G4", "AID"), "gate_passed": {"type": "boolean"},
+            "enabled": {"type": "boolean"}}), 1), "note": STR})
+    kinds += ["experimental_features"]
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
               "$id": "urn:cleanmanager:protocol:1.0", "title": "CleanManager proposed v1 record",
               "description": "Pre-implementation contract; examples are synthetic, not runtime evidence.",
@@ -706,6 +742,24 @@ def main():
             {"action_id": "a01", "action_type": "process_end", "pid": 4242, "started_at": "134050000000000000", "name": "example.exe",
              "image_path": wpath_early(r"C:\Users\Example\AppData\Local\Example\example.exe"), "image_sha256": "7" * 64}]),
     }
+    # UNI-11: one stage-1 plan for two applications (each its own close request and uninstaller); a third, protected
+    # one was refused as it would be on its own and is not in the plan.
+    def uninstaller(action_id, program):
+        return {**adapter, "action_id": action_id, "adapter_id": "windows.registered-uninstaller", "adapter_version": "1",
+                "executable": {"path": wpath_early(program), "sha256": "4" * 64}, "argv": [], "timeout_seconds": 3600}
+    batch = plan_v2("up_batch", "uninstall", [
+        {"action_id": "q0000000", "action_type": "app_quit", "app_instance_id": "app_demo", "app_identity": "C:\\Program Files\\Example App", "force": "never"},
+        uninstaller("u0000001", "C:\\Program Files\\Example App\\uninst.exe"),
+        {"action_id": "u0010000", "action_type": "app_quit", "app_instance_id": "app_tool", "app_identity": "C:\\Tools\\Example Tool", "force": "never"},
+        uninstaller("u0010001", "C:\\Tools\\Example Tool\\unins000.exe")])
+    batch["leftover_estimate"] = {"caches_logs": 3, "settings": 2, "bundle": 2}
+    batch["uninstall_apps"] = [
+        {"app_instance_id": "app_demo", "name": "Example App", "action_ids": ["q0000000", "u0000001"], "leftover_estimate": {"caches_logs": 2, "settings": 1, "bundle": 1}},
+        {"app_instance_id": "app_tool", "name": "Example Tool", "action_ids": ["u0010000", "u0010001"], "leftover_estimate": {"caches_logs": 1, "settings": 1, "bundle": 1}}]
+    batch["uninstall_refused"] = [{"app_instance_id": "app_agent", "name": "Example Endpoint Agent", "code": "policy_denied",
+        "message": "Security or device-management agent: CleanManager offers no uninstall; remove it through your administrator or the vendor's official uninstall process",
+        "settings_uri": None}]
+    v2["plan-v2-uninstall-batch"] = batch
     for name, example in v2.items():
         save("examples/contracts/" + name + ".json", example)
     # CLI-10 fixtures (synthetic; no real application, metric or path is claimed).
@@ -762,6 +816,10 @@ def main():
             "operation_id": None, "scope_id": None}),
         "unsupported-capability": rec("error", code="unsupported", message="Fan control is not available on this platform",
             retryable=False, required_action=None, details={"plan_id": None, "operation_id": None, "scope_id": None}),
+        # D15: a gated capability is off until its gate passes or experimental features are turned on.
+        "experimental-off": rec("error", code="unsupported", message="maintenance.run is off until release gate G3 passes; experimental features are "
+            "disabled. To evaluate it on this machine, turn them on with `cleanmanager experimental --state on` or 设置 › 实验功能 in the desktop app",
+            retryable=False, required_action="cleanmanager experimental --state on", details={"plan_id": None, "operation_id": None, "scope_id": None}),
         "protection-unavailable": rec("error", code="protection_unavailable", message="Protection list could not be parsed",
             retryable=False, required_action="Repair or reset the protection list", details={"plan_id": None, "operation_id": None, "scope_id": None}),
         "app-list": rec("app_list", next_cursor=None, page_size=50, items=[
@@ -835,7 +893,14 @@ def main():
                                     "score": 100},
                                    {"dimension": "thermal", "metric": "thermal.max_zone_celsius", "value": None, "full_score_at": 70,
                                     "zero_score_at": 95, "score": None}]},
-            diagnosis={"code": "low_free_space", "message": "System volume free space is low", "link": "analyze"}),
+            diagnosis={"code": "low_free_space", "message": "System volume free space is low", "link": "analyze"},
+            network={"classification": "interface_type", "received_bytes_per_sec": 120000.0, "sent_bytes_per_sec": 30000.0,
+                     "may_double_count": False,
+                     "counted": [{"name": "Wi-Fi", "class": "physical", "received_bytes_per_sec": 120000.0, "sent_bytes_per_sec": 30000.0}],
+                     "separate": [{"name": "Example VPN", "class": "tunnel", "received_bytes_per_sec": 100000.0, "sent_bytes_per_sec": 25000.0},
+                                  {"name": "vEthernet (WSL)", "class": "virtual", "received_bytes_per_sec": 0.0, "sent_bytes_per_sec": 0.0}],
+                     "loopback_excluded": 1,
+                     "note": "Physical interfaces only; loopback is excluded and tunnel or virtual adapters are listed separately, not added"}),
         "protection-list": rec("protection_list", items=[
             {"protection_id": "hd_windows", "layer": "hard_deny", "match": "descendants", "display": "C:\\Windows (system_root)",
              "removable": False, "note": None, "added_at": None},
@@ -921,6 +986,14 @@ def main():
                 entry_item("e_videos", "C:\\Users\\Example\\Videos", "directory", "73400320", "subtree_known"),
                 entry_item("e_iso", "C:\\Users\\Example\\image.iso", "file", "31457280"),
                 entry_item("e_denied", "C:\\Users\\Example\\Private", "directory", None, "unknown")]),
+        "entries-page-cleanable": rec("entries_page", scan_id="s_demo", scope_id="scope_demo", revision=1, sort="logical_desc",
+            filter={"kind": "directory", "name_contains": None, "parent_entry_id": "e_app"}, page_size=3, next_cursor=None,
+            unknown_size_items=0, items=[
+                {**entry_item("e_nm", "C:\\Users\\Example\\source\\app\\node_modules", "directory", "524288000", "subtree_known", "e_app"),
+                 "cleanable_hint": {"basis": "build_artifact", "rule_id": "purge.node-modules", "detail": "package.json", "flow": "purge"}},
+                {**entry_item("e_tool", "C:\\Users\\Example\\source\\app\\.tool-cache", "directory", "41943040", "subtree_known", "e_app"),
+                 "cleanable_hint": {"basis": "cachedir_tag", "rule_id": None, "detail": "CACHEDIR.TAG", "flow": "manual_trash"}},
+                entry_item("e_src", "C:\\Users\\Example\\source\\app\\src", "directory", "2097152", "subtree_known", "e_app")]),
         "candidates-page": rec("candidates_page", candidate_set_id="cs_demo", scan_id="s_demo", revision=1, page_size=50,
             next_cursor=None, items=[cand_item]),
         "analysis-result": rec("analysis_result", candidate_set_id="cs_demo", scan_id="s_demo", scan_revision=1,
@@ -1053,6 +1126,10 @@ def main():
             {"app_instance_id": "app_tool", "name": "Unpackaged Tool", "current_version": "0.9", "available_version": None, "channel": None,
              "channel_id": None, "state": "cannot_check", "reason": "No update channel: not installed through winget, Microsoft Store or Scoop",
              "checked_at": t1, "route": "none", "official_url": None}])
+    cli["experimental-features"] = rec("experimental_features", experimental_features=False, capabilities=[
+            {"capability": "clean.catalog", "gate": "G1", "gate_passed": False, "enabled": False},
+            {"capability": "maintenance.run", "gate": "G3", "gate_passed": False, "enabled": False}],
+        note="Capabilities whose release gate has not passed are off unless experimental features are on. They are for evaluation on this machine only; turning this on passes no gate and changes no plan review.")
     cli["app-update-settings"] = rec("app_update_settings", checks_enabled=False, periodic_checks=False, last_checked_at=t1,
         note="Checks run only when you ask (apps updates); off means no update request of any kind is made.")
     upd_target = {"app_instance_id": "app_editor", "name": "Example Editor", "channel": "winget", "package_id": "Example.Editor",
@@ -1106,6 +1183,35 @@ def main():
                 {"group": "system", "items": [leftover("lo_svc", "service", "system", "service ExampleAppUpdater", "review_only", False, action="manual",
                     guidance="CleanManager does not delete services: stop it and run `sc.exe delete ExampleAppUpdater` from an administrator terminal")]}],
         default_selected=1, external_references=["C:\\Users\\Example\\.gitconfig mentions C:\\Program Files\\Example App (read-only hint; CleanManager does not edit it)"])
+    # UNI-11: a batch request, its per-application results (one uninstaller failed, the other completed) and the
+    # leftover review of that operation: only the application whose uninstaller succeeded has objects to review.
+    cli["request-apps-uninstall-batch"] = rec("cli_request", command="apps.uninstall.plan", output="json", non_interactive=True, dry_run=False,
+        params={"app_instance_ids": ["app_demo", "app_tool"], "end_running": False})
+    def result(action_id, status, code, message):
+        return {"action_id": action_id, "status": status, "code": code, "message": message, "recovery": "not_applicable"}
+    cli["operation-uninstall-batch"] = rec("operation_report", operation_id="op_batch", plan_id="up_batch", plan_digest="6" * 64, status="partial",
+        started_at="2026-10-15T12:00:00Z", finished_at="2026-10-15T12:01:10Z", succeeded=3, skipped=0, failed=1, not_started=0, unknown=0,
+        items=[result("q0000000", "succeeded", "not_running", "Example App is not running"),
+               result("u0000001", "failed", "uninstaller_failed", "uninstaller exited with code 1603 after 5120 ms; rescan: the install folder and the uninstall registration still present"),
+               result("u0010000", "succeeded", "not_running", "Example Tool is not running"),
+               result("u0010001", "succeeded", "done", "uninstaller exited with code 0 after 8410 ms; rescan: install folder and registration are gone")],
+        processed_logical_bytes="0", quarantined_logical_bytes="0", estimated_freed_bytes="0", volume_free_before_bytes=None,
+        volume_free_after_bytes=None, observed_free_delta_bytes=None, uninstall_apps=[
+            {"app_instance_id": "app_demo", "name": "Example App", "status": "failed", "code": "uninstaller_failed",
+             "message": "uninstaller exited with code 1603 after 5120 ms; rescan: the install folder and the uninstall registration still present",
+             "action_ids": ["q0000000", "u0000001"], "leftovers_reviewable": False},
+            {"app_instance_id": "app_tool", "name": "Example Tool", "status": "completed", "code": "done",
+             "message": "uninstaller exited with code 0 after 8410 ms; rescan: install folder and registration are gone",
+             "action_ids": ["u0010000", "u0010001"], "leftovers_reviewable": True}])
+    tool_cache = leftover("lo_toolcache", "directory", "caches_logs", "C:\\Users\\Example\\AppData\\Local\\Example Tool\\Cache", "default_selected", True, size="2097152")
+    demo_app = {"app_instance_id": "app_demo", "name": "Example App", "publisher": "Example Vendor Ltd.", "source": "registry_uninstall"}
+    tool_app = {"app_instance_id": "app_tool", "name": "Example Tool", "publisher": None, "source": "registry_uninstall"}
+    cli["uninstall-leftovers-batch"] = rec("uninstall_leftovers", operation_id="op_batch", app=None,
+        groups=[{"group": "caches_logs", "items": [tool_cache]}], default_selected=1, external_references=[], apps=[
+            {"app": demo_app, "status": "failed", "code": "uninstaller_failed", "message": "uninstaller exited with code 1603 after 5120 ms",
+             "leftovers_reviewable": False, "groups": [], "default_selected": 0, "external_references": []},
+            {"app": tool_app, "status": "completed", "code": "done", "message": "uninstaller exited with code 0 after 8410 ms",
+             "leftovers_reviewable": True, "groups": [{"group": "caches_logs", "items": [tool_cache]}], "default_selected": 1, "external_references": []}])
     for name, example in cli.items():
         save("examples/contracts/" + name + ".json", example)
     save("rules/examples/example-cache.json", {"schema_version": "1.0", "rule_id": "example.cache", "version": "0.1.0",

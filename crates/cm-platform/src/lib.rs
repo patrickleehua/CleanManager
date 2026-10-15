@@ -1,6 +1,7 @@
 //! Platform access for CleanManager. Each OS module implements `cm_core` traits; the core
 //! never calls OS APIs directly.
 
+pub mod cleanable;
 pub mod credentials;
 pub mod host;
 pub mod paths;
@@ -10,7 +11,7 @@ pub mod macos;
 #[cfg(windows)]
 pub mod windows;
 
-use cm_core::capability::{Capability, CapabilityProvider, CapabilityState, Platform};
+use cm_core::capability::{Capability, CapabilityProvider, CapabilityState, GATED, Platform};
 
 #[cfg(not(any(windows, target_os = "macos")))]
 compile_error!("CleanManager supports Windows and macOS only.");
@@ -34,7 +35,9 @@ impl CapabilityProvider for HostPlatform {
         let mut caps: Vec<Capability> = names.iter().map(|n| Capability::new(n, CapabilityState::Unverified, Some(NOT_YET_VERIFIED))).collect();
         // Mole-parity tools (add-mole-parity-suite 18.5): implemented on Windows but not through their gate, so never
         // `available`; the macOS backends do not exist in this build.
-        for (name, gate) in PARITY {
+        // The experimental-features switch (`cm_app::features`) may further report them off on this machine.
+        for g in GATED {
+            let (name, gate) = (g.capability, g.gate);
             caps.push(if cfg!(windows) {
                 Capability::new(name, CapabilityState::Unverified, Some(&format!("Implemented on Windows; gate {gate} not passed (no release, CI or real-device acceptance yet)")))
             } else {
@@ -44,24 +47,6 @@ impl CapabilityProvider for HostPlatform {
         caps
     }
 }
-
-/// Parity capabilities and the gate (D15) each must pass before it may report `available`.
-const PARITY: &[(&str, &str)] = &[
-    ("clean.catalog", "G1"),
-    ("purge.artifacts", "G1"),
-    ("installer.cleanup", "G1"),
-    ("trash.manual", "G1"),
-    ("insights.overview", "G1"),
-    ("apps.uninstall", "G3"),
-    ("apps.updates", "G3"),
-    ("startup.toggle", "G3"),
-    ("maintenance.run", "G3"),
-    ("status.metrics", "G3"),
-    ("process.end", "G3"),
-    ("resident.utilities", "G4"),
-    ("lifecycle.self_update", "G3"),
-    ("diag.ai", "AID"),
-];
 
 pub fn host() -> HostPlatform {
     HostPlatform

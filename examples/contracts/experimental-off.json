@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "unsupported",
+  "message": "maintenance.run is off until release gate G3 passes; experimental features are disabled. To evaluate it on this machine, turn them on with `cleanmanager experimental --state on` or 设置 › 实验功能 in the desktop app",
+  "retryable": false,
+  "required_action": "cleanmanager experimental --state on",
+  "details": {
+    "plan_id": null,
+    "operation_id": null,
+    "scope_id": null
+  }
+}

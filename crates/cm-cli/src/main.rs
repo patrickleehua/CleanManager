@@ -9,6 +9,7 @@ mod commands;
 mod completion_cmd;
 mod diag_cmd;
 mod doctor_cmd;
+mod features_cmd;
 mod i18n;
 mod insights_cmd;
 mod install_self;
@@ -87,6 +88,21 @@ fn main() -> ExitCode {
     match args::parse(&raw) {
         Ok(parsed) => {
             i18n::set(parsed.lang);
+            // CLI-14: stderr only, Doctor path display rules; never part of any decision or stdout record.
+            if parsed.flag("debug") {
+                let redactor = doctor_cmd::Redactor::from_env();
+                cm_core::trace::enable(Box::new(move |s| redactor.text(s)));
+                cm_core::debug_trace!(
+                    "cli",
+                    "command=\"{}\" format={:?} stream={} non_interactive={} version={}",
+                    parsed.words.join(" "),
+                    parsed.format,
+                    parsed.stream,
+                    parsed.non_interactive(),
+                    env!("CARGO_PKG_VERSION")
+                );
+            }
+            let _run = cm_core::trace::span("cli.run");
             commands::run(&req, parsed)
         }
         Err(msg) => fail(&req, ErrorCode::InvalidArgument, &msg, fallback),

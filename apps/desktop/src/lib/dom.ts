@@ -45,6 +45,7 @@ const ICONS: Record<string, string> = {
   scope: 'M4 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z',
   theme: 'M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z',
   up: 'M12 5l-7 7h4v7h6v-7h4l-7-7Z',
+  down: 'M12 19l-7-7h4V5h6v7h4l-7 7Z',
   close: 'M6 6l12 12M18 6 6 18',
   info: 'M12 8h.01M11 12h1v5h1',
   cleanup: 'M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5',

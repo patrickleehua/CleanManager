@@ -164,6 +164,7 @@ function nppLeftovers(): Leftovers {
     app: { app_instance_id: 'app_b17a3e60f2c4', name: 'Notepad++', publisher: 'Notepad++ Team', source: 'registry_uninstall' },
     is_admin: false,
     default_selected: 2,
+    apps: [],
     external_references: [`${HOME}\\.gitconfig`, `${HOME}\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1`],
     groups: [
       {
@@ -446,7 +447,9 @@ export function mockSoftware(makePlan: MakePlan, seed: Seed): SoftwareBackend {
     'partial',
     60 * 3,
   );
-  recent.push({ operation_id: nppOp, plan_id: nppPlan, app_name: 'Notepad++', stage: 'uninstall', state: 'partial', started_at: iso(-60 * 3), finished_at: iso(-60 * 3 + 2) });
+  recent.push({ operation_id: nppOp, plan_id: nppPlan, app_name: 'Notepad++', app_count: 1, stage: 'uninstall', state: 'partial', leftovers_reviewable: true, started_at: iso(-60 * 3), finished_at: iso(-60 * 3 + 2) });
+  /** Which applications each stage-1 preview run held, and whether each one's uninstaller succeeded (UNI-11). */
+  const runApps = new Map<string, { app: UninstallApp; ok: boolean }[]>([[nppOp, [{ app: APPS.find((a) => a.app_instance_id === 'app_b17a3e60f2c4')!, ok: true }]]]);
 
   const uninstallScript = (a: UninstallApp): Scripted[] =>
     a.app_instance_id === 'app_7c1e0a9b2f41'
@@ -466,31 +469,73 @@ export function mockSoftware(makePlan: MakePlan, seed: Seed): SoftwareBackend {
       await delay(260);
       return { supported: true, is_admin: false, items: APPS.map((a) => ({ ...a })), issues: [{ code: 'unreadable_key', scope_display: 'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{0F…}', message: '1 registration could not be read; it is not listed' }], recent: recent.map((r) => ({ ...r })) };
     },
-    async uninstallPlan(id) {
+    async uninstallPlan(ids) {
       await delay(420);
-      const a = APPS.find((x) => x.app_instance_id === id);
-      if (!a) throw err('invalid_argument', 'invalid_argument', `no installed application ${id}`);
-      if (a.state !== 'available') throw err(a.state === 'unsupported' ? 'policy_denied' : 'unsupported', a.state === 'unsupported' ? 'policy_denied' : 'unsupported', `${a.reason ?? ''} (ms-settings:appsfeatures)`);
+      // UNI-11: one plan for every selected app; refused ones (protected, no verifiable route) stay out, as on their own.
+      const chosen: UninstallApp[] = [];
+      const refused: { app_instance_id: string; name: string | null; reason: string; message: string }[] = [];
+      for (const id of ids) {
+        const a = APPS.find((x) => x.app_instance_id === id);
+        if (!a) refused.push({ app_instance_id: id, name: null, reason: 'invalid_argument', message: `no installed application ${id}` });
+        else if (a.state !== 'available') refused.push({ app_instance_id: id, name: a.name, reason: a.state === 'unsupported' ? 'policy_denied' : 'unsupported', message: `${a.reason ?? ''} (ms-settings:appsfeatures)` });
+        else chosen.push(a);
+      }
+      if (!chosen.length) {
+        if (refused.length === 1) throw err(refused[0].reason, refused[0].reason, refused[0].message);
+        throw err('invalid_argument', 'invalid_argument', `none of the selected applications can be uninstalled here: ${refused.map((r) => `${r.name ?? r.app_instance_id}: ${r.message}`).join('; ')}`);
+      }
       const estimate = ESTIMATE.default;
+      const total: Record<string, number> = {};
+      for (const _ of chosen) for (const [g, n] of Object.entries(estimate)) total[g] = (total[g] ?? 0) + n;
+      const items: PlanItem[] = [];
+      const script: Scripted[] = [];
+      const apps = chosen.map((a, n) => {
+        // Ids sort in plan order: the first app keeps q0000000/u0000001, the n-th uses u{n:03}0000/u{n:03}0001.
+        const q = n === 0 ? 'q0000000' : `u${String(n).padStart(3, '0')}0000`;
+        const u = `u${String(n).padStart(3, '0')}0001`;
+        items.push(row(q, a.name, a.location ?? a.name, 'app_quit', 'app_quit', { detail: { force: 'never', app_instance_id: a.app_instance_id } }));
+        items.push(row(u, a.name, a.adapter!.display, 'uninstaller', 'tool_adapter', { detail: { adapter_id: a.adapter!.adapter_id, program: a.location ?? '', timeout_seconds: 3600, app_instance_id: a.app_instance_id } }));
+        script.push(...uninstallScript(a));
+        return { app_instance_id: a.app_instance_id, name: a.name, publisher: a.publisher, version: a.version, source: a.source, adapter: a.adapter!.display, signer: a.publisher, action_ids: [q, u] };
+      });
+      const names = chosen.map((a) => a.name).join('、');
+      const batchApps = chosen.map((a) => ({ app_instance_id: a.app_instance_id, name: a.name, leftover_estimate: estimate }));
+      const first = apps[0];
       const planId = makePlan(
         'uninstall',
         null,
-        [
-          row('q0000000', a.name, a.location ?? a.name, 'app_quit', 'app_quit', { detail: { force: 'never' } }),
-          row('u0000001', a.name, a.adapter!.display, 'uninstaller', 'tool_adapter', { detail: { adapter_id: a.adapter!.adapter_id, program: a.location ?? '', timeout_seconds: 3600 } }),
-        ],
-        { ...V2, plan_kind_v2: 'uninstall', kind_detail: { stage: 'uninstall', app: { name: a.name, publisher: a.publisher, version: a.version, source: a.source, adapter: a.adapter!.display, signer: a.publisher }, may_end_processes: false, noted: { app_name: a.name, leftover_estimate: estimate } } },
-        uninstallScript(a),
-        (op) => recent.unshift({ operation_id: op, plan_id: planId, app_name: a.name, stage: 'uninstall', state: a.app_instance_id === 'app_7c1e0a9b2f41' ? 'failed' : 'partial', started_at: iso(0), finished_at: iso(0) }),
+        items,
+        {
+          ...V2,
+          plan_kind_v2: 'uninstall',
+          kind_detail: { stage: 'uninstall', app: first, apps, may_end_processes: false, noted: { app_name: names, leftover_estimate: total, apps: batchApps, refused } },
+        },
+        script,
+        (op) => {
+          const ran = chosen.map((a) => ({ app: a, ok: a.app_instance_id !== 'app_7c1e0a9b2f41' }));
+          runApps.set(op, ran);
+          const ok = ran.filter((r) => r.ok).length;
+          recent.unshift({ operation_id: op, plan_id: planId, app_name: names, app_count: chosen.length, stage: 'uninstall', state: ok ? 'partial' : 'failed', leftovers_reviewable: ok > 0, started_at: iso(0), finished_at: iso(0) });
+        },
       );
-      return { plan_id: planId, leftover_estimate: estimate };
+      return { plan_id: planId, leftover_estimate: total, apps: batchApps, refused };
     },
     async uninstallLeftovers(opId) {
       await delay(520);
       if (!recent.some((r) => r.operation_id === opId && r.stage === 'uninstall')) throw err('invalid_argument', 'invalid_argument', `operation ${opId} is not an application uninstall`);
+      const ran = runApps.get(opId) ?? [];
+      if (!ran.some((r) => r.ok)) throw err('invalid_argument', 'invalid_argument', `the uninstall in operation ${opId} did not complete; its leftovers are not reviewed or removed while the application is still installed`);
+      // The preview has one set of leftover objects: it belongs to the first application whose uninstaller succeeded.
       const l = nppLeftovers();
-      const run = recent.find((r) => r.operation_id === opId)!;
-      return { ...l, operation_id: opId, app: { ...l.app, name: run.app_name } };
+      const owner = ran.find((r) => r.ok)!.app;
+      const apps = ran.map((r) => {
+        const app = { app_instance_id: r.app.app_instance_id, name: r.app.name, publisher: r.app.publisher, source: r.app.source };
+        const mine = r.app === owner;
+        return r.ok
+          ? { app, status: 'partial' as const, code: 'leftovers_remain', message: 'uninstaller exited with code 0; rescan: the install folder still present: partial', leftovers_reviewable: true, groups: mine ? l.groups : [], default_selected: mine ? l.default_selected : 0, external_references: mine ? l.external_references : [] }
+          : { app, status: 'skipped' as const, code: 'still_running', message: 'still running after the close request; nothing was uninstalled', leftovers_reviewable: false, groups: [], default_selected: 0, external_references: [] };
+      });
+      return { ...l, operation_id: opId, app: ran.length === 1 ? apps[0].app : null, apps };
     },
     async uninstallLeftoversPlan(opId, ids) {
       await delay(640);
@@ -507,12 +552,13 @@ export function mockSoftware(makePlan: MakePlan, seed: Seed): SoftwareBackend {
         return row(`f${String(n).padStart(4, '0')}0000`, c!.display.split('\\').pop()!, c!.display, 'directory', 'fs_trash', { logical_bytes: c!.logical_bytes ?? '0', detail: { leftover: `${c!.group}: ${c!.display}` } });
       });
       const run = recent.find((r) => r.operation_id === opId);
+      const owner = (runApps.get(opId) ?? []).filter((r) => r.ok).map((r) => r.app.name).join('、');
       const keys = items.filter((i) => i.action_type === 'registry_backup_delete').length;
       const planId = makePlan(
         'uninstall_leftovers',
         null,
         items,
-        { ...V2, plan_kind_v2: 'uninstall', total_logical_bytes: items.reduce((a, i) => a + BigInt(i.logical_bytes), 0n).toString(), kind_detail: { stage: 'leftovers', app: null, registry_keys: keys, noted: { app_name: run?.app_name ?? 'Notepad++', operation_id: opId } } },
+        { ...V2, plan_kind_v2: 'uninstall', total_logical_bytes: items.reduce((a, i) => a + BigInt(i.logical_bytes), 0n).toString(), kind_detail: { stage: 'leftovers', app: null, registry_keys: keys, noted: { app_name: owner || run?.app_name || 'Notepad++', operation_id: opId } } },
         items.map((i) => (i.action_type === 'registry_backup_delete' ? { status: 'succeeded', code: 'done', message: 'deleted after its backup was stored' } : { status: 'succeeded', code: 'done', message: '' })),
       );
       return { plan_id: planId };

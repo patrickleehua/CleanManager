@@ -1,7 +1,7 @@
 use super::*;
 use crate::authz::{KindReceipt, Receipt, ReceiptSource, kind_receipt_valid};
 
-const GOLDEN: [(&str, &str); 11] = [
+const GOLDEN: [(&str, &str); 12] = [
     ("cleanup", include_str!("../../../../../examples/contracts/plan-v2-cleanup.json")),
     ("manual", include_str!("../../../../../examples/contracts/plan-v2-manual-selection.json")),
     ("manual-purge", include_str!("../../../../../examples/contracts/plan-v2-manual-trash-purge.json")),
@@ -13,6 +13,8 @@ const GOLDEN: [(&str, &str); 11] = [
     ("manual-folder", include_str!("../../../../../examples/contracts/plan-v2-manual-folder.json")),
     ("startup-disable", include_str!("../../../../../examples/contracts/plan-v2-startup-disable.json")),
     ("process", include_str!("../../../../../examples/contracts/plan-v2-process.json")),
+    // UNI-11: one uninstall plan for two applications (each its own close request and uninstaller).
+    ("uninstall-batch", include_str!("../../../../../examples/contracts/plan-v2-uninstall-batch.json")),
 ];
 
 fn golden(name: &str) -> PlanBodyV2 {

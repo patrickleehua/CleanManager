@@ -2,6 +2,8 @@
 
 状态：变更 `add-mole-parity-suite` 任务 10.2–10.3 已勾选；10.1（检测通道）只实现了 Windows 通道，因此未勾选。整体未通过 G3 门禁（任务 18.3），没有发布。实现位置：核心 `cm_core::updates`，服务 `cm_app::updates`，平台 `windows/updates.rs`，执行走 `cm_app::plans` 的 `update` 计划。macOS 的 Sparkle、App Store、Homebrew 与 Electron 检测未实现，命令返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
+默认关闭（设计 D15）：应用更新尚未通过门禁 G3，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 ## 检测通道与“无法检查”（UPD-01）
 
 | 通道 | 检测方式 | 结果 |

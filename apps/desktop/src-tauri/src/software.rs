@@ -95,10 +95,15 @@ pub struct UninstallAppDto {
 pub struct UninstallRunDto {
     pub operation_id: String,
     pub plan_id: String,
+    /// The application, or every application of a batch (UNI-11) joined for display.
     pub app_name: String,
+    /// Applications in the plan (stage 1; 0 for a leftovers plan).
+    pub app_count: usize,
     /// `uninstall` (stage 1) or `leftovers` (stage 2).
     pub stage: &'static str,
     pub state: String,
+    /// Stage 1 finished and at least one application's uninstaller succeeded: its leftovers can be reviewed.
+    pub leftovers_reviewable: bool,
     pub started_at: String,
     pub finished_at: Option<String>,
 }
@@ -116,8 +121,28 @@ pub struct UninstallListDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct UninstallPlanDto {
     pub plan_id: String,
-    /// D7: what would probably remain, by group (an estimate shown in review, never part of the plan).
+    /// D7: what would probably remain, by group (an estimate shown in review, never part of the plan), over the batch.
     pub leftover_estimate: BTreeMap<String, usize>,
+    /// UNI-11: the applications in the plan, in plan order.
+    pub apps: Vec<BatchAppDto>,
+    /// Applications refused exactly as on their own (protected class, unverifiable route...); not in the plan.
+    pub refused: Vec<BatchRefusalDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BatchAppDto {
+    pub app_instance_id: String,
+    pub name: String,
+    pub leftover_estimate: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BatchRefusalDto {
+    pub app_instance_id: String,
+    pub name: Option<String>,
+    /// The reason word of [`refused`] (`policy_denied`, `unsupported`...).
+    pub reason: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -155,11 +180,29 @@ pub struct LeftoverGroupDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct LeftoversDto {
     pub operation_id: String,
+    /// The application of a single uninstall; `null` for a batch (see `apps`).
     pub app: Value,
     pub is_admin: bool,
+    /// Every reviewable object of the operation (all applications).
     pub groups: Vec<LeftoverGroupDto>,
     pub default_selected: usize,
     /// Home-folder configuration files that mention the install folder: a read-only hint, never planned.
+    pub external_references: Vec<String>,
+    /// UNI-11: the same review per application, in plan order. An application whose uninstaller failed, was skipped
+    /// or did not run lists no objects: it is still installed and keeps everything.
+    pub apps: Vec<LeftoverAppDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LeftoverAppDto {
+    pub app: Value,
+    /// `completed`, `partial`, `failed`, `skipped`, `not_started`, `unknown` (see `cm_app::uninstall::AppOutcome`).
+    pub status: &'static str,
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub leftovers_reviewable: bool,
+    pub groups: Vec<LeftoverGroupDto>,
+    pub default_selected: usize,
     pub external_references: Vec<String>,
 }
 
@@ -222,6 +265,30 @@ pub fn grouped(items: &[cm_core::uninstall::Leftover], is_admin: bool) -> Vec<Le
     out
 }
 
+/// The IPC shape of a stage-1 batch: per application its estimate, the batch total, and the refused applications.
+#[allow(clippy::type_complexity)]
+pub fn batch_dto(plan_id: &str, apps: &[(&str, &str, &BTreeMap<cm_core::uninstall::Group, usize>)], refusals: &[(&str, Option<&str>, &cm_app::uninstall::Refused)]) -> UninstallPlanDto {
+    let mut total: BTreeMap<String, usize> = BTreeMap::new();
+    let apps = apps
+        .iter()
+        .map(|(id, name, estimate)| {
+            let est: BTreeMap<String, usize> = estimate.iter().map(|(g, n)| (enum_word(g), *n)).collect();
+            for (g, n) in &est {
+                *total.entry(g.clone()).or_insert(0) += n;
+            }
+            BatchAppDto { app_instance_id: (*id).to_owned(), name: (*name).to_owned(), leftover_estimate: est }
+        })
+        .collect();
+    let refused = refusals
+        .iter()
+        .map(|(id, name, r)| {
+            let e = refused(r);
+            BatchRefusalDto { app_instance_id: (*id).to_owned(), name: name.map(str::to_owned), reason: e.reason.to_string(), message: e.message }
+        })
+        .collect();
+    UninstallPlanDto { plan_id: plan_id.to_owned(), leftover_estimate: total, apps, refused }
+}
+
 /// Split a final selection into what the core adds by name (`extra`) and preselected objects the person cleared.
 pub fn split_selection(all: &[cm_core::uninstall::Leftover], chosen: &[String]) -> (Vec<String>, Vec<String>) {
     let pre: Vec<&str> = all.iter().filter(|l| l.selected).map(|l| l.object_id.as_str()).collect();
@@ -230,12 +297,18 @@ pub fn split_selection(all: &[cm_core::uninstall::Leftover], chosen: &[String]) 
     (extra, dropped)
 }
 
-/// The app name of a stored uninstall plan (stage 1), for recent runs.
+/// The app name of a stored uninstall plan (stage 1), for recent runs; the applications of a batch, joined.
 fn plan_app(plan: &PlanV2) -> Option<String> {
-    plan.meta.iter().find_map(|m| match &m.uninstall {
-        Some(cm_core::uninstall::UninstallMeta::App { identity, .. }) => Some(identity.name.clone()),
-        _ => None,
-    })
+    let names: Vec<String> = cm_app::uninstall::planned_apps(plan).into_iter().map(|a| a.identity.name).collect();
+    (!names.is_empty()).then(|| names_text(&names))
+}
+
+/// Display names of several applications: all of them up to three, then the first two and a count.
+pub fn names_text(names: &[String]) -> String {
+    match names.len() {
+        0..=3 => names.join("、"),
+        n => format!("{} 等 {n} 个应用", names[..2].join("、")),
+    }
 }
 
 /// Recent uninstall operations, newest first (at most `limit`).
@@ -255,12 +328,17 @@ pub fn recent_runs(stores: &cm_store::Stores, notes: &HashMap<String, Value>, li
         }
         let stage1 = crate::v2::runs_uninstaller(&plan);
         let name = plan_app(&plan).or_else(|| notes.get(&r.plan_id).and_then(|n| n["app_name"].as_str().map(str::to_owned))).unwrap_or_else(|| "—".into());
+        // UNI-11: leftovers exist only for applications whose own uninstaller succeeded.
+        let report = stores.audit.operation_report(&r.operation_id).ok().flatten().and_then(|j| serde_json::from_str::<cm_app::execute::OperationReport>(&j).ok());
+        let outcomes = cm_app::uninstall::app_outcomes(&plan, report.as_ref());
         out.push(UninstallRunDto {
             operation_id: r.operation_id,
             plan_id: r.plan_id,
             app_name: name,
+            app_count: outcomes.len(),
             stage: if stage1 { "uninstall" } else { "leftovers" },
             state: r.state,
+            leftovers_reviewable: stage1 && outcomes.iter().any(|o| o.leftovers_reviewable),
             started_at: r.started_at,
             finished_at: r.finished_at,
         });
@@ -330,31 +408,67 @@ mod win {
         })
     }
 
-    /// Stage 1 (UNI-01/02/03/10): never the variant that may end processes.
-    pub fn plan(s: &AppState, instance: &str) -> IpcResult<UninstallPlanDto> {
+    /// Stage 1 (UNI-01/02/03/10/11) for one or several applications in one plan: never the variant that may end
+    /// processes. Refused applications are reported and left out; the request fails only when all are refused.
+    pub fn plan(s: &AppState, instances: &[String]) -> IpcResult<UninstallPlanDto> {
         let env = env()?;
         let st = stores(s)?;
         let plan_id = new_id("up");
         let pdigest = crate::cleanup::policy_digest(&st);
-        let s1 = cm_app::uninstall::create_uninstall_plan(&st, &env, instance, false, &plan_id, now_unix(), &pdigest).map_err(|r| refused(&r))?;
-        let estimate: BTreeMap<String, usize> = s1.estimate.iter().map(|(g, n)| (enum_word(g), *n)).collect();
-        note_plan(s, &plan_id, json!({"app_name": s1.record.name, "leftover_estimate": estimate}));
-        Ok(UninstallPlanDto { plan_id, leftover_estimate: estimate })
+        let b = cm_app::uninstall::create_uninstall_batch(&st, &env, instances, false, &plan_id, now_unix(), &pdigest).map_err(|r| refused(&r))?;
+        let apps: Vec<_> = b.apps.iter().map(|a| (a.record.instance_id.as_str(), a.record.name.as_str(), &a.estimate)).collect();
+        let refusals: Vec<_> = b.refused.iter().map(|x| (x.app_instance_id.as_str(), x.name.as_deref(), &x.refused)).collect();
+        let dto = batch_dto(&b.plan.body.plan_id, &apps, &refusals);
+        let names: Vec<String> = dto.apps.iter().map(|a| a.name.clone()).collect();
+        note_plan(s, &plan_id, json!({"app_name": names_text(&names), "leftover_estimate": dto.leftover_estimate, "apps": dto.apps, "refused": dto.refused}));
+        Ok(dto)
+    }
+
+    fn app_json(i: &cm_core::uninstall::AppIdentity) -> Value {
+        json!({"app_instance_id": i.instance_id, "name": i.name, "publisher": i.publisher, "source": i.source})
     }
 
     pub fn leftovers(s: &AppState, operation_id: &str) -> IpcResult<LeftoversDto> {
         let env = env()?;
         let st = stores(s)?;
-        let (identity, items, refs) = cm_app::uninstall::leftovers(&st, &env, operation_id).map_err(|r| refused(&r))?;
-        let groups = grouped(&items, env.is_admin);
+        let by_app = cm_app::uninstall::leftovers_by_app(&st, &env, operation_id).map_err(|r| refused(&r))?;
+        // A failed, skipped or stale uninstall keeps everything of that application (UNI-11).
+        if let Some(r) = cm_app::uninstall::none_reviewable(operation_id, &by_app) {
+            return Err(refused(&r));
+        }
+        let all: Vec<cm_core::uninstall::Leftover> = by_app.iter().flat_map(|a| a.items.iter().cloned()).collect();
+        let groups = grouped(&all, env.is_admin);
         let default_selected = groups.iter().flat_map(|g| &g.items).filter(|i| i.selected).count();
+        let mut refs: Vec<String> = Vec::new();
+        for r in by_app.iter().flat_map(|a| &a.external_references) {
+            if !refs.contains(r) {
+                refs.push(r.clone());
+            }
+        }
+        let apps: Vec<LeftoverAppDto> = by_app
+            .iter()
+            .map(|a| {
+                let groups = grouped(&a.items, env.is_admin);
+                LeftoverAppDto {
+                    app: app_json(&a.identity),
+                    status: a.outcome.status,
+                    code: a.outcome.code.clone(),
+                    message: a.outcome.message.clone(),
+                    leftovers_reviewable: a.outcome.leftovers_reviewable,
+                    default_selected: groups.iter().flat_map(|g| &g.items).filter(|i| i.selected).count(),
+                    groups,
+                    external_references: a.external_references.clone(),
+                }
+            })
+            .collect();
         Ok(LeftoversDto {
             operation_id: operation_id.into(),
-            app: json!({"app_instance_id": identity.instance_id, "name": identity.name, "publisher": identity.publisher, "source": identity.source}),
+            app: if by_app.len() == 1 { app_json(&by_app[0].identity) } else { Value::Null },
             is_admin: env.is_admin,
             groups,
             default_selected,
             external_references: refs,
+            apps,
         })
     }
 
@@ -374,14 +488,16 @@ mod win {
         let _release = Release;
         let env = env()?;
         let st = stores(s)?;
-        let (identity, all, _) = cm_app::uninstall::leftovers(&st, &env, operation_id).map_err(|r| refused(&r))?;
+        let by_app = cm_app::uninstall::leftovers_by_app(&st, &env, operation_id).map_err(|r| refused(&r))?;
+        let names: Vec<String> = by_app.iter().filter(|a| a.outcome.leftovers_reviewable).map(|a| a.identity.name.clone()).collect();
+        let all: Vec<cm_core::uninstall::Leftover> = by_app.into_iter().flat_map(|a| a.items).collect();
         let (extra, cleared) = split_selection(&all, chosen);
         let plan_id = new_id("lp");
         let pdigest = crate::cleanup::policy_digest(&st);
         let host = cm_platform::host::OsHostProbe.current("desktop");
         let now = now_unix();
         let (plan, _) = cm_app::uninstall::create_leftovers_plan(&st, &env, operation_id, &extra, &cleared, &host, &plan_id, now, &pdigest).map_err(|r| refused(&r))?;
-        note_plan(s, &plan.body.plan_id, json!({"app_name": identity.name, "operation_id": operation_id}));
+        note_plan(s, &plan.body.plan_id, json!({"app_name": names_text(&names), "operation_id": operation_id}));
         Ok(CreatedPlanDto::new(plan.body.plan_id.clone()))
     }
 
@@ -475,16 +591,17 @@ pub async fn uninstall_list(state: St<'_>) -> IpcResult<UninstallListDto> {
     .await
 }
 
+/// UNI-11: one plan for the selected applications (one or several).
 #[tauri::command(rename_all = "snake_case")]
-pub async fn uninstall_plan(state: St<'_>, app_instance_id: String) -> IpcResult<UninstallPlanDto> {
+pub async fn uninstall_plan(state: St<'_>, app_instance_ids: Vec<String>) -> IpcResult<UninstallPlanDto> {
     let s = state.inner().clone();
     blocking(move || {
-        let id = args::record_id("app instance", &app_instance_id)?;
+        let ids = args::record_ids("app instance", &app_instance_ids, cm_app::uninstall::MAX_BATCH)?;
         #[cfg(windows)]
-        return win::plan(&s, &id);
+        return win::plan(&s, &ids);
         #[cfg(not(windows))]
         {
-            let _ = (s, id);
+            let _ = (s, ids);
             Err(unsupported("application uninstall"))
         }
     })
@@ -636,6 +753,21 @@ mod tests {
         assert_eq!((by("lo_svc").why_not, by("lo_svc").action), (Some("manual"), "manual"));
         assert_eq!(by("lo_admin").why_not, Some("needs_admin"));
         assert_eq!(grouped(&items, true).iter().flat_map(|g| &g.items).find(|i| i.object_id == "lo_admin").unwrap().why_not, None);
+    }
+
+    #[test]
+    fn a_batch_reports_each_application_and_each_refusal() {
+        // UNI-11: estimates per application and summed; refused applications keep their reason word.
+        let foo: BTreeMap<Group, usize> = [(Group::CachesLogs, 2), (Group::Settings, 1)].into_iter().collect();
+        let bar: BTreeMap<Group, usize> = [(Group::CachesLogs, 1)].into_iter().collect();
+        let agent = cm_app::uninstall::Refused { code: "policy_denied".into(), message: "endpoint security agent".into(), settings_uri: None };
+        let dto = batch_dto("up_1", &[("app_foo", "Foo", &foo), ("app_bar", "Bar", &bar)], &[("app_agent", Some("Agent"), &agent)]);
+        assert_eq!(dto.plan_id, "up_1");
+        assert_eq!(dto.apps.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Foo", "Bar"]);
+        assert_eq!((dto.leftover_estimate["caches_logs"], dto.leftover_estimate["settings"]), (3, 1));
+        assert_eq!((dto.refused[0].reason.as_str(), dto.refused[0].name.as_deref()), ("policy_denied", Some("Agent")));
+        assert_eq!(names_text(&["A".into(), "B".into()]), "A、B");
+        assert_eq!(names_text(&["A".into(), "B".into(), "C".into(), "D".into()]), "A、B 等 4 个应用");
     }
 
     #[test]

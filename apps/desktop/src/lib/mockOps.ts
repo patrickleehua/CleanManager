@@ -4,6 +4,7 @@
 // prefix, a same-volume quarantine frees nothing, the same plan never runs twice.
 
 import type { Backend } from './api';
+import { outcomeFromItems } from '../views/uninstallBatch';
 import type {
   ApplyFinishedEvent,
   ApplyProgressEvent,
@@ -824,7 +825,9 @@ export function mockOps(): OpsBackend {
       await delay(100);
       const m = ops.get(opId);
       if (!m) throw err('invalid_argument', 'not_found', `not found: ${opId}`);
-      return { ...m.op, counts: counts(m.items) };
+      // UNI-11: each application's own result, by the core's rule.
+      const apps = m.op.plan_kind === 'uninstall' ? plans.get(m.op.plan_id)?.detail.kind_detail?.apps : undefined;
+      return { ...m.op, counts: counts(m.items), uninstall_apps: apps ? apps.map((a) => outcomeFromItems(a, m.items)) : [] };
     },
     async operationItems(opId, filter, pageSize, cursor) {
       await delay(90);

@@ -7,12 +7,18 @@
 //! (`IOCTL_BATTERY_QUERY_INFORMATION`, opened read-only) for charge, health and cycles; and
 //! `IOCTL_STORAGE_PREDICT_FAILURE` on the system disk, opened with no data access.
 //!
+//! Network (STS-07): `GetIfTable2` gives each interface's type, tunnel type, `HardwareInterface` flag and octet
+//! counters; rates are the counter differences over the sample interval. NDIS filter layers (rows flagged
+//! `FilterInterface`, which repeat their adapter's counters) and interfaces that are not up are skipped. If the table
+//! cannot be read, the PDH `Network Interface` sum is reported instead, marked as possibly double counting.
+//!
 //! Everything is read-only. A counter that does not exist, a device that does not answer or a value the hardware
 //! does not report becomes an `unavailable` (or `permission_required`) metric with a reason, never 0.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use cm_core::status::network::{Classification, InterfaceClass, InterfaceFacts, InterfaceRate, NetworkTotals, classify};
 use cm_core::status::{Metric, StatusSnapshot, TopProcess, names};
 use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, OPEN_EXISTING};
@@ -134,6 +140,8 @@ pub struct Sampler {
     counters: Counters,
     logical_cpus: usize,
     primed: std::time::Instant,
+    /// Interface octet counters at the previous sample, by LUID.
+    net_prev: Option<(std::time::Instant, Octets)>,
 }
 
 impl Default for Sampler {
@@ -165,11 +173,12 @@ impl Sampler {
             thermal_low: add(r"\Thermal Zone Information(*)\Temperature"),
             process_cpu: add(r"\Process(*)\% Processor Time"),
         };
+        let net_prev = interface_table().map(|rows| (std::time::Instant::now(), octets(&rows)));
         if let Some(q) = &query {
             q.collect();
         }
         let logical_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        Sampler { query, counters, logical_cpus, primed: std::time::Instant::now() }
+        Sampler { query, counters, logical_cpus, primed: std::time::Instant::now(), net_prev }
     }
 
     /// Take one snapshot. Rate counters cover the time since the previous call (or since `new`); if that is
@@ -180,6 +189,7 @@ impl Sampler {
             std::thread::sleep(FIRST_WINDOW - elapsed);
         }
         let collected = self.query.as_ref().is_some_and(Query::collect);
+        let rows = interface_table();
         self.primed = std::time::Instant::now();
         let sampled_at = cm_core::time::now_utc();
         let mut metrics = Vec::new();
@@ -189,6 +199,7 @@ impl Sampler {
         } else {
             metrics.push(Metric::unavailable(names::CPU_TOTAL, "percent", "performance counters could not be opened or collected"));
         }
+        let network = self.network_metrics(rows, collected, &mut metrics);
         memory_metrics(&mut metrics);
         volume_metrics(&mut metrics);
         disk_health_metric(&mut metrics);
@@ -199,7 +210,45 @@ impl Sampler {
             "Windows has no documented user-mode fan-speed interface; vendor tools read the embedded controller directly",
         ));
         metrics.push(Metric::unavailable("gpu.temperature_celsius", "celsius", "No documented Windows interface reports GPU temperature without vendor software"));
-        StatusSnapshot::new(sampled_at, metrics, top.as_ref())
+        StatusSnapshot::new(sampled_at, metrics, top.as_ref()).with_network(network)
+    }
+
+    /// STS-07 totals: classified interface rates from the IP Helper table, else the unclassified PDH sum.
+    fn network_metrics(&mut self, rows: Option<Vec<IfRow>>, collected: bool, out: &mut Vec<Metric>) -> Option<NetworkTotals> {
+        let now = std::time::Instant::now();
+        let classified = match (rows, self.net_prev.take()) {
+            (Some(rows), prev) => {
+                self.net_prev = Some((now, octets(&rows)));
+                // Without an earlier reading (the table was unreadable before) there is nothing to difference yet.
+                prev.map(|(then, prev)| NetworkTotals::from_rates(Classification::InterfaceType, interface_rates(&prev, &rows, now.duration_since(then).as_secs_f64())))
+            }
+            (None, _) => None,
+        };
+        let totals = classified.or_else(|| {
+            let c = &self.counters;
+            let (rx, tx) = (array(c.net_rx).filter(|_| collected)?, array(c.net_tx).filter(|_| collected)?);
+            let txm: BTreeMap<String, f64> = tx.into_iter().collect();
+            let rates = rx
+                .into_iter()
+                .map(|(name, r)| {
+                    let sent = txm.get(&name).copied().unwrap_or(0.0);
+                    InterfaceRate { name, class: InterfaceClass::Unknown, received_bytes_per_sec: r, sent_bytes_per_sec: sent }
+                })
+                .collect();
+            Some(NetworkTotals::from_rates(Classification::Unavailable, rates))
+        });
+        match &totals {
+            Some(t) => {
+                out.push(Metric::noted("network.received_bytes_per_sec", t.received_bytes_per_sec, "bytes_per_second", &t.note));
+                out.push(Metric::noted("network.sent_bytes_per_sec", t.sent_bytes_per_sec, "bytes_per_second", &t.note));
+            }
+            None => {
+                let why = "neither the interface table nor the Network Interface performance counters could be read";
+                out.push(Metric::unavailable("network.received_bytes_per_sec", "bytes_per_second", why));
+                out.push(Metric::unavailable("network.sent_bytes_per_sec", "bytes_per_second", why));
+            }
+        }
+        totals
     }
 
     fn counter_metrics(&self, out: &mut Vec<Metric>, top: &mut Option<TopProcess>) {
@@ -243,25 +292,6 @@ impl Sampler {
             Some(idle) => out.push(Metric::noted(names::DISK_BUSY, (100.0 - idle.min(100.0)).max(0.0), "percent", "100 minus physical-disk idle time, averaged over disks")),
             None => out.push(missing(names::DISK_BUSY, "percent", r"\PhysicalDisk(_Total)\% Idle Time")),
         }
-        match (array(c.net_rx), array(c.net_tx)) {
-            (Some(rx), Some(tx)) => {
-                let (rx_total, tx_total) = (rx.iter().map(|(_, v)| v).sum::<f64>(), tx.iter().map(|(_, v)| v).sum::<f64>());
-                let note = "Sum over network interfaces; traffic through a virtual switch can be counted on both the physical and the virtual adapter";
-                out.push(Metric::noted("network.received_bytes_per_sec", rx_total, "bytes_per_second", note));
-                out.push(Metric::noted("network.sent_bytes_per_sec", tx_total, "bytes_per_second", note));
-                let txm: BTreeMap<String, f64> = tx.into_iter().collect();
-                for (name, v) in rx {
-                    out.push(Metric::value(format!("network.if.{name}.received_bytes_per_sec"), v, "bytes_per_second"));
-                    if let Some(t) = txm.get(&name) {
-                        out.push(Metric::value(format!("network.if.{name}.sent_bytes_per_sec"), *t, "bytes_per_second"));
-                    }
-                }
-            }
-            _ => {
-                out.push(missing("network.received_bytes_per_sec", "bytes_per_second", r"\Network Interface(*)"));
-                out.push(missing("network.sent_bytes_per_sec", "bytes_per_second", r"\Network Interface(*)"));
-            }
-        }
         match single(c.pagefile) {
             Some(v) => out.push(Metric::value("memory.pagefile_used_percent", v.min(100.0), "percent")),
             None => out.push(Metric::unavailable("memory.pagefile_used_percent", "percent", "no paging file is configured or the counter is not available")),
@@ -285,6 +315,75 @@ impl Sampler {
             *top = top_process(&procs, self.logical_cpus);
         }
     }
+}
+
+/// One interface from the IP Helper table (filter layers and interfaces that are not up already dropped).
+pub(crate) struct IfRow {
+    pub luid: u64,
+    pub name: String,
+    pub facts: InterfaceFacts,
+    pub received: u64,
+    pub sent: u64,
+}
+
+/// (received, sent) byte counters by interface LUID.
+type Octets = BTreeMap<u64, (u64, u64)>;
+
+fn octets(rows: &[IfRow]) -> Octets {
+    rows.iter().map(|r| (r.luid, (r.received, r.sent))).collect()
+}
+
+/// Rates over `secs` for interfaces seen in both readings. An interface that is new since the previous reading or
+/// whose counters went backwards (reset) has no rate for this interval and is left out.
+pub(crate) fn interface_rates(prev: &Octets, rows: &[IfRow], secs: f64) -> Vec<InterfaceRate> {
+    if secs <= 0.0 {
+        return Vec::new();
+    }
+    rows.iter()
+        .filter_map(|r| {
+            let &(rx0, tx0) = prev.get(&r.luid)?;
+            let (rx, tx) = (r.received.checked_sub(rx0)?, r.sent.checked_sub(tx0)?);
+            Some(InterfaceRate { name: r.name.clone(), class: classify(&r.facts), received_bytes_per_sec: rx as f64 / secs, sent_bytes_per_sec: tx as f64 / secs })
+        })
+        .collect()
+}
+
+fn wide_field(w: &[u16]) -> String {
+    String::from_utf16_lossy(&w[..w.iter().position(|&c| c == 0).unwrap_or(w.len())])
+}
+
+/// `GetIfTable2`, read-only. `None` when the table cannot be read.
+fn interface_table() -> Option<Vec<IfRow>> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2};
+    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+    // MIB_IF_ROW2 InterfaceAndOperStatusFlags bitfield: bit 0 HardwareInterface, bit 1 FilterInterface.
+    const HARDWARE: u8 = 0b01;
+    const FILTER: u8 = 0b10;
+    let mut t: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+    // SAFETY: valid out-pointer; the table is freed with FreeMibTable below.
+    if unsafe { GetIfTable2(&mut t) } != 0 || t.is_null() {
+        return None;
+    }
+    // SAFETY: GetIfTable2 returned a table of NumEntries rows starting at Table.
+    let rows = unsafe { std::slice::from_raw_parts(std::ptr::addr_of!((*t).Table).cast::<MIB_IF_ROW2>(), (*t).NumEntries as usize) };
+    let out = rows
+        .iter()
+        .filter(|r| r.InterfaceAndOperStatusFlags._bitfield & FILTER == 0 && r.OperStatus == IfOperStatusUp)
+        .map(|r| {
+            let alias = wide_field(&r.Alias);
+            IfRow {
+                // SAFETY: Value spans the whole 64-bit LUID union.
+                luid: unsafe { r.InterfaceLuid.Value },
+                name: if alias.is_empty() { wide_field(&r.Description) } else { alias },
+                facts: InterfaceFacts { if_type: r.Type, tunnel_type: r.TunnelType as u32, hardware: Some(r.InterfaceAndOperStatusFlags._bitfield & HARDWARE != 0) },
+                received: r.InOctets,
+                sent: r.OutOctets,
+            }
+        })
+        .collect();
+    // SAFETY: table from GetIfTable2, freed once; `rows` is not used after this.
+    unsafe { FreeMibTable(t.cast()) };
+    Some(out)
 }
 
 fn round1(v: f64) -> f64 {

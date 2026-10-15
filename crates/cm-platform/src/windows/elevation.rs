@@ -489,6 +489,7 @@ pub fn start_worker(launcher: &dyn WorkerLauncher, cfg: &WorkerConfig, grant: &W
         Err(LaunchError::Declined) => return Err(StartError::Declined),
         Err(LaunchError::Failed(e)) => return Err(StartError::Unavailable(e)),
     };
+    cm_core::debug_trace!("process", "maintenance worker launched pid={} elevating_launcher={}", child.pid, launcher.elevates());
     let refused_clients = accept(&pipe, child.pid, Some(&child.process), cfg.connect_timeout).map_err(|e| StartError::Unavailable(format!("worker did not connect: {e:?}")))?;
     let hello = match pipe.read_line(MAX_REPLY, cfg.connect_timeout) {
         Ok(ReadLine::Line(l)) => WorkerReply::parse(&l).ok_or_else(|| StartError::Unavailable("worker hello not understood".into()))?,
@@ -546,6 +547,14 @@ impl WorkerConnection {
         let _ = self.pipe.read_line(MAX_REPLY, Duration::from_secs(5));
         // SAFETY: valid process handle.
         unsafe { WaitForSingleObject(self.child.process.as_raw_handle(), 5_000) };
+        if cm_core::trace::enabled() {
+            const STILL_ACTIVE: u32 = 259;
+            let mut code = 0u32;
+            // SAFETY: valid process handle and a valid out pointer.
+            let known = unsafe { windows_sys::Win32::System::Threading::GetExitCodeProcess(self.child.process.as_raw_handle(), &mut code) } != 0;
+            let exit = if !known { "unknown".to_owned() } else if code == STILL_ACTIVE { "still running".to_owned() } else { code.to_string() };
+            cm_core::debug_trace!("process", "maintenance worker pid={} exit={exit}", self.child.pid);
+        }
     }
 }
 

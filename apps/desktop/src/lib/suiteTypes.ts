@@ -26,9 +26,14 @@ export interface UninstallApp {
 export interface UninstallRun {
   operation_id: string;
   plan_id: string;
+  /** The application, or the applications of a batch (UNI-11) joined for display. */
   app_name: string;
+  /** Applications in the plan (stage 1; 0 for a leftovers plan). */
+  app_count: number;
   stage: 'uninstall' | 'leftovers';
   state: string;
+  /** Stage 1 finished and at least one application's own uninstaller succeeded. */
+  leftovers_reviewable: boolean;
   started_at: string;
   finished_at: string | null;
 }
@@ -43,7 +48,26 @@ export interface UninstallList {
 
 export interface UninstallPlanCreated {
   plan_id: string;
+  /** Summed over the batch; an estimate shown in review, never part of the plan. */
   leftover_estimate: Record<string, number>;
+  /** UNI-11: the applications in the plan, in plan order. */
+  apps: { app_instance_id: string; name: string; leftover_estimate: Record<string, number> }[];
+  /** Refused exactly as on their own (protected class, unverifiable route...); not in the plan. */
+  refused: { app_instance_id: string; name: string | null; reason: string; message: string }[];
+}
+
+/** One application's own result in a stage-1 uninstall (UNI-11). */
+export type AppOutcomeStatus = 'completed' | 'partial' | 'failed' | 'skipped' | 'not_started' | 'unknown' | 'pending';
+
+export interface AppOutcome {
+  app_instance_id: string;
+  name: string;
+  status: AppOutcomeStatus;
+  code: string | null;
+  message: string | null;
+  action_ids: string[];
+  /** Its uninstaller succeeded: only then are its leftovers reviewed. */
+  leftovers_reviewable: boolean;
 }
 
 export type LeftoverTier = 'default_selected' | 'review_only' | 'blocked' | 'kept';
@@ -68,14 +92,34 @@ export interface Leftover {
   guidance: string | null;
 }
 
+export interface LeftoverApp {
+  app_instance_id: string;
+  name: string;
+  publisher: string | null;
+  source: string;
+}
+
 export interface Leftovers {
   operation_id: string;
-  app: { app_instance_id: string; name: string; publisher: string | null; source: string };
+  /** The application of a single uninstall; null for a batch (see `apps`). */
+  app: LeftoverApp | null;
   is_admin: boolean;
+  /** Every reviewable object of the operation, all applications together. */
   groups: { group: string; items: Leftover[] }[];
   default_selected: number;
   /** Home-folder configuration files that mention the install folder: read-only hint. */
   external_references: string[];
+  /** UNI-11: the review per application, in plan order; a failed or skipped one lists no objects. */
+  apps: {
+    app: LeftoverApp;
+    status: AppOutcomeStatus;
+    code: string | null;
+    message: string | null;
+    leftovers_reviewable: boolean;
+    groups: { group: string; items: Leftover[] }[];
+    default_selected: number;
+    external_references: string[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------------------------

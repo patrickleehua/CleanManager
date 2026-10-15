@@ -14,7 +14,7 @@
 | `scan show ID` | 查询扫描状态与覆盖率；宿主已退出的扫描先标为中断 | 运行中 `scan_status`，结束后 `scan_result` | 无目标写入 |
 | `scan wait ID [--timeout S]` | 等待终态（默认 60 s，最长 86400 s） | `scan_result`；预算用尽为运行态 `scan_status`（退出 8） | 无目标写入 |
 | `scan cancel ID` | 请求停止扫描（回执不是终态） | `scan_cancel_receipt` | 无目标写入 |
-| `entries list --scan ID [--sort S] [--kind K] [--parent E] [--name T]` | 分页查询目录或大文件（`--limit` 默认 50、上限 500，`--cursor` 续页） | `entries_page` | 无目标写入 |
+| `entries list --scan ID [--sort S] [--kind K] [--parent E] [--name T]` | 分页查询目录或大文件（`--limit` 默认 50、上限 500，`--cursor` 续页）；本页目录可带只读的 `cleanable_hint`（依据 `build_artifact`/`catalog_rule`/`cachedir_tag`、`rule_id`、`detail`、入口 `flow`，无依据或受保护时省略，见[磁盘视图线索](system-status.md#磁盘视图的可手动清理线索din-05)） | `entries_page` | 无目标写入 |
 | `analyze --scan ID` | 规则分析、生成 candidate_set | `analysis_result` | 只写本工具结果 |
 | `candidates list --set ID [--limit N] [--cursor C]` | 分页查询理由与影响 | `candidates_page` | 无目标写入 |
 | `plan create --set ID --mode MODE --candidates ID,ID` | 生成固定计划；或以 `--all-default-selected` 取全部默认选中项 | `plan` | 只写本工具计划 |
@@ -58,10 +58,10 @@
 | `insights.overview` | `insights overview [--older-than-days N]`（已实现 Windows，见 [系统状态与洞察卡片](system-status.md)） | insight_overview | 无 |
 | `insights.downloads` | `insights downloads [--older-than-days N] [--limit N]`（已实现 Windows；按大小排序、无预选） | old_downloads_review | 无 |
 | `apps.list` | `apps list` | app_list | 无 |
-| `apps.uninstall.plan` | `apps uninstall plan create --instance ID [--end-running]`（已实现 Windows，第一段：退出请求 + 经路径/哈希/签名核验的卸载适配；`--end-running` 仅交互终端；见 [应用卸载](app-uninstall.md)） | plan（uninstall，附 `leftover_estimate` 估计）；不支持来源为 unsupported、保护类与签名不符为 policy_denied（`required_action` 指向系统设置） | 只写计划 |
+| `apps.uninstall.plan` | `apps uninstall plan create --instance ID [--instance ID …] [--end-running]`（已实现 Windows，第一段：退出请求 + 经路径/哈希/签名核验的卸载适配；重复 `--instance` 把多个应用放进同一份计划（UNI-11，最多 20 个；`--instance` 是唯一可以重复的选项，同一实例重复为 invalid_argument）；`--end-running` 仅交互终端；见 [应用卸载](app-uninstall.md)） | plan（uninstall，附 `leftover_estimate` 估计，以及逐应用的 `uninstall_apps` 与被拒绝的 `uninstall_refused`）；部分应用被拒绝时仍返回计划，退出码 5；全部被拒绝时为 error：单个应用时与以前相同（不支持来源为 unsupported、保护类与签名不符为 policy_denied，`required_action` 指向系统设置），多个应用时逐个列出原因 | 只写计划 |
 | `apps.uninstall.list` | `apps uninstall list`（已实现 Windows） | app_uninstall_list | 无 |
-| `apps.uninstall.leftovers` | `apps uninstall leftovers --operation OP_ID`（已实现 Windows，第一段完成后） | uninstall_leftovers | 无（只读） |
-| `apps.uninstall.leftovers_plan` | `apps uninstall leftovers plan create --operation OP_ID [--items ID,ID]`（已实现 Windows，第二段，单独审阅） | plan（uninstall）；kept/blocked 对象为 policy_denied | 只写计划 |
+| `apps.uninstall.leftovers` | `apps uninstall leftovers --operation OP_ID`（已实现 Windows，第一段完成后） | uninstall_leftovers（另附逐应用的 `apps`；批量时顶层 `app` 为 null）；没有任何应用的卸载程序成功时为 invalid_argument | 无（只读） |
+| `apps.uninstall.leftovers_plan` | `apps uninstall leftovers plan create --operation OP_ID [--items ID,ID]`（已实现 Windows，第二段，单独审阅；批量时包含所有卸载程序成功的应用的残留） | plan（uninstall）；kept/blocked 对象为 policy_denied | 只写计划 |
 | `apps.uninstall.orphans` | `apps uninstall orphans`（已实现 Windows） | uninstall_leftovers（review_only） | 无 |
 | `apps.uninstall.restore_plan` | `apps uninstall restore --operation OP_ID`（已实现 Windows） | plan（recovery） | 只写计划 |
 | `apps.updates.check` | `apps updates`；`apps updates show` 只读上次结果（已实现 Windows，见 [应用更新](app-updates.md)） | app_update_list | 仅访问更新通道；检查关闭时无任何请求 |
@@ -74,7 +74,7 @@
 | `optimize.plan` | `optimize plan create [--tasks ID,ID]`（已实现 Windows；不带 `--tasks` 只含未受保护且未判定不适用的任务；点名受保护任务为 policy_denied、点名禁止项为 policy_denied） | plan（maintenance）；`plan apply` 的结果为 maintenance_report | 只写计划 |
 | `optimize.diagnose` | `optimize diagnose [--window SECONDS]`（已实现 Windows，1–30 s） | maintenance_diagnosis | 无（只读，不结束进程、不改设置） |
 | `optimize.history` | `optimize history [--limit N]`（已实现） | maintenance_history | 无 |
-| `status.snapshot` | `status --json` | status_snapshot | 无 |
+| `status.snapshot` | `status --json`（可选 `network`：合计只计物理网卡，回环排除，隧道/虚拟网卡单独列出；无法分类时 `may_double_count: true`，见 [系统状态](system-status.md#网络合计去重sts-07)） | status_snapshot | 无 |
 | `status.watch` | `status --watch [--interval N] [--count M]`（`--format jsonl` 等价；默认间隔 5 s，不限次数；未及时完成的采样以原时间重复并标 `stale`） | JSONL 的 status_snapshot；开启提醒时另有 status_alert | 无 |
 | `status.alerts` | `status alerts [--state on\|off] [--cpu-threshold PCT] [--window-seconds N] [--cooldown-seconds N]`（已实现，默认关闭） | status_alert_settings | 只写本工具设置（`status-alerts.json`） |
 | `process.list` | `process list [--by cpu\|memory\|disk\|network\|name] [--search TEXT] [--limit N]`；`process show PID`（已实现 Windows） | process_list | 无 |
@@ -90,6 +90,31 @@
 | `self.update.apply` | `self update [--manifest URL\|PATH]`（已实现） | self_update_result | 校验签名、版本、存储兼容与逐文件校验和并试运行新程序后，原子替换本工具程序（失败回滚）；持有生命周期独占锁 |
 | `self.install` | `self install --dir PATH [--add-to-path]`（已实现 Windows） | self_install_result；目录非空或已有安装为 conflict | 仅终端输入 install 后复制到新目录；`--add-to-path` 只追加用户 PATH 且 PATH 上有不同的 cleanmanager 时拒绝 |
 | `self.remove.preview` | `self uninstall [--install-dir PATH] [--remove-user-data]`（已实现） | self_remove_preview；实际移除只在终端输入 uninstall 且计划摘要未变时进行 | 无（预览）；确认后只移除本工具自身足迹 |
+
+### 实验功能（D15）
+
+上表的工具命令组都属于尚未通过发布门禁的能力，**默认关闭**（设计 D15“单项未通过则该能力关闭”）。命令属于哪项能力、门禁是什么：
+
+| 命令组 | 能力 | 门禁 |
+| --- | --- | --- |
+| `clean list`、`clean` | `clean.catalog` | G1 |
+| `purge …` | `purge.artifacts` | G1 |
+| `installer …` | `installer.cleanup` | G1 |
+| `trash …` | `trash.manual` | G1 |
+| `insights …` | `insights.overview` | G1 |
+| `apps uninstall …` | `apps.uninstall` | G3 |
+| `apps updates …`、`apps update` | `apps.updates` | G3 |
+| `startup …` | `startup.toggle` | G3 |
+| `optimize …` | `maintenance.run` | G3 |
+| `status`、`status alerts` | `status.metrics` | G3 |
+| `process …` | `process.end` | G3 |
+| `self update` | `lifecycle.self_update` | G3 |
+| `diag …` | `diag.ai` | AID |
+
+- 关闭时，这些命令在做任何读写之前返回一条 `error`：`code: "unsupported"`（退出码 7），`message` 写明能力、门禁与开启方法，`required_action` 为 `cleanmanager experimental --state on`。`plan review`/`plan apply` 对已存储的 `plan/v2` 按其种类检查同样的开关（`manual_selection` → `trash.manual`，`uninstall` → `apps.uninstall`，`maintenance` → `maintenance.run`，`startup` → `startup.toggle`，`update` → `apps.updates`，`process` → `process.end`），拒绝时 `details.plan_id` 为该计划；`plan show`/`plan revoke` 不受影响。
+- `cleanmanager experimental` 查看开关与每项能力（`experimental_features` 记录：`experimental_features`、每项的 `capability`/`gate`/`gate_passed`/`enabled`）；`cleanmanager experimental --state on|off` 只改本机存储中的 `features.json`，桌面端“设置 › 实验功能”读写同一个文件。没有环境变量或隐藏参数可以绕过。
+- `capabilities` 随开关变化：关闭时对标能力报告为 `unsupported`，原因为 `off until gate Gx passes; experimental features are disabled`；开启后在 Windows 上仍为 `unverified`，从不报告为 `available`。
+- 扫描、目录项、分析、`plan create`/v1 规则清理、隔离与恢复、`operations`、`protect`、`policy`、`apps list`、`capabilities`、`doctor`、`completion`、`self install|uninstall` 属于首版核心，不受开关影响。
 
 ### 构建产物与安装包（已实现，Windows）
 
@@ -127,6 +152,7 @@
 - 格式：`--format json|jsonl|text`；`--json` 是 `--format json` 的别名，`human` 是 `text` 的别名；同一命令重复或冲突的格式参数报 invalid_argument。stdout 不是终端时默认 JSON；从不自动启动 TUI 或等待输入。
 - `--non-interactive`：任何命令都接受，进程内所有提示（计划审阅、策略启用、保护移除、补全安装、Doctor 导出）都直接按“无人确认”处理；stdin 或 stdout 不是终端时同样视为非交互。非交互从不意味着授权。
 - `--lang zh-CN|en`（或环境变量 `CLEANMANAGER_LANG`，否则跟随系统界面语言）只影响人类可读文本；`--no-color` 被接受，JSON 从不含 ANSI 控制序列。
+- `--debug`（CLI-14）：任何命令都接受，把诊断轨迹逐行写到 stderr，格式为 `[debug +<自启用起的毫秒>ms] <阶段>: <内容>`，包括阶段起止与耗时（`scan.walk: done in 12ms`）、所选扫描/执行后端及其理由、跳过与降级原因（候选的 skip_reason、过期项、每个动作的状态与代码）、外部进程的退出码与耗时（维护工具、卸载程序、适配器、提权 worker、AI CLI）以及 HTTP 状态码。stdout 的机器记录与不带 `--debug` 时逐字节相同（request_id、时间戳等本来就每次不同的字段除外）；退出码、选择、授权与执行都不变。轨迹不含 AI 提供方密钥（只写 `key=present|absent`）、请求头、提示词或回执内容；路径按 Doctor 报告的规则显示（主目录为 `~`，用户名与计算机名为 `<user>`/`<host>`）。轨迹是给人排查用的文本，不是协议，调用方不得解析它；不带 `--debug` 时 stderr 不写任何轨迹。
 - 只有 `--name` 形式的长选项；`-y`、`-f` 之类短选项一律是参数错误，不猜测含义。未知选项、缺值与重复选项都是 invalid_argument（退出 2），不忽略。
 - `--limit` 默认 50、上限 500，超出报错；游标是不透明字符串，与 scan revision、排序、过滤和页大小绑定，换任何一项即 cursor_stale（退出 6）。
 
@@ -243,6 +269,8 @@ cleanmanager apps uninstall leftovers --operation op_demo --json      # uninstal
 ```
 
 这两条命令的机器请求与响应分别对应样例 [request-clean-preview](../examples/contracts/request-clean-preview.json)、[preview-clean](../examples/contracts/preview-clean.json)、[request-apps-uninstall](../examples/contracts/request-apps-uninstall.json) 与 [needs-approval-uninstall](../examples/contracts/needs-approval-uninstall.json)；从预览建计划且有变化项时见 [plan-from-preview-stale](../examples/contracts/plan-from-preview-stale.json)。
+
+批量卸载（UNI-11）：`apps uninstall plan create --instance A --instance B` 生成**一份** `uninstall` 计划，每个应用各有自己的 `app_quit` 与 `tool_adapter`（第一个应用的动作 ID 与单独卸载相同，为 `q0000000`/`u0000001`；第 n 个为 `u{n:03}0000`/`u{n:03}0001`，动作仍按 `action_id` 排序）。计划记录附加 `uninstall_apps`（每个应用的 `action_ids` 与估计）和 `uninstall_refused`（与单独卸载时一样被拒绝的应用，不进入计划）；`plan/v2` 的正文、摘要与种类规则不变，单应用计划仍完全有效。执行时某个应用的卸载程序只等待它自己的退出请求；一个应用失败、被跳过或登记已变化不阻止其他应用，`operation_report` 附加逐应用的 `uninstall_apps`（`status`：completed/partial/failed/skipped/not_started/unknown，`leftovers_reviewable`），`operations show` 同样给出。之后 `apps uninstall leftovers` 的 `apps` 按应用分组；卸载程序没有成功的应用不列出任何对象，残留计划也从不包含它们。样例：[request-apps-uninstall-batch](../examples/contracts/request-apps-uninstall-batch.json)、[plan-v2-uninstall-batch](../examples/contracts/plan-v2-uninstall-batch.json)、[operation-uninstall-batch](../examples/contracts/operation-uninstall-batch.json)、[uninstall-leftovers-batch](../examples/contracts/uninstall-leftovers-batch.json)。
 
 两个平台使用同一参数风格。路径由 shell 按本平台正确传入，内部立即转成原始路径结构；不把模型拼出的字符串当 shell 脚本执行。输出中的条目 ID 是后续选择的主要接口，避免再次拼接路径。
 

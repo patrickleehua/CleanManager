@@ -12,6 +12,7 @@ mod cleanup;
 mod commands;
 mod diag;
 mod dto;
+mod gate;
 mod host;
 mod ops;
 mod resident;
@@ -30,6 +31,29 @@ use std::sync::Arc;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 use crate::host::AppState;
+
+/// D15: every IPC call passes the release-gate check first; a command of a capability that is off here is rejected
+/// before it runs (`gate::refusal`), whatever the WebView shows.
+fn gated<R: tauri::Runtime>(handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let refused = {
+            let webview = invoke.message.webview();
+            let state = webview.state::<Arc<AppState>>();
+            let payload = match invoke.message.payload() {
+                tauri::ipc::InvokeBody::Json(v) => Some(v),
+                _ => None,
+            };
+            gate::refusal(state.store_dir.as_deref(), invoke.message.command(), payload)
+        };
+        match refused {
+            Some(e) => {
+                invoke.resolver.reject(e);
+                true
+            }
+            None => handler(invoke),
+        }
+    }
+}
 
 fn main() {
     // The short-lived elevated maintenance worker (MNT-04): this executable started by Windows after one UAC prompt,
@@ -65,8 +89,9 @@ fn main() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(gated(tauri::generate_handler![
             commands::capabilities,
+            gate::set_experimental_features,
             commands::list_scan_roots,
             commands::choose_folder,
             commands::recent_scans,
@@ -161,7 +186,7 @@ fn main() {
             resident::resident_clean_screen,
             resident::resident_privacy,
             resident::resident_batteries,
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("error while building CleanManager desktop")
         .run(|app, event| {

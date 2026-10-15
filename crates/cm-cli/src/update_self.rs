@@ -267,11 +267,15 @@ fn parse_key(hex: &str) -> Option<TrustedKey> {
 /// `CM_UPDATE_TEST_PUBLIC_KEY` from the environment so tests can drive the real binary with test
 /// keys; that code is compiled out of release builds (the packager checks the string is absent).
 pub fn trusted_keys() -> Vec<TrustedKey> {
-    let mut keys: Vec<TrustedKey> = option_env!("CM_UPDATE_PUBLIC_KEYS").unwrap_or("").split(',').filter_map(parse_key).collect();
+    let keys: Vec<TrustedKey> = option_env!("CM_UPDATE_PUBLIC_KEYS").unwrap_or("").split(',').filter_map(parse_key).collect();
     #[cfg(debug_assertions)]
-    if let Ok(k) = std::env::var("CM_UPDATE_TEST_PUBLIC_KEY") {
-        keys.extend(parse_key(&k));
-    }
+    let keys = {
+        let mut keys = keys;
+        if let Ok(k) = std::env::var("CM_UPDATE_TEST_PUBLIC_KEY") {
+            keys.extend(parse_key(&k));
+        }
+        keys
+    };
     keys
 }
 

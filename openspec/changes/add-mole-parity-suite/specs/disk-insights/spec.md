@@ -37,3 +37,14 @@
 #### Scenario: Downloads has files older than 90 days
 - **WHEN** 概览显示旧下载卡片
 - **THEN** 打开后为按大小排序的列表，没有预选项
+
+### Requirement: DIN-05 Cleanable directory markers
+磁盘分析 SHALL 在目录条目上标记“可手动清理”线索，依据只能是可验证的签名（`CACHEDIR.TAG`、构建产物识别器的项目签名、已启用目录规则覆盖的缓存位置），并给出前往构建产物清理或手选回收站的入口。标记 SHALL 只读、不预选、不改变档位或保护判定；签名无法确认时 SHALL 不标记。
+
+#### Scenario: A directory carries CACHEDIR.TAG
+- **WHEN** 磁盘视图列出一个含有效 `CACHEDIR.TAG` 的目录
+- **THEN** 条目显示“可手动清理”及依据，选择状态不变，并提供手选回收站入口
+
+#### Scenario: A protected directory looks like a cache
+- **WHEN** 受保护目录内含缓存签名
+- **THEN** 条目不显示可清理入口，保护判定优先

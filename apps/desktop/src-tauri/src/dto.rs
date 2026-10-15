@@ -78,6 +78,8 @@ pub struct EntryDto {
     pub boundary: Option<BoundaryKind>,
     pub identity_quality: IdentityQuality,
     pub link_count: Option<u32>,
+    /// DIN-05: read-only "cleanable by hand" hint (listed directories only); never a selection.
+    pub cleanable_hint: Option<cm_core::cleanable::CleanableHint>,
 }
 
 impl EntryDto {
@@ -97,6 +99,7 @@ impl EntryDto {
             boundary: item.boundary,
             identity_quality: item.identity_quality,
             link_count: item.link_count,
+            cleanable_hint: None,
         }
     }
 }
@@ -250,6 +253,10 @@ pub struct CapabilitiesDto {
     pub rule_count: Option<usize>,
     /// The OS user that receipts and policies bind to.
     pub principal: String,
+    /// D15: capabilities whose release gate has not passed are off unless this is on (shared with the CLI).
+    pub experimental_features: bool,
+    /// One row per gated capability: its gate, whether it passed and whether it is on here.
+    pub gates: Vec<cm_app::features::GateRow>,
 }
 
 #[derive(Debug, Clone, Serialize)]

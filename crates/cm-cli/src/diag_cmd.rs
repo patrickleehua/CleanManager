@@ -72,10 +72,19 @@ pub fn diag_config(req: &str, p: &Parsed) -> ExitCode {
     };
     match svc.status() {
         Ok(st) => {
+            trace_status(&st);
             emit(&record("diagnosis_config", req, fields(serde_json::to_value(&st).expect("serializable"))), p.format);
             ExitCode::SUCCESS
         }
         Err(e) => diag_error(req, &e, p),
+    }
+}
+
+/// CLI-14: which providers exist and whether a key is stored, never the key (it is not even read here).
+fn trace_status(st: &cm_app::diag::ConfigStatus) {
+    cm_core::debug_trace!("diag", "configured={} credential_store={} default={:?} providers={}", st.configured, st.credential_store, st.default_provider_id, st.providers.len());
+    for pr in &st.providers {
+        cm_core::debug_trace!("diag", "provider={} kind={:?} mode={:?} key={} support={}", pr.provider_id, pr.kind, pr.mode, pr.credential, pr.support.state);
     }
 }
 
@@ -87,6 +96,11 @@ fn preview(req: &str, p: &Parsed) -> Result<(Service, cm_core::diag::Preview), E
     let stores = open_stores(req, p)?;
     let ctx = ScanContext::load(&stores, &r.scan_id).map_err(|e| diag_error(req, &e, p))?;
     let pv = svc.prepare(&ctx, r).map_err(|e| diag_error(req, &e, p))?;
+    cm_core::debug_trace!(
+        "diag",
+        "preview={} provider={} mode={:?} endpoint={:?} payload_bytes={} digest={}",
+        pv.preview_id, pv.destination.provider_id, pv.destination.mode, pv.destination.endpoint, pv.payload_bytes, pv.payload_digest
+    );
     Ok((svc, pv))
 }
 
@@ -126,10 +140,13 @@ pub fn diag_create(req: &str, p: &Parsed) -> ExitCode {
         svc.discard(&pv.preview_id);
         return fail(req, ErrorCode::Conflict, "the payload differs from the reviewed preview (scan, options, provider or CLI changed); preview again", p.format);
     }
+    let send = cm_core::trace::span("diag.execute");
     let d = match svc.confirm(&pv.preview_id, &digest).and_then(|d| svc.execute(&d.diagnosis_id)) {
         Ok(d) => d,
         Err(e) => return diag_error(req, &e, p),
     };
+    drop(send);
+    cm_core::debug_trace!("diag", "diagnosis={} state={:?} failure={:?}", d.diagnosis_id, d.state, d.failure.as_ref().map(|f| f.code));
     emit(&record("diagnosis_record", req, fields(json!({"diagnosis": d}))), p.format);
     exit_for(&d)
 }

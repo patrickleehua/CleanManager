@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cm_core::analysis::{ProtectionClass, class_of_name};
+use cm_core::analysis::ProtectionClass;
 use cm_core::error::{ErrorCode, ExitClass};
 use cm_core::protect::{self, HardDenySet, MatchKind, ProtectionDecision, ProtectionUnavailable, Subject, UserEntry, UserProtection};
 use cm_core::protocol::{ErrorDetails, error_record, record};
@@ -225,22 +225,6 @@ pub fn protect_remove(req: &str, p: &Parsed, id: &str) -> ExitCode {
     }
 }
 
-/// Default class of a live path as analysis classifies an indexed entry: the strongest class
-/// on the object and its ancestors (a non-reviewable class wins, else the nearest). The
-/// object's descendants are not walked.
-fn default_class(path: &Path) -> Option<ProtectionClass> {
-    let mut found = Vec::new();
-    for (i, p) in path.ancestors().enumerate() {
-        let Some(name) = p.file_name() else { continue };
-        let meta = std::fs::symlink_metadata(p).ok();
-        // A missing ancestor is a directory by position; a missing object is classified as a file.
-        let is_dir = meta.as_ref().map_or(i > 0, |m| m.is_dir());
-        let has_git = is_dir && std::fs::symlink_metadata(p.join(".git")).is_ok();
-        found.extend(class_of_name(&name.to_string_lossy().to_lowercase(), is_dir, has_git));
-    }
-    found.iter().copied().find(|c| !c.is_reviewable()).or_else(|| found.first().copied())
-}
-
 fn verdict(layer: &str, d: &ProtectionDecision, clear: &str, detail: Option<String>, entry: Option<&str>) -> Value {
     match d {
         ProtectionDecision::Allowed => json!({"layer": layer, "result": "clear", "detail": clear, "protection_id": null}),
@@ -263,7 +247,7 @@ pub fn protect_check(req: &str, p: &Parsed) -> ExitCode {
     let path = Path::new(os);
     let chain = cm_platform::protection::identity_chain(&raw);
     let hard = cm_platform::protection::hard_deny_set();
-    let class = default_class(path);
+    let class = cm_platform::protection::default_class(path);
     let recursive = std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
     let subject = Subject { path: &raw, chain: &chain, default_class: class, rule_id: p.option("rule"), recursive };
     let class_detail = class.map(|c| {

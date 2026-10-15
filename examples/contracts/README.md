@@ -42,6 +42,7 @@
 | [scan-cancel-receipt.json](scan-cancel-receipt.json) | 取消回执，只表示请求已接收 |
 | [scan-interrupted.json](scan-interrupted.json) | 宿主进程退出后的 interrupted 终态，保留已知结果 |
 | [entries-page.json](entries-page.json) | 绑定 revision 的目录分页，未知大小为 null |
+| [entries-page-cleanable.json](entries-page-cleanable.json) | 目录条目上的只读“可手动清理”线索 `cleanable_hint`（DIN-05）：依据、规则与入口流程；无依据时省略 |
 | [candidates-page.json](candidates-page.json) | 候选分页 |
 | [analysis-result.json](analysis-result.json) | candidate_set 结果，部分扫描下的待判断证据 |
 | [recovery-plan-restore.json](recovery-plan-restore.json) | recovery/v1 恢复计划，目标冲突时跳过 |

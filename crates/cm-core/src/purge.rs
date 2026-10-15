@@ -137,6 +137,19 @@ pub fn is_artifact_name(name: &str) -> bool {
     ARTIFACTS.iter().any(|a| a.name == name)
 }
 
+/// Project markers (patterns of [`PROJECT_MARKERS`]) present among a directory's lower-case
+/// child names; non-empty means the directory is a project root (PUR-01).
+pub fn project_markers(child_names: &[String]) -> Vec<String> {
+    PROJECT_MARKERS.iter().filter(|m| child_names.iter().any(|n| marker_match(m, n))).map(|m| (*m).to_owned()).collect()
+}
+
+/// The artifact a direct child named `name` (lower-case) of a project root with `markers` is:
+/// only an artifact one of whose owner markers is present. Shared by the analysis and the disk
+/// view's cleanable hints (DIN-05), so both recognize exactly the same directories.
+pub fn owned_artifact(name: &str, markers: &[String]) -> Option<&'static Artifact> {
+    artifacts_named(name).find(|a| a.owners.iter().any(|o| markers.iter().any(|m| m == o)))
+}
+
 pub fn rule_id(a: &Artifact) -> String {
     format!("{RULE_PREFIX}{}", a.name.trim_start_matches('.').replace('_', "-"))
 }
@@ -362,7 +375,7 @@ fn find_projects(view: &dyn IndexView, root: u64, max_depth: u32) -> Vec<(u64, V
     let mut stack = vec![(root, 0u32)];
     while let Some((dir, d)) = stack.pop() {
         let names: Vec<String> = view.children(dir).iter().map(|c| lower(view, *c)).collect();
-        let markers: Vec<String> = PROJECT_MARKERS.iter().filter(|m| names.iter().any(|n| marker_match(m, n))).map(|m| (*m).to_owned()).collect();
+        let markers = project_markers(&names);
         if !markers.is_empty() {
             out.push((dir, markers));
         }
@@ -479,7 +492,7 @@ pub fn analyze_purge(view: &dyn IndexView, input: &PurgeInput<'_>, prot: &Analys
             if f.kind != ObjectKind::Directory || f.boundary {
                 continue;
             }
-            let Some(artifact) = artifacts_named(&name).find(|a| a.owners.iter().any(|o| markers.iter().any(|m| m == o))) else {
+            let Some(artifact) = owned_artifact(&name, markers) else {
                 continue;
             };
             let path = view.path(child);

@@ -43,6 +43,7 @@ CleanManager scans, explains and cleans disk space. The **core** decides what is
 | 5 partial | results exist but are incomplete (unreadable subtree, skipped or failed actions, `interrupted` scan) | Report what is known and what was skipped and why; keep the IDs. |
 | 6 `plan_stale` / `cursor_stale` / `conflict` | observations changed or a page cursor expired | Rescan or re-preview, then make a new plan; a plan's `stale_items` were left out on purpose. |
 | 7 `unsupported` | not available on this platform/build | Say so; offer the read-only parts. |
+| 7 `unsupported` with `required_action: cleanmanager experimental --state on` | that tool has not passed its release gate and is off by default | Say it is off and why; offer core scan/analyze/recovery instead. Turning experimental features on is the person's machine-wide choice: run it only if they explicitly ask. |
 | 8 with `reconciliation_required` or `unknown > 0` | outcome of some actions is unconfirmed | Run `cleanmanager operations reconcile <OPERATION_ID> --json`; **never** re-apply or retry blindly. |
 | 8 with `scan_status` from `scan wait` | wait budget ran out; scan still running | Wait again later or `scan cancel`; nothing was rolled back. |
 | 130 `cancelled` | stopped by request | Report confirmed results; nothing is undone automatically. |

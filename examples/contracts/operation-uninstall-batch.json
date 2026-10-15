@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_report",
+  "request_id": "req_synthetic",
+  "operation_id": "op_batch",
+  "plan_id": "up_batch",
+  "plan_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+  "status": "partial",
+  "started_at": "2026-10-15T12:00:00Z",
+  "finished_at": "2026-10-15T12:01:10Z",
+  "succeeded": 3,
+  "skipped": 0,
+  "failed": 1,
+  "not_started": 0,
+  "unknown": 0,
+  "items": [
+    {
+      "action_id": "q0000000",
+      "status": "succeeded",
+      "code": "not_running",
+      "message": "Example App is not running",
+      "recovery": "not_applicable"
+    },
+    {
+      "action_id": "u0000001",
+      "status": "failed",
+      "code": "uninstaller_failed",
+      "message": "uninstaller exited with code 1603 after 5120 ms; rescan: the install folder and the uninstall registration still present",
+      "recovery": "not_applicable"
+    },
+    {
+      "action_id": "u0010000",
+      "status": "succeeded",
+      "code": "not_running",
+      "message": "Example Tool is not running",
+      "recovery": "not_applicable"
+    },
+    {
+      "action_id": "u0010001",
+      "status": "succeeded",
+      "code": "done",
+      "message": "uninstaller exited with code 0 after 8410 ms; rescan: install folder and registration are gone",
+      "recovery": "not_applicable"
+    }
+  ],
+  "processed_logical_bytes": "0",
+  "quarantined_logical_bytes": "0",
+  "estimated_freed_bytes": "0",
+  "volume_free_before_bytes": null,
+  "volume_free_after_bytes": null,
+  "observed_free_delta_bytes": null,
+  "uninstall_apps": [
+    {
+      "app_instance_id": "app_demo",
+      "name": "Example App",
+      "status": "failed",
+      "code": "uninstaller_failed",
+      "message": "uninstaller exited with code 1603 after 5120 ms; rescan: the install folder and the uninstall registration still present",
+      "action_ids": [
+        "q0000000",
+        "u0000001"
+      ],
+      "leftovers_reviewable": false
+    },
+    {
+      "app_instance_id": "app_tool",
+      "name": "Example Tool",
+      "status": "completed",
+      "code": "done",
+      "message": "uninstaller exited with code 0 after 8410 ms; rescan: install folder and registration are gone",
+      "action_ids": [
+        "u0010000",
+        "u0010001"
+      ],
+      "leftovers_reviewable": true
+    }
+  ]
+}

@@ -69,6 +69,7 @@ fn current_rule_set_digest(p: &Parsed) -> Result<String, String> {
 }
 
 pub fn report_record(req: &str, r: &OperationReport) -> Value {
+    trace_report(r);
     record("operation_report", req, fields(json!({
         "operation_id": r.operation_id,
         "plan_id": r.plan_id,
@@ -89,6 +90,19 @@ pub fn report_record(req: &str, r: &OperationReport) -> Value {
         "volume_free_after_bytes": r.volume_free_after_bytes,
         "observed_free_delta_bytes": r.observed_free_delta_bytes,
     })))
+}
+
+/// CLI-14: every operation report that leaves this process, with each action's outcome and skip reason, on stderr
+/// only. The authorization source is a label (`interactive_review`, a policy ID), never receipt contents.
+fn trace_report(r: &OperationReport) {
+    cm_core::debug_trace!(
+        "apply",
+        "operation={} plan={} status={} authorization_source={} succeeded={} skipped={} failed={} not_started={} unknown={} processed_bytes={}",
+        r.operation_id, r.plan_id, r.status, r.authorization_source, r.succeeded, r.skipped, r.failed, r.not_started, r.unknown, r.processed_logical_bytes
+    );
+    for i in &r.items {
+        cm_core::debug_trace!("apply.action", "{} status={:?} code={} recovery={} message=\"{}\"", i.action_id, i.status, i.code, i.recovery, i.message);
+    }
 }
 
 pub fn exit_for(r: &OperationReport) -> ExitCode {
@@ -119,7 +133,10 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
         Err(c) => return c,
     };
     // CLI-05: dispatch on the stored, authoritative plan type, never on a caller-supplied mode.
-    match crate::plan_cmd::stored_type(&stores, plan_id) {
+    let stored_type = crate::plan_cmd::stored_type(&stores, plan_id);
+    cm_core::debug_trace!("apply", "plan={plan_id} stored_type={stored_type:?}");
+    let _apply = cm_core::trace::span("apply.run");
+    match stored_type {
         Some(PlanType::RecoveryV1) => return crate::recovery_cmd::plan_apply(req, p, &stores, plan_id),
         Some(PlanType::V2(kind)) => return v2_apply(req, p, &stores, plan_id, kind),
         _ => {}
@@ -169,7 +186,9 @@ pub fn operations_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
     match stores.audit.operation_report(id) {
         Ok(Some(json)) => match serde_json::from_str::<OperationReport>(&json) {
             Ok(r) => {
-                emit(&report_record(req, &r), p.format);
+                let mut rec = report_record(req, &r);
+                crate::uninstall_cmd::add_app_outcomes(&stores, &r, &mut rec);
+                emit(&rec, p.format);
                 exit_for(&r)
             }
             Err(e) => fail(req, ErrorCode::InternalError, &e.to_string(), p.format),
@@ -293,7 +312,9 @@ fn v2_apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, kin
             ExitCode::from(ExitClass::Error(ErrorCode::PermissionRequired).code() as u8)
         }
         Ok(Ok(Ok(r))) => {
-            emit(&report_record(req, &r), p.format);
+            let mut rec = report_record(req, &r);
+            crate::uninstall_cmd::add_app_outcomes(stores, &r, &mut rec);
+            emit(&rec, p.format);
             exit_for(&r)
         }
         Ok(Ok(Err(e))) => apply_error(req, plan_id, &e, p),

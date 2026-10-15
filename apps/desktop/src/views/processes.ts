@@ -11,11 +11,12 @@ import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import type { AlertSettings, ProcessList, ProcessRow, ProcessSort } from '../lib/suiteTypes';
 import { PROTECTION_WORD, SIGNATURE_WORD, SORT_WORD } from '../lib/suiteWords';
+import { PROCESS_SORTS, loadPrefs, updatePrefs } from '../lib/statusPrefs';
 import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
 
-const SORTS: ProcessSort[] = ['cpu', 'memory', 'disk', 'name'];
+const SORTS: readonly ProcessSort[] = PROCESS_SORTS;
 
 export function rate(v: number | null): string {
   if (v === null) return '—';
@@ -32,7 +33,8 @@ export class ProcessesPage {
   private data: ProcessList | null = null;
   private error: IpcError | null = null;
   private loading = false;
-  private sort: ProcessSort = 'cpu';
+  /** Remembered across sessions with the other status display preferences (STS-07). */
+  private sort: ProcessSort = loadPrefs().processSort;
   private query = '';
   private focus: number | null = null;
   private gate = new RequestGate();
@@ -168,6 +170,7 @@ export class ProcessesPage {
         input.checked = this.sort === k;
         input.addEventListener('change', () => {
           this.sort = k;
+          updatePrefs((p) => ({ ...p, processSort: k }));
           void this.load();
         });
         return h('label', { for: `proc-sort-${k}` }, input, h('span', {}, SORT_WORD[k]));

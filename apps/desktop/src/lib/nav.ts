@@ -3,6 +3,7 @@
 // keeps its place and shows an explanatory page instead of disappearing.
 
 import type { ActivityTab, Page } from './store';
+import type { GateRow } from './types';
 
 export type ToolId = 'clean' | 'software' | 'optimize' | 'analyze' | 'status';
 export type ExtId = 'plans' | 'activity' | 'recovery' | 'agent' | 'diag' | 'settings';
@@ -172,4 +173,42 @@ export function shortcutLabel(key: string, mod: string): string {
 /** Short label for a tool whose gate has not passed (18.5: the UI never presents ungated tools as released). */
 export function gateLabel(tool: Tool): string {
   return `实验 · ${tool.gate} 未通过`;
+}
+
+/** A section backed by a capability with a release gate (D15). */
+export interface GatedSection {
+  capability: string;
+  gate: string;
+}
+
+/**
+ * D15: sections whose capability has not passed its release gate. They are off unless 设置 › 实验功能 is on; an off
+ * section keeps its place in the navigation (GUI-08) and opens an explanatory page. Sections not listed are core.
+ */
+export const GATED_PAGES: Partial<Record<Page, GatedSection>> = {
+  purge: { capability: 'purge.artifacts', gate: 'G1' },
+  installer: { capability: 'installer.cleanup', gate: 'G1' },
+  recyclebin: { capability: 'trash.manual', gate: 'G1' },
+  insights: { capability: 'insights.overview', gate: 'G1' },
+  uninstall: { capability: 'apps.uninstall', gate: 'G3' },
+  updates: { capability: 'apps.updates', gate: 'G3' },
+  startup: { capability: 'startup.toggle', gate: 'G3' },
+  maintenance: { capability: 'maintenance.run', gate: 'G3' },
+  diagnosis: { capability: 'maintenance.run', gate: 'G3' },
+  status: { capability: 'status.metrics', gate: 'G3' },
+  processes: { capability: 'process.end', gate: 'G3' },
+  resident: { capability: 'resident.utilities', gate: 'G4' },
+  diag: { capability: 'diag.ai', gate: 'AID' },
+};
+
+/**
+ * The gate a page waits on when it is off here, or null when it is core or on. The host's rows are authoritative;
+ * without them (capabilities unavailable) a gated page is off, as the host would refuse it anyway.
+ */
+export function gatedOff(page: Page, gates: GateRow[] | null | undefined): GatedSection | null {
+  const g = GATED_PAGES[page];
+  if (!g) return null;
+  const row = gates?.find((r) => r.capability === g.capability);
+  if (row?.enabled) return null;
+  return row ? { capability: row.capability, gate: row.gate } : g;
 }

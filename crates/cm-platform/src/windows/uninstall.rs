@@ -783,7 +783,9 @@ pub fn end_process(p: &RunningProcess) -> Result<(), String> {
 /// through a shell. Returns (exit code, duration in ms).
 pub fn run_choice(choice: &AdapterChoice, timeout_seconds: u32) -> Result<(Option<i32>, u64), String> {
     if choice.kind == AdapterKind::Msix {
-        return remove_package(choice.argv.get(1).map(String::as_str).unwrap_or_default());
+        let r = remove_package(choice.argv.get(1).map(String::as_str).unwrap_or_default());
+        cm_core::debug_trace!("process", "msix removal through PackageManager: {}", match &r { Ok((code, ms)) => format!("result={code:?} in {ms}ms"), Err(e) => format!("refused: {e}") });
+        return r;
     }
     let program = Path::new(&choice.program);
     let cwd = program.parent().filter(|p| p.is_dir()).map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
@@ -804,8 +806,14 @@ pub fn run_choice(choice: &AdapterChoice, timeout_seconds: u32) -> Result<(Optio
     let deadline = started + Duration::from_secs(u64::from(timeout_seconds));
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok((status.code(), started.elapsed().as_millis() as u64)),
-            Ok(None) if Instant::now() >= deadline => return Ok((None, started.elapsed().as_millis() as u64)),
+            Ok(Some(status)) => {
+                cm_core::debug_trace!("process", "uninstaller \"{}\" kind={:?} exit={:?} in {}ms", choice.program, choice.kind, status.code(), started.elapsed().as_millis());
+                return Ok((status.code(), started.elapsed().as_millis() as u64));
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                cm_core::debug_trace!("process", "uninstaller \"{}\" kind={:?} still running after {}ms (timeout; not ended)", choice.program, choice.kind, started.elapsed().as_millis());
+                return Ok((None, started.elapsed().as_millis() as u64));
+            }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             Err(e) => return Err(e.to_string()),
         }

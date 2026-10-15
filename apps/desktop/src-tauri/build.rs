@@ -7,6 +7,8 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
         // Scan and index (read-only for user files).
         "capabilities",
+        // D15 release gates: the experimental-features switch (CleanManager's own features.json; off stops resident utilities).
+        "set_experimental_features",
         "list_scan_roots",
         "choose_folder",
         "recent_scans",

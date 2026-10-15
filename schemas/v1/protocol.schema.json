@@ -156,6 +156,9 @@
     },
     {
       "$ref": "#/$defs/uninstall_leftovers"
+    },
+    {
+      "$ref": "#/$defs/experimental_features"
     }
   ],
   "$defs": {
@@ -1673,6 +1676,46 @@
             "strong",
             "weak"
           ]
+        },
+        "cleanable_hint": {
+          "type": "object",
+          "properties": {
+            "basis": {
+              "enum": [
+                "build_artifact",
+                "catalog_rule",
+                "cachedir_tag"
+              ]
+            },
+            "rule_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1
+            },
+            "flow": {
+              "enum": [
+                "purge",
+                "manual_trash"
+              ]
+            }
+          },
+          "required": [
+            "basis",
+            "rule_id",
+            "detail",
+            "flow"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -3675,6 +3718,114 @@
             "minimum": 0,
             "maximum": 9007199254740991
           }
+        },
+        "uninstall_apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app_instance_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "action_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "leftover_estimate": {
+                "type": "object",
+                "propertyNames": {
+                  "enum": [
+                    "bundle",
+                    "caches_logs",
+                    "settings",
+                    "personal_data",
+                    "startup",
+                    "system"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              }
+            },
+            "required": [
+              "app_instance_id",
+              "name",
+              "action_ids",
+              "leftover_estimate"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "uninstall_refused": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app_instance_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "code": {
+                "enum": [
+                  "invalid_argument",
+                  "policy_denied",
+                  "unsupported",
+                  "permission_required",
+                  "conflict",
+                  "io_error",
+                  "internal_error"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "settings_uri": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "app_instance_id",
+              "name",
+              "code",
+              "message",
+              "settings_uri"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -3850,6 +4001,77 @@
               "type": "null"
             }
           ]
+        },
+        "uninstall_apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app_instance_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "completed",
+                  "partial",
+                  "failed",
+                  "skipped",
+                  "not_started",
+                  "unknown",
+                  "pending"
+                ]
+              },
+              "code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "action_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "leftovers_reviewable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "app_instance_id",
+              "name",
+              "status",
+              "code",
+              "message",
+              "action_ids",
+              "leftovers_reviewable"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -4769,15 +4991,36 @@
           "type": "string",
           "minLength": 1
         },
+        "app_instance_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "maxItems": 20
+        },
         "end_running": {
           "type": "boolean"
         }
       },
       "required": [
-        "app_instance_id",
         "end_running"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "app_instance_id"
+          ]
+        },
+        {
+          "required": [
+            "app_instance_ids"
+          ]
+        }
+      ]
     },
     "params_apps_uninstall_list": {
       "type": "object",
@@ -8555,6 +8798,116 @@
             "link"
           ],
           "additionalProperties": false
+        },
+        "network": {
+          "type": "object",
+          "properties": {
+            "classification": {
+              "enum": [
+                "interface_type",
+                "unavailable"
+              ]
+            },
+            "received_bytes_per_sec": {
+              "type": "number",
+              "minimum": 0
+            },
+            "sent_bytes_per_sec": {
+              "type": "number",
+              "minimum": 0
+            },
+            "may_double_count": {
+              "type": "boolean"
+            },
+            "counted": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "class": {
+                    "enum": [
+                      "physical",
+                      "unknown"
+                    ]
+                  },
+                  "received_bytes_per_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "sent_bytes_per_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "name",
+                  "class",
+                  "received_bytes_per_sec",
+                  "sent_bytes_per_sec"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            },
+            "separate": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "class": {
+                    "enum": [
+                      "tunnel",
+                      "virtual"
+                    ]
+                  },
+                  "received_bytes_per_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "sent_bytes_per_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "name",
+                  "class",
+                  "received_bytes_per_sec",
+                  "sent_bytes_per_sec"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            },
+            "loopback_excluded": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "classification",
+            "received_bytes_per_sec",
+            "sent_bytes_per_sec",
+            "may_double_count",
+            "counted",
+            "separate",
+            "loopback_excluded",
+            "note"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -11627,6 +11980,147 @@
             "minLength": 1
           },
           "minItems": 0
+        },
+        "apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "object",
+                "properties": {
+                  "app_instance_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "publisher": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "registry_uninstall",
+                      "msi",
+                      "msix",
+                      "scoop",
+                      "npm_global",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "app_instance_id",
+                  "name",
+                  "publisher",
+                  "source"
+                ],
+                "additionalProperties": false
+              },
+              "status": {
+                "enum": [
+                  "completed",
+                  "partial",
+                  "failed",
+                  "skipped",
+                  "not_started",
+                  "unknown",
+                  "pending"
+                ]
+              },
+              "code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "leftovers_reviewable": {
+                "type": "boolean"
+              },
+              "groups": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "group": {
+                      "enum": [
+                        "bundle",
+                        "caches_logs",
+                        "settings",
+                        "personal_data",
+                        "startup",
+                        "system"
+                      ]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/uninstall_leftover"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "group",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 0
+              },
+              "default_selected": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "external_references": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "app",
+              "status",
+              "code",
+              "message",
+              "leftovers_reviewable",
+              "groups",
+              "default_selected",
+              "external_references"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -11638,6 +12132,72 @@
         "groups",
         "default_selected",
         "external_references"
+      ],
+      "additionalProperties": false
+    },
+    "experimental_features": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "experimental_features"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experimental_features": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "gate": {
+                "enum": [
+                  "G1",
+                  "G2",
+                  "G3",
+                  "G4",
+                  "AID"
+                ]
+              },
+              "gate_passed": {
+                "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capability",
+              "gate",
+              "gate_passed",
+              "enabled"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "experimental_features",
+        "capabilities",
+        "note"
       ],
       "additionalProperties": false
     }

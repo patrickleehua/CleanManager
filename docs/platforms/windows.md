@@ -225,7 +225,7 @@ IPC 使用仅本机命名管道，显式 DACL 绑定当前用户/登录会话与
 
 ### 系统状态快照（parity 12.1/12.2，`status`）
 
-采样接口：PDH 计数器以英文名添加（本机为中文系统，`PdhAddEnglishCounterW` 可用）——CPU 总体/每逻辑核、处理器队列长度（Windows 没有 Unix 负载均值）、GPU 引擎（按适配器与引擎类型汇总取最忙者，与任务管理器口径一致）与专用显存、物理磁盘读写速率与空闲时间、各网络接口收发速率、页面文件使用率、ACPI 热区温度与逐进程 CPU；`GlobalMemoryStatusEx`；每个固定/可移动卷的 `GetDiskFreeSpaceExW`（网络与光驱卷不访问）；`GetSystemPowerStatus` 与电池类驱动（只读句柄 `IOCTL_BATTERY_QUERY_INFORMATION`）；系统盘以无数据访问权限打开后发 `IOCTL_STORAGE_PREDICT_FAILURE`。首个样本等待 1 s 计算速率；`--watch`/`--interval N`/`--count M`（或 `--format jsonl` 与这些参数）按间隔输出 JSONL，每行一条带原采样时间的 `status_snapshot`，速率覆盖上一样本以来的区间。
+采样接口：PDH 计数器以英文名添加（本机为中文系统，`PdhAddEnglishCounterW` 可用）——CPU 总体/每逻辑核、处理器队列长度（Windows 没有 Unix 负载均值）、GPU 引擎（按适配器与引擎类型汇总取最忙者，与任务管理器口径一致）与专用显存、物理磁盘读写速率与空闲时间、页面文件使用率、ACPI 热区温度与逐进程 CPU；`GlobalMemoryStatusEx`；每个固定/可移动卷的 `GetDiskFreeSpaceExW`（网络与光驱卷不访问）；`GetSystemPowerStatus` 与电池类驱动（只读句柄 `IOCTL_BATTERY_QUERY_INFORMATION`）；系统盘以无数据访问权限打开后发 `IOCTL_STORAGE_PREDICT_FAILURE`；网络速率取 `GetIfTable2` 两次读数的字节计数差，并按接口类型与 `HardwareInterface` 标志分类（STS-07，见 [系统状态](../system-status.md#网络合计去重sts-07)），读不到接口表时才退回 PDH `Network Interface` 求和并标注可能重复。首个样本等待 1 s 计算速率；`--watch`/`--interval N`/`--count M`（或 `--format jsonl` 与这些参数）按间隔输出 JSONL，每行一条带原采样时间的 `status_snapshot`，速率覆盖上一样本以来的区间。
 
 本机（Lenovo 83G6 笔记本，AMD Radeon 780M，Windows 11 26200）实际可得性：
 
@@ -237,7 +237,7 @@ IPC 使用仅本机命名管道，显式 DACL 绑定当前用户/登录会话与
 | 内存已用/可用/提交、页面文件使用率 | available | 内存压缩量 unavailable（无已文档化接口） |
 | 卷容量/剩余（C:/D:/E:）、磁盘读写速率与忙碌度 | available | |
 | 磁盘故障预测 | unavailable | NVMe 驱动对 `IOCTL_STORAGE_PREDICT_FAILURE` 返回 error 1；不推断为健康 |
-| 网络各接口收发速率 | available | 虚拟交换机下物理与虚拟网卡可能重复计数（已在 reason 中声明） |
+| 网络合计与各接口收发速率 | available | 合计只计物理网卡（本机 `WLAN`）；回环排除，6 个虚拟网卡（含类型 53 的第三方隧道驱动与 WSL vEthernet/vSwitch）单独列出，`may_double_count: false` |
 | 电池电量、交流电状态、健康度（满充/设计容量 95.9%）、循环次数（30） | available | 循环数为 0 时视为驱动不支持 |
 | 温度 | available（ACPI 热区） | 3 个热区：`TZS0` 约 61–65 °C、`TZS1` 约 51 °C、`TZ01` 恒约 20 °C；这是固件发布的热区，不一定是 CPU 核心传感器，健康分取最高热区 |
 | 风扇转速 | unavailable | Windows 无已文档化的用户态风扇接口（WMI `Win32_Fan` 本机为 0 个实例） |

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-experimental-features"
+description = "Enables the set_experimental_features command without any pre-configured scope."
+commands.allow = ["set_experimental_features"]
+
+[[permission]]
+identifier = "deny-set-experimental-features"
+description = "Denies the set_experimental_features command without any pre-configured scope."
+commands.deny = ["set_experimental_features"]

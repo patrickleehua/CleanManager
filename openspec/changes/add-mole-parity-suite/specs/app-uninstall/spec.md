@@ -83,3 +83,14 @@ Windows 卸载程序 SHALL 只使用安装注册信息中记录的命令，经�
 #### Scenario: A user selects an endpoint security agent
 - **WHEN** 打开该代理的应用详情
 - **THEN** 卸载按钮不可用，说明需通过管理员或厂商流程移除
+
+### Requirement: UNI-11 Batch uninstall in one plan
+一份卸载计划 SHALL 可以包含多个应用实例（CLI 重复 `--instance`，桌面多选）。每个应用保留自己的阶段、残留分组与结果；审阅 SHALL 按应用分组展示；某个应用的阶段失败、被跳过或残留过期 SHALL 不阻止其余应用，结果逐应用报告。批量 SHALL 不放宽 UNI-10 的受保护类，也不改变残留默认不选个人数据的规则。
+
+#### Scenario: One of two applications fails
+- **WHEN** 批量卸载两个应用，其中一个的卸载程序返回失败
+- **THEN** 另一个应用照常完成，结果分别报告失败与完成，失败应用的残留不进入移除
+
+#### Scenario: A protected application is included in a batch
+- **WHEN** 批量选择中包含受保护类应用
+- **THEN** 该应用与单独卸载时一样被拒绝，其余应用的计划不受影响

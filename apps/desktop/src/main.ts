@@ -7,7 +7,7 @@ import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
 import type { DiagTarget } from './lib/diagTypes';
 import type { ReadinessOp, ScanStatus } from './lib/types';
 import { OPERATION_STATE_LABEL } from './lib/words';
-import { EXTENSIONS, TOOLS, gateLabel, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
+import { EXTENSIONS, TOOLS, gateLabel, gatedOff, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
 import { platform, setPlatform, words } from './lib/platform';
 import { ActivityPage } from './views/activity';
 import { AppsPage } from './views/apps';
@@ -28,6 +28,7 @@ import { DiagnosisPage, MaintenancePage } from './views/maintenance';
 import { ProcessesPage } from './views/processes';
 import { ResidentPage } from './views/resident';
 import { ensureReady } from './views/kit';
+import { GateOffView } from './views/gateOff';
 
 export interface App {
   backend: Backend;
@@ -426,9 +427,12 @@ async function boot(): Promise<void> {
     }
   });
 
-  let current: Page | null = null;
+  // D15: a gated section that is off here shows its explanatory page in its place (one view per page, made on demand).
+  const offViews = new Map<Page, GateOffView>();
+  let current: string | null = null;
   const render = () => {
     const s = store.state;
+    const off = gatedOff(s.page, s.caps?.gates);
     const place = placeOf(s.page, s.activityTab, s.returnTo);
     const toolId = place && 'tool' in place ? place.tool : null;
     const extId = place && 'ext' in place ? place.ext : null;
@@ -449,7 +453,7 @@ async function boot(): Promise<void> {
     // Section tabs of the current tool (detail pages keep their tool's sections visible).
     const tool = toolId ? toolOf(toolId) : null;
     const ext = extId ? EXTENSIONS.find((x) => x.id === extId) : null;
-    const sectionKey = tool ? `${tool.id}:${s.page}` : `ext:${extId ?? ''}`;
+    const sectionKey = `${tool ? `${tool.id}:${s.page}` : `ext:${extId ?? ''}`}:${off ? 'off' : 'on'}`;
     if (sectionNav.dataset.key !== sectionKey) {
       sectionNav.dataset.key = sectionKey;
       sectionNav.setAttribute('aria-label', tool ? `${tool.label}分区` : '当前位置');
@@ -458,23 +462,43 @@ async function boot(): Promise<void> {
         tool ? h('span', { class: 'section-tool' }, icon(tool.icon), tool.label) : ext ? h('span', { class: 'section-tool' }, icon(ext.icon), ext.label) : null,
         ...(tool && tool.sections.length > 1
           ? tool.sections.map((sec) =>
-              h('button', { type: 'button', class: 'section-tab', 'aria-current': sec.page === s.page ? 'page' : null, onclick: () => app.navigate(sec.page) }, sec.label),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'section-tab',
+                  'aria-current': sec.page === s.page ? 'page' : null,
+                  title: gatedOff(sec.page, s.caps?.gates) ? `${sec.label}：默认关闭，可在 设置 › 实验功能 中开启` : null,
+                  onclick: () => app.navigate(sec.page),
+                },
+                sec.label,
+              ),
             )
           : []),
         tool
-          ? h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：仅 Windows 开发构建，未发布`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
+          ? off
+            ? h('span', { class: 'pill gate-pill', title: `这个分区尚未通过发布门禁 ${off.gate}，默认关闭；可在 设置 › 实验功能 中开启`, 'data-tone': 'muted' }, h('span', { class: 'pill-mark' }), `默认关闭 · ${off.gate} 未通过`)
+            : h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：仅 Windows 开发构建，未发布`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
           : null,
       );
     }
     closingBanner.hidden = !s.closing;
-    if (current !== s.page) {
-      replace(main, pages[s.page].el);
-      current = s.page;
+    let view: { el: HTMLElement; update(): void; activate?(): void } = pages[s.page];
+    if (off) {
+      const v = offViews.get(s.page) ?? new GateOffView(app, s.page, off);
+      offViews.set(s.page, v);
+      v.show(off);
+      view = v;
+    }
+    const key = `${s.page}:${off ? 'off' : 'on'}`;
+    if (current !== key) {
+      replace(main, view.el);
+      current = key;
       closeMore();
-      pages[s.page].activate?.();
+      view.activate?.();
       window.scrollTo({ top: 0 });
     }
-    pages[s.page].update();
+    view.update();
     chip.update();
     applyChip.update();
   };

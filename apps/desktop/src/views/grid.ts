@@ -5,6 +5,7 @@
 
 import { formatBytes, formatExactBytes, groupDigits, parseBytes, ratio } from '../lib/bytes';
 import { categoryOf } from '../lib/category';
+import { HINT_LABEL, hintBasisText, hintOf, hintTitle } from '../lib/cleanable';
 import { h, replace } from '../lib/dom';
 import { kindLabel } from '../lib/format';
 import type { Entry, SortKey } from '../lib/types';
@@ -198,6 +199,11 @@ export class EntryGrid {
     if (e.identity_quality === 'weak') note.push('身份较弱');
     const bar = h('span', { class: 'share', 'aria-hidden': 'true' });
     bar.style.setProperty('--share', String(share));
+    // DIN-05: read-only marker; the basis is in the tooltip and for screen readers. It never selects.
+    const hint = hintOf(e);
+    const hintTag = hint
+      ? h('span', { class: 'row-tag hint-tag', title: hintTitle(hint) }, HINT_LABEL, h('span', { class: 'sr-only' }, `，依据：${hintBasisText(hint)}`))
+      : null;
     const row = h(
       'div',
       {
@@ -214,6 +220,7 @@ export class EntryGrid {
         h('span', { class: 'check', 'aria-hidden': 'true' }),
         h('span', { class: 'swatch', 'data-cat': categoryOf(e), 'aria-hidden': 'true' }),
         h('span', { class: 'name', title: e.path_display }, e.name),
+        hintTag,
         canOpen(e) ? h('span', { class: 'chev', 'aria-hidden': 'true' }, '›') : null,
       ),
       h('div', { role: 'gridcell', class: 'col col-num', title: formatExactBytes(logical) }, bar, h('span', {}, formatBytes(logical))),

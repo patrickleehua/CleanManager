@@ -16,6 +16,7 @@ import type { MaintenanceReport } from '../lib/suiteTypes';
 import { ELEVATION_WORD, TASK_WORDS } from '../lib/suiteWords';
 import { outcomeMark, outcomeTally, type Outcome } from './kit';
 import { allDone, taskReason } from './maintenance';
+import { APP_OUTCOME, leftoversReviewable, outcomeReason } from './uninstallBatch';
 
 /** Kinds whose results are not about disk space (no size figures). */
 const NO_SPACE = new Set(['startup', 'startup_restore', 'uninstall', 'uninstall_restore', 'update', 'process', 'maintenance']);
@@ -201,7 +202,7 @@ export class OperationPage {
         ],
         actions: [h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openPlan(op.plan_id, 'activity') }, '查看计划')],
       }),
-      h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.progressPanel(op, state, total, counts, !!live), this.itemsPanel()), this.summaryPanel(op, state)),
+      h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.progressPanel(op, state, total, counts, !!live), this.appsPanel(op, !!live), this.itemsPanel()), this.summaryPanel(op, state)),
     );
   }
 
@@ -224,6 +225,8 @@ export class OperationPage {
       lines.push(h('p', {}, '卸载程序已运行，但重新检查发现安装目录或卸载登记仍在，所以记为“部分完成”。剩下的内容在“审阅残留”中单独处理。'));
     else if (state === 'partial' && op.plan_kind === 'maintenance' && counts.failed + counts.skipped === 0)
       lines.push(h('p', {}, '有任务需要你跟进（见下表），所以记为“部分完成”。'));
+    else if (state === 'partial' && op.plan_kind === 'uninstall' && (op.uninstall_apps?.length ?? 0) > 1)
+      lines.push(h('p', {}, '有应用没有卸载或卸载后仍有剩余，所以整体记为“部分完成”。每个应用的结果见“逐个应用”；一个应用失败没有影响其他应用。'));
     else if (state === 'partial') lines.push(h('p', {}, '部分项目被跳过或失败，原因见下表。需要处理剩余对象时，请重新分析并生成新计划；系统不会重做已成功的项目。'));
     const stop = live && state === 'running' ? h('button', { type: 'button', id: 'op-stop', class: 'danger-quiet', onclick: () => void this.stop() }, '停止后续操作') : null;
     return h(
@@ -233,6 +236,31 @@ export class OperationPage {
       segBar(total, counts, live ? '执行进度' : '执行结果'),
       ...lines,
       errorLine(this.actionError),
+    );
+  }
+
+  /** UNI-11: each application of a batch uninstall with its own result (a single uninstall needs no extra panel). */
+  private appsPanel(op: Operation, live: boolean): HTMLElement | null {
+    const apps = op.uninstall_apps ?? [];
+    if (op.plan_kind !== 'uninstall' || apps.length < 2 || live) return null;
+    const done = apps.filter((a) => a.status === 'completed' || a.status === 'partial').length;
+    return h(
+      'section',
+      { class: 'panel', 'aria-labelledby': 'op-apps-title' },
+      h('div', { class: 'panel-head' }, h('h2', { id: 'op-apps-title' }, '逐个应用'), h('span', { class: 'small muted num' }, `${apps.length} 个应用中 ${done} 个已卸载`)),
+      h(
+        'ul',
+        { class: 'run-list' },
+        ...apps.map((a) => {
+          const st = APP_OUTCOME[a.status] ?? { label: a.status, tone: 'muted' as const };
+          return h(
+            'li',
+            { class: 'run-row', 'data-app': a.app_instance_id },
+            h('span', { class: 'run-main' }, h('b', {}, a.name), h('span', { class: 'muted small' }, outcomeReason(a), a.leftovers_reviewable || a.status === 'pending' ? '' : ' 它的残留不会进入第 2 步。')),
+            pill(st.label, st.tone),
+          );
+        }),
+      ),
     );
   }
 
@@ -299,16 +327,19 @@ export class OperationPage {
 
   /** What comes after this result: the leftovers review of an uninstall, the six outcomes of a maintenance run. */
   private nextStep(op: Operation, state: string): HTMLElement | null {
-    if (op.plan_kind === 'uninstall' && (state === 'completed' || state === 'partial')) {
+    // UNI-11: leftovers are reviewed only for applications whose own uninstaller succeeded.
+    const batch = (op.uninstall_apps?.length ?? 0) > 1;
+    if (op.plan_kind === 'uninstall' && (state === 'completed' || state === 'partial') && leftoversReviewable(op.uninstall_apps, state)) {
       return h(
         'div',
         { class: 'next-block' },
         h('h3', {}, '下一步：审阅残留'),
         h('p', { class: 'small' }, '卸载程序已经运行。重新检查后，确实留下的文件、注册表项和启动项在单独的第 2 步审阅；什么都不会自动删除。'),
+        batch ? h('p', { class: 'small muted' }, '残留按应用分组审阅；卸载没有完成的应用仍然安装着，它的任何对象都不会出现在审阅中。') : null,
         h('button', { type: 'button', class: 'primary wide', id: 'op-leftovers', onclick: () => this.app.store.set({ leftoversOp: op.operation_id, page: 'uninstall' }) }, '审阅残留'),
       );
     }
-    if (op.plan_kind === 'uninstall' && state === 'failed')
+    if (op.plan_kind === 'uninstall' && (state === 'failed' || state === 'partial'))
       return h('div', { class: 'next-block' }, h('h3', {}, '没有卸载'), h('p', { class: 'small' }, '应用没有退出或卸载程序没有运行成功，原因见左侧。关闭应用后可以重新生成卸载计划。'));
     if (op.plan_kind === 'update' && op.counts.skipped > 0)
       return h('div', { class: 'next-block' }, h('h3', {}, '跳过的应用'), h('p', { class: 'small' }, '正在运行的应用被跳过了。请先关闭它们，再生成一份新的更新计划。'), h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('updates') }, '返回更新'));

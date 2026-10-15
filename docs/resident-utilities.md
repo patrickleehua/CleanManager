@@ -2,6 +2,8 @@
 
 最近更新：2026-10-15。对应变更 `add-mole-parity-suite` 任务 15.1、15.2（RES-01..04、RES-07）。风扇、充电上限、网络低延迟（15.3，RES-05）与 Touch ID（15.4，RES-06）不在本轮；Windows 上在页面“此平台不提供”中说明原因。实机记录见 [evidence/resident-windows.json](evidence/resident-windows.json)。
 
+默认关闭（设计 D15）：常驻工具尚未通过门禁 G4，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
+
 | 层 | 位置 |
 | --- | --- |
 | 纯逻辑 | `crates/cm-core/src/resident.rs`：设置、启动项同步与 `turn_off`、唯一的后台循环 `ResidentLoop`、托盘读数、快捷入口白名单、保持亮屏与清洁屏幕参数、长按 Esc、隐私记录判定、电量提醒 |

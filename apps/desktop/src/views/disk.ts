@@ -12,7 +12,8 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { basisLabel, ERROR_HINT, formatTime, isTerminal, kindLabel, STATE_LABEL, taskTitle } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { MERGED_ID } from '../lib/treemap';
-import type { Entry, EntriesQuery, IpcError, KindFilter, SortKey, Summary, TreemapLayer } from '../lib/types';
+import { HINT_LABEL, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
+import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, SortKey, Summary, TreemapLayer } from '../lib/types';
 import { canOpen, EntryGrid } from './grid';
 import { REST_ID, TreemapView } from './treemapView';
 
@@ -506,6 +507,7 @@ export class DiskPage {
     // Platform idiom (GUI-12): show the object in the file manager; the host resolves the path from the index.
     const reveal = this.scanId ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
     reveal?.addEventListener('click', () => void this.app.backend.revealEntry(this.scanId!, e.entry_id).catch(() => this.app.announce(`无法${words().reveal}`)));
+    const hint = hintOf(e);
     replace(
       this.details,
       h('h2', { class: 'detail-name' }, e.name),
@@ -525,9 +527,28 @@ export class DiskPage {
         e.unknown_descendants ? h('dd', {}, `${groupDigits(e.unknown_descendants)} 项（未计入大小）`) : null,
         h('dt', {}, '身份'),
         h('dd', {}, e.identity_quality === 'strong' ? '卷 + 文件 ID' : '较弱（仅供浏览，不作执行依据）'),
+        hint ? h('dt', {}, HINT_LABEL) : null,
+        hint ? h('dd', { id: 'detail-hint-basis' }, hintBasisText(hint)) : null,
       ),
       e.boundary ? h('p', { class: 'notice' }, '这是一个链接或云端边界。扫描记录了它，但没有进入其中，也不会把目标的大小算进来。') : null,
+      hint ? this.hintEntry(e, hint) : null,
       h('div', { class: 'card-actions' }, open, sel, diag, reveal),
+    );
+  }
+
+  /** DIN-05: the review flow a cleanable hint leads to. Read-only here: the selection is not touched. */
+  private hintEntry(e: Entry, hint: CleanableHint): HTMLElement {
+    const action = hintAction(hint);
+    const go = h('button', { type: 'button', id: 'detail-hint-go', 'aria-describedby': 'detail-hint-basis detail-hint-note' }, action.label);
+    go.addEventListener('click', () => {
+      if (action.flow === 'purge') this.app.navigate('purge');
+      else void reviewTrash(this.app, this.scanId!, [e]);
+    });
+    return h(
+      'div',
+      { class: 'hint-entry' },
+      h('p', { class: 'muted small', id: 'detail-hint-note' }, `只是提示：不会替你选中，也不改变保护或风险判断。${action.note}`),
+      h('div', { class: 'card-actions' }, go),
     );
   }
 

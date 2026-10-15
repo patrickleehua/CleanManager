@@ -306,6 +306,8 @@ pub struct OperationDto {
     pub observed_free_delta_bytes: Option<String>,
     /// Outcomes are unconfirmed: a read-only reconciliation must run before anything else.
     pub needs_reconcile: bool,
+    /// UNI-11: each application's own result of a stage-1 uninstall (one entry per application; empty otherwise).
+    pub uninstall_apps: Vec<cm_app::uninstall::AppOutcome>,
 }
 
 fn report_of(stores: &Stores, operation_id: &str) -> IpcResult<Option<OperationReport>> {
@@ -326,7 +328,13 @@ pub fn operation(s: &AppState, stores: &Stores, operation_id: &str) -> IpcResult
         None => journal_counts(stores, operation_id),
     };
     let started = stores.audit.operations_page(cm_store::index::MAX_PAGE, None).ok().and_then(|(rows, _)| rows.into_iter().find(|r| r.operation_id == operation_id));
+    let uninstall_apps = if kind == "uninstall" {
+        stores.audit.load_plan_v2(&plan_id).map(|p| cm_app::uninstall::app_outcomes(&p, report.as_ref())).unwrap_or_default()
+    } else {
+        vec![]
+    };
     Ok(OperationDto {
+        uninstall_apps,
         operation_id: operation_id.into(),
         plan_id,
         plan_kind: kind,
@@ -766,6 +774,7 @@ pub async fn start_apply(app: AppHandle, state: St<'_>, plan_id: String) -> IpcR
     let s = state.inner().clone();
     blocking(move || {
         let id = args::record_id("plan", &plan_id)?;
+        crate::gate::require_plan(&s, &id)?;
         start(&app, &s, &id)
     })
     .await

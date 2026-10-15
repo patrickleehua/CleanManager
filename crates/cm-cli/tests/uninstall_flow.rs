@@ -66,7 +66,16 @@ fn scratch(name: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("cm-cli-uninst-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
+    experimental_on(&p);
+    experimental_on(&p.join("store"));
     p
+}
+
+/// D15: the gated tools under test are off by default. Opt in to experimental features in the scratch stores (the
+/// directory itself and its `store` child) the way a person does, through the CLI.
+fn experimental_on(store: &Path) {
+    let o = Command::new(env!("CARGO_BIN_EXE_cleanmanager")).args(["experimental", "--state", "on", "--json"]).env("CM_STORE_DIR", store).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
 }
 
 fn reg(args: &[&str]) -> (bool, String) {

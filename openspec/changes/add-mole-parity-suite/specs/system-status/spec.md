@@ -47,3 +47,14 @@ CLI SHALL 提供单次状态快照与按间隔输出的 JSONL 状态流，字段
 #### Scenario: An agent watches status for one minute
 - **WHEN** 以 5 秒间隔请求状态流
 - **THEN** 每行为一个带时间戳的快照，不可用指标为 null 并带原因
+
+### Requirement: STS-07 Display preferences and deduplicated network totals
+系统状态 SHALL 跨会话保留用户的显示偏好（面板显示与顺序、进程排序、刷新间隔）。网络合计 SHALL 排除回环接口，并把隧道/虚拟适配器的流量单独显示而不重复计入合计；无法区分时 SHALL 注明合计可能重复。macOS 在可得时显示僵尸进程计数；Windows 没有该概念，不显示该字段。
+
+#### Scenario: A VPN tunnel is active
+- **WHEN** 物理网卡与 VPN 隧道同时有流量
+- **THEN** 合计只计物理接口，隧道流量单独列出
+
+#### Scenario: Preferences survive a restart
+- **WHEN** 用户隐藏某个面板并改变进程排序后重启应用
+- **THEN** 状态页按上次的偏好显示
