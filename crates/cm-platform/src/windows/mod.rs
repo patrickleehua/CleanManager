@@ -16,6 +16,8 @@ pub mod privileges;
 pub mod probes;
 pub mod processes;
 pub mod purge;
+pub mod resident;
+pub mod resident_screen;
 pub mod resolve;
 pub mod restart_manager;
 pub mod startup;

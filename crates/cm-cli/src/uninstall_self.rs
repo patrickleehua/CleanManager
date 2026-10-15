@@ -15,9 +15,11 @@
 //! `--remove-user-data` also removes configuration, protection list and history — only when the
 //! quarantine is empty and no operation awaits reconciliation.
 //!
-//! Resident components: this build installs no service, scheduled task, startup entry, helper or
-//! background process, and changes no other system setting, so there is nothing else to remove or
-//! restore; the plan says so instead of searching for look-alikes it did not create.
+//! Resident components: this build installs no service, scheduled task, helper or background
+//! process of its own. The one startup entry CleanManager can create is the desktop tray's opt-in
+//! value `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CleanManager.Resident` (RES-01/07,
+//! `docs/resident-utilities.md`); when it exists it is listed as a `system_setting` item
+//! (`remove_run_value`) and removed by that exact name. Nothing else is searched for or removed.
 //!
 //! Package-manager installs are not removed here: the plan names the package manager's command.
 
@@ -34,7 +36,8 @@ pub struct Item {
     pub item_id: String,
     /// `cli`, `caches`, `system_setting`, `user_data`.
     pub component: &'static str,
-    /// `remove_file`, `remove_empty_dir`, `remove_path_entry`, `remove_profile_block`, `remove_credential`.
+    /// `remove_file`, `remove_empty_dir`, `remove_path_entry`, `remove_profile_block`, `remove_credential`,
+    /// `remove_run_value`.
     pub action: &'static str,
     pub path: PathBuf,
     pub display: String,
@@ -76,10 +79,12 @@ pub struct Inputs<'a> {
     pub user_path: Option<&'a dyn UserPathStore>,
     /// AI diagnosis provider ids whose keys are in the system credential store.
     pub credential_targets: Vec<String>,
+    /// The resident component's startup value (`HKCU\…\Run\CleanManager.Resident`) if it exists: its display.
+    pub resident_startup: Option<String>,
 }
 
 const CACHE_FILES: &[&str] = &["index.db", "index.db-wal", "index.db-shm", "installer-last-run.json", "purge-last-run.json"];
-const CONFIG_FILES: &[&str] = &["purge-settings.json", "app-updates.json", "status-alerts.json", "process-pins.json", "diag-providers.json"];
+const CONFIG_FILES: &[&str] = &["purge-settings.json", "app-updates.json", "status-alerts.json", "process-pins.json", "diag-providers.json", cm_core::resident::SETTINGS_FILE];
 const PROTECTION_FILES: &[&str] = &["protection.json", "protection.json.lock"];
 const HISTORY_FILES: &[&str] = &["audit.db", "audit.db-wal", "audit.db-shm", cm_store::migrate::LOG_FILE];
 
@@ -167,7 +172,12 @@ pub fn plan(inp: &Inputs<'_>) -> Plan {
     let mut items: Vec<Item> = Vec::new();
     let mut keep = Vec::new();
     let mut warnings = Vec::new();
-    let mut notes = vec!["This build installs no service, scheduled task, startup entry, helper or background process and changes no other system setting; there is nothing else to remove or restore.".to_owned()];
+    let mut notes = vec![format!(
+        "No service, scheduled task, helper or background process is installed. The only startup entry CleanManager creates is the desktop tray's opt-in value HKCU\\{}\\{} ({}); no other system setting is changed.",
+        cm_core::resident::RUN_SUBKEY,
+        cm_core::resident::RUN_VALUE_NAME,
+        if inp.resident_startup.is_some() { "present, listed for removal" } else { "not present" }
+    )];
     let mut push = |component: &'static str, action: &'static str, path: PathBuf, display: String, sha256: Option<String>| {
         let item_id = format!("i{:03}", items.len() + 1);
         items.push(Item { item_id, component, action, path, display, sha256 });
@@ -243,6 +253,9 @@ pub fn plan(inp: &Inputs<'_>) -> Plan {
         && install_self::path_contains(store, &entry).unwrap_or(false)
     {
         push("system_setting", "remove_path_entry", PathBuf::from(&entry), format!("user PATH entry {}", display(Path::new(&entry))), None);
+    }
+    if let Some(display) = &inp.resident_startup {
+        push("system_setting", "remove_run_value", PathBuf::from(cm_core::resident::RUN_VALUE_NAME), format!("resident component startup value {display}"), None);
     }
     for (shell, profile) in &inp.profiles {
         if let Ok(text) = std::fs::read_to_string(profile)
@@ -371,6 +384,8 @@ pub struct Effects<'a> {
     pub delete_credential: &'a dyn Fn(&str) -> Result<(), String>,
     /// Arrange removal of the running program and its then-empty directory after exit.
     pub defer: &'a dyn Fn(&Path, &Path) -> Result<(), String>,
+    /// Remove the resident component's startup value (`CleanManager.Resident` only); `Ok(false)` if already gone.
+    pub remove_resident_startup: &'a dyn Fn() -> Result<bool, String>,
 }
 
 /// Carry out a reviewed plan item by item. Files are removed only if they still have the planned
@@ -412,6 +427,7 @@ pub fn execute(p: &Plan, install_dir: &Path, fx: &Effects<'_>) -> Vec<Done> {
             },
             "remove_profile_block" => remove_block(&i.path, install_dir).map(|()| "removed"),
             "remove_credential" => (fx.delete_credential)(&i.path.display().to_string()).map(|()| "removed"),
+            "remove_run_value" => (fx.remove_resident_startup)().map(|removed| if removed { "removed" } else { "skipped" }),
             other => Err(format!("unknown action {other}")),
         };
         out.push(match r {

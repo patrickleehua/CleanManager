@@ -14,6 +14,7 @@ mod diag;
 mod dto;
 mod host;
 mod ops;
+mod resident;
 mod roots;
 mod rules;
 mod settings;
@@ -26,7 +27,7 @@ mod flow_tests;
 
 use std::sync::Arc;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 use crate::host::AppState;
 
@@ -41,11 +42,23 @@ fn main() {
         // Used from Rust only (choose_folder); the capability grants the WebView no dialog API.
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            app.manage(Arc::new(AppState::init(rules::locate())));
+            let state = Arc::new(AppState::init(rules::locate()));
+            // Optional tray (RES-01): off by default; the window starts hidden and is shown here unless the
+            // tray is on and this start came from the CleanManager-owned startup value (`--resident`).
+            let resident = Arc::new(resident::Resident::for_this_platform(state.store_dir.as_deref()));
+            app.manage(state);
+            app.manage(resident.clone());
+            resident::setup(app.handle(), &resident);
             Ok(())
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // Tray on: closing the window hides it; the tray's "退出" really quits.
+                if resident::hide_on_close(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
                 let state = window.state::<Arc<AppState>>();
                 if host::close_requested(window.app_handle(), state.inner()) {
                     api.prevent_close();
@@ -142,7 +155,19 @@ fn main() {
             diag::diag_remove,
             diag::diag_export,
             diag::diag_handoff,
+            resident::resident_status,
+            resident::resident_save,
+            resident::resident_keep_awake,
+            resident::resident_clean_screen,
+            resident::resident_privacy,
+            resident::resident_batteries,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running CleanManager desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building CleanManager desktop")
+        .run(|app, event| {
+            // Exit: stop the tray's sampling and release any keep-awake request (RES-02).
+            if let RunEvent::Exit = event {
+                app.state::<Arc<resident::Resident>>().shutdown();
+            }
+        });
 }

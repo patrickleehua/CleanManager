@@ -51,6 +51,7 @@ import type {
   TrashInspection,
 } from './types';
 import type { DiagBackend, DiagFinishedEvent } from './diagTypes';
+import type { BatteryAlert, ResidentBackend } from './residentTypes';
 import type {
   AlertSettings,
   InsightOverview,
@@ -67,7 +68,7 @@ import type {
   UpdatePlanCreated,
 } from './suiteTypes';
 
-export interface Backend extends DiagBackend {
+export interface Backend extends DiagBackend, ResidentBackend {
   capabilities(): Promise<Capabilities>;
   listScanRoots(): Promise<RootOffer[]>;
   chooseFolder(): Promise<RootOffer | null>;
@@ -275,6 +276,15 @@ async function tauriBackend(): Promise<Backend> {
     diagExport: (diagnosis_id) => call('diag_export', { diagnosis_id }),
     diagHandoff: (diagnosis_id, action, mode) => call('diag_handoff', { diagnosis_id, action, mode }),
     onDiagFinished: (cb) => listen<DiagFinishedEvent>('diag-finished', (e) => cb(e.payload)),
+    residentStatus: () => call('resident_status'),
+    residentSave: (settings) => call('resident_save', { settings }),
+    residentKeepAwake: (on, minutes) => call('resident_keep_awake', { on, minutes }),
+    residentCleanScreen: (timeout_secs) => call('resident_clean_screen', { timeout_secs }),
+    residentPrivacy: () => call('resident_privacy'),
+    residentBatteries: () => call('resident_batteries'),
+    onResidentNavigate: (cb) => listen<{ page: string }>('resident-navigate', (e) => cb(e.payload.page)),
+    onResidentChanged: (cb) => listen('resident-changed', () => cb()),
+    onResidentAlert: (cb) => listen<BatteryAlert[]>('resident-alert', (e) => cb(e.payload)),
   };
 }
 

@@ -320,7 +320,7 @@
 | `tao` | 0.37.1 | Apache-2.0 | crates.io | Transitive: required by tauri-runtime-wry |
 | `tao-macros` | 0.1.4 | MIT OR Apache-2.0 | crates.io | Transitive: required by tao, wry |
 | `target-lexicon` | 0.12.16 | Apache-2.0 WITH LLVM-exception | crates.io | Transitive: required by cfg-expr |
-| `tauri` | 2.12.4 | Apache-2.0 OR MIT | crates.io | Desktop shell: native window, IPC commands to the shared Rust core, capability-scoped permissions |
+| `tauri` | 2.12.4 | Apache-2.0 OR MIT | crates.io | Desktop shell: native window, IPC commands to the shared Rust core, capability-scoped permissions; tray-icon feature for the optional resident tray (RES-01, off by default) |
 | `tauri-build` | 2.7.3 | Apache-2.0 OR MIT | crates.io | Build-time generation of the Tauri context, permissions and Windows resources |
 | `tauri-codegen` | 2.7.3 | Apache-2.0 OR MIT | crates.io | Transitive: required by tauri-macros |
 | `tauri-macros` | 2.7.3 | Apache-2.0 OR MIT | crates.io | Transitive: required by tauri |

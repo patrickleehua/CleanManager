@@ -245,6 +245,32 @@ pub fn self_install(req: &str, p: &Parsed) -> ExitCode {
 // ---------------------------------------------------------------------------------------------
 // self uninstall
 
+/// The desktop tray's startup value (RES-07), if it exists: its display.
+fn resident_startup() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use cm_core::resident::StartupStore;
+        let rv = cm_platform::windows::resident::RunValue::real();
+        rv.read().ok().flatten().map(|cmd| format!("{} = {cmd}", rv.display()))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn remove_resident_startup() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use cm_core::resident::StartupStore;
+        cm_platform::windows::resident::RunValue::real().remove()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 fn credential_targets(store: Option<&Path>) -> Vec<String> {
     let Some(text) = store.and_then(|s| std::fs::read_to_string(s.join("diag-providers.json")).ok()) else { return Vec::new() };
     let Ok(v) = serde_json::from_str::<Value>(&text) else { return Vec::new() };
@@ -316,6 +342,7 @@ pub fn self_uninstall(req: &str, p: &Parsed) -> ExitCode {
             profiles: ["bash", "zsh", "fish", "powershell"].into_iter().filter_map(|s| crate::completion_cmd::default_profile(s).map(|pr| (s, pr))).collect(),
             user_path: user_path.as_deref(),
             credential_targets: if remove_user_data { credential_targets(store.as_deref()) } else { Vec::new() },
+            resident_startup: resident_startup(),
         })
     };
     let plan = build();
@@ -345,6 +372,7 @@ pub fn self_uninstall(req: &str, p: &Parsed) -> ExitCode {
         current_exe: current,
         delete_credential: &delete_credential,
         defer: &crate::uninstall_self::defer_removal,
+        remove_resident_startup: &remove_resident_startup,
     });
     let failed = done.iter().any(|d| d.outcome == "failed");
     emit(&remove_record(req, if failed { "partial" } else { "removed" }, &plan, &detected, &done), p.format);

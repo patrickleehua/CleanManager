@@ -26,7 +26,9 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
     # System maintenance (parity 13.1/14.x): the short-lived UAC worker and its user-only named pipe, DNS/DISM entry points
     # resolved from System32, graceful shell-host restart, read-only diagnosis (process memory, session filter).
     "Win32_System_Pipes", "Win32_Security_Authorization", "Win32_UI_Shell", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop",
-    "Win32_System_ProcessStatus"] }
+    "Win32_System_ProcessStatus",
+    # Resident utilities (RES-04): read-only device property query for Bluetooth battery levels.
+    "Win32_Devices_Properties"] }
 # Shell IFileOperation (recycle-bin moves) for the executor's trash action; read-only IShellLink, Task Scheduler and
 # WMI queries for the startup inventory and disk insights.
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_Storage_FileSystem",
@@ -46,4 +48,6 @@ cm-fixtures = { path = "../cm-fixtures" }
 
 # Test-only provider for the cloud placeholder boundary tests (Cloud Files API).
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_CloudFilters", "Win32_System_CorrelationVector"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_CloudFilters", "Win32_System_CorrelationVector",
+    # Real-device clean-screen test: injects a long Esc press.
+    "Win32_UI_Input_KeyboardAndMouse"] }

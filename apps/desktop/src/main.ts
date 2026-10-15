@@ -7,7 +7,7 @@ import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
 import type { DiagTarget } from './lib/diagTypes';
 import type { ReadinessOp, ScanStatus } from './lib/types';
 import { OPERATION_STATE_LABEL } from './lib/words';
-import { EXTENSIONS, TOOLS, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
+import { EXTENSIONS, TOOLS, gateLabel, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
 import { platform, setPlatform, words } from './lib/platform';
 import { ActivityPage } from './views/activity';
 import { AppsPage } from './views/apps';
@@ -26,6 +26,7 @@ import { UninstallPage } from './views/uninstall';
 import { UpdatesPage } from './views/updates';
 import { DiagnosisPage, MaintenancePage } from './views/maintenance';
 import { ProcessesPage } from './views/processes';
+import { ResidentPage } from './views/resident';
 import { ensureReady } from './views/kit';
 
 export interface App {
@@ -247,6 +248,15 @@ async function boot(): Promise<void> {
     announce(`AI 诊断${word}`);
     void (pages.diag as DiagPage).finished(e.diagnosis_id);
   });
+  // Tray (RES-01): quick links open one of a fixed set of pages; alerts and changes refresh 常驻工具.
+  await backend.onResidentNavigate((page) => {
+    if (['status', 'processes', 'resident', 'cleanup'].includes(page)) app.navigate(page as Page);
+  });
+  await backend.onResidentChanged(() => (pages.resident as ResidentPage).changed());
+  await backend.onResidentAlert((alerts) => {
+    announce(alerts.map((a) => `电量低：${a.name} ${a.percent}%`).join('；'));
+    (pages.resident as ResidentPage).alerted(alerts);
+  });
   await backend.onClosing((e) => {
     store.set({ closing: true });
     announce(e.waiting_for.includes('operation') ? '正在停止后续操作，当前动作结束后关闭窗口' : '正在安全停止扫描，完成后关闭窗口');
@@ -273,6 +283,7 @@ async function boot(): Promise<void> {
     diagnosis: new DiagnosisPage(app),
     status: new StatusPage(app),
     processes: new ProcessesPage(app),
+    resident: new ResidentPage(app),
     activity: new ActivityPage(app),
     agent: caps.agent,
     settings: new SettingsPage(app),
@@ -450,6 +461,9 @@ async function boot(): Promise<void> {
               h('button', { type: 'button', class: 'section-tab', 'aria-current': sec.page === s.page ? 'page' : null, onclick: () => app.navigate(sec.page) }, sec.label),
             )
           : []),
+        tool
+          ? h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：仅 Windows 开发构建，未发布`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
+          : null,
       );
     }
     closingBanner.hidden = !s.closing;
@@ -513,7 +527,7 @@ function routeFromHash(app: App): void {
     } else app.navigate('diag');
   }
   else if (
-    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'diagnosis', 'status', 'processes', 'agent', 'settings'].includes(page)
+    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'diagnosis', 'status', 'processes', 'resident', 'agent', 'settings'].includes(page)
   )
     app.navigate(page as Page);
 }

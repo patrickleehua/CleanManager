@@ -890,7 +890,7 @@ def main():
                   {"data": "history", "display": "Operation history"}, {"data": "quarantine", "display": "Quarantine items"}],
             quarantine_items=2, quarantine_logical_bytes="2097152", system_settings_to_restore=[r"user PATH entry D:\Tools\CleanManager"],
             warnings=[{"code": "quarantine_not_empty", "message": "the quarantine still holds 2 item(s), 2097152 bytes; restore, purge or keep them"}],
-            notes=["This build installs no service, scheduled task, startup entry, helper or background process."],
+            notes=["No service, scheduled task, helper or background process is installed. The only startup entry CleanManager creates is the desktop tray's opt-in value HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\CleanManager.Resident (not present); no other system setting is changed."],
             install_method="standalone", uninstall_command=None, plan_digest="0" * 64, requires_interactive_confirmation=True),
         "self-install-result": rec("self_install_result", status="preview", version="0.0.0-design-example", install_dir=r"D:\Tools\CleanManager",
             files=40, path_conflicts=[{"path": r"C:\Users\<user>\scoop\shims\cleanmanager.exe", "relation": "different"}],

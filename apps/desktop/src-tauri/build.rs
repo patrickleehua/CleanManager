@@ -104,6 +104,14 @@ fn main() {
         "diag_remove",
         "diag_export",
         "diag_handoff",
+        // 状态 › 常驻工具 (RES-01..04): read-only status/privacy/battery reads; settings write only resident.json and the
+        // CleanManager-owned startup value; keep-awake is a temporary power request; clean screen ends on Esc/timeout.
+        "resident_status",
+        "resident_save",
+        "resident_keep_awake",
+        "resident_clean_screen",
+        "resident_privacy",
+        "resident_batteries",
     ])))
     .expect("tauri-build failed");
 }

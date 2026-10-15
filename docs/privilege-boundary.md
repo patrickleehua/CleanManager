@@ -1,6 +1,6 @@
 # 提权边界与特权 helper 威胁模型
 
-对应 `add-mole-parity-suite` 任务 13.1（Windows 短生命周期提权工作进程，已实现）、13.2（macOS 签名特权 helper，**规划中，未实现**）与 13.3（本文），以及 EXE-08、MNT-04、D10、D12。
+对应 `add-mole-parity-suite` 任务 13.1（Windows 短生命周期提权工作进程，已实现）、13.2（macOS 签名特权 helper，**规划中，未实现**）与 13.3（本文；macOS 一节要等 13.2 实现后才能补齐，所以 13.3 未勾选），以及 EXE-08、MNT-04、D10、D12。
 
 ## 原则
 

@@ -6,9 +6,9 @@
 
 从 [文档索引](docs/README.md) 开始；需要了解选择理由，读 [总体分析](docs/architecture-analysis.zh-CN.md)；准备开发，读 [实施路线](docs/roadmap.md) 和 [验证计划](docs/verification-plan.md)。
 
-当前状态：Rust 核心、`cleanmanager` CLI 与 Tauri 桌面端已在 Windows 11 x64 上实现并测试（macOS 后端、真实 CI、签名发布仍待完成，见两个 OpenSpec 变更的 tasks）。体验全貌可看 [v6 HTML 交互原型](output/ui-preview-2026-10-14/suite-v3/index-v6.html) 与 [v6 说明](output/ui-preview-2026-10-14/suite-v3/prototype-v6.md)（原型数据均为样例）；可选的 [AI 清理诊断](docs/ai-diagnostics.md) 只在你自配提供方并确认发送内容后才联网。
+当前状态：Rust 核心、`cleanmanager` CLI 与 Tauri 桌面端已在 Windows 11 x64 上实现，并通过单机自动化测试与本机运行记录检验；macOS 后端、真实 CI、签名发布仍待完成，G0–G4 发布门禁都还没有通过，因此没有任何能力已发布（见两个 OpenSpec 变更的 tasks）。体验全貌可看 [v6 HTML 交互原型](output/ui-preview-2026-10-14/suite-v3/index-v6.html) 与 [v6 说明](output/ui-preview-2026-10-14/suite-v3/prototype-v6.md)（原型数据均为样例）；可选的 [AI 清理诊断](docs/ai-diagnostics.md) 只在你自配提供方并确认发送内容后才联网。
 
-产品行为以 [OpenSpec 提案](openspec/changes/define-cleanmanager-mvp/proposal.md)、设计、能力 specs 与任务为验收规划；九项首版能力之外的 AI 诊断是独立可选扩展，不阻塞 G0/G1/G2。对标 Mole 全部功能（清理目录、构建产物、安装包、手选回收站、卸载/更新/启动项、维护、状态、托盘工具）的规划见变更 `add-mole-parity-suite`，在 MVP 之后按 G1–G4 门禁实施。
+产品行为以 [OpenSpec 提案](openspec/changes/define-cleanmanager-mvp/proposal.md)、设计、能力 specs 与任务为验收规划；九项首版能力之外的 AI 诊断是独立可选扩展，不阻塞 G0/G1/G2。对标 Mole 全部功能（清理目录、构建产物、安装包、手选回收站、卸载/更新/启动项、维护、状态、托盘工具）的规划见变更 `add-mole-parity-suite`，按 G1–G4 门禁验收。目前其中多数能力的 Windows 部分已实现但未验收；macOS 部分、常驻/特权工具与各门禁仍待完成。逐项状态见 [对标完成度复核](openspec/changes/add-mole-parity-suite/parity-review.md)。
 
 建议技术路线：**Rust library + 原生平台后端 + SQLite + 独立 Rust CLI + Tauri 2/TypeScript GUI**。终端交互与 MCP 后续复用同一核心，不再实现另一套清理逻辑。
 

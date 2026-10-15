@@ -3,6 +3,7 @@
 // shows a "preview data" banner whenever it is active. Semantics mirror the host: published
 // revisions only, size-desc with unknown last and entry_id tie-break, bounded pages.
 
+import { mockResident } from './mockResident';
 import type { Backend } from './api';
 import { mockDiag } from './mockDiag';
 import { mockOps } from './mockOps';
@@ -265,12 +266,14 @@ export function mockBackend(): Backend {
     return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
   });
   const soft = mockSoftware(ops.__plan, ops.__seed);
+  const resident = mockResident();
   let alerted = false;
   return {
     ...ops,
     ...suite,
     ...soft,
     ...diag,
+    ...resident,
     preview: true,
     async statusSnapshot() {
       const snap = await suite.statusSnapshot();

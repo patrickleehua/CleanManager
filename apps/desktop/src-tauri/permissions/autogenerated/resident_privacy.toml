@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resident-privacy"
+description = "Enables the resident_privacy command without any pre-configured scope."
+commands.allow = ["resident_privacy"]
+
+[[permission]]
+identifier = "deny-resident-privacy"
+description = "Denies the resident_privacy command without any pre-configured scope."
+commands.deny = ["resident_privacy"]

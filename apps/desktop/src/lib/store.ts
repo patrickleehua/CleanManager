@@ -23,6 +23,7 @@ export type Page =
   | 'diagnosis'
   | 'status'
   | 'processes'
+  | 'resident'
   | 'activity'
   | 'agent'
   | 'settings'

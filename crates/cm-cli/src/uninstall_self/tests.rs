@@ -62,10 +62,15 @@ fn inputs<'a>(f: &'a Fixture, d: &'a Detected, remove_user_data: bool) -> Inputs
         profiles: vec![("powershell", f.profile.clone()), ("bash", f.other_profile.clone())],
         user_path: Some(&f.path),
         credential_targets: Vec::new(),
+        resident_startup: None,
     }
 }
 
 fn no_credentials(_: &str) -> Result<(), String> {
+    Err("not expected".into())
+}
+
+fn no_startup() -> Result<bool, String> {
     Err("not expected".into())
 }
 
@@ -74,7 +79,7 @@ fn no_defer(_: &Path, _: &Path) -> Result<(), String> {
 }
 
 fn effects<'a>(f: &'a Fixture) -> Effects<'a> {
-    Effects { user_path: Some(&f.path), current_exe: None, delete_credential: &no_credentials, defer: &no_defer }
+    Effects { user_path: Some(&f.path), current_exe: None, delete_credential: &no_credentials, defer: &no_defer, remove_resident_startup: &no_startup }
 }
 
 fn actions(p: &Plan) -> Vec<(String, &'static str, &'static str)> {
@@ -104,7 +109,8 @@ fn the_default_plan_removes_only_the_program_caches_and_its_own_system_changes()
     let kinds: Vec<_> = p.keep.iter().map(|k| k.data).collect();
     assert!(kinds.contains(&"configuration") && kinds.contains(&"protection_list") && kinds.contains(&"history"), "{kinds:?}");
     assert!(p.notes.iter().any(|n| n.contains("notes-by-user.txt")));
-    assert!(p.notes[0].contains("no service, scheduled task, startup entry, helper"));
+    assert!(p.notes[0].contains("No service, scheduled task, helper or background process") && p.notes[0].contains("CleanManager.Resident (not present)"));
+    assert!(!a.iter().any(|x| x.2 == "remove_run_value"));
     assert_eq!(p.quarantine_items, 0);
     assert!(p.warnings.is_empty(), "{:?}", p.warnings);
     // The digest binds the exact plan.
@@ -224,4 +230,28 @@ fn removing_all_user_data_also_removes_the_store_while_its_lock_is_held() {
     drop(held);
     assert!(done.iter().all(|x| x.outcome == "removed"), "{done:?}");
     assert!(!f.store.exists(), "the store directory is gone");
+}
+
+#[test]
+fn the_resident_startup_value_is_listed_and_removed_by_its_own_name() {
+    let f = fixture("resident");
+    let d = standalone();
+    let mut inp = inputs(&f, &d, false);
+    inp.resident_startup = Some(r#"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CleanManager.Resident = "C:\x\cleanmanager-desktop.exe" --resident"#.into());
+    let p = plan(&inp);
+    let item = p.items.iter().find(|i| i.action == "remove_run_value").expect("listed");
+    assert_eq!(item.component, "system_setting");
+    assert!(item.display.contains("CleanManager.Resident"));
+    assert!(p.notes[0].contains("present, listed for removal"));
+    assert_ne!(p.digest, plan(&inputs(&f, &d, false)).digest, "the digest covers the startup value");
+    let calls = std::cell::Cell::new(0);
+    let remove = || {
+        calls.set(calls.get() + 1);
+        Ok(true)
+    };
+    let fx = Effects { remove_resident_startup: &remove, ..effects(&f) };
+    let done = execute(&p, &f.install, &fx);
+    assert_eq!(calls.get(), 1);
+    let d = done.iter().find(|x| x.item_id == item.item_id).unwrap();
+    assert_eq!(d.outcome, "removed");
 }

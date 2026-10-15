@@ -31,9 +31,37 @@ impl CapabilityProvider for HostPlatform {
         } else {
             &["scan.mac.posix", "scan.mac.bulk", "execute.trash", "execute.quarantine", "execute.delete", "recovery.restore", "recovery.purge"]
         };
-        names.iter().map(|n| Capability::new(n, CapabilityState::Unverified, Some(NOT_YET_VERIFIED))).collect()
+        let mut caps: Vec<Capability> = names.iter().map(|n| Capability::new(n, CapabilityState::Unverified, Some(NOT_YET_VERIFIED))).collect();
+        // Mole-parity tools (add-mole-parity-suite 18.5): implemented on Windows but not through their gate, so never
+        // `available`; the macOS backends do not exist in this build.
+        for (name, gate) in PARITY {
+            caps.push(if cfg!(windows) {
+                Capability::new(name, CapabilityState::Unverified, Some(&format!("Implemented on Windows; gate {gate} not passed (no release, CI or real-device acceptance yet)")))
+            } else {
+                Capability::new(name, CapabilityState::Unsupported, Some("Not implemented on macOS in this build"))
+            });
+        }
+        caps
     }
 }
+
+/// Parity capabilities and the gate (D15) each must pass before it may report `available`.
+const PARITY: &[(&str, &str)] = &[
+    ("clean.catalog", "G1"),
+    ("purge.artifacts", "G1"),
+    ("installer.cleanup", "G1"),
+    ("trash.manual", "G1"),
+    ("insights.overview", "G1"),
+    ("apps.uninstall", "G3"),
+    ("apps.updates", "G3"),
+    ("startup.toggle", "G3"),
+    ("maintenance.run", "G3"),
+    ("status.metrics", "G3"),
+    ("process.end", "G3"),
+    ("resident.utilities", "G4"),
+    ("lifecycle.self_update", "G3"),
+    ("diag.ai", "AID"),
+];
 
 pub fn host() -> HostPlatform {
     HostPlatform

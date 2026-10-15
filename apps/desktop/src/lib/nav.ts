@@ -20,6 +20,8 @@ export interface Tool {
   key: string;
   /** One line under the tool name in the shortcut sheet and on narrow screens. */
   blurb: string;
+  /** Release gate (D15) this tool's capabilities must pass; none has passed yet, so every tool is labelled experimental. */
+  gate: string;
   sections: Section[];
 }
 
@@ -35,6 +37,7 @@ export interface Extension {
 export const TOOLS: Tool[] = [
   {
     id: 'clean',
+    gate: 'G1',
     label: '清理',
     icon: 'tool-clean',
     key: '1',
@@ -48,6 +51,7 @@ export const TOOLS: Tool[] = [
   },
   {
     id: 'software',
+    gate: 'G3',
     label: '软件',
     icon: 'tool-software',
     key: '2',
@@ -61,6 +65,7 @@ export const TOOLS: Tool[] = [
   },
   {
     id: 'optimize',
+    gate: 'G3',
     label: '优化',
     icon: 'tool-optimize',
     key: '3',
@@ -72,6 +77,7 @@ export const TOOLS: Tool[] = [
   },
   {
     id: 'analyze',
+    gate: 'G1',
     label: '分析',
     icon: 'tool-analyze',
     key: '4',
@@ -85,13 +91,15 @@ export const TOOLS: Tool[] = [
   },
   {
     id: 'status',
+    gate: 'G3',
     label: '状态',
     icon: 'tool-status',
     key: '5',
-    blurb: '系统指标与进程',
+    blurb: '系统指标、进程与常驻工具',
     sections: [
       { page: 'status', label: '系统状态' },
       { page: 'processes', label: '进程' },
+      { page: 'resident', label: '常驻工具' },
     ],
   },
 ];
@@ -159,4 +167,9 @@ export function shortcutFor(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'
 /** Human-readable shortcut for a key, e.g. "Ctrl+1" or "⌘1". */
 export function shortcutLabel(key: string, mod: string): string {
   return mod === '⌘' ? `⌘${key}` : `${mod}+${key}`;
+}
+
+/** Short label for a tool whose gate has not passed (18.5: the UI never presents ungated tools as released). */
+export function gateLabel(tool: Tool): string {
+  return `实验 · ${tool.gate} 未通过`;
 }

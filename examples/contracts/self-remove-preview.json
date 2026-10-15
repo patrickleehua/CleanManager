@@ -59,7 +59,7 @@
     }
   ],
   "notes": [
-    "This build installs no service, scheduled task, startup entry, helper or background process."
+    "No service, scheduled task, helper or background process is installed. The only startup entry CleanManager creates is the desktop tray's opt-in value HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\CleanManager.Resident (not present); no other system setting is changed."
   ],
   "install_method": "standalone",
   "uninstall_command": null,

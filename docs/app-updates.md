@@ -1,6 +1,6 @@
 # 应用更新（Windows）
 
-状态：变更 `add-mole-parity-suite` 任务 10.1–10.3 的 Windows 部分已实现（核心 `cm_core::updates`，服务 `cm_app::updates`，平台 `windows/updates.rs`，执行走 `cm_app::plans` 的 `update` 计划）；macOS 的 Sparkle、App Store、Homebrew 与 Electron 检测未实现，命令返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 10.2–10.3 已勾选；10.1（检测通道）只实现了 Windows 通道，因此未勾选。整体未通过 G3 门禁（任务 18.3），没有发布。实现位置：核心 `cm_core::updates`，服务 `cm_app::updates`，平台 `windows/updates.rs`，执行走 `cm_app::plans` 的 `update` 计划。macOS 的 Sparkle、App Store、Homebrew 与 Electron 检测未实现，命令返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 ## 检测通道与“无法检查”（UPD-01）
 

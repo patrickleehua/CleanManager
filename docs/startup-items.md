@@ -1,6 +1,6 @@
 # 启动项（Windows）
 
-状态：变更 `add-mole-parity-suite` 任务 11.1 已实现只读清单，11.2–11.3 的 Windows 部分已实现（核心 `cm_core::startup`、执行 `cm_app::plans`、平台 `windows/startup.rs` 只读清单与 `windows/startup_actions.rs` 写入）；macOS 未实现。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 11.1 的 Windows 只读清单已实现（11.1 要求两个平台，macOS 登录/后台项与 launchd 作业未实现，所以任务未勾选），11.2–11.3 的 Windows 部分已实现。所有部分都未通过 G3 门禁（任务 18.3），也没有发布（核心 `cm_core::startup`、执行 `cm_app::plans`、平台 `windows/startup.rs` 只读清单与 `windows/startup_actions.rs` 写入）；macOS 未实现。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 ## 哪些条目可以启停（STA-02/04）
 

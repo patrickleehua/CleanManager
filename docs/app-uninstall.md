@@ -1,6 +1,6 @@
 # 应用卸载
 
-状态：变更 `add-mole-parity-suite` 任务 9.1–9.8 的 Windows 部分已实现（核心 `cm_core::uninstall`、执行与计划 `cm_app::uninstall`、平台 `windows/uninstall.rs`、命令 `apps uninstall …`）；macOS 未实现，所有 `apps uninstall` 命令在 macOS 返回 `unsupported`（不伪造废纸篓或 Homebrew 适配）。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 9.2–9.8 已勾选，9.1（来源适配）的 Windows 部分已实现，但因 macOS 来源未实现而未勾选。没有在测试中移除过真实的 MSIX 包，也未通过 G3 门禁（任务 18.3），没有发布。代码位置：核心 `cm_core::uninstall`、执行与计划 `cm_app::uninstall`、平台 `windows/uninstall.rs`、命令 `apps uninstall …`。macOS 未实现，所有 `apps uninstall` 命令在 macOS 返回 `unsupported`（不伪造废纸篓或 Homebrew 适配）。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 ## 两段计划（D7）
 

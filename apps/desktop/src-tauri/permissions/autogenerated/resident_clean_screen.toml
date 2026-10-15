@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resident-clean-screen"
+description = "Enables the resident_clean_screen command without any pre-configured scope."
+commands.allow = ["resident_clean_screen"]
+
+[[permission]]
+identifier = "deny-resident-clean-screen"
+description = "Denies the resident_clean_screen command without any pre-configured scope."
+commands.deny = ["resident_clean_screen"]

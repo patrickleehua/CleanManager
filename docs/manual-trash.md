@@ -1,6 +1,6 @@
 # 手选移入回收站（Windows）
 
-状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现（核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、命令 `trash`）；macOS 一侧未实现，`trash` 在 macOS 返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现，其中 6.2（回收站/废纸篓移动与 D6 竞态夹具）因 macOS 未实现而未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、命令 `trash`。macOS 一侧未实现，`trash` 在 macOS 返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 ## 能做什么，不能做什么
 

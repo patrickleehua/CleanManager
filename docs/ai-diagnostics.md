@@ -1,6 +1,6 @@
 # AI 诊断扩展：实现与契约
 
-更新：2026-10-15。本文记录 OpenSpec 任务 15.1–15.8 的实现：契约、证据包、提供方与凭据、CLI 适配、结果校验、交接、桌面与 CLI 入口，以及在本机（Windows 11 x64）实际核验过的内容。产品设计见 [AI 清理诊断扩展设计](ai-cleanup-diagnostics.md)，行为要求见 [AID-01–13](../openspec/changes/define-cleanmanager-mvp/specs/ai-cleanup-diagnostics/spec.md)。15.9（真机 Mac 与全部适配模式的发布验收）尚未进行。
+更新：2026-10-15。本文记录 OpenSpec 任务 15.1–15.8 的实现（15.4 的受约束 CLI 适配已实现，但 Win/Mac 模式证据未补齐，任务未勾选；其余已勾选）：契约、证据包、提供方与凭据、CLI 适配、结果校验、交接、桌面与 CLI 入口，以及在本机（Windows 11 x64）实际核验过的内容。产品设计见 [AI 清理诊断扩展设计](ai-cleanup-diagnostics.md)，行为要求见 [AID-01–13](../openspec/changes/define-cleanmanager-mvp/specs/ai-cleanup-diagnostics/spec.md)。15.9（真机 Mac 与全部适配模式的发布验收）尚未进行。
 
 ## 分层
 

@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "description": "add-mole-parity-suite 15.1/15.2 real-device records of the Windows resident utilities (Windows 11 Enterprise 10.0.26200 x64, Lenovo laptop, elevated shell for powercfg). Commands are the ignored real-device tests in crates/cm-platform/src/windows/resident.rs and resident_screen.rs. No system setting was changed permanently: the only registry writes went to throwaway HKCU\\Software\\CleanManagerTest\\<unique> keys, deleted by the tests.",
+  "recorded_at": "2026-10-15T11:50:18Z",
+  "base_commit": "03eaa068d72a9cf2f2e3fece0b7e403ff0335a60",
+  "base_commit_note": "uncommitted working tree on top of this commit",
+  "records": [
+    {
+      "requirement": "RES-02",
+      "feature": "keep_screen_on",
+      "command": "cargo test -p cm-platform keep_awake_shows_in_powercfg -- --ignored --nocapture",
+      "api": "SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) on a dedicated thread; release = SetThreadExecutionState(ES_CONTINUOUS)",
+      "result": "passed",
+      "before": "powercfg /requests: the test process listed under neither DISPLAY nor SYSTEM",
+      "during": "powercfg /requests: [PROCESS] \\Device\\HarddiskVolume6\\workplace\\cleanmanager\\target\\debug\\deps\\cm_platform-9babf5e6266a0b21.exe listed under DISPLAY and SYSTEM",
+      "after": "powercfg /requests: the process listed under neither section after release",
+      "other_requests_seen": "GameViewer.exe / GameViewerServer.exe (pre-existing third-party requests, unchanged)",
+      "duration_expiry": "unit test keep_awake_holds_and_releases_on_its_own_thread: a 20 ms request is no longer active after 300 ms"
+    },
+    {
+      "requirement": "RES-02",
+      "feature": "clean_screen",
+      "command": "cargo test -p cm-platform clean_screen_exits -- --ignored --nocapture",
+      "result": "passed",
+      "window": "found by class CleanManager.CleanScreen; rect (0, 0, 1440, 900) equals the virtual screen as seen by the (DPI-unaware) test process; WS_EX_TOPMOST set; visible",
+      "timeout_exit": "timeout 3 s: exited with timeout after 3.08 s; input hooks removed (is_running false)",
+      "esc_exit": "injected Esc down 0.5 s (ignored), then held 2.6 s: exited with esc_held after 3.52 s of a 30 s timeout",
+      "input": "WH_KEYBOARD_LL swallows key presses (and the releases of swallowed presses), WH_MOUSE_LL swallows clicks and wheel; both removed before run() returns. Ctrl+Alt+Del cannot be intercepted and remains available."
+    },
+    {
+      "requirement": "RES-03",
+      "feature": "privacy_indicator",
+      "command": "cargo test -p cm-platform real_device_snapshot -- --ignored --nocapture",
+      "source": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\{webcam,microphone} (packaged apps and NonPackaged desktop apps), read-only; in use = LastUsedTimeStart != 0 and LastUsedTimeStop == 0",
+      "result": "readable",
+      "snapshot": { "supported": true, "records_total": 12, "camera_records": 4, "microphone_records": 8, "in_use": [] },
+      "note": "No app was using the camera or microphone during the snapshot. The appear/disappear behaviour (app named while in use, cleared after LastUsedTimeStop is set) is covered by consent_records_are_read_from_an_injected_root against a throwaway HKCU key; a live camera/microphone session was not started by the agent."
+    },
+    {
+      "requirement": "RES-04",
+      "feature": "battery",
+      "command": "cargo test -p cm-platform real_device_snapshot -- --ignored --nocapture",
+      "system_battery": { "source": "GetSystemPowerStatus", "percent": 100, "charging_or_on_ac": true },
+      "bluetooth": {
+        "source": "device property {104EA319-6EE2-4701-BD47-8DDBF425BBE5},2 (byte) read with SetupDiGetDevicePropertyW over present device nodes; it is the level the Windows Bluetooth stack records for devices that report one (shown in Settings > Bluetooth & devices). It is not declared in the public SDK headers, so devices without it are shown as not reporting, never estimated.",
+        "bluetooth_devices_present": 0,
+        "devices_with_level": [],
+        "result": "no paired Bluetooth device on this laptop; the page says so. A device that reports its level could not be tested here."
+      },
+      "alerts": "BatteryAlerts unit tests (cm-core): one alert below the threshold, none while still low or charging, re-armed after recovering by 5 points; alerts are checked only by the tray loop, which runs only while the tray is on"
+    },
+    {
+      "requirement": "RES-01/RES-07",
+      "feature": "tray_lifecycle",
+      "result": "unit tests passed (not exercised on the real Run key)",
+      "tests": [
+        "cm-core resident::tests::turning_off_stops_and_joins_the_sampling_loop (injected sampler counting ticks: no tick after turn_off)",
+        "cm-platform resident::tests::run_value_is_written_read_and_removed_in_a_throwaway_key",
+        "desktop resident::tests::turning_the_tray_off_stops_sampling_and_removes_the_startup_value",
+        "desktop resident::tests::turning_off_removes_the_value_from_a_throwaway_registry_key (HKCU\\Software\\CleanManagerTest\\desktop-<pid>-<nanos>)",
+        "desktop resident::tests::a_stale_startup_value_is_removed_at_startup_when_the_tray_is_off",
+        "cm-cli uninstall_self::tests::the_resident_startup_value_is_listed_and_removed_by_its_own_name"
+      ],
+      "post_check": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run has no CleanManager.Resident value; HKCU\\Software\\CleanManagerTest removed; powercfg /requests lists no CleanManager process"
+    }
+  ]
+}

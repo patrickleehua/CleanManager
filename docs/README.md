@@ -13,6 +13,7 @@
 | [AI 清理诊断扩展](ai-cleanup-diagnostics.md) | 自配 API/CLI、用途与删除影响、依据/追问及原型交互 |
 | [v6 可点击原型](../output/ui-preview-2026-10-14/suite-v3/prototype-v6.md) | 五工具信息架构、规格/门禁状态、体验路径与浏览器验证（[v5](../output/ui-preview-2026-10-14/suite-v3/prototype-v5.md) 保留作 AI 诊断交互参考） |
 | [OpenSpec 提案](../openspec/changes/define-cleanmanager-mvp/proposal.md) | 首版九项能力、可选 AI 扩展及设计/任务验收规划 |
+| [Mole 对标完成度复核](../openspec/changes/add-mole-parity-suite/parity-review.md) | 每项 Mole 功能的归属、实现状态、阻塞门槛，以及对外文案审计（2026-10-15） |
 | [核心架构](core-architecture.md) | 模块、数据对象、索引、并发和状态机 |
 | [Windows 后端](platforms/windows.md) | NTFS、USN、权限、云占位、应用管理与发布 |
 | [macOS 后端](platforms/macos.md) | 批量枚举、APFS、FSEvents、TCC 与平台限制 |
@@ -22,6 +23,7 @@
 | [启动项](startup-items.md) | 可逆启停、失效项备份后删除、管理员要求与恢复计划 |
 | [应用卸载](app-uninstall.md) | 两段卸载计划、各平台支持来源、签名核验、运行中处理、残留分组与注册表备份恢复 |
 | [系统状态与洞察卡片](system-status.md) | 进程解释与结束进程、关键进程保护、可选高 CPU 提醒、状态流过期标记、概览卡片与旧下载审阅 |
+| [常驻工具](resident-utilities.md) | 可选托盘（默认关闭、关闭即停止采样并删除登录启动项）、保持亮屏、清洁屏幕、摄像头/麦克风提示与设备电量 |
 | [应用更新](app-updates.md) | 检测通道与“无法检查”、检查开关、签名一致才执行的更新与逐项结果 |
 | [系统维护](system-maintenance.md) | 维护任务目录、六种结果、集中提权、禁止项、只读诊断与运行记录 |
 | [提权边界](privilege-boundary.md) | Windows 短生命周期提权工作进程的命令集、校验、生命周期与移除；macOS helper（规划） |
@@ -59,7 +61,8 @@ JSON Schema 负责已定义字段的机器形状；CLI 文档负责参数和输�
 | disk-cleaner 两个分类风险案例 | 已用合成 CSV 复现；未执行生成的清理脚本 |
 | 设计、任务、协议样例与文档一致性 | 本轮交付，具体校验数以结果文件为准 |
 | Mole 风格 HTML 原型与 AI 诊断交互 | 已设计并检查浏览器演示；未连接真实模型/CLI/本机操作 |
-| Rust 扫描器、桌面、CLI、授权与清理执行器 | 尚未实现 |
-| Windows/macOS 真机产品验收、性能比较、签名发布 | 尚未执行；见阶段 0 和验证计划 |
+| Rust 扫描器、桌面、CLI、授权与清理执行器 | Windows 11 x64 已实现，经单机自动化测试与本机运行记录检验；macOS 后端未实现 |
+| Mole 对标能力（`add-mole-parity-suite`） | 多数 Windows 部分已实现，没有一项通过门禁；逐项状态见 [对标完成度复核](../openspec/changes/add-mole-parity-suite/parity-review.md) |
+| Windows/macOS 真机产品验收（G0–G4）、CI 实际运行、性能比较、签名发布 | 尚未通过；见两个 OpenSpec 变更的 tasks 与验证计划 |
 
-下一步可直接领取 TASK-001 与 TASK-002，建立环境矩阵、只读语料和核心契约。能否达到 WizTree 的速度，由同口径实测决定；无需等反编译完成才开始自研只读原型。
+下一步以两个 OpenSpec 变更 tasks 中未勾选的任务为准：macOS 后端、CI 实际运行、真机门禁记录与签名发布。能否达到 WizTree 的速度，由同口径实测决定。

@@ -64,7 +64,7 @@ def main():
 
 # Direct dependencies of the desktop host (apps/desktop): Tauri crates and npm packages.
 DESKTOP_PURPOSE = {
-    "tauri": "Desktop shell: native window, IPC commands to the shared Rust core, capability-scoped permissions",
+    "tauri": "Desktop shell: native window, IPC commands to the shared Rust core, capability-scoped permissions; tray-icon feature for the optional resident tray (RES-01, off by default)",
     "tauri-build": "Build-time generation of the Tauri context, permissions and Windows resources",
     "tauri-plugin-dialog": "Native folder picker for choosing scan scopes (no file contents read)",
     "serde": "Typed (de)serialization of IPC payloads",

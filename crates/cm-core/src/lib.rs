@@ -30,6 +30,7 @@ pub mod protocol;
 pub mod purge;
 pub mod purge_git;
 pub mod recovery;
+pub mod resident;
 pub mod rules;
 pub mod scan;
 pub mod startup;
