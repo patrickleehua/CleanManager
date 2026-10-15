@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_process",
+    "plan_kind": "process",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "a01",
+        "action_type": "process_end",
+        "pid": 4242,
+        "started_at": "134050000000000000",
+        "name": "example.exe",
+        "image_path": {
+          "platform": "windows",
+          "display": "C:\\Users\\Example\\AppData\\Local\\Example\\example.exe",
+          "raw_encoding": "windows_utf16le_base64",
+          "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAFwAZQB4AGEAbQBwAGwAZQAuAGUAeABlAA=="
+        },
+        "image_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      }
+    ]
+  },
+  "plan_digest": "056adc3b53b427baf8ee4d0ab4a3eb6bee2e06230c4581470d810491a7f69c8f",
+  "authorization_status": "required"
+}

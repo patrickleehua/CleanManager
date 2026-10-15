@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v2",
+    "plan_id": "p_v2_startup_disable",
+    "plan_kind": "startup",
+    "policy_matchable": false,
+    "requires_admin": false,
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-15T12:00:00Z",
+    "expires_at": "2026-10-15T12:15:00Z",
+    "items": [
+      {
+        "action_id": "s0000000",
+        "action_type": "startup_toggle",
+        "startup_item_id": "st_demo",
+        "source": "run_key",
+        "operation": "disable",
+        "scope": "user",
+        "definition": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run : Example Updater",
+        "observed_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      }
+    ]
+  },
+  "plan_digest": "e522af65718a45b09d26886234c2ad54a7a05849ac6a453bd59415ac03a3d691",
+  "authorization_status": "required"
+}

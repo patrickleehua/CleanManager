@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-cancel"
+description = "Enables the diag_cancel command without any pre-configured scope."
+commands.allow = ["diag_cancel"]
+
+[[permission]]
+identifier = "deny-diag-cancel"
+description = "Denies the diag_cancel command without any pre-configured scope."
+commands.deny = ["diag_cancel"]

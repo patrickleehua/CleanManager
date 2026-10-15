@@ -8,9 +8,6 @@
   "dry_run": false,
   "params": {
     "app_instance_id": "app_demo",
-    "include_groups": [
-      "bundle",
-      "caches_logs"
-    ]
+    "end_running": false
   }
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-prepare"
+description = "Enables the diag_prepare command without any pre-configured scope."
+commands.allow = ["diag_prepare"]
+
+[[permission]]
+identifier = "deny-diag-prepare"
+description = "Denies the diag_prepare command without any pre-configured scope."
+commands.deny = ["diag_prepare"]

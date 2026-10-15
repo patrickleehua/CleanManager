@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "kind": "process_list",
+  "request_id": "req_synthetic",
+  "sampled_at": "2026-10-14T12:00:02Z",
+  "window_ms": 1000,
+  "sort": "cpu",
+  "search": null,
+  "total": 2,
+  "matched": 2,
+  "unidentified": 1,
+  "notes": [
+    "disk_bytes_per_sec is the process's read+write transfer rate"
+  ],
+  "items": [
+    {
+      "pid": 4242,
+      "parent_pid": 1000,
+      "parent_name": "explorer.exe",
+      "name": "example-helper.exe",
+      "image_path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\AppData\\Local\\Example\\example-helper.exe",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAFwAZQB4AGEAbQBwAGwAZQAtAGgAZQBsAHAAZQByAC4AZQB4AGUA"
+      },
+      "started_at": "134050000000000000",
+      "cpu_percent": 12.5,
+      "memory_bytes": "104857600",
+      "disk_bytes_per_sec": 0.0,
+      "network_bytes_per_sec": null,
+      "signature": {
+        "state": "unsigned",
+        "publisher": null,
+        "reason": "no valid embedded or catalog signature"
+      },
+      "owner_app": null,
+      "identified": false,
+      "purpose": null,
+      "unidentified_reason": "Not in CleanManager's local process knowledge",
+      "ai_diagnosis": {
+        "available": true,
+        "hint": "Purpose not identified locally. You can ask the optional AI diagnosis about this process"
+      },
+      "pinned": false,
+      "end_capability": {
+        "state": "available",
+        "protection": null,
+        "reason": "Ends only through a reviewed plan for this one process"
+      },
+      "notes": []
+    },
+    {
+      "pid": 700,
+      "parent_pid": 600,
+      "parent_name": "wininit.exe",
+      "name": "lsass.exe",
+      "image_path": {
+        "platform": "windows",
+        "display": "C:\\Windows\\System32\\lsass.exe",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVwBpAG4AZABvAHcAcwBcAFMAeQBzAHQAZQBtADMAMgBcAGwAcwBhAHMAcwAuAGUAeABlAA=="
+      },
+      "started_at": "134049000000000000",
+      "cpu_percent": 0.1,
+      "memory_bytes": "8388608",
+      "disk_bytes_per_sec": 0.0,
+      "network_bytes_per_sec": null,
+      "signature": {
+        "state": "catalog_signed",
+        "publisher": "Microsoft Windows",
+        "reason": null
+      },
+      "owner_app": null,
+      "identified": true,
+      "purpose": "Local Security Authority: sign-in, credentials and security policy",
+      "unidentified_reason": null,
+      "ai_diagnosis": null,
+      "pinned": false,
+      "end_capability": {
+        "state": "unsupported",
+        "protection": "critical_system",
+        "reason": "Critical Windows process: ending it stops or restarts the system"
+      },
+      "notes": []
+    }
+  ]
+}

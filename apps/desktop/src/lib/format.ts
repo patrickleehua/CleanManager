@@ -130,6 +130,22 @@ export const ERROR_HINT: Record<string, string> = {
   protection_busy: '另一个程序正在写保护清单，请稍后重试。',
   not_removable: '内置的硬拒绝与默认保护类目不能移除。',
   unsupported: '此平台的这项能力尚未经过验证，未执行任何操作。',
+  not_directory: '所选位置不是文件夹。',
+  not_project_root: '这个位置不能作为项目扫描根目录（例如系统目录或卷根目录）。',
+  already_configured: '这个文件夹已经在扫描根目录中。',
+  purge_settings_invalid: '构建产物设置文件无法读取。请修复或删除它后重试。',
+  io_error: '读写 CleanManager 自己的数据时出错，未做任何更改。',
+  wrong_catalog: '这些对象来自另一类扫描或旧版本目录，请重新扫描。',
+  unknown_candidate: '所选对象不在这次扫描结果中，请重新扫描。',
+  selection_stale: '所选对象在扫描后都已变化，请重新扫描后再选择。',
+  recycle_bin_unavailable: '所在的卷没有可用的回收站。不会改为永久删除。',
+  unknown_entry: '所选条目不在这次扫描中。',
+  overlap: '所选对象之间有包含关系，请只保留外层或只保留内层。',
+  incomplete_subtree: '文件夹中有未读取的部分，无法确认全部内容。',
+  unknown_item: '找不到这个启动项，请重新读取清单。',
+  needs_cli_confirmation: '永久删除需要一次单独的不可恢复确认，目前请在终端中用 plan review 批准。',
+  conflict: '对象当前的状态与请求不符（例如已经是停用状态）。',
+  protected: '这个对象受保护，不能放入计划。',
 };
 
 /** Short task title: "正在扫描", "正在停止扫描", "扫描已完成"… */

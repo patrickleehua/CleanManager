@@ -1,0 +1,259 @@
+{
+  "contract": "diag/1",
+  "kind": "diagnosis_record",
+  "request_id": "req_synthetic",
+  "diagnosis": {
+    "diagnosis_id": "dg_cccccccccccccccccccc",
+    "state": "completed",
+    "request": {
+      "contract": "diag/1",
+      "object": {
+        "scan_id": "s_demo",
+        "revision": 1,
+        "entry_id": "88",
+        "origin": "apps",
+        "candidate_id": null,
+        "app_instance_id": "app_example"
+      },
+      "observed_at": "2026-10-14T12:00:00Z",
+      "observation_fingerprint": "f94043b7e1a2433c4f910214a322c706dbd9c2c8c9789f1e39aaa22f63649137",
+      "disclosure": {
+        "full_path": false,
+        "child_summary": false
+      },
+      "question": null,
+      "statements": [],
+      "parent_diagnosis_id": null,
+      "prompt_template": "diag-prompt/1"
+    },
+    "evidence": {
+      "version": "diag-evidence/1",
+      "subject": {
+        "kind": "file",
+        "name": "history.sqlite",
+        "extension": "sqlite",
+        "location": "%USERPROFILE%\\AppData\\Local\\ExampleApp",
+        "logical_bytes": "943718400",
+        "allocated_bytes": "943718400",
+        "size_basis": "entity",
+        "modified_at": "2026-05-28T20:26:40Z",
+        "link_count": 1,
+        "cloud": "not_cloud",
+        "identity_quality": "strong"
+      },
+      "children": null,
+      "children_omitted": 0,
+      "items": [
+        {
+          "evidence_id": "ev_1",
+          "layer": "observation",
+          "code": "observation.size",
+          "text": "逻辑大小 900.0 MiB（943718400 字节），分配大小 900.0 MiB（943718400 字节）。"
+        },
+        {
+          "evidence_id": "ev_2",
+          "layer": "rule",
+          "code": "rule.none",
+          "text": "没有已启用的清理规则匹配这个对象；这不说明它是垃圾，也不说明它重要。"
+        },
+        {
+          "evidence_id": "ev_3",
+          "layer": "protection",
+          "code": "protection.builtin_self",
+          "text": "属于默认保护类别 database：Database files and their journals (.db, .sqlite, -wal, -shm, .mdb, .accdb)。"
+        },
+        {
+          "evidence_id": "ev_4",
+          "layer": "ownership",
+          "code": "ownership.app",
+          "text": "位于已安装应用「Example App」记录的安装位置。"
+        }
+      ],
+      "gaps": [
+        {
+          "gap_id": "gap_1",
+          "code": "backup_unknown",
+          "text": "CleanManager 不检测备份；是否已有可用备份未知。"
+        },
+        {
+          "gap_id": "gap_2",
+          "code": "usage_unknown",
+          "text": "未检测是否有程序或工程正在使用它。"
+        },
+        {
+          "gap_id": "gap_3",
+          "code": "reclaim_unknown",
+          "text": "删除后实际能释放多少空间未知（共享块、硬链接、回收站等）。"
+        }
+      ],
+      "redactions": [
+        {
+          "field": "subject.location",
+          "rule": "user_profile"
+        }
+      ],
+      "excluded": [
+        "file_contents",
+        "directory_tree",
+        "credentials",
+        "sessions",
+        "cloud_hydration"
+      ]
+    },
+    "facts": {
+      "entry_id": "88",
+      "kind": "file",
+      "volume_id": "synthetic-volume",
+      "file_id": "ntfs64:2d0274deed733f09",
+      "object_fingerprint": "fcf3596c1b13b49f0ceac6499f937fb6f9875e96e70485a6c96856a1b2cc91a5",
+      "protection": "protected:database",
+      "protection_checked": true,
+      "candidate_id": null,
+      "candidate_state": null,
+      "plannable": false,
+      "partial_evidence": false,
+      "cloud_placeholder": false,
+      "hard_links": false,
+      "app_instance_ids": [
+        "app_example"
+      ],
+      "rule_refs": []
+    },
+    "destination": {
+      "provider_id": "local-llm",
+      "label": "本机模型",
+      "kind": "openai_compatible",
+      "mode": "api",
+      "endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+      "executable": null,
+      "model": "example-local-model",
+      "template": "diag-prompt/1"
+    },
+    "payload_digest": "0a322f9d9190af720f8e84cc5b749ab0cef0afd9de677c08cf4fdd3084e71007",
+    "created_at": "2026-10-15T09:30:00Z",
+    "updated_at": "2026-10-15T09:30:12Z",
+    "finished_at": "2026-10-15T09:30:12Z",
+    "expires_at": "2026-10-16T09:30:12Z",
+    "retention": "session",
+    "retain_until": "2026-10-16T09:30:00Z",
+    "result": {
+      "answer": {
+        "answer_version": "diag-answer/1",
+        "summary": "这是应用的历史数据库。",
+        "purpose": "保存浏览或使用历史。",
+        "recommendation": "reviewable",
+        "conditions": [],
+        "deletion_impact": "删除会丢失历史记录。",
+        "rebuild_cost": "无法重建。",
+        "claims": [
+          {
+            "text": "这是可丢弃的临时数据库，可以删除",
+            "basis": "inference",
+            "refs": []
+          }
+        ],
+        "gaps": [],
+        "alternatives": [
+          {
+            "action": "review_plan",
+            "text": "[已移除：回答包含批准/授权说法；授权只能由你在计划审阅中完成]"
+          }
+        ],
+        "questions": []
+      },
+      "model_recommendation": "reviewable",
+      "effective_recommendation": "keep",
+      "grounding": [
+        {
+          "index": 0,
+          "status": "conflicts_with_facts",
+          "note": "该对象受保护"
+        }
+      ],
+      "conflicts": [
+        {
+          "code": "protected_object",
+          "text": "对象受保护（protected:database）；保护优先于任何建议。"
+        }
+      ],
+      "sanitized": [
+        {
+          "field": "alternatives[0].text",
+          "reason": "approval_instruction"
+        }
+      ]
+    },
+    "failure": null,
+    "freshness": {
+      "state": "current",
+      "checked_at": "2026-10-15T09:30:12Z",
+      "reasons": []
+    },
+    "handoff": [
+      {
+        "action": "review_plan",
+        "available": false,
+        "reason": "受保护（protected:database），核心不会为它生成计划；可以保留或定位。",
+        "suggested_by_model": true,
+        "target": null
+      },
+      {
+        "action": "keep",
+        "available": true,
+        "reason": "不做任何操作，文件保持原状。",
+        "suggested_by_model": false,
+        "target": null
+      },
+      {
+        "action": "protect",
+        "available": true,
+        "reason": "加入你的保护名单；以后的规则与策略都不会选中它。",
+        "suggested_by_model": false,
+        "target": {
+          "scan_id": "s_demo",
+          "entry_id": "88",
+          "candidate_id": null,
+          "app_instance_id": null
+        }
+      },
+      {
+        "action": "locate",
+        "available": true,
+        "reason": "在磁盘视图中定位（只读）。",
+        "suggested_by_model": false,
+        "target": {
+          "scan_id": "s_demo",
+          "entry_id": "88",
+          "candidate_id": null,
+          "app_instance_id": null
+        }
+      },
+      {
+        "action": "verify",
+        "available": true,
+        "reason": "按核实清单确认备份、引用与来源。",
+        "suggested_by_model": false,
+        "target": null
+      },
+      {
+        "action": "app_management",
+        "available": true,
+        "reason": "在应用页查看关联应用（只读清单）。",
+        "suggested_by_model": false,
+        "target": {
+          "scan_id": "s_demo",
+          "entry_id": "88",
+          "candidate_id": null,
+          "app_instance_id": "app_example"
+        }
+      },
+      {
+        "action": "archive",
+        "available": false,
+        "reason": "CleanManager 不移动或归档文件；请使用你自己的备份工具。",
+        "suggested_by_model": false,
+        "target": null
+      }
+    ]
+  }
+}

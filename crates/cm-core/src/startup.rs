@@ -1,21 +1,32 @@
-//! Startup item inventory model (parity STA-01; read-only, toggling is task 11.2).
+//! Startup items (parity STA-01..04, tasks 11.1–11.3): inventory model, change decisions and plans.
 //!
 //! - An item is identified by where it is defined (source, scope, registry view / file / task path), never by its
 //!   display name, so two entries with the same name stay separate.
 //! - `state` folds the platform's enable/disable record together with a read-only check of the target: a target
 //!   missing on a mounted volume is `broken`; a target on a volume that is not mounted is `target_unreachable`
 //!   (unknown, never broken: STA-03). A target that could not be checked keeps the recorded state.
-//! - Nothing here is a toggle. `toggle_capability` stays `unverified` until 11.2 lands; protected items (STA-04:
-//!   system components, security/management agents, this tool) are `unsupported`.
+//! - Changes (11.2/11.3) are `startup` plans (`plan/v2`) of `startup_toggle` actions, reviewed by a person and applied
+//!   by the shared executor. Enable/disable writes only the enable record Task Manager uses (`StartupApproved`); the
+//!   definition is untouched. A stale Run value is deleted only after its backup is stored with the operation. Every
+//!   change records the prior state, and a `recovery` plan puts it back (never over a value recreated since).
+//! - Only sources with a verified mechanism toggle (Run values, Startup-folder files). Others offer the system settings
+//!   page instead; protected items (STA-04: system components, security/management agents, this tool) never toggle;
+//!   system-scope items need an administrator and this tool never elevates itself.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::capability::CapabilityState;
 use crate::path::RawPath;
+use crate::plan::v2::{ActionMeta, Hive, HeaderInput, PlanAction, PlanKind, PlanV2, RegistryRestoreAction, StartupOperation, StartupToggleAction};
 
-/// Toggle reason while startup changes are not implemented (11.2).
+/// Former read-only reason (11.1); kept for callers that still show it.
 pub const TOGGLE_NOT_IMPLEMENTED: &str = "Read-only inventory: enabling or disabling startup items is not available in this build";
+/// Reason for sources without a verified toggle mechanism (scheduled tasks, packaged-app tasks).
+pub const OPEN_SETTINGS_GUIDANCE: &str =
+    "No verified toggle for this source: change it in Settings > Apps > Startup (ms-settings:startupapps) or Task Scheduler";
+/// Reason for system-scope items when this process is not elevated.
+pub const ADMIN_REQUIRED: &str = "System-wide entry: run CleanManager from an administrator terminal to change it (it never elevates itself)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +94,294 @@ pub struct StartupItem {
     pub toggle_capability: CapabilityState,
     pub protected: bool,
     pub reason: Option<String>,
+    /// Structured location for sources with a verified toggle mechanism (Run values, Startup-folder files).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<StartupLocation>,
+    /// The definition is a value of a `Run` key (not RunOnce or policy): the only kind a stale entry is removed from.
+    #[serde(default)]
+    pub removable_when_stale: bool,
+}
+
+/// Registry view of a key on 64-bit Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegView {
+    Default,
+    Wow64_64,
+    Wow64_32,
+}
+
+/// Where a toggleable entry and its enable record live. Key paths are logical (as on a real machine); `root` is the
+/// physical redirection they were read through (empty = the real hives; tests use a throwaway key), so a plan made
+/// against one root can never act on another.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum StartupLocation {
+    /// A `Run` value; its enable record is the same-named value under `approval_key`.
+    RunValue { root: String, hive: Hive, view: RegView, key: String, value_name: String, approval_key: String },
+    /// A file in a Startup folder; its enable record is the value named like the file under `approval_key`.
+    FolderFile { root: String, hive: Hive, folder: RawPath, file_name: String, approval_key: String },
+}
+
+impl StartupLocation {
+    pub fn hive(&self) -> Hive {
+        match self {
+            StartupLocation::RunValue { hive, .. } | StartupLocation::FolderFile { hive, .. } => *hive,
+        }
+    }
+
+    pub fn root(&self) -> &str {
+        match self {
+            StartupLocation::RunValue { root, .. } | StartupLocation::FolderFile { root, .. } => root,
+        }
+    }
+
+    /// Name of the enable-record value.
+    pub fn approval_value(&self) -> &str {
+        match self {
+            StartupLocation::RunValue { value_name, .. } => value_name,
+            StartupLocation::FolderFile { file_name, .. } => file_name,
+        }
+    }
+
+    pub fn approval_key(&self) -> &str {
+        match self {
+            StartupLocation::RunValue { approval_key, .. } | StartupLocation::FolderFile { approval_key, .. } => approval_key,
+        }
+    }
+}
+
+/// A registry value as read: type and raw data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegValue {
+    pub value_type: u32,
+    /// Lower-case hex of the raw data.
+    pub data_hex: String,
+}
+
+impl RegValue {
+    pub fn new(value_type: u32, data: &[u8]) -> Self {
+        RegValue { value_type, data_hex: hex(data) }
+    }
+
+    pub fn data(&self) -> Option<Vec<u8>> {
+        unhex(&self.data_hex)
+    }
+}
+
+pub fn hex(data: &[u8]) -> String {
+    data.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn unhex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+}
+
+/// Live state of a toggleable entry, read without changing anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartupObservation {
+    /// The `Run` value (type and data), or for a Startup-folder file its volume/file identity as text. `None` = gone.
+    pub definition: Option<RegValue>,
+    /// The enable record (`StartupApproved` value data). `None` = no record (runs as enabled).
+    pub approval: Option<RegValue>,
+}
+
+impl StartupObservation {
+    /// Enabled as Explorer/Task Manager would treat it (no or unreadable record = enabled).
+    pub fn enabled(&self) -> bool {
+        self.approval.as_ref().and_then(RegValue::data).and_then(|d| approval_enabled(&d)).unwrap_or(true)
+    }
+}
+
+/// SHA-256 binding a location to what was observed there; recomputed live before any change.
+pub fn observation_digest(loc: &StartupLocation, obs: &StartupObservation) -> String {
+    let v = serde_json::json!({"location": loc, "observation": obs});
+    crate::c14n::digest(&v).expect("plain JSON")
+}
+
+/// Enable-record data written for `enabled` (Task Manager's format: 0x02 enabled; 0x03 disabled + FILETIME).
+pub fn approval_record(enabled: bool, now_filetime: u64) -> Vec<u8> {
+    let mut d = vec![if enabled { 2u8 } else { 3u8 }, 0, 0, 0];
+    d.extend_from_slice(&if enabled { 0u64 } else { now_filetime }.to_le_bytes());
+    d
+}
+
+/// Prior-state record stored with the operation before a startup change, so a recovery plan can put it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartupBackup {
+    pub backup_id: String,
+    pub startup_item_id: String,
+    pub operation: StartupOperation,
+    pub location: StartupLocation,
+    /// The `Run` value before the change (always kept for removals).
+    pub prior_definition: Option<RegValue>,
+    /// The enable record before the change.
+    pub prior_approval: Option<RegValue>,
+    /// The enable record this change wrote (`None` for a removal).
+    pub written_approval: Option<RegValue>,
+    pub created_at: String,
+}
+
+impl StartupBackup {
+    pub fn sha256(&self) -> String {
+        crate::c14n::digest(&serde_json::to_value(self).expect("backup serializes")).expect("plain JSON")
+    }
+}
+
+/// Why a change cannot be planned or applied (`code` is the protocol error/skip code).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: &'static str,
+    pub message: String,
+}
+
+fn refuse(code: &'static str, message: impl Into<String>) -> Refusal {
+    Refusal { code, message: message.into() }
+}
+
+/// Whether `op` may be planned for `item` by a process that is (`is_admin`) or is not elevated (STA-02/03/04).
+pub fn change_decision(item: &StartupItem, op: StartupOperation, is_admin: bool) -> Result<(), Refusal> {
+    if item.protected {
+        return Err(refuse("policy_denied", format!("{} is protected: {}", item.name, item.reason.as_deref().unwrap_or("system or security entry"))));
+    }
+    if item.location.is_none() {
+        let why = item.reason.clone().unwrap_or_else(|| OPEN_SETTINGS_GUIDANCE.into());
+        return Err(refuse("unsupported", why));
+    }
+    if item.scope == StartupScope::System && !is_admin {
+        return Err(refuse("permission_required", ADMIN_REQUIRED));
+    }
+    match op {
+        StartupOperation::Restore => Err(refuse("invalid_argument", "restore comes from an operation's recorded prior state (startup restore --operation)")),
+        StartupOperation::Disable if item.state == StartupState::Disabled => Err(refuse("conflict", "already disabled")),
+        StartupOperation::Enable if item.state == StartupState::Enabled => Err(refuse("conflict", "already enabled")),
+        StartupOperation::RemoveWithBackup => match item.state {
+            _ if !item.removable_when_stale => Err(refuse("unsupported", "only stale Run-key values are removed; this source keeps its definition")),
+            StartupState::Broken => Ok(()),
+            StartupState::TargetUnreachable => Err(refuse("conflict", "target volume is offline: state unknown, not stale")),
+            _ => Err(refuse("conflict", "the target exists or could not be checked; only stale entries are removed")),
+        },
+        _ => Ok(()),
+    }
+}
+
+/// Wire capability of an item for a process that is (`is_admin`) or is not elevated.
+pub fn toggle_capability(protected: bool, has_mechanism: bool, scope: StartupScope, is_admin: bool) -> CapabilityState {
+    if protected {
+        CapabilityState::Unsupported
+    } else if !has_mechanism {
+        CapabilityState::Unverified
+    } else if scope == StartupScope::System && !is_admin {
+        CapabilityState::PermissionRequired
+    } else {
+        CapabilityState::Available
+    }
+}
+
+/// Freeze one change of one item into a `startup` plan (review required; never policy-matched).
+pub fn build_startup_plan(
+    item: &StartupItem, op: StartupOperation, obs: &StartupObservation, is_admin: bool, plan_id: &str, created_unix: i64, policy_digest: &str,
+) -> Result<PlanV2, Refusal> {
+    change_decision(item, op, is_admin)?;
+    let loc = item.location.clone().expect("checked by change_decision");
+    if obs.definition.is_none() {
+        return Err(refuse("conflict", "the entry no longer exists; list startup items again"));
+    }
+    let action = PlanAction::StartupToggle(StartupToggleAction {
+        action_id: "s0000000".into(),
+        startup_item_id: item.item_id.clone(),
+        source: item.source,
+        operation: op,
+        scope: item.scope,
+        definition: Some(item.definition.clone()),
+        observed_sha256: Some(observation_digest(&loc, obs)),
+        backup_id: None,
+    });
+    let header = HeaderInput {
+        plan_id, plan_kind: PlanKind::Startup, created_unix, scope_id: None, scan_id: None, scan_revision: None,
+        rule_set_digest: crate::plan::v2::NO_RULES_DIGEST, policy_digest,
+    };
+    let meta = ActionMeta { startup: Some(loc), note: Some(item.name.clone()), ..Default::default() };
+    crate::plan::v2::build(&header, vec![action], vec![meta]).map_err(|e| refuse("internal_error", e.to_string()))
+}
+
+/// Freeze the recorded prior states of a startup operation into a `recovery` plan: enable records are put back
+/// (`startup_toggle restore`, only if nobody changed them since), removed values are recreated (`registry_restore`,
+/// skipped when the value exists again).
+pub fn build_startup_recovery_plan(backups: &[(String, StartupBackup)], plan_id: &str, created_unix: i64, policy_digest: &str) -> Result<PlanV2, Refusal> {
+    if backups.is_empty() {
+        return Err(refuse("invalid_argument", "the operation recorded no startup change to restore"));
+    }
+    let mut items = Vec::new();
+    let mut meta = Vec::new();
+    for (i, (item_name, b)) in backups.iter().enumerate() {
+        let action_id = format!("r{i:07}");
+        let scope = if b.location.hive() == Hive::Hklm { StartupScope::System } else { StartupScope::User };
+        let source = match b.location {
+            StartupLocation::RunValue { .. } => StartupSource::RunKey,
+            StartupLocation::FolderFile { .. } => StartupSource::StartupFolder,
+        };
+        match (&b.operation, &b.location) {
+            (StartupOperation::RemoveWithBackup, StartupLocation::RunValue { hive, key, value_name, .. }) => {
+                items.push(PlanAction::RegistryRestore(RegistryRestoreAction {
+                    action_id, backup_id: b.backup_id.clone(), hive: *hive, key_path: key.clone(), value_name: Some(value_name.clone()),
+                    backup_sha256: Some(b.sha256()), on_existing: "skip".into(),
+                }));
+            }
+            (StartupOperation::Enable | StartupOperation::Disable, _) => {
+                items.push(PlanAction::StartupToggle(StartupToggleAction {
+                    action_id, startup_item_id: b.startup_item_id.clone(), source, operation: StartupOperation::Restore, scope,
+                    definition: None, observed_sha256: Some(b.sha256()), backup_id: Some(b.backup_id.clone()),
+                }));
+            }
+            _ => return Err(refuse("unsupported", format!("backup {} cannot be restored by this build", b.backup_id))),
+        }
+        meta.push(ActionMeta { startup: Some(b.location.clone()), note: Some(item_name.clone()), ..Default::default() });
+    }
+    let header = HeaderInput {
+        plan_id, plan_kind: PlanKind::Recovery, created_unix, scope_id: None, scan_id: None, scan_revision: None,
+        rule_set_digest: crate::plan::v2::NO_RULES_DIGEST, policy_digest,
+    };
+    crate::plan::v2::build(&header, items, meta).map_err(|e| refuse("internal_error", e.to_string()))
+}
+
+/// Result of one platform startup change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum StartupOutcome {
+    Done,
+    /// Precondition not met (changed since planning, recreated, protected...); nothing was changed.
+    Skipped { code: String, message: String },
+    /// The OS refused; nothing was changed.
+    Failed { code: String, message: String },
+    /// The write may or may not have taken effect.
+    Unknown { message: String },
+}
+
+/// Stores the prior state (and the enable record about to be written) before a change; an `Err` stops the change.
+pub type ToggleBackup<'a> = &'a mut dyn FnMut(&StartupObservation, Option<&RegValue>) -> Result<(), String>;
+/// Stores the prior state before a removal; an `Err` stops the removal.
+pub type RemovalBackup<'a> = &'a mut dyn FnMut(&StartupObservation) -> Result<(), String>;
+
+/// Platform startup changes. Every method re-reads the live state first and changes nothing unless it still matches.
+pub trait StartupActions {
+    /// Read-only observation of a location.
+    fn observe(&self, loc: &StartupLocation) -> Result<StartupObservation, String>;
+    /// Whether this process may write machine-wide locations (never elevates).
+    fn is_admin(&self) -> bool;
+    /// Write the enable record if the live state still hashes to `expected`; `backup` stores the prior state first
+    /// (its failure stops the change).
+    fn set_enabled(&self, loc: &StartupLocation, enabled: bool, expected: &str, backup: ToggleBackup<'_>) -> StartupOutcome;
+    /// Delete a stale `Run` value (and its enable record) after `backup` stored both; the target must still be missing.
+    fn remove_stale(&self, loc: &StartupLocation, expected: &str, backup: RemovalBackup<'_>) -> StartupOutcome;
+    /// Put an enable record back to `prior` if it still holds what the operation wrote (`written`).
+    fn restore_approval(&self, loc: &StartupLocation, written: Option<&RegValue>, prior: Option<&RegValue>) -> StartupOutcome;
+    /// Recreate a removed `Run` value (and its enable record) unless a value with that name exists again.
+    fn restore_value(&self, backup: &StartupBackup) -> StartupOutcome;
 }
 
 /// Stable item ID from the definition material (source, scope, location, value or file name), never the target.
@@ -306,6 +605,8 @@ mod tests {
             toggle_capability: CapabilityState::Unverified,
             protected: false,
             reason: None,
+            location: None,
+            removable_when_stale: false,
         };
         let items = normalize(vec![mk("b", StartupScope::System), mk("a", StartupScope::User), mk("b", StartupScope::System)]);
         assert_eq!(items.len(), 2);
@@ -314,5 +615,65 @@ mod tests {
         assert_eq!(w["source"], "run_key");
         assert_eq!(w["toggle_capability"], "unverified");
         assert_eq!(w["publisher_evidence"], "none");
+    }
+
+    fn toggleable(scope: StartupScope, state: StartupState) -> StartupItem {
+        let hive = if scope == StartupScope::System { Hive::Hklm } else { Hive::Hkcu };
+        StartupItem {
+            item_id: "st_x".into(), name: "X".into(), source: StartupSource::RunKey, definition: "Run : X".into(), target: None, publisher: None,
+            publisher_evidence: PublisherEvidence::None, scope, state, toggle_capability: CapabilityState::Available, protected: false, reason: None,
+            location: Some(StartupLocation::RunValue { root: String::new(), hive, view: RegView::Default, key: "Run".into(), value_name: "X".into(), approval_key: "A".into() }),
+            removable_when_stale: true,
+        }
+    }
+
+    /// STA-02/03/04 decisions with the elevation state injected (the dev shell itself is elevated).
+    #[test]
+    fn change_decisions() {
+        let user = toggleable(StartupScope::User, StartupState::Enabled);
+        assert_eq!(change_decision(&user, StartupOperation::Disable, false), Ok(()));
+        assert_eq!(change_decision(&user, StartupOperation::Enable, false).unwrap_err().code, "conflict");
+        let system = toggleable(StartupScope::System, StartupState::Enabled);
+        assert_eq!(change_decision(&system, StartupOperation::Disable, false).unwrap_err().code, "permission_required");
+        assert_eq!(change_decision(&system, StartupOperation::Disable, true), Ok(()));
+        let protected = StartupItem { protected: true, reason: Some("Security or device-management agent".into()), ..user.clone() };
+        assert_eq!(change_decision(&protected, StartupOperation::Disable, true).unwrap_err().code, "policy_denied");
+        let unverified = StartupItem { location: None, source: StartupSource::ScheduledTask, reason: Some(OPEN_SETTINGS_GUIDANCE.into()), ..user.clone() };
+        let r = change_decision(&unverified, StartupOperation::Disable, true).unwrap_err();
+        assert_eq!(r.code, "unsupported");
+        assert!(r.message.contains("ms-settings:startupapps"));
+        // Stale: broken only; an offline volume is unknown, never stale; non-Run sources keep their definition.
+        let broken = toggleable(StartupScope::User, StartupState::Broken);
+        assert_eq!(change_decision(&broken, StartupOperation::RemoveWithBackup, false), Ok(()));
+        let offline = toggleable(StartupScope::User, StartupState::TargetUnreachable);
+        assert_eq!(change_decision(&offline, StartupOperation::RemoveWithBackup, false).unwrap_err().code, "conflict");
+        assert_eq!(change_decision(&user, StartupOperation::RemoveWithBackup, false).unwrap_err().code, "conflict");
+        let folder = StartupItem { removable_when_stale: false, ..broken.clone() };
+        assert_eq!(change_decision(&folder, StartupOperation::RemoveWithBackup, false).unwrap_err().code, "unsupported");
+        assert_eq!(change_decision(&user, StartupOperation::Restore, false).unwrap_err().code, "invalid_argument");
+        assert_eq!(toggle_capability(false, true, StartupScope::System, false), CapabilityState::PermissionRequired);
+        assert_eq!(toggle_capability(false, true, StartupScope::System, true), CapabilityState::Available);
+        assert_eq!(toggle_capability(false, false, StartupScope::User, true), CapabilityState::Unverified);
+        assert_eq!(toggle_capability(true, true, StartupScope::User, true), CapabilityState::Unsupported);
+    }
+
+    #[test]
+    fn task_manager_records_and_plans() {
+        assert_eq!(approval_record(true, 99), vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let off = approval_record(false, 0x0102_0304_0506_0708);
+        assert_eq!((off[0], &off[4..]), (3, &[8u8, 7, 6, 5, 4, 3, 2, 1][..]));
+        assert_eq!(approval_enabled(&off), Some(false));
+        let item = toggleable(StartupScope::User, StartupState::Enabled);
+        let obs = StartupObservation { definition: Some(RegValue::new(1, b"a ")), approval: None };
+        let plan = build_startup_plan(&item, StartupOperation::Disable, &obs, false, "sp", 1_800_000_000, crate::plan::v2::NO_RULES_DIGEST).unwrap();
+        assert_eq!((plan.body.plan_kind, plan.body.policy_matchable, plan.body.requires_admin), (PlanKind::Startup, false, false));
+        let PlanAction::StartupToggle(t) = &plan.body.items[0] else { panic!() };
+        assert_eq!(t.observed_sha256.as_deref(), Some(observation_digest(item.location.as_ref().unwrap(), &obs).as_str()));
+        let changed = StartupObservation { approval: Some(RegValue::new(3, &approval_record(false, 1))), ..obs.clone() };
+        assert_ne!(observation_digest(item.location.as_ref().unwrap(), &obs), observation_digest(item.location.as_ref().unwrap(), &changed));
+        let gone = StartupObservation { definition: None, approval: None };
+        assert_eq!(build_startup_plan(&item, StartupOperation::Disable, &gone, false, "sp", 0, "x").unwrap_err().code, "conflict");
+        assert_eq!(unhex(&hex(&[0, 255, 16])), Some(vec![0, 255, 16]));
+        assert_eq!(unhex("abc"), None);
     }
 }

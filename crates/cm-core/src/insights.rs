@@ -285,9 +285,343 @@ pub fn sort(items: &mut [Insight]) {
     items.sort_by(|a, b| b.logical_bytes.is_some().cmp(&a.logical_bytes.is_some()).then(b.logical_bytes.cmp(&a.logical_bytes)).then(a.title.cmp(&b.title)));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Overview cards and the old-downloads review (parity DIN-03/04, task 7.3).
+
+/// Overview card categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardKind {
+    OldDownloads,
+    VirtualMachines,
+    Snapshots,
+    SystemFiles,
+    ComponentStore,
+    PreviousInstallation,
+    UpdateCache,
+    DeveloperTools,
+    ModelLibraries,
+    DeviceBackups,
+}
+
+impl CardKind {
+    fn title(self) -> &'static str {
+        match self {
+            CardKind::OldDownloads => "Old downloads",
+            CardKind::VirtualMachines => "Virtual machines and containers",
+            CardKind::Snapshots => "Restore points and snapshots",
+            CardKind::SystemFiles => "Hibernation and paging files",
+            CardKind::ComponentStore => "Windows component store",
+            CardKind::PreviousInstallation => "Previous Windows installation",
+            CardKind::UpdateCache => "Update delivery cache",
+            CardKind::DeveloperTools => "Developer tool caches",
+            CardKind::ModelLibraries => "AI model libraries",
+            CardKind::DeviceBackups => "Device backups",
+        }
+    }
+
+    /// Card a known Windows object belongs to.
+    pub fn of_insight(kind: &str) -> Option<CardKind> {
+        Some(match kind {
+            "windows.wsl_disk" | "windows.docker_disk" | "windows.hyperv_disks" => CardKind::VirtualMachines,
+            "windows.shadow_storage" => CardKind::Snapshots,
+            "windows.hibernation_file" | "windows.page_file" | "windows.swap_file" => CardKind::SystemFiles,
+            "windows.component_store" => CardKind::ComponentStore,
+            "windows.previous_installation" => CardKind::PreviousInstallation,
+            "windows.delivery_optimization_cache" => CardKind::UpdateCache,
+            _ => return None,
+        })
+    }
+}
+
+/// A measured directory for the developer-tool, model-library and device-backup cards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeasuredDir {
+    pub card: CardKind,
+    pub label: String,
+    pub path: RawPath,
+    pub size: Measured,
+    pub observed_at: String,
+}
+
+/// One file in the old-downloads review. Never preselected (DIN-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldDownload {
+    pub path: RawPath,
+    pub logical_bytes: u64,
+    pub modified_at: String,
+    pub age_days: u64,
+    /// Looks like an installer package by extension; such files can also go through the installer review.
+    pub installer_like: bool,
+    pub selected: bool,
+}
+
+/// A file found in Downloads, as the platform listed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadEntry {
+    pub path: RawPath,
+    pub logical_bytes: u64,
+    pub modified_unix: i64,
+}
+
+/// The old-downloads review (DIN-04): a size-sorted list with nothing selected; handling is the manual trash review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldDownloadsReview {
+    pub root: Option<RawPath>,
+    pub older_than_days: u32,
+    pub observed_at: String,
+    pub items: Vec<OldDownload>,
+    pub total_logical_bytes: Option<u64>,
+    pub item_count: u64,
+    /// Why the list may be incomplete (unreadable folders, listing limit), or why there is no list.
+    pub note: Option<String>,
+    pub handling: Handling,
+}
+
+/// Default age threshold of the old-downloads card.
+pub const OLD_DOWNLOADS_DAYS: u32 = 90;
+
+const INSTALLER_EXTENSIONS: &[&str] = &["exe", "msi", "msix", "msixbundle", "appx", "appxbundle", "iso", "dmg", "pkg", "zip", "7z"];
+
+/// Filter by age, sort (largest first, then path) and wrap the listing. `root: None` = no Downloads folder (unknown).
+pub fn old_downloads(root: Option<RawPath>, entries: Vec<DownloadEntry>, now_unix: i64, days: u32, observed_at: &str, note: Option<String>) -> OldDownloadsReview {
+    let cutoff = now_unix - i64::from(days) * 86_400;
+    let mut items: Vec<OldDownload> = entries
+        .into_iter()
+        .filter(|e| e.modified_unix <= cutoff)
+        .map(|e| {
+            let ext = e.path.display().rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+            OldDownload {
+                logical_bytes: e.logical_bytes,
+                modified_at: crate::time::utc_from_unix(e.modified_unix),
+                age_days: ((now_unix - e.modified_unix).max(0) / 86_400) as u64,
+                installer_like: INSTALLER_EXTENSIONS.contains(&ext.as_str()),
+                selected: false,
+                path: e.path,
+            }
+        })
+        .collect();
+    items.sort_by(|a, b| b.logical_bytes.cmp(&a.logical_bytes).then_with(|| a.path.display().cmp(&b.path.display())));
+    let total = items.iter().map(|i| i.logical_bytes).fold(0u64, u64::saturating_add);
+    OldDownloadsReview {
+        item_count: items.len() as u64,
+        total_logical_bytes: root.is_some().then_some(total),
+        root,
+        older_than_days: days,
+        observed_at: observed_at.into(),
+        items,
+        note,
+        handling: Handling::ManualTrashReview,
+    }
+}
+
+/// Where a card opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardLink {
+    /// `analyze` (disk analysis at `path`), `insights.downloads` (old-downloads review) or `insights` (known objects).
+    pub view: String,
+    pub path: Option<RawPath>,
+    pub insight_ids: Vec<String>,
+}
+
+/// One overview card (DIN-03): known size or unknown, with the last observation time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsightCard {
+    pub card_id: String,
+    pub kind: CardKind,
+    pub title: String,
+    /// `None` = unknown (never 0 and never a partial sum presented as the total).
+    pub logical_bytes: Option<u64>,
+    /// Object count (snapshots: the number of restore points, shown even when sizes are unavailable).
+    pub count: Option<u64>,
+    pub size_note: Option<String>,
+    /// Oldest observation among the card's members.
+    pub observed_at: Option<String>,
+    pub link: CardLink,
+}
+
+struct Member {
+    bytes: Option<u64>,
+    count: Option<u64>,
+    note: Option<String>,
+    observed_at: Option<String>,
+    path: Option<RawPath>,
+    insight_id: Option<String>,
+}
+
+fn card(kind: CardKind, members: &[Member]) -> InsightCard {
+    let known: Vec<u64> = members.iter().filter_map(|m| m.bytes).collect();
+    let unknown = members.len() - known.len();
+    let sum = known.iter().copied().fold(0u64, u64::saturating_add);
+    let (logical_bytes, size_note) = if unknown == 0 {
+        (Some(sum), None)
+    } else {
+        let why = members.iter().filter(|m| m.bytes.is_none()).find_map(|m| m.note.clone()).unwrap_or_else(|| "size not available".into());
+        let known_part = if known.is_empty() { String::new() } else { format!("; {} of {} measured: {sum} bytes", known.len(), members.len()) };
+        (None, Some(format!("Size unavailable: {why}{known_part}")))
+    };
+    let count = match kind {
+        CardKind::Snapshots => members.iter().filter_map(|m| m.count).reduce(u64::saturating_add),
+        _ => Some(members.len() as u64),
+    };
+    let observed_at = members.iter().filter_map(|m| m.observed_at.clone()).min();
+    let insight_ids: Vec<String> = members.iter().filter_map(|m| m.insight_id.clone()).collect();
+    let single_path = if members.len() == 1 { members[0].path.clone() } else { None };
+    let link = match kind {
+        CardKind::OldDownloads => CardLink { view: "insights.downloads".into(), path: single_path, insight_ids },
+        _ if single_path.is_some() => CardLink { view: "analyze".into(), path: single_path, insight_ids },
+        _ => CardLink { view: "insights".into(), path: None, insight_ids },
+    };
+    InsightCard { card_id: insight_id("card", &format!("{kind:?}")), kind, title: kind.title().into(), logical_bytes, count, size_note, observed_at, link }
+}
+
+/// DIN-03: overview cards from the known objects, the old-downloads review and measured tool directories. Cards
+/// without members are left out, except old downloads (an empty review is a measured result).
+pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &[MeasuredDir]) -> Vec<InsightCard> {
+    let mut groups: std::collections::BTreeMap<CardKind, Vec<Member>> = std::collections::BTreeMap::new();
+    groups.insert(
+        CardKind::OldDownloads,
+        vec![Member {
+            bytes: downloads.total_logical_bytes,
+            count: Some(downloads.item_count),
+            note: downloads.note.clone(),
+            observed_at: Some(downloads.observed_at.clone()),
+            path: downloads.root.clone(),
+            insight_id: None,
+        }],
+    );
+    for i in known {
+        if let Some(kind) = CardKind::of_insight(&i.kind) {
+            groups.entry(kind).or_default().push(Member {
+                bytes: i.logical_bytes,
+                count: i.count,
+                note: i.size_note.clone(),
+                observed_at: i.observed_at.clone(),
+                path: i.path.clone(),
+                insight_id: Some(i.insight_id.clone()),
+            });
+        }
+    }
+    for d in dirs {
+        let (bytes, note) = match &d.size {
+            Measured::Bytes { bytes, .. } => (Some(*bytes), None),
+            Measured::Unknown(why) => (None, Some(format!("{}: {why}", d.label))),
+        };
+        groups.entry(d.card).or_default().push(Member { bytes, count: None, note, observed_at: Some(d.observed_at.clone()), path: Some(d.path.clone()), insight_id: None });
+    }
+    let mut cards: Vec<InsightCard> = groups.iter().map(|(k, m)| card(*k, m)).collect();
+    if let Some(c) = cards.iter_mut().find(|c| c.kind == CardKind::OldDownloads) {
+        c.count = Some(downloads.item_count);
+        c.title = format!("Downloads older than {} days", downloads.older_than_days);
+    }
+    // Largest known size first, unknown after, then by kind.
+    cards.sort_by(|a, b| b.logical_bytes.is_some().cmp(&a.logical_bytes.is_some()).then(b.logical_bytes.cmp(&a.logical_bytes)).then(a.kind.cmp(&b.kind)));
+    cards
+}
+
+impl InsightCard {
+    pub fn to_wire(&self) -> serde_json::Value {
+        let mut v = serde_json::to_value(self).expect("card serializes");
+        v["logical_bytes"] = self.logical_bytes.map_or(serde_json::Value::Null, |b| serde_json::Value::String(b.to_string()));
+        v
+    }
+}
+
+/// Review text of the old-downloads list: how to act on a file without CleanManager choosing for the user.
+pub const OLD_DOWNLOADS_GUIDANCE: &str =
+    "Review only: nothing is selected. Pick files yourself and move them to the Recycle Bin with the trash command, or review installer packages with installer scan.";
+
+impl OldDownloadsReview {
+    pub fn to_wire(&self) -> serde_json::Value {
+        let items: Vec<serde_json::Value> = self
+            .items
+            .iter()
+            .map(|i| {
+                serde_json::json!({"path": i.path, "logical_bytes": i.logical_bytes.to_string(), "modified_at": i.modified_at, "age_days": i.age_days,
+                    "installer_like": i.installer_like, "selected": i.selected})
+            })
+            .collect();
+        serde_json::json!({
+            "root": self.root, "older_than_days": self.older_than_days, "observed_at": self.observed_at, "items": items,
+            "total_logical_bytes": self.total_logical_bytes.map(|b| b.to_string()), "item_count": self.item_count, "note": self.note,
+            "handling": self.handling, "guidance": OLD_DOWNLOADS_GUIDANCE,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn raw(p: &str) -> RawPath {
+        RawPath::windows(p.encode_utf16().collect()).unwrap()
+    }
+
+    /// DIN-04: the old-downloads review is size-sorted, age-filtered and has nothing selected.
+    #[test]
+    fn old_downloads_are_reviewed_not_preselected() {
+        let now = 1_800_000_000;
+        let day = 86_400;
+        let e = |p: &str, size: u64, age: i64| DownloadEntry { path: raw(p), logical_bytes: size, modified_unix: now - age * day };
+        let r = old_downloads(
+            Some(raw(r"C:\Users\A\Downloads")),
+            vec![e(r"C:\Users\A\Downloads\new.zip", 9_000, 3), e(r"C:\Users\A\Downloads\a.pdf", 10, 200), e(r"C:\Users\A\Downloads\setup.EXE", 5_000, 91), e(r"C:\Users\A\Downloads\b.mov", 7_000, 400)],
+            now,
+            90,
+            "2026-10-15T00:00:00Z",
+            None,
+        );
+        assert_eq!(r.items.iter().map(|i| i.logical_bytes).collect::<Vec<_>>(), [7_000, 5_000, 10]);
+        assert!(r.items.iter().all(|i| !i.selected), "nothing preselected");
+        assert!(r.items[1].installer_like && !r.items[0].installer_like);
+        assert_eq!((r.total_logical_bytes, r.item_count, r.handling), (Some(12_010), 3, Handling::ManualTrashReview));
+        assert_eq!(r.items[2].age_days, 200);
+        let w = r.to_wire();
+        assert!(w["items"].as_array().unwrap().iter().all(|i| i["selected"] == false));
+        assert!(w.get("allowed_modes").is_none() && w["items"][0].get("default_selected").is_none());
+    }
+
+    /// DIN-03: each card shows a known size or unknown plus the observation time; snapshots without sizes show a count.
+    #[test]
+    fn cards_show_known_size_or_unknown_with_time() {
+        let downloads = old_downloads(Some(raw(r"C:\D")), vec![], 1_800_000_000, 90, "2026-10-15T08:00:00Z", None);
+        let known = vec![
+            Insight::windows(WindowsObject::WslDisk, Some("Ubuntu"), "u", Some(raw(r"C:\wsl\ext4.vhdx")), Measured::Bytes { bytes: 40, basis: SizeBasis::FileMetadata }, None, "2026-10-15T08:00:03Z"),
+            Insight::windows(WindowsObject::DockerDisk, None, "d", None, Measured::Unknown("access denied".into()), None, "2026-10-15T08:00:02Z"),
+            Insight::windows(WindowsObject::ShadowStorage, Some("C:"), "c", None, Measured::Unknown("WMI unavailable".into()), Some(3), "2026-10-15T08:00:01Z"),
+            Insight::windows(WindowsObject::HibernationFile, Some("C:"), "h", Some(raw(r"C:\hiberfil.sys")), Measured::Bytes { bytes: 7, basis: SizeBasis::FileMetadata }, None, "2026-10-15T08:00:04Z"),
+        ];
+        let dirs = vec![MeasuredDir {
+            card: CardKind::DeveloperTools,
+            label: "Cargo".into(),
+            path: raw(r"C:\Users\A\.cargo"),
+            size: Measured::Bytes { bytes: 100, basis: SizeBasis::DirectoryWalk },
+            observed_at: "2026-10-15T08:00:05Z".into(),
+        }];
+        let cards = overview_cards(&known, &downloads, &dirs);
+        let by = |k: CardKind| cards.iter().find(|c| c.kind == k).unwrap();
+        let vm = by(CardKind::VirtualMachines);
+        assert_eq!(vm.logical_bytes, None, "a partial sum is never shown as the total");
+        let note = vm.size_note.as_deref().unwrap();
+        assert!(note.contains("access denied") && note.contains("1 of 2 measured: 40"), "{note}");
+        assert_eq!(vm.observed_at.as_deref(), Some("2026-10-15T08:00:02Z"), "oldest observation");
+        let snap = by(CardKind::Snapshots);
+        assert_eq!((snap.logical_bytes, snap.count), (None, Some(3)));
+        assert!(snap.to_wire()["logical_bytes"].is_null());
+        let dl = by(CardKind::OldDownloads);
+        assert_eq!((dl.logical_bytes, dl.count, dl.link.view.as_str()), (Some(0), Some(0), "insights.downloads"));
+        assert_eq!(dl.observed_at.as_deref(), Some("2026-10-15T08:00:00Z"));
+        let dev = by(CardKind::DeveloperTools);
+        assert_eq!((dev.logical_bytes, dev.link.view.as_str()), (Some(100), "analyze"));
+        assert_eq!(dev.to_wire()["logical_bytes"], "100");
+        assert!(cards.iter().all(|c| c.observed_at.is_some()));
+        assert!(cards.iter().all(|c| c.logical_bytes.is_some() || c.size_note.is_some()));
+        assert!(!cards.iter().any(|c| c.kind == CardKind::ModelLibraries), "no members, no card");
+        // No Downloads folder: unknown, not 0.
+        let none = old_downloads(None, vec![], 0, 90, "t", Some("no Downloads folder".into()));
+        let c = overview_cards(&[], &none, &[]);
+        assert_eq!(c[0].logical_bytes, None);
+    }
 
     /// DIN-01/02: no known object offers a trash/delete route, every one explains itself, names a system or owner
     /// tool, and marks administrator steps.

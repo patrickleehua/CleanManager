@@ -10,12 +10,15 @@
 mod args;
 mod cleanup;
 mod commands;
+mod diag;
 mod dto;
 mod host;
 mod ops;
 mod roots;
 mod rules;
 mod settings;
+mod suite;
+mod v2;
 #[cfg(all(test, windows))]
 mod flow_tests;
 
@@ -73,10 +76,43 @@ fn main() {
             ops::list_plans,
             ops::list_quarantine,
             ops::create_recovery_plan,
+            suite::purge_roots,
+            suite::purge_roots_add,
+            suite::purge_roots_remove,
+            suite::purge_scan,
+            suite::installer_locations,
+            suite::installer_scan,
+            suite::create_catalog_plan,
+            suite::trash_inspect,
+            suite::trash_plan,
+            suite::startup_list,
+            suite::startup_plan,
+            suite::insights_list,
+            suite::status_snapshot,
+            suite::readiness,
+            suite::reveal_entry,
             settings::list_protection,
             settings::add_protection,
             settings::remove_protection,
             settings::list_apps,
+            diag::diag_status,
+            diag::diag_save_provider,
+            diag::diag_choose_cli,
+            diag::diag_remove_provider,
+            diag::diag_set_key,
+            diag::diag_forget_key,
+            diag::diag_probe,
+            diag::diag_prepare,
+            diag::diag_follow_up,
+            diag::diag_discard,
+            diag::diag_confirm,
+            diag::diag_cancel,
+            diag::diag_get,
+            diag::diag_list,
+            diag::diag_save,
+            diag::diag_remove,
+            diag::diag_export,
+            diag::diag_handoff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running CleanManager desktop");

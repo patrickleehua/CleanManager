@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "kind": "completion_script",
+  "request_id": "req_synthetic",
+  "shell": "powershell",
+  "action": "preview",
+  "script": "# >>> cleanmanager completion >>>\n& 'C:\\Tools\\cleanmanager.exe' completion print powershell --format text | Out-String | Invoke-Expression\n# <<< cleanmanager completion <<<\n",
+  "profile_path": {
+    "platform": "windows",
+    "display": "C:\\Users\\Example\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1",
+    "raw_encoding": "windows_utf16le_base64",
+    "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAbwBjAHUAbQBlAG4AdABzAFwAUABvAHcAZQByAFMAaABlAGwAbABcAE0AaQBjAHIAbwBzAG8AZgB0AC4AUABvAHcAZQByAFMAaABlAGwAbABfAHAAcgBvAGYAaQBsAGUALgBwAHMAMQA="
+  },
+  "written": false
+}

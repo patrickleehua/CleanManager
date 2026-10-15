@@ -13,6 +13,8 @@
 //! - `reconcile_operation` only inspects; it never starts an action.
 //! - `create_recovery_plan` freezes quarantine ids into a `recovery/v1` plan; it authorizes
 //!   nothing and goes through the same review page as a cleanup plan.
+//! - `plan/v2` plans (manual trash, startup, startup restore) dispatch to `crate::v2`, which refuses kinds this window
+//!   does not apply and plans that need an administrator while this process is not elevated, before anything starts.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +24,7 @@ use cm_app::execute::{ActionResult, ActionStatus, ApplyError, OperationReport};
 use cm_core::authz::{current_principal, policy_covers, receipt_valid};
 use cm_core::error::ErrorCode;
 use cm_core::host::HostProbe;
+use cm_core::plan::v2::PLAN_V2_CONTRACT;
 use cm_core::recovery::{RECOVERY_CONTRACT, RecoveryKind};
 use cm_core::rules::Mode;
 use cm_platform::host::OsHostProbe;
@@ -74,9 +77,14 @@ impl From<ApplyError> for IpcError {
     }
 }
 
-/// `cleanup`, `restore` or `purge`, and the cleanup mode, from the stored plan.
+/// `cleanup`, `restore`, `purge` or a plan/v2 kind name, the cleanup mode, digest and item count, from the stored plan.
 fn plan_kind(stores: &Stores, plan_id: &str) -> IpcResult<(&'static str, Option<Mode>, String, u64)> {
-    if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
+    let contract = stores.audit.plan_contract(plan_id)?;
+    if contract == PLAN_V2_CONTRACT {
+        let p = stores.audit.load_plan_v2(plan_id)?;
+        return Ok((crate::v2::kind_name(&p), crate::v2::mode_of(&p), p.digest.clone(), p.body.items.len() as u64));
+    }
+    if contract == RECOVERY_CONTRACT {
         let p = stores.audit.load_recovery_plan(plan_id)?;
         let kind = match p.body.recovery_kind {
             RecoveryKind::Restore => "restore",
@@ -94,7 +102,11 @@ fn plan_kind(stores: &Stores, plan_id: &str) -> IpcResult<(&'static str, Option<
 fn precheck(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<()> {
     let now = now_unix();
     let principal = current_principal();
-    if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
+    let contract = stores.audit.plan_contract(plan_id)?;
+    if contract == PLAN_V2_CONTRACT {
+        return crate::v2::precheck(stores, plan_id);
+    }
+    if contract == RECOVERY_CONTRACT {
         let plan = stores.audit.load_recovery_plan(plan_id)?;
         if crate::cleanup::recovery_authorization(stores, &plan, now)?.status != "authorized" {
             return Err(ApplyError::NeedsApproval(plan_id.into()).into());
@@ -102,7 +114,7 @@ fn precheck(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<()> {
         return Ok(());
     }
     let plan = stores.audit.load_plan(plan_id)?;
-    let digest = crate::rules::load(s.rules_dir.as_deref()).map_err(|e| ipc(ErrorCode::InternalError, "rules_unavailable", e))?.digest;
+    let digest = crate::cleanup::rules_digest_for(s, &plan).map_err(|e| ipc(ErrorCode::InternalError, "rules_unavailable", e))?;
     cm_core::plan::check_plan(&plan, now, &digest).map_err(ApplyError::Stale)?;
     let receipt = stores.audit.receipts_for(plan_id)?.iter().any(|r| receipt_valid(r, &plan, &principal, now));
     let policy = stores.audit.policies()?.iter().any(|p| policy_covers(p, &plan, &principal, now).is_ok());
@@ -169,14 +181,22 @@ fn run(stores: &Stores, plan_id: &str, rules_digest: &str, cancel: &AtomicBool) 
     let principal = current_principal();
     let host = OsHostProbe.current("desktop");
     let cancelled = || cancel.load(Ordering::Acquire);
-    if stores.audit.plan_contract(plan_id).ok().as_deref() == Some(RECOVERY_CONTRACT) {
-        let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &cancelled, fault: &|_, _| false };
-        return cm_app::recovery::apply_recovery_plan(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, plan_id, &ctx);
+    match stores.audit.plan_contract(plan_id).ok().as_deref() {
+        Some(RECOVERY_CONTRACT) => {
+            let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &cancelled, fault: &|_, _| false };
+            return cm_app::recovery::apply_recovery_plan(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, plan_id, &ctx);
+        }
+        Some(PLAN_V2_CONTRACT) => return crate::v2::apply(stores, plan_id, &cancelled),
+        _ => {}
     }
     // Same wiring as `cleanmanager plan apply`: verified Windows actions with the store's
     // quarantine, and the protection checker consulted immediately before every action.
-    let rule_refs = stores.audit.load_plan(plan_id).map(|p| p.rule_refs).unwrap_or_default();
-    let protect = cm_platform::protection::checker(&stores.dir, rule_refs);
+    let stored = stores.audit.load_plan(plan_id).ok();
+    let rule_refs = stored.as_ref().map(|p| p.rule_refs.clone()).unwrap_or_default();
+    let base = cm_platform::protection::checker(&stores.dir, rule_refs);
+    // PUR-03: purge plans re-read version-control state per artifact before acting (other plans pass through).
+    let gate = stored.as_ref().map(cm_platform::windows::purge::vcs_gate);
+    let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t).and_then(|()| gate.as_ref().map_or(Ok(()), |g| g(t)));
     let ctx = cm_app::execute::ApplyContext {
         principal: &principal,
         host: &host,
@@ -207,7 +227,11 @@ pub fn start(app: &AppHandle, state: &Arc<AppState>, plan_id: &str) -> IpcResult
         return Ok(ApplyStartDto { plan_id: plan_id.into(), operation_id: op, total, existing: true });
     }
     state.with_stores(|st| precheck(state, st, plan_id))?;
-    let rules_digest = crate::rules::load(state.rules_dir.as_deref()).map(|r| r.digest).unwrap_or_default();
+    // Cleanup plans: the installed rule pack, or the plan's own digest for built-in catalogs (purge, installers).
+    let rules_digest = state
+        .with_stores(|st| Ok(st.audit.load_plan(plan_id).ok()))?
+        .and_then(|p| crate::cleanup::rules_digest_for(state, &p).ok())
+        .unwrap_or_default();
 
     let mut slot = lock(&state.apply);
     if let Some(a) = slot.as_ref()
@@ -261,7 +285,8 @@ pub fn start(app: &AppHandle, state: &Arc<AppState>, plan_id: &str) -> IpcResult
 pub struct OperationDto {
     pub operation_id: String,
     pub plan_id: String,
-    /// `cleanup`, `restore`, `purge` or `unknown` (plan unreadable).
+    /// `cleanup`, `restore`, `purge`, `manual_trash`, `manual_purge`, `startup`, `startup_restore` (other plan/v2
+    /// kinds by their raw name) or `unknown` (plan unreadable).
     pub plan_kind: &'static str,
     pub mode: Option<Mode>,
     pub state: String,
@@ -358,7 +383,13 @@ pub fn operation_items(stores: &Stores, operation_id: &str, filter: &str, page_s
     let start = args::offset_cursor(cursor)?;
     let plan_id = stores.audit.operation_plan(operation_id)?;
     // (action id, name, path, original path, bytes) of every planned item, in plan order.
-    let planned: Vec<(String, String, String, Option<String>, String)> = if stores.audit.plan_contract(&plan_id)? == RECOVERY_CONTRACT {
+    let contract = stores.audit.plan_contract(&plan_id)?;
+    let planned: Vec<(String, String, String, Option<String>, String)> = if contract == PLAN_V2_CONTRACT {
+        crate::v2::item_rows(&stores.audit.load_plan_v2(&plan_id)?)
+            .into_iter()
+            .map(|r| (r.action_id, r.name, r.path_display, r.original_path_display, r.logical_bytes))
+            .collect()
+    } else if contract == RECOVERY_CONTRACT {
         stores.audit.load_recovery_plan(&plan_id)?.body.items.iter().map(|i| {
             let o = i.original_path.display();
             (i.action_id.clone(), last_component(&o).to_owned(), i.quarantined_path.display(), Some(o), i.logical_bytes.to_string())
@@ -428,9 +459,13 @@ fn reconcile_impl(stores: &Stores, operation_id: &str) -> Result<OperationReport
     let principal = current_principal();
     let host = OsHostProbe.current("desktop");
     let plan = stores.audit.operation_plan(operation_id)?;
-    if stores.audit.plan_contract(&plan).ok().as_deref() == Some(RECOVERY_CONTRACT) {
-        let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &|| false, fault: &|_, _| false };
-        return cm_app::recovery::reconcile_recovery_operation(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, operation_id, &ctx);
+    match stores.audit.plan_contract(&plan).ok().as_deref() {
+        Some(RECOVERY_CONTRACT) => {
+            let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &|| false, fault: &|_, _| false };
+            return cm_app::recovery::reconcile_recovery_operation(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, operation_id, &ctx);
+        }
+        Some(PLAN_V2_CONTRACT) => return crate::v2::reconcile(stores, operation_id),
+        _ => {}
     }
     // Reconciliation only inspects; it never starts a new action, so protection is not consulted.
     let ctx = cm_app::execute::ApplyContext {
@@ -531,7 +566,15 @@ pub fn plans(stores: &Stores, page_size: u32, cursor: Option<&str>) -> IpcResult
         .map(|r| {
             let expired = cm_core::plan::parse_utc(&r.expires_at).is_none_or(|e| now >= e);
             let operation_id = stores.audit.operation_for_dedupe(&format!("{}#{}", r.plan_id, r.plan_digest)).ok().flatten().map(|(op, _)| op);
-            let (kind, mode, count, auth, problem) = if r.contract == RECOVERY_CONTRACT {
+            let (kind, mode, count, auth, problem) = if r.contract == PLAN_V2_CONTRACT {
+                match stores.audit.load_plan_v2(&r.plan_id) {
+                    Ok(p) => {
+                        let a = crate::v2::authorization(stores, &p, now).ok().map(|a| a.status);
+                        (crate::v2::kind_name(&p), crate::v2::mode_of(&p), Some(p.body.items.len() as u64), a, None)
+                    }
+                    Err(e) => ("unknown", None, None, None, Some(e.to_string())),
+                }
+            } else if r.contract == RECOVERY_CONTRACT {
                 match stores.audit.load_recovery_plan(&r.plan_id) {
                     Ok(p) => {
                         let a = crate::cleanup::recovery_authorization(stores, &p, now).ok().map(|a| a.status);
@@ -700,7 +743,7 @@ pub fn recovery_plan(stores: &Stores, kind: RecoveryKind, ids: &[String]) -> Ipc
         };
         IpcError::new(e.code(), reason, e.to_string())
     })?;
-    Ok(crate::cleanup::CreatedPlanDto { plan_id })
+    Ok(crate::cleanup::CreatedPlanDto::new(plan_id))
 }
 
 // ---------------------------------------------------------------------------------------------

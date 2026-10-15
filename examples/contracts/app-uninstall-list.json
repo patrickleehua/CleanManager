@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "kind": "app_uninstall_list",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "app_instance_id": "app_demo",
+      "name": "Example App",
+      "version": "2.1",
+      "publisher": "Example Vendor Ltd.",
+      "source": "registry_uninstall",
+      "last_used_at": null,
+      "location": "C:\\Program Files\\Example App",
+      "protected_class": false,
+      "uninstall": {
+        "state": "available",
+        "adapter": {
+          "adapter_id": "windows.registered-uninstaller",
+          "display": "\"C:\\Program Files\\Example App\\uninst.exe\" (vendor uninstaller, its own UI)",
+          "package_manager": false
+        },
+        "reason": null,
+        "settings_uri": null
+      }
+    },
+    {
+      "app_instance_id": "app_tool",
+      "name": "Example Tool",
+      "version": null,
+      "publisher": null,
+      "source": "registry_uninstall",
+      "location": null,
+      "last_used_at": null,
+      "protected_class": false,
+      "uninstall": {
+        "state": "unverified",
+        "adapter": null,
+        "reason": "no uninstall command is registered for this application; CleanManager never deletes the install folder as an uninstall",
+        "settings_uri": "ms-settings:appsfeatures"
+      }
+    },
+    {
+      "app_instance_id": "app_agent",
+      "name": "Example Endpoint Agent",
+      "version": "7.0",
+      "publisher": "Example Security",
+      "source": "msi",
+      "location": null,
+      "last_used_at": null,
+      "protected_class": true,
+      "uninstall": {
+        "state": "unsupported",
+        "adapter": null,
+        "reason": "Security or device-management agent: CleanManager offers no uninstall; remove it through your administrator or the vendor's official uninstall process",
+        "settings_uri": null
+      }
+    }
+  ],
+  "issues": []
+}

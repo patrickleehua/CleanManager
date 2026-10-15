@@ -1,9 +1,11 @@
-//! `plan apply`, `operations show`, `operations reconcile` (EXE-*, CLI-02/05/09). Recovery plans
-//! and their operations are dispatched to `recovery_cmd` by the stored plan type.
+//! `plan apply`, `operations show`, `operations reconcile` (EXE-*, CLI-02/05/09). The stored plan type decides
+//! the executor: `recovery/v1` plans and their operations go to `recovery_cmd`, `plan/v2` plans (manual selection,
+//! startup, startup recovery) to `cm_app::plans` by their kind, `plan/v1` to the cleanup executor.
 
 use std::process::ExitCode;
 
 use cm_app::execute::{ApplyContext, ApplyError, OperationReport, apply_plan, reconcile_operation};
+use cm_app::plans::PlanType;
 use cm_core::authz::current_principal;
 use cm_core::error::{ErrorCode, ExitClass};
 use cm_core::host::HostProbe;
@@ -117,8 +119,10 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
         Err(c) => return c,
     };
     // CLI-05: dispatch on the stored, authoritative plan type, never on a caller-supplied mode.
-    if stores.audit.plan_contract(plan_id).ok().as_deref() == Some(cm_core::recovery::RECOVERY_CONTRACT) {
-        return crate::recovery_cmd::plan_apply(req, p, &stores, plan_id);
+    match crate::plan_cmd::stored_type(&stores, plan_id) {
+        Some(PlanType::RecoveryV1) => return crate::recovery_cmd::plan_apply(req, p, &stores, plan_id),
+        Some(PlanType::V2(kind)) => return v2_apply(req, p, &stores, plan_id, kind),
+        _ => {}
     }
     let stored = stores.audit.load_plan(plan_id).ok();
     // Built-in catalogs (purge, installer) ship with this binary: their digest is checked by the core.
@@ -188,9 +192,10 @@ pub fn operations_reconcile(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
-    let recovery = stores.audit.operation_plan(id).and_then(|plan| stores.audit.plan_contract(&plan));
-    if recovery.ok().as_deref() == Some(cm_core::recovery::RECOVERY_CONTRACT) {
-        return crate::recovery_cmd::operations_reconcile(req, p, &stores, id);
+    match stores.audit.operation_plan(id).ok().and_then(|plan| crate::plan_cmd::stored_type(&stores, &plan)) {
+        Some(PlanType::RecoveryV1) => return crate::recovery_cmd::operations_reconcile(req, p, &stores, id),
+        Some(PlanType::V2(_)) => return v2_reconcile(req, p, &stores, id),
+        _ => {}
     }
     let principal = current_principal();
     let host = OsHostProbe.current("cli");
@@ -202,5 +207,110 @@ pub fn operations_reconcile(req: &str, p: &Parsed, id: &str) -> ExitCode {
             exit_for(&r)
         }
         Err(e) => apply_error(req, id, &e, p),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// plan/v2
+
+/// Run `f` with the platform backends of plan/v2 kinds (Windows: file actions, startup changes through the process'
+/// startup environment, Restart Manager holders and the user protection list).
+#[cfg(windows)]
+fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans::V2Backends<'_>, bool) -> T) -> Result<T, String> {
+    use cm_platform::windows::startup_actions::WindowsStartup;
+    let env = cm_platform::windows::startup::StartupEnv::from_process()?;
+    let is_admin = env.is_admin;
+    let startup = WindowsStartup { env };
+    let files = actions(&stores.dir);
+    let user = cm_platform::protection::load(&stores.dir);
+    let holders = |paths: &[cm_core::path::RawPath]| -> Option<Vec<String>> {
+        cm_platform::windows::restart_manager::holders(paths).ok().map(|h| h.iter().map(|x| x.describe()).collect())
+    };
+    let protect_item = |item_id: &str| -> Result<(), String> {
+        let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
+        match cm_core::protect::evaluate_task(item_id, user) {
+            cm_core::protect::ProtectionDecision::Allowed => Ok(()),
+            denied => Err(format!("{denied:?}")),
+        }
+    };
+    let processes = cm_platform::windows::processes::WindowsProcesses;
+    let updates = cm_platform::windows::updates::WindowsUpdates;
+    // UNI-02: ending still-running processes needs a plan reviewed for it and, at apply time, a person typing END.
+    let uninstall = cm_platform::windows::uninstall::WindowsUninstall {
+        env: cm_platform::windows::uninstall::UninstallEnv::from_process()?,
+        confirm: Box::new(|procs: &[cm_core::uninstall::RunningProcess]| {
+            let names: Vec<String> = procs.iter().map(|x| x.describe()).collect();
+            crate::plan_cmd::interactive()
+                && crate::plan_cmd::prompt(&format!("Still running: {}. Type END to end them now, anything else to cancel (nothing is uninstalled then): ", names.join(", "))).as_deref()
+                    == Some("END")
+        }),
+    };
+    let b = cm_app::plans::V2Backends {
+        files: &files,
+        startup: Some(&startup),
+        holders: &holders,
+        protect_item: &protect_item,
+        processes: Some(&processes),
+        updates: Some(&updates),
+        uninstall: Some(&uninstall),
+    };
+    Ok(f(&b, is_admin))
+}
+
+#[cfg(not(windows))]
+fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans::V2Backends<'_>, bool) -> T) -> Result<T, String> {
+    let files = actions(&stores.dir);
+    let b = cm_app::plans::V2Backends { files: &files, startup: None, holders: &|_| None, protect_item: &|_| Ok(()), processes: None, updates: None, uninstall: None };
+    Ok(f(&b, false))
+}
+
+fn v2_apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, kind: cm_core::plan::v2::PlanKind) -> ExitCode {
+    // Maintenance runs elevate once through their own short-lived worker (MNT-04) and report per task.
+    if kind == cm_core::plan::v2::PlanKind::Maintenance {
+        return crate::optimize_cmd::apply(req, p, stores, plan_id);
+    }
+    if !cm_app::plans::executable(kind) {
+        return fail(req, ErrorCode::Unsupported, &format!("plan kind {} cannot be applied by this build", kind.as_str()), p.format);
+    }
+    let requires_admin = stores.audit.load_plan_v2(plan_id).map(|pl| pl.body.requires_admin).unwrap_or(false);
+    let principal = current_principal();
+    let host = OsHostProbe.current("cli");
+    // PRT-01: every file action (and everything a folder move carries) passes the protection re-check.
+    let protect = cm_platform::protection::checker(&stores.dir, vec![]);
+    let ctx = ApplyContext { principal: &principal, host: &host, current_rule_set_digest: "", now: &now_unix, cancel: &|| false, fault: &|_, _| false, protect: &protect };
+    let out = with_v2_backends(stores, |b, is_admin| {
+        // System-wide changes need an elevated token; this tool never elevates itself (STA-02).
+        if requires_admin && !is_admin {
+            return Err(());
+        }
+        Ok(cm_app::plans::apply_plan_v2(stores, b, plan_id, &ctx))
+    });
+    match out {
+        Err(e) => fail(req, ErrorCode::InvalidArgument, &e, p.format),
+        Ok(Err(())) => {
+            let details = ErrorDetails { plan_id: Some(plan_id.into()), operation_id: None, scope_id: None };
+            emit(&error_record(req, ErrorCode::PermissionRequired, cm_core::startup::ADMIN_REQUIRED, Some("Run `cleanmanager plan apply` from an administrator terminal"), details), p.format);
+            ExitCode::from(ExitClass::Error(ErrorCode::PermissionRequired).code() as u8)
+        }
+        Ok(Ok(Ok(r))) => {
+            emit(&report_record(req, &r), p.format);
+            exit_for(&r)
+        }
+        Ok(Ok(Err(e))) => apply_error(req, plan_id, &e, p),
+    }
+}
+
+fn v2_reconcile(req: &str, p: &Parsed, stores: &cm_store::Stores, id: &str) -> ExitCode {
+    let principal = current_principal();
+    let host = OsHostProbe.current("cli");
+    // Reconciliation only inspects; it never starts a new action.
+    let ctx = ApplyContext { principal: &principal, host: &host, current_rule_set_digest: "", now: &now_unix, cancel: &|| false, fault: &|_, _| false, protect: &|_| Ok(()) };
+    match with_v2_backends(stores, |b, _| cm_app::plans::reconcile_operation_v2(stores, b, id, &ctx)) {
+        Err(e) => fail(req, ErrorCode::InvalidArgument, &e, p.format),
+        Ok(Ok(r)) => {
+            emit(&report_record(req, &r), p.format);
+            exit_for(&r)
+        }
+        Ok(Err(e)) => apply_error(req, id, &e, p),
     }
 }

@@ -14,6 +14,9 @@ cm-store = { path = "../cm-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# Optional AI diagnosis API adapters only (no other network use): OS TLS stack and trust store,
+# no bundled roots, no C toolchain; redirects and automatic retries are disabled in code.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no-default"] }
 
 [dev-dependencies]
 cm-fixtures = { path = "../cm-fixtures" }

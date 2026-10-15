@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-trash-plan"
+description = "Enables the trash_plan command without any pre-configured scope."
+commands.allow = ["trash_plan"]
+
+[[permission]]
+identifier = "deny-trash-plan"
+description = "Denies the trash_plan command without any pre-configured scope."
+commands.deny = ["trash_plan"]

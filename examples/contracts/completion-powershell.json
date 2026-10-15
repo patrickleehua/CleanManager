@@ -3,6 +3,7 @@
   "kind": "completion_script",
   "request_id": "req_synthetic",
   "shell": "powershell",
+  "action": "print",
   "script": "# synthetic completion script",
   "profile_path": null,
   "written": false

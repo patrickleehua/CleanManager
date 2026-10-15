@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "kind": "maintenance_diagnosis",
+  "request_id": "req_synthetic",
+  "sampled_at": "2026-10-14T12:00:02Z",
+  "window_seconds": 2,
+  "read_only": true,
+  "findings": [
+    {
+      "code": "runaway_process",
+      "severity": "warning",
+      "subject": "example.exe",
+      "process_id": 4242,
+      "duration_seconds": 3600,
+      "detail": "99% of a CPU now and 97% on average for 60 min (C:\\Apps\\example.exe); it is not ended automatically",
+      "next_step": "status.processes"
+    },
+    {
+      "code": "low_disk_space",
+      "severity": "warning",
+      "subject": "C:",
+      "process_id": null,
+      "duration_seconds": null,
+      "detail": "5.0 GiB free (1%)",
+      "next_step": "analyze"
+    }
+  ],
+  "top_processes": [
+    {
+      "process_id": 4242,
+      "name": "example.exe",
+      "image": "C:\\Apps\\example.exe",
+      "cpu_core_percent": 99.0,
+      "working_set_bytes": "2147483648"
+    }
+  ],
+  "memory_load_percent": 62.0,
+  "commit_used_percent": 48.5,
+  "note": "Read-only: no process is ended and no setting is changed. Open the status view or Task Manager to act."
+}

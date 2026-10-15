@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "kind": "status_alert_settings",
+  "request_id": "req_synthetic",
+  "enabled": false,
+  "cpu_threshold_percent": 80.0,
+  "window_seconds": 120,
+  "cooldown_seconds": 1800,
+  "note": "Alerts are raised only while a status stream (status --watch) or the resident component runs; off means no process sampling for alerts."
+}

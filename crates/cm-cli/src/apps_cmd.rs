@@ -1,5 +1,6 @@
 //! `apps list` (APP-01..04): read-only installed-application inventory. No uninstaller is ever
-//! invoked; every instance reports uninstall as unsupported in this release.
+//! invoked; each instance's `uninstall_capability` is the route `apps uninstall list` reports for it (UNI-01):
+//! `available`, `unverified` with the reason, or `unsupported` for protected classes.
 
 use std::process::ExitCode;
 
@@ -18,6 +19,8 @@ pub fn apps_list(req: &str, p: &Parsed) -> ExitCode {
     };
     #[cfg(windows)]
     let (mut apps, _issues) = cm_platform::windows::apps::inventory();
+    #[cfg(windows)]
+    cm_platform::windows::uninstall::apply_uninstall_capability(&cm_platform::windows::uninstall::UninstallEnv::real(), &mut apps);
     #[cfg(not(windows))]
     let mut apps: Vec<cm_core::apps::AppInstance> = Vec::new();
     apps.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));

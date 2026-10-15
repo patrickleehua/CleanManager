@@ -110,7 +110,7 @@ def main():
     # REC-04 history: one row per operation with truthful recovery availability.
     defs["operation_summary"] = obj({"operation_id": STR, "plan_id": STR,
         "plan_contract": nullable(enum("plan/v1", "plan/v2", "recovery/v1")),
-        "action": nullable(enum("trash", "quarantine", "delete", "restore", "purge")),
+        "action": nullable(enum("trash", "quarantine", "delete", "restore", "purge", "startup", "maintenance")),
         "state": enum("created", "validating", "running", "stopping", "completed", "partial", "cancelled", "failed", "reconciliation_required"),
         "started_at": TIME, "finished_at": nullable(TIME), "authorization_source": nullable(STR), "rule_refs": arr(STR),
         "counts": nullable(obj({"succeeded": COUNT, "skipped": COUNT, "failed": COUNT, "not_started": COUNT, "unknown": COUNT})),
@@ -184,10 +184,23 @@ def main():
             "operation": enum("enable", "disable", "remove_with_backup", "restore"), "scope": enum("user", "system")},
         "maintenance_task": {"task_id": STR, "task_version": STR, "requires_admin": {"type": "boolean"}},
         "settings_change": {"setting_id": STR, "from_value": STR, "to_value": STR, "restore_on_exit": {"type": "boolean"}},
+        # STS-04: one process instance (PID + creation time in FILETIME ticks); a reused PID never matches.
+        "process_end": {"pid": {"type": "integer", "minimum": 0, "maximum": 4294967295}, "started_at": {"type": "string", "pattern": "^[0-9]{1,20}$"},
+            "name": STR, "image_path": nullable(ref("path")), "image_sha256": nullable(HASH)},
     }
     for name, props in action_props.items():
         defs["action_" + name] = obj({"action_id": STR, "action_type": {"const": name}, **props})
     defs["plan_action"] = {"oneOf": [ref("action_" + name) for name in action_props]}
+    # Optional, digest-covered bindings (parity 6.x/11.x): target kind (absent = file), the scanned members a whole-folder
+    # trash moves, the recycled item a purge step belongs to, the observed startup state and the recorded prior state.
+    defs["plan_target"]["properties"]["kind"] = enum("file", "directory")
+    for name in ("fs_trash", "fs_quarantine", "fs_delete"):
+        defs["action_" + name]["properties"]["subtree"] = obj({"items": COUNT, "logical_bytes": UINT, "members_sha256": HASH})
+        defs["action_" + name]["properties"]["trash_entry_id"] = STR
+    defs["action_startup_toggle"]["properties"].update({"definition": STR, "observed_sha256": HASH, "backup_id": STR})
+    defs["action_registry_restore"]["properties"].update({"value_name": STR, "backup_sha256": HASH})
+    # UNI-06: a leftover key delete binds the key's observed content; anything changed since planning is skipped.
+    defs["action_registry_backup_delete"]["properties"]["observed_sha256"] = HASH
     kind_actions = {
         "cleanup": ["fs_trash", "fs_quarantine", "fs_delete", "tool_adapter"],
         "manual_selection": ["fs_trash", "fs_delete"],
@@ -196,6 +209,7 @@ def main():
         "startup": ["startup_toggle"],
         "update": ["app_quit", "tool_adapter"],
         "recovery": ["registry_restore", "startup_toggle", "settings_change"],
+        "process": ["process_end"],
     }
     defs["plan_body_v2"] = obj({"engine_contract": {"const": "plan/v2"}, "plan_id": STR,
         "plan_kind": enum(*kind_actions), "policy_matchable": {"type": "boolean"}, "requires_admin": {"type": "boolean"},
@@ -213,6 +227,8 @@ def main():
         then = {"properties": {"items": {"items": item}}}
         if kind != "cleanup":
             then["properties"]["policy_matchable"] = {"const": False}
+        if kind == "process":
+            then["properties"]["items"]["maxItems"] = 1  # each process end is confirmed on its own
         rules_by_kind.append({"if": {"properties": {"plan_kind": {"const": kind}}}, "then": then})
     defs["plan_body_v2"]["allOf"] = rules_by_kind
     # recovery/v1 (REC-02/03): restore or purge quarantined items under the same review/apply service.
@@ -232,6 +248,12 @@ def main():
              "kind": {"const": "permanent_delete"}, "path": {"type": "null"}}}}}}}}}]
     defs["plan"] = record("plan", {"body": {"oneOf": [ref("plan_body"), ref("plan_body_v2"), ref("recovery_body")]}, "plan_digest": HASH,
         "authorization_status": enum("required", "authorized", "expired", "revoked")})
+    # CLI-11 (parity 8.1): a plan made from a dry-run selection lists, outside the signed body, the
+    # selected objects whose observed state changed since the scan; they are not in the plan.
+    defs["plan"]["properties"]["stale_items"] = arr(obj({"object_id": STR, "reason": enum("missing", "changed"), "detail": STR}))
+    # Uninstall stage 1 (D7): the leftovers it would probably leave, by group; an estimate only, never authorized.
+    uninstall_groups = ("bundle", "caches_logs", "settings", "personal_data", "startup", "system")
+    defs["plan"]["properties"]["leftover_estimate"] = {"type": "object", "propertyNames": enum(*uninstall_groups), "additionalProperties": COUNT}
     defs["action_result"] = obj({"action_id": STR, "status": enum("succeeded", "skipped", "failed", "not_started", "unknown"),
         "code": STR, "message": STR, "recovery": enum("trash", "quarantine", "unavailable", "not_applicable", "unknown")})
     defs["operation_report"] = record("operation_report", {"operation_id": STR, "plan_id": STR,
@@ -266,14 +288,34 @@ def main():
         "installer.preview": obj(selection), "installer.plan": obj(selection),
         "trash.plan": obj({"scan_id": STR, "entry_ids": {**arr(STR, 1), "uniqueItems": True}}),
         "trash.purge_plan": obj({"trash_entry_ids": {**arr(STR, 1), "uniqueItems": True}}),
+        # Read-only (MTR-02/04/05): one entry's coverage, protection and holders; the current user's recycled items.
+        "trash.inspect": obj({"scan_id": STR, "entry_id": STR}), "trash.list": obj({}),
         "insights.list": obj({"scan_id": nullable(STR)}),
         "apps.list": obj({"cursor": nullable(STR), "page_size": selection["page_size"]}),
-        "apps.uninstall.plan": obj({"app_instance_id": STR, "include_groups": {**arr(enum("bundle", "caches_logs",
-            "settings", "personal_data", "startup", "system"), 1), "uniqueItems": True}}),
+        "apps.uninstall.plan": obj({"app_instance_id": STR, "end_running": {"type": "boolean"}}),
+        # Parity 9.x: route list, grouped leftovers of a finished uninstall operation, their plan, orphans, key restores.
+        "apps.uninstall.list": obj({}), "apps.uninstall.leftovers": obj({"operation_id": STR}),
+        "apps.uninstall.leftovers_plan": obj({"operation_id": STR, "object_ids": {**arr(STR), "uniqueItems": True}}),
+        "apps.uninstall.orphans": obj({}), "apps.uninstall.restore_plan": obj({"operation_id": STR}),
         "apps.updates.check": obj({"app_instance_ids": arr(STR)}), "apps.updates.plan": obj({"app_instance_ids": arr(STR, 1)}),
+        # Parity 10.3 (UPD-04), 12.3/12.4 (STS-04/05), 7.3 (DIN-03/04).
+        "apps.updates.config": obj({"checks_enabled": nullable({"type": "boolean"})}),
+        "process.list": obj({"sort": enum("cpu", "memory", "disk", "network", "name"), "search": nullable(STR),
+            "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "pid": nullable({"type": "integer", "minimum": 0, "maximum": 4294967295})}),
+        "process.pin": obj({"name": STR, "pinned": {"type": "boolean"}}),
+        "process.end_plan": obj({"pid": {"type": "integer", "minimum": 0, "maximum": 4294967295}}),
+        "status.alerts": obj({"enabled": nullable({"type": "boolean"}), "cpu_threshold_percent": nullable({"type": "number", "minimum": 1, "maximum": 100}),
+            "window_seconds": nullable({"type": "integer", "minimum": 10, "maximum": 3600}),
+            "cooldown_seconds": nullable({"type": "integer", "minimum": 60, "maximum": 86400})}),
+        "insights.overview": obj({"older_than_days": {"type": "integer", "minimum": 1, "maximum": 3650}}),
+        "insights.downloads": obj({"older_than_days": {"type": "integer", "minimum": 1, "maximum": 3650}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}),
         "startup.list": obj({}), "startup.plan": obj({"startup_item_id": STR,
             "operation": enum("enable", "disable", "remove_with_backup", "restore")}),
-        "optimize.list": obj({}), "optimize.plan": obj({"task_ids": {**arr(STR, 1), "uniqueItems": True}}),
+        "startup.restore_plan": obj({"operation_id": STR}),
+        "optimize.list": obj({"search": nullable(STR)}), "optimize.plan": obj({"task_ids": nullable({**arr(STR, 1), "uniqueItems": True})}),
+        # MNT-06/07: read-only diagnosis and run history.
+        "optimize.diagnose": obj({"window_seconds": {"type": "integer", "minimum": 1, "maximum": 30}}),
+        "optimize.history": obj({"limit": {"type": "integer", "minimum": 1, "maximum": 500}}),
         "status.snapshot": obj({}), "status.watch": obj({"interval_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
             "max_samples": nullable({"type": "integer", "minimum": 1, "maximum": 100000})}),
         "protect.list": obj({}), "protect.add": obj({"entry": ref("protection_entry_input")}), "protect.remove": obj({"protection_id": STR}),
@@ -334,15 +376,49 @@ def main():
         "state": enum("enabled", "disabled", "broken", "target_unreachable"), "toggle_capability": capability_state,
         "protected": {"type": "boolean"}, "reason": nullable(STR)})
     defs["startup_list"] = record("startup_list", {"items": arr(ref("startup_item")), "issues": arr(ref("issue"))})
-    defs["maintenance_task_info"] = obj({"task_id": STR, "task_version": STR, "platform": enum("windows", "macos"),
-        "problem": STR, "impact": STR, "requires_admin": {"type": "boolean"},
-        "applicability": enum("applicable", "not_applicable", "unknown"), "applicability_reason": nullable(STR),
-        "user_protected": {"type": "boolean"}})
-    defs["maintenance_catalog"] = record("maintenance_catalog", {"items": arr(ref("maintenance_task_info"))})
+    # Manual trash (MTR-02/04/05): index facts only (nothing opened or hydrated), path data instead of a shell reveal.
+    hit = obj({"path": ref("path"), "reason": STR})
+    defs["trash_inspection"] = record("trash_inspection", {"scan_id": STR, "entry_id": STR, "path": ref("path"),
+        "parent_display": nullable(STR), "object_kind": enum("file", "directory", "symlink", "reparse", "other"),
+        "cloud": enum("not_cloud", "hydrated", "placeholder", "unknown"), "logical_bytes": nullable(UINT), "allocated_bytes": nullable(UINT),
+        "files": COUNT, "directories": COUNT, "protected": arr(hit), "protected_count": COUNT, "coverage_gaps": arr(hit), "gap_count": COUNT,
+        "trashable": {"type": "boolean"}, "refusal": nullable(obj({"code": STR, "reason": STR, "message": STR})),
+        "holders": nullable(arr(STR)), "available_actions": {**arr(enum("show_path", "copy_path", "move_to_trash")), "uniqueItems": True},
+        "guidance": STR})
+    defs["trash_list"] = record("trash_list", {"items": arr(obj({"trash_item_id": STR, "bin_location": STR,
+        "original_path": nullable(STR), "deleted_at": nullable(TIME), "object_kind": enum("file", "directory", "symlink", "reparse", "other"),
+        "logical_bytes": nullable(UINT), "purge_capability": enum("available", "unsupported"), "reason": nullable(STR)})),
+        "issues": arr(ref("issue"))})
+    defs["maintenance_task_info"] = obj({"task_id": STR, "task_version": STR, "platform": enum("windows", "macos"), "title": STR,
+        "problem": STR, "impact": STR, "requires_admin": {"type": "boolean"}, "applies_when": STR, "estimated_seconds": COUNT,
+        "applicability": enum("applicable", "not_needed", "not_applicable", "unknown"), "applicability_reason": nullable(STR),
+        "user_protected": {"type": "boolean"}, "reversible": {"const": False}})
+    # MNT-05: what is deliberately not offered, with the reason (a search for it finds no task).
+    defs["maintenance_catalog"] = record("maintenance_catalog", {"platform": enum("windows", "macos"), "query": nullable(STR),
+        "items": arr(ref("maintenance_task_info")), "prohibited": arr(obj({"id": STR, "title": STR, "reason": STR})),
+        "elevation": enum("already_elevated", "one_prompt_per_run")})
     outcome = enum("applied", "unchanged", "skipped", "unavailable", "attention", "failed")
-    defs["maintenance_report"] = record("maintenance_report", {"operation_id": STR, "plan_id": STR,
-        "elevation": enum("not_needed", "granted", "declined"), "items": arr(obj({"task_id": STR, "outcome": outcome, "reason": STR})),
-        "counts": obj({k: COUNT for k in outcome["enum"]}), "all_clear": {"type": "boolean"}})
+    # MNT-03/04/07: per-task outcome with reason, how admin tasks were elevated, who ran it; never undone.
+    defs["maintenance_task_run"] = obj({"task_id": STR, "task_version": STR, "requires_admin": {"type": "boolean"}, "outcome": outcome,
+        "code": STR, "reason": STR, "elevated": {"type": "boolean"}, "started_at": TIME, "finished_at": TIME})
+    run_props = {"operation_id": STR, "plan_id": STR, "plan_digest": HASH, "entry": enum("cli", "desktop"), "principal": STR,
+        "elevation": enum("not_needed", "already_elevated", "granted", "declined", "unavailable"), "started_at": TIME, "finished_at": TIME,
+        "items": arr(ref("maintenance_task_run")), "counts": obj({k: COUNT for k in outcome["enum"]}), "all_clear": {"type": "boolean"},
+        "undo": {"const": "unavailable"}}
+    defs["maintenance_run"] = obj(run_props)
+    defs["maintenance_report"] = record("maintenance_report", run_props)
+    defs["maintenance_history"] = record("maintenance_history", {"items": arr(ref("maintenance_run")), "undo": {"const": "unavailable"}, "note": STR})
+    # MNT-06: read-only; findings name processes and next steps, nothing is ended or changed.
+    defs["maintenance_diagnosis"] = record("maintenance_diagnosis", {"sampled_at": TIME,
+        "window_seconds": {"type": "integer", "minimum": 1, "maximum": 30}, "read_only": {"const": True},
+        "findings": arr(obj({"code": enum("runaway_process", "busy_process", "memory_pressure", "commit_pressure", "low_disk_space",
+            "idle_virtual_machine", "attached_disk_image", "many_startup_items"), "severity": enum("info", "warning"), "subject": STR, "detail": STR,
+            "process_id": nullable(COUNT), "duration_seconds": nullable(COUNT),
+            "next_step": enum("status.processes", "status.memory", "analyze", "startup.list", "explorer")})),
+        "top_processes": arr(obj({"process_id": COUNT, "name": STR, "image": nullable(STR), "cpu_core_percent": {"type": "number", "minimum": 0},
+            "working_set_bytes": UINT})),
+        "memory_load_percent": nullable({"type": "number", "minimum": 0, "maximum": 100}),
+        "commit_used_percent": nullable({"type": "number", "minimum": 0, "maximum": 100}), "note": STR})
     defs["metric"] = obj({"name": STR, "availability": enum("available", "unavailable", "permission_required"),
         "value": nullable({"type": "number"}), "unit": STR, "reason": nullable(STR)})
     defs["status_snapshot"] = record("status_snapshot", {"sampled_at": TIME, "stale": {"type": "boolean"},
@@ -367,9 +443,16 @@ def main():
             "open_system_settings", "open_owner_tool", "manual_trash_review", "installer_review"),
         "guidance": arr(obj({"tool": STR, "steps": STR, "requires_admin": {"type": "boolean"}, "impact": STR}))})
     defs["insight_list"] = record("insight_list", {"items": arr(ref("insight"))})
+    # LIF-04: capability matrix, permission context, configuration, error-code table, recent error codes
+    # and store self-check; redacted by default, exported only after a previewed terminal confirmation.
     defs["doctor_report"] = record("doctor_report", {"generated_at": TIME, "redacted": {"type": "boolean"},
         "engine_version": STR, "platform": enum("windows", "macos"), "capabilities": arr(ref("capability")),
-        "checks": arr(obj({"check": STR, "status": enum("ok", "warning", "failed", "unknown"), "detail": STR}))})
+        "checks": arr(obj({"area": enum("platform", "permissions", "config", "store"), "check": STR,
+            "status": enum("ok", "warning", "failed", "unknown"), "detail": STR})),
+        "error_codes": arr(obj({"code": defs["error"]["properties"]["code"], "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+            "retryable": {"type": "boolean"}})),
+        "recent_errors": arr(obj({"code": STR, "count": COUNT, "last_seen": nullable(TIME)})),
+        "export": nullable(obj({"path": STR, "written": {"type": "boolean"}}))})
     defs["purge_roots"] = record("purge_roots", {"roots": arr(obj({"path": ref("path"), "source": enum("default", "user"),
         "exists": {"type": "boolean"}}))})
     defs["installer_locations"] = record("installer_locations", {"locations": arr(obj({"path": ref("path"),
@@ -386,7 +469,9 @@ def main():
         "helper", "caches", "startup_entry"), "display": STR})), "keep": arr(obj({"data": enum("configuration", "protection_list",
         "history", "quarantine", "registry_backups"), "display": STR})), "quarantine_items": COUNT, "quarantine_logical_bytes": UINT,
         "system_settings_to_restore": arr(STR), "requires_interactive_confirmation": {"const": True}})
-    defs["completion_script"] = record("completion_script", {"shell": enum("bash", "zsh", "fish", "powershell"), "script": STR,
+    # LIF-03: `print` and `preview` never write; only a typed terminal confirmation reaches `installed`.
+    defs["completion_script"] = record("completion_script", {"shell": enum("bash", "zsh", "fish", "powershell"),
+        "action": enum("print", "preview", "already_installed", "installed"), "script": STR,
         "profile_path": nullable(ref("path")), "written": {"type": "boolean"}})
     kinds = ["capabilities", "scan_result", "candidate", "plan", "operation_report", "error", "progress",
              "scan_status", "scan_cancel_receipt", "entries_page", "candidates_page", "analysis_result",
@@ -395,6 +480,85 @@ def main():
              "status_snapshot", "protection_list", "protection_check", "insight_list", "doctor_report", "purge_roots", "release_info",
              "self_update_result", "self_remove_preview", "completion_script", "cleanup_catalog"]
     kinds.append("installer_locations")  # INC-01 declared locations
+    kinds += ["trash_inspection", "trash_list"]  # MTR-02..05 read models
+    kinds += ["maintenance_history", "maintenance_diagnosis"]  # MNT-06/07
+    # Parity 12.3/12.4 (STS-04..06): process list with explanations, pins, opt-in sustained-CPU alerts.
+    NUM, BOOL, U32 = {"type": "number"}, {"type": "boolean"}, {"type": "integer", "minimum": 0, "maximum": 4294967295}
+    defs["signature"] = obj({"state": enum("signed", "catalog_signed", "unsigned", "unknown"), "publisher": nullable(STR), "reason": nullable(STR)})
+    defs["process_row"] = obj({"pid": U32, "parent_pid": nullable(U32), "parent_name": nullable(STR), "name": STR,
+        "image_path": nullable(ref("path")), "started_at": nullable({"type": "string", "pattern": "^[0-9]{1,20}$"}),
+        "cpu_percent": nullable(NUM), "memory_bytes": nullable(UINT), "disk_bytes_per_sec": nullable(NUM), "network_bytes_per_sec": nullable(NUM),
+        "signature": ref("signature"), "owner_app": nullable(STR), "identified": BOOL, "purpose": nullable(STR), "unidentified_reason": nullable(STR),
+        "ai_diagnosis": nullable(obj({"available": {"const": True}, "hint": STR})), "pinned": BOOL,
+        "end_capability": obj({"state": enum("available", "unsupported"),
+            "protection": nullable(enum("critical_system", "os_critical", "clean_manager", "security_software")), "reason": STR}),
+        "notes": arr(STR)})
+    # STS-04: an unidentified process always carries the AI-diagnosis entry; an identified one always has a purpose.
+    defs["process_row"]["allOf"] = [
+        {"if": {"properties": {"identified": {"const": False}}}, "then": {"properties": {"ai_diagnosis": {"type": "object"}, "purpose": {"type": "null"}}}},
+        {"if": {"properties": {"identified": {"const": True}}}, "then": {"properties": {"purpose": STR}}}]
+    defs["process_list"] = record("process_list", {"sampled_at": TIME, "window_ms": COUNT, "sort": enum("cpu", "memory", "disk", "network", "name"),
+        "search": nullable(STR), "total": COUNT, "matched": COUNT, "unidentified": COUNT, "items": arr(ref("process_row")), "notes": arr(STR)})
+    defs["process_pins"] = record("process_pins", {"pins": arr(STR)})
+    defs["status_alert"] = record("status_alert", {"pid": U32, "name": STR, "image_path": nullable(STR), "min_cpu_percent": NUM,
+        "threshold_percent": NUM, "window_seconds": COUNT, "since": TIME, "raised_at": TIME, "link": STR})
+    defs["status_alert_settings"] = record("status_alert_settings", {"enabled": BOOL, "cpu_threshold_percent": {"type": "number", "minimum": 1, "maximum": 100},
+        "window_seconds": {"type": "integer", "minimum": 10, "maximum": 3600}, "cooldown_seconds": {"type": "integer", "minimum": 60, "maximum": 86400}, "note": STR})
+    # Parity 7.3 (DIN-03/04): overview cards (known size or unknown + observation time) and the old-downloads review.
+    defs["insight_card"] = obj({"card_id": STR, "kind": enum("old_downloads", "virtual_machines", "snapshots", "system_files", "component_store",
+            "previous_installation", "update_cache", "developer_tools", "model_libraries", "device_backups"), "title": STR,
+        "logical_bytes": nullable(UINT), "count": nullable(COUNT), "size_note": nullable(STR), "observed_at": nullable(TIME),
+        "link": obj({"view": enum("analyze", "insights.downloads", "insights"), "path": nullable(ref("path")), "insight_ids": arr(STR)})})
+    defs["insight_card"]["allOf"] = [{"if": {"properties": {"logical_bytes": {"type": "null"}}}, "then": {"properties": {"size_note": STR}}}]
+    defs["insight_overview"] = record("insight_overview", {"generated_at": TIME, "cards": arr(ref("insight_card")),
+        "old_downloads": obj({"older_than_days": COUNT, "item_count": COUNT, "total_logical_bytes": nullable(UINT), "observed_at": TIME})})
+    defs["old_downloads_review"] = record("old_downloads_review", {"root": nullable(ref("path")), "older_than_days": COUNT, "observed_at": TIME,
+        "items": arr(obj({"path": ref("path"), "logical_bytes": UINT, "modified_at": TIME, "age_days": COUNT, "installer_like": BOOL,
+            "selected": {"const": False}})),
+        "total_logical_bytes": nullable(UINT), "item_count": COUNT, "shown": COUNT, "note": nullable(STR),
+        "handling": {"const": "manual_trash_review"}, "guidance": STR})
+    # Parity 10.x (UPD-01..04): "up to date" only with a channel that answered and a check time.
+    update_route = enum("package_manager", "open_store", "open_app", "open_official_page", "none")
+    defs["app_update"] = obj({"app_instance_id": STR, "name": STR, "current_version": nullable(STR), "available_version": nullable(STR),
+        "channel": nullable(enum("winget", "microsoft_store", "scoop", "self_updater")), "channel_id": nullable(STR),
+        "state": enum("update_available", "up_to_date", "cannot_check", "not_checked"), "reason": nullable(STR), "checked_at": nullable(TIME),
+        "route": update_route, "official_url": nullable(STR)})
+    defs["app_update"]["allOf"] = [
+        {"if": {"properties": {"state": {"enum": ["up_to_date", "update_available"]}}},
+         "then": {"properties": {"channel": {"enum": ["winget", "microsoft_store", "scoop"]}, "checked_at": TIME}}},
+        {"if": {"properties": {"state": {"const": "cannot_check"}}}, "then": {"properties": {"reason": STR}}}]
+    defs["app_update_list"] = record("app_update_list", {"checks_enabled": BOOL, "checked": BOOL, "checked_at": nullable(TIME),
+        "counts": obj({"update_available": COUNT, "up_to_date": COUNT, "cannot_check": COUNT, "not_checked": COUNT}), "items": arr(ref("app_update"))})
+    defs["app_update_settings"] = record("app_update_settings", {"checks_enabled": BOOL, "periodic_checks": {"const": False},
+        "last_checked_at": nullable(TIME), "note": STR})
+    defs["app_update_plan"] = record("app_update_plan", {"plan": nullable(obj({"body": ref("plan_body_v2"), "plan_digest": HASH,
+            "authorization_status": enum("required", "authorized", "expired", "revoked")})),
+        "routed": arr(obj({"app_instance_id": STR, "name": STR, "route": update_route, "reason": STR, "url": nullable(STR)})), "next": nullable(STR)})
+    kinds += ["process_list", "process_pins", "status_alert", "status_alert_settings", "insight_overview", "old_downloads_review",
+              "app_update_list", "app_update_settings", "app_update_plan"]
+    # Parity 9.x (UNI-01..10): uninstall routes and the grouped leftover review.
+    defs["app_uninstall_route"] = obj({"app_instance_id": STR, "name": STR, "version": nullable(STR), "publisher": nullable(STR),
+        "source": enum("registry_uninstall", "msi", "msix_store", "scoop", "npm_global", "unknown"), "location": nullable(STR),
+        "last_used_at": nullable(TIME), "protected_class": {"type": "boolean"}, "uninstall": obj({"state": enum("available", "unsupported", "unverified"),
+            "adapter": nullable(obj({"adapter_id": enum("windows.registered-uninstaller", "windows.msiexec-uninstall", "windows.msix-remove-package",
+                "winget.uninstall", "scoop.uninstall", "npm.uninstall-global"), "display": STR, "package_manager": {"type": "boolean"}})),
+            "reason": nullable(STR), "settings_uri": nullable(STR)})})
+    defs["app_uninstall_list"] = record("app_uninstall_list", {"items": arr(ref("app_uninstall_route")), "issues": arr(ref("issue"))})
+    defs["uninstall_leftover"] = obj({"object_id": STR, "kind": enum("directory", "file", "registry_key", "startup_entry", "shortcut", "service"),
+        "group": enum(*uninstall_groups), "display": STR, "evidence": arr(STR), "marker": nullable(enum("shared_owner", "owner_unknown", "app_reappeared")),
+        "tier": enum("default_selected", "review_only", "blocked", "kept"), "selected": {"type": "boolean"}, "warnings": arr(STR),
+        "logical_bytes": nullable(UINT), "note": nullable(STR), "requires_admin": {"type": "boolean"},
+        "action": enum("fs_trash", "registry_backup_delete", "startup_toggle", "manual"), "guidance": nullable(STR)})
+    # UNI-05: only caches and logs may be preselected; kept (marked) and blocked objects never are.
+    defs["uninstall_leftover"]["allOf"] = [
+        {"if": {"properties": {"selected": {"const": True}}}, "then": {"properties": {"group": {"const": "caches_logs"}, "tier": {"const": "default_selected"}}}},
+        {"if": {"required": ["marker"], "properties": {"marker": {"type": "string"}}}, "then": {"properties": {"tier": {"const": "kept"}}}}]
+    defs["uninstall_leftovers"] = record("uninstall_leftovers", {"operation_id": nullable(STR),
+        "app": nullable(obj({"app_instance_id": STR, "name": STR, "publisher": nullable(STR),
+            "source": enum("registry_uninstall", "msi", "msix", "scoop", "npm_global", "unknown")})),
+        "groups": arr(obj({"group": enum(*uninstall_groups), "items": arr(ref("uninstall_leftover"), 1)})),
+        "default_selected": COUNT, "external_references": arr(STR)})
+    kinds += ["app_uninstall_list", "uninstall_leftovers"]
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
               "$id": "urn:cleanmanager:protocol:1.0", "title": "CleanManager proposed v1 record",
               "description": "Pre-implementation contract; examples are synthetic, not runtime evidence.",
@@ -438,6 +602,8 @@ def main():
             {"name": "scan.ntfs", "state": "permission_required", "reason": "Synthetic elevated scanner requirement"}]),
         "scan-partial": scan, "candidate": candidate,
         "plan": rec("plan", body=body, plan_digest=digest, authorization_status="required"),
+        "plan-from-preview-stale": rec("plan", body=body, plan_digest=digest, authorization_status="required",
+            stale_items=[{"object_id": "c_gone", "reason": "missing", "detail": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache\\old2.tmp no longer exists"}]),
         "needs-approval": rec("error", code="needs_approval", message="Plan needs user authorization", retryable=False,
             required_action="Review the plan in the trusted UI", details={"plan_id": "p_demo", "operation_id": None, "scope_id": "scope_demo"}),
         "operation-trash": rec("operation_report", operation_id="op_demo", plan_id="p_demo", plan_digest=digest,
@@ -468,6 +634,9 @@ def main():
                "executable": {"path": {"platform": "windows", "display": "C:\\Example\\tool.exe", "raw_encoding": "windows_utf16le_base64",
                    "raw_base64": base64.b64encode("C:\\Example\\tool.exe".encode("utf-16-le")).decode("ascii")}, "sha256": "4"*64},
                "argv": ["cache", "clean", "--unreferenced"], "preview_digest": "5"*64, "timeout_seconds": 120}
+    def wpath_early(display):
+        return {"platform": "windows", "display": display, "raw_encoding": "windows_utf16le_base64",
+                "raw_base64": base64.b64encode(display.encode("utf-16-le")).decode("ascii")}
     def plan_v2(plan_id, kind, items, policy_matchable=False, requires_admin=False):
         body = {"engine_contract": "plan/v2", "plan_id": plan_id, "plan_kind": kind, "policy_matchable": policy_matchable,
                 "requires_admin": requires_admin, "scope_id": "scope_demo", "scan_id": "s_demo", "scan_revision": 1,
@@ -484,6 +653,15 @@ def main():
             fs("a01", "fs_trash", "e_video", "D:\\Videos\\example.mov")]),
         "plan-v2-manual-trash-purge": plan_v2("p_v2_manual_purge", "manual_selection", [
             fs("a01", "fs_delete", "e_trashed", "D:\\$Recycle.Bin\\S-1-5-21-example\\$Rexample.mov", "platform_trash")]),
+        # A whole folder: one trash action binding every scanned member (MTR-02 coverage), plus a disable/enable record change.
+        "plan-v2-manual-folder": plan_v2("p_v2_manual_folder", "manual_selection", [
+            {**fs("a01", "fs_trash", "e_folder", "D:\\Projects\\old-renders"), "target": {**target("e_folder", "D:\\Projects\\old-renders"),
+             "kind": "directory"}, "subtree": {"items": 42, "logical_bytes": "1048576",
+             "members_sha256": "6" * 64}}]),
+        "plan-v2-startup-disable": plan_v2("p_v2_startup_disable", "startup", [
+            {"action_id": "s0000000", "action_type": "startup_toggle", "startup_item_id": "st_demo", "source": "run_key",
+             "operation": "disable", "scope": "user", "definition": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run : Example Updater",
+             "observed_sha256": "7" * 64}]),
         "plan-v2-uninstall": plan_v2("p_v2_uninstall", "uninstall", [
             {"action_id": "a01", "action_type": "app_quit", "app_instance_id": "app_demo", "app_identity": "Example.App", "force": "ask_user"},
             {"action_id": "a02", **adapter, "adapter_id": "example.adapter.vendor-uninstaller", "argv": []},
@@ -494,8 +672,8 @@ def main():
             {"action_id": "a06", "action_type": "startup_toggle", "startup_item_id": "st_demo", "source": "run_key",
              "operation": "remove_with_backup", "scope": "user"}]),
         "plan-v2-maintenance": plan_v2("p_v2_maintenance", "maintenance", [
-            {"action_id": "a01", "action_type": "maintenance_task", "task_id": "windows.dns-flush", "task_version": "0.1.0", "requires_admin": False},
-            {"action_id": "a02", "action_type": "maintenance_task", "task_id": "windows.trim-when-due", "task_version": "0.1.0", "requires_admin": True},
+            {"action_id": "a01", "action_type": "maintenance_task", "task_id": "windows.dns-flush", "task_version": "1.0.0", "requires_admin": False},
+            {"action_id": "a02", "action_type": "maintenance_task", "task_id": "windows.trim-when-due", "task_version": "1.0.0", "requires_admin": True},
             {"action_id": "a03", "action_type": "settings_change", "setting_id": "display.keep_awake", "from_value": "off",
              "to_value": "on_60_minutes", "restore_on_exit": True}], requires_admin=True),
         "plan-v2-startup": plan_v2("p_v2_startup", "startup", [
@@ -505,9 +683,12 @@ def main():
             {"action_id": "a01", "action_type": "registry_restore", "backup_id": "rb_demo", "hive": "HKCU",
              "key_path": "Software\\ExampleVendor\\ExampleApp", "on_existing": "skip"},
             {"action_id": "a02", "action_type": "startup_toggle", "startup_item_id": "st_demo", "source": "run_key",
-             "operation": "restore", "scope": "user"},
+             "operation": "restore", "scope": "user", "backup_id": "rb_demo_toggle"},
             {"action_id": "a03", "action_type": "settings_change", "setting_id": "display.keep_awake", "from_value": "on_60_minutes",
              "to_value": "off", "restore_on_exit": False}]),
+        "plan-v2-process": plan_v2("p_v2_process", "process", [
+            {"action_id": "a01", "action_type": "process_end", "pid": 4242, "started_at": "134050000000000000", "name": "example.exe",
+             "image_path": wpath_early(r"C:\Users\Example\AppData\Local\Example\example.exe"), "image_sha256": "7" * 64}]),
     }
     for name, example in v2.items():
         save("examples/contracts/" + name + ".json", example)
@@ -521,11 +702,20 @@ def main():
                 "rebuild_class": rebuild, "registry_status": "covered" if t == "default_selected" else "version_untested",
                 "selected_by_default": selected, "skip_reason": skip, "probes": [{"probe": p, "result": r} for p, r in probes],
                 "logical_bytes": size, "reclaimable_estimate_bytes": None, "impact": "Synthetic impact text"}
+    maintenance_run = {"operation_id": "op_maint", "plan_id": "p_v2_maintenance", "plan_digest": "3" * 64, "entry": "cli",
+        "principal": "user:EXAMPLE\\alice", "elevation": "declined", "started_at": "2026-10-15T12:00:00Z", "finished_at": "2026-10-15T12:00:02Z",
+        "items": [{"task_id": "windows.dns-flush", "task_version": "1.0.0", "requires_admin": False, "outcome": "applied", "code": "flushed",
+                   "reason": "DNS resolver cache flushed", "elevated": False, "started_at": "2026-10-15T12:00:01Z", "finished_at": "2026-10-15T12:00:01Z"},
+                  {"task_id": "windows.trim-when-due", "task_version": "1.0.0", "requires_admin": True, "outcome": "skipped",
+                   "code": "elevation_declined", "reason": "administrator authorization was declined; not run", "elevated": False,
+                   "started_at": "2026-10-15T12:00:01Z", "finished_at": "2026-10-15T12:00:01Z"}],
+        "counts": {"applied": 1, "unchanged": 0, "skipped": 1, "unavailable": 0, "attention": 0, "failed": 0}, "all_clear": True,
+        "undo": "unavailable"}
     cli = {
         "request-clean-preview": rec("cli_request", command="clean.preview", output="json", non_interactive=True, dry_run=True,
             params={"scan_id": "s_demo", "cursor": None, "page_size": 50, "include_tiers": ["default_selected"], "object_ids": [], "mode": None}),
         "request-apps-uninstall": rec("cli_request", command="apps.uninstall.plan", output="json", non_interactive=True, dry_run=False,
-            params={"app_instance_id": "app_demo", "include_groups": ["bundle", "caches_logs"]}),
+            params={"app_instance_id": "app_demo", "end_running": False}),
         "preview-clean": rec("selection_preview", command="clean.preview", scan_id="s_demo", scan_revision=1, dry_run=True,
             non_interactive=True, next_cursor=None, page_size=50, convertible_to_plan=True, items=[
                 item("o1", "C:\\Users\\Example\\AppData\\Local\\FixtureBrowser\\Code Cache", "browsers", "default_selected",
@@ -579,17 +769,47 @@ def main():
              "scope": "user", "state": "broken", "toggle_capability": "available", "protected": False,
              "reason": "Target is missing on a mounted volume"}],
             issues=[{"code": "permission_denied", "scope_display": "Task Scheduler \\Example", "message": "2 task folders could not be read"}]),
-        "maintenance-catalog": rec("maintenance_catalog", items=[
-            {"task_id": "windows.dns-flush", "task_version": "0.1.0", "platform": "windows", "problem": "Stale name resolution",
-             "impact": "First lookups are slower briefly", "requires_admin": False, "applicability": "applicable",
-             "applicability_reason": None, "user_protected": False},
-            {"task_id": "windows.trim-when-due", "task_version": "0.1.0", "platform": "windows", "problem": "SSD retrim overdue",
-             "impact": "Short disk activity", "requires_admin": True, "applicability": "not_applicable",
-             "applicability_reason": "Last optimization is within the schedule", "user_protected": False}]),
-        "maintenance-report": rec("maintenance_report", operation_id="op_maint", plan_id="p_v2_maintenance", elevation="declined",
-            items=[{"task_id": "windows.dns-flush", "outcome": "applied", "reason": "Resolver cache flushed"},
-                   {"task_id": "windows.trim-when-due", "outcome": "skipped", "reason": "Administrator authorization declined"}],
-            counts={"applied": 1, "unchanged": 0, "skipped": 1, "unavailable": 0, "attention": 0, "failed": 0}, all_clear=False),
+        "trash-inspection": rec("trash_inspection", scan_id="s_demo", entry_id="1842", path=wpath("D:\\Projects\\old-renders"),
+            parent_display="D:\\Projects", object_kind="directory", cloud="not_cloud", logical_bytes="1048576", allocated_bytes=None,
+            files=40, directories=2, protected=[{"path": wpath("D:\\Projects\\old-renders\\.git"), "reason": "default protection class source_worktree"}],
+            protected_count=1, coverage_gaps=[], gap_count=0, trashable=False,
+            refusal={"code": "policy_denied", "reason": "protected_descendants",
+                     "message": "1 protected object(s) inside; select unprotected descendants instead"},
+            holders=None, available_actions=["show_path", "copy_path"],
+            guidance="Show or copy the path; reveal it in Explorer from the desktop app. Nothing was opened or downloaded."),
+        "trash-list": rec("trash_list", items=[
+            {"trash_item_id": "tb_00c0ffee00c0ffee", "bin_location": "D:\\$Recycle.Bin\\S-1-5-21-example\\$RAB12CD.mov",
+             "original_path": "D:\\Videos\\example.mov", "deleted_at": "2026-10-14T09:00:00Z", "object_kind": "file",
+             "logical_bytes": "1048576", "purge_capability": "available", "reason": None},
+            {"trash_item_id": "tb_0badc0de0badc0de", "bin_location": "D:\\$Recycle.Bin\\S-1-5-21-example\\$RCD34EF",
+             "original_path": "D:\\Projects\\linked", "deleted_at": "2026-10-13T09:00:00Z", "object_kind": "directory",
+             "logical_bytes": None, "purge_capability": "unsupported",
+             "reason": "contains a link or special object; empty it with Explorer (Recycle Bin, Delete) instead"}],
+            issues=[]),
+        "maintenance-catalog": rec("maintenance_catalog", platform="windows", query=None, elevation="one_prompt_per_run", items=[
+            {"task_id": "windows.dns-flush", "task_version": "1.0.0", "platform": "windows", "title": "Flush DNS resolver cache",
+             "problem": "Stale name resolution", "impact": "First lookups are slower briefly", "requires_admin": False,
+             "applies_when": "The Windows DNS client interface is present", "estimated_seconds": 1, "applicability": "applicable",
+             "applicability_reason": None, "user_protected": False, "reversible": False},
+            {"task_id": "windows.trim-when-due", "task_version": "1.0.0", "platform": "windows", "title": "Retrim solid-state drives when due",
+             "problem": "SSD retrim overdue", "impact": "Short disk activity", "requires_admin": True,
+             "applies_when": "A fixed SSD volume was last optimized more than 30 days ago", "estimated_seconds": 60, "applicability": "not_needed",
+             "applicability_reason": "C: last optimized 2026-10-10T03:00:00Z", "user_protected": False, "reversible": False}],
+            prohibited=[{"id": "registry-optimizer", "title": "Registry cleaning or optimization",
+                         "reason": "No measurable benefit and can break applications; there is no task for it"}]),
+        "maintenance-report": rec("maintenance_report", **maintenance_run),
+        "maintenance-history": rec("maintenance_history", items=[maintenance_run], undo="unavailable",
+            note="Maintenance tasks are not undone; each run lists its tasks, outcomes and reasons."),
+        "maintenance-diagnosis": rec("maintenance_diagnosis", sampled_at=t1, window_seconds=2, read_only=True, findings=[
+            {"code": "runaway_process", "severity": "warning", "subject": "example.exe", "process_id": 4242, "duration_seconds": 3600,
+             "detail": "99% of a CPU now and 97% on average for 60 min (C:\\Apps\\example.exe); it is not ended automatically",
+             "next_step": "status.processes"},
+            {"code": "low_disk_space", "severity": "warning", "subject": "C:", "process_id": None, "duration_seconds": None,
+             "detail": "5.0 GiB free (1%)", "next_step": "analyze"}],
+            top_processes=[{"process_id": 4242, "name": "example.exe", "image": "C:\\Apps\\example.exe", "cpu_core_percent": 99.0,
+                            "working_set_bytes": "2147483648"}],
+            memory_load_percent=62.0, commit_used_percent=48.5,
+            note="Read-only: no process is ended and no setting is changed. Open the status view or Task Manager to act."),
         "status-snapshot": rec("status_snapshot", sampled_at=t1, stale=False, metrics=[
             {"name": "cpu.total_percent", "availability": "available", "value": 37.5, "unit": "percent", "reason": None},
             {"name": "thermal.cpu_celsius", "availability": "unavailable", "value": None, "unit": "celsius",
@@ -624,8 +844,11 @@ def main():
              "explanation": "Files older than 90 days in Downloads", "handling": "manual_trash_review", "guidance": []}]),
         "doctor-report": rec("doctor_report", generated_at=t1, redacted=True, engine_version="0.0.0-design-example", platform="windows",
             capabilities=[{"name": "uninstall.registry", "state": "unverified", "reason": "Synthetic report"}],
-            checks=[{"check": "protection_list", "status": "ok", "detail": "3 entries"},
-                    {"check": "index_store", "status": "unknown", "detail": "Synthetic report"}]),
+            checks=[{"area": "config", "check": "config.protection_list", "status": "ok", "detail": "3 entries"},
+                    {"area": "store", "check": "store.open", "status": "unknown", "detail": "Synthetic report at ~\\AppData\\Local\\CleanManager\\store"}],
+            error_codes=[{"code": "needs_approval", "exit_code": 3, "retryable": False}],
+            recent_errors=[{"code": "precondition_changed", "count": 2, "last_seen": t1}],
+            export={"path": "~\\Desktop\\cleanmanager-doctor.json", "written": False}),
     }
     cli.update({
         "purge-roots": rec("purge_roots", roots=[{"path": wpath("C:\\Users\\Example\\Projects"), "source": "default", "exists": True},
@@ -643,8 +866,11 @@ def main():
                   {"data": "history", "display": "Operation history"}, {"data": "quarantine", "display": "Quarantine items"}],
             quarantine_items=2, quarantine_logical_bytes="2097152", system_settings_to_restore=["display.keep_awake"],
             requires_interactive_confirmation=True),
-        "completion-powershell": rec("completion_script", shell="powershell", script="# synthetic completion script",
+        "completion-powershell": rec("completion_script", shell="powershell", action="print", script="# synthetic completion script",
             profile_path=None, written=False),
+        "completion-install-preview": rec("completion_script", shell="powershell", action="preview",
+            script="# >>> cleanmanager completion >>>\n& 'C:\\Tools\\cleanmanager.exe' completion print powershell --format text | Out-String | Invoke-Expression\n# <<< cleanmanager completion <<<\n",
+            profile_path=wpath("C:\\Users\\Example\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"), written=False),
     })
     def entry_item(eid, display, kind, logical, basis="entity", parent="e_root", boundary=None, quality="strong"):
         return {"entry_id": eid, "parent_entry_id": parent, "object_id": "o_" + eid, "path": wpath(display), "kind": kind,
@@ -761,6 +987,96 @@ def main():
     cli["installer-locations"] = rec("installer_locations", max_depth=2, locations=[
         {"path": wpath("C:\\Users\\Example\\Downloads"), "source_label": "downloads", "exists": True},
         {"path": wpath("C:\\Users\\Example\\Desktop"), "source_label": "desktop", "exists": True}])
+    # Parity 12.3/12.4, 7.3, 10.x fixtures (synthetic).
+    unsigned = {"state": "unsigned", "publisher": None, "reason": "no valid embedded or catalog signature"}
+    cli["process-list"] = rec("process_list", sampled_at=t1, window_ms=1000, sort="cpu", search=None, total=2, matched=2, unidentified=1,
+        notes=["disk_bytes_per_sec is the process's read+write transfer rate"], items=[
+            {"pid": 4242, "parent_pid": 1000, "parent_name": "explorer.exe", "name": "example-helper.exe",
+             "image_path": wpath("C:\\Users\\Example\\AppData\\Local\\Example\\example-helper.exe"), "started_at": "134050000000000000",
+             "cpu_percent": 12.5, "memory_bytes": "104857600", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None, "signature": unsigned,
+             "owner_app": None, "identified": False, "purpose": None, "unidentified_reason": "Not in CleanManager's local process knowledge",
+             "ai_diagnosis": {"available": True, "hint": "Purpose not identified locally. You can ask the optional AI diagnosis about this process"},
+             "pinned": False, "end_capability": {"state": "available", "protection": None, "reason": "Ends only through a reviewed plan for this one process"},
+             "notes": []},
+            {"pid": 700, "parent_pid": 600, "parent_name": "wininit.exe", "name": "lsass.exe", "image_path": wpath("C:\\Windows\\System32\\lsass.exe"),
+             "started_at": "134049000000000000", "cpu_percent": 0.1, "memory_bytes": "8388608", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None,
+             "signature": {"state": "catalog_signed", "publisher": "Microsoft Windows", "reason": None}, "owner_app": None, "identified": True,
+             "purpose": "Local Security Authority: sign-in, credentials and security policy", "unidentified_reason": None, "ai_diagnosis": None,
+             "pinned": False, "end_capability": {"state": "unsupported", "protection": "critical_system",
+                                                 "reason": "Critical Windows process: ending it stops or restarts the system"}, "notes": []}])
+    cli["status-alert"] = rec("status_alert", pid=4242, name="example-helper.exe", image_path="C:\\Users\\Example\\AppData\\Local\\Example\\example-helper.exe",
+        min_cpu_percent=91.0, threshold_percent=80.0, window_seconds=120, since=t0, raised_at=t1, link="status.processes/4242")
+    cli["insight-overview"] = rec("insight_overview", generated_at=t1, old_downloads={"older_than_days": 90, "item_count": 3,
+            "total_logical_bytes": "734003200", "observed_at": t1}, cards=[
+        {"card_id": "i_card_downloads", "kind": "old_downloads", "title": "Downloads older than 90 days", "logical_bytes": "734003200", "count": 3,
+         "size_note": None, "observed_at": t1, "link": {"view": "insights.downloads", "path": wpath("C:\\Users\\Example\\Downloads"), "insight_ids": []}},
+        {"card_id": "i_card_snapshots", "kind": "snapshots", "title": "Restore points and snapshots", "logical_bytes": None, "count": 4,
+         "size_note": "Size unavailable: Requires administrator", "observed_at": t0, "link": {"view": "insights", "path": None, "insight_ids": ["i_shadow"]}}])
+    cli["old-downloads-review"] = rec("old_downloads_review", root=wpath("C:\\Users\\Example\\Downloads"), older_than_days=90, observed_at=t1,
+        items=[{"path": wpath("C:\\Users\\Example\\Downloads\\video.mov"), "logical_bytes": "629145600", "modified_at": t0, "age_days": 210,
+                "installer_like": False, "selected": False}],
+        total_logical_bytes="734003200", item_count=3, shown=1, note=None, handling="manual_trash_review",
+        guidance="Review only: nothing is selected. Pick files yourself and move them to the Recycle Bin with the trash command.")
+    cli["app-update-list"] = rec("app_update_list", checks_enabled=True, checked=True, checked_at=t1,
+        counts={"update_available": 1, "up_to_date": 0, "cannot_check": 1, "not_checked": 0}, items=[
+            {"app_instance_id": "app_editor", "name": "Example Editor", "current_version": "1.2.0", "available_version": "1.3.0", "channel": "winget",
+             "channel_id": "Example.Editor", "state": "update_available", "reason": None, "checked_at": t1, "route": "package_manager", "official_url": None},
+            {"app_instance_id": "app_tool", "name": "Unpackaged Tool", "current_version": "0.9", "available_version": None, "channel": None,
+             "channel_id": None, "state": "cannot_check", "reason": "No update channel: not installed through winget, Microsoft Store or Scoop",
+             "checked_at": t1, "route": "none", "official_url": None}])
+    cli["app-update-settings"] = rec("app_update_settings", checks_enabled=False, periodic_checks=False, last_checked_at=t1,
+        note="Checks run only when you ask (apps updates); off means no update request of any kind is made.")
+    upd_target = {"app_instance_id": "app_editor", "name": "Example Editor", "channel": "winget", "package_id": "Example.Editor",
+                  "from_version": "1.2.0", "to_version": "1.3.0", "installed_signer": "Example Software, Inc.", "install_location": "C:\\Program Files\\Example",
+                  "official_url": None}
+    upd_body = {"engine_contract": "plan/v2", "plan_id": "up_demo", "plan_kind": "update", "policy_matchable": False, "requires_admin": False,
+                "scope_id": None, "scan_id": None, "scan_revision": None, "rule_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+                "policy_digest": "2" * 64, "created_at": t1, "expires_at": "2026-10-14T12:15:02Z", "items": [
+                    {"action_id": "a01", "action_type": "tool_adapter", "adapter_id": "winget.upgrade", "adapter_version": "1",
+                     "executable": {"path": wpath("C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\winget.exe"), "sha256": "e" * 64},
+                     "argv": ["upgrade", "--id", "Example.Editor", "--exact", "--version", "1.3.0", "--source", "winget", "--silent",
+                              "--disable-interactivity", "--accept-source-agreements", "--accept-package-agreements"],
+                     "preview_digest": hashlib.sha256(canonical(upd_target)).hexdigest(), "timeout_seconds": 900}]}
+    cli["app-update-plan"] = rec("app_update_plan", plan={"body": upd_body, "plan_digest": hashlib.sha256(canonical(upd_body)).hexdigest(),
+            "authorization_status": "required"},
+        routed=[{"app_instance_id": "app_photos", "name": "Example Store App", "route": "open_store", "reason": "Microsoft Store updates its own apps",
+                 "url": "ms-windows-store://downloadsandupdates"}],
+        next="cleanmanager plan review up_demo (in a terminal), then cleanmanager plan apply up_demo")
+    cli["process-pins"] = rec("process_pins", pins=["code.exe"])
+    cli["status-alert-settings"] = rec("status_alert_settings", enabled=False, cpu_threshold_percent=80.0, window_seconds=120, cooldown_seconds=1800,
+        note="Alerts are raised only while a status stream (status --watch) or the resident component runs; off means no process sampling for alerts.")
+    # Parity 9.x (UNI-01..10): uninstall routes and the grouped leftover review of a finished uninstall operation.
+    cli["app-uninstall-list"] = rec("app_uninstall_list", items=[
+        {"app_instance_id": "app_demo", "name": "Example App", "version": "2.1", "publisher": "Example Vendor Ltd.", "source": "registry_uninstall",
+         "last_used_at": None, "location": "C:\\Program Files\\Example App", "protected_class": False, "uninstall": {"state": "available",
+             "adapter": {"adapter_id": "windows.registered-uninstaller", "display": "\"C:\\Program Files\\Example App\\uninst.exe\" (vendor uninstaller, its own UI)",
+                 "package_manager": False}, "reason": None, "settings_uri": None}},
+        {"app_instance_id": "app_tool", "name": "Example Tool", "version": None, "publisher": None, "source": "registry_uninstall", "location": None,
+         "last_used_at": None,
+         "protected_class": False, "uninstall": {"state": "unverified", "adapter": None,
+             "reason": "no uninstall command is registered for this application; CleanManager never deletes the install folder as an uninstall",
+             "settings_uri": "ms-settings:appsfeatures"}},
+        {"app_instance_id": "app_agent", "name": "Example Endpoint Agent", "version": "7.0", "publisher": "Example Security", "source": "msi",
+         "location": None, "last_used_at": None, "protected_class": True, "uninstall": {"state": "unsupported", "adapter": None,
+             "reason": "Security or device-management agent: CleanManager offers no uninstall; remove it through your administrator or the vendor's official uninstall process",
+             "settings_uri": None}}], issues=[])
+    def leftover(oid, kind, group, display, tier, selected, action="fs_trash", marker=None, warnings=(), note=None, size=None, guidance=None):
+        return {"object_id": oid, "kind": kind, "group": group, "display": display, "evidence": ["%APPDATA%\\ExampleApp matches the product name"],
+                "marker": marker, "tier": tier, "selected": selected, "warnings": list(warnings), "logical_bytes": size, "note": note,
+                "requires_admin": False, "action": action, "guidance": guidance}
+    cli["uninstall-leftovers"] = rec("uninstall_leftovers", operation_id="op_demo",
+        app={"app_instance_id": "app_demo", "name": "Example App", "publisher": "Example Vendor Ltd.", "source": "registry_uninstall"},
+        groups=[{"group": "caches_logs", "items": [leftover("lo_cache", "directory", "caches_logs", "C:\\Users\\Example\\AppData\\Roaming\\ExampleApp\\Cache",
+                    "default_selected", True, size="1048576")]},
+                {"group": "personal_data", "items": [leftover("lo_models", "directory", "personal_data", "C:\\Users\\Example\\AppData\\Roaming\\ExampleApp\\models",
+                    "review_only", False, note="models: large, usually re-downloadable by the app, but only if you still have access to them", size="4294967296"),
+                    leftover("lo_shared", "directory", "personal_data", "C:\\Users\\Example\\AppData\\Local\\ExampleApp", "kept", False,
+                    marker="shared_owner")]},
+                {"group": "settings", "items": [leftover("lo_key", "registry_key", "settings", "HKCU\\SOFTWARE\\ExampleVendor\\ExampleApp", "review_only", False,
+                    action="registry_backup_delete", note="backed up before it is deleted; restorable from history")]},
+                {"group": "system", "items": [leftover("lo_svc", "service", "system", "service ExampleAppUpdater", "review_only", False, action="manual",
+                    guidance="CleanManager does not delete services: stop it and run `sc.exe delete ExampleAppUpdater` from an administrator terminal")]}],
+        default_selected=1, external_references=["C:\\Users\\Example\\.gitconfig mentions C:\\Program Files\\Example App (read-only hint; CleanManager does not edit it)"])
     for name, example in cli.items():
         save("examples/contracts/" + name + ".json", example)
     save("rules/examples/example-cache.json", {"schema_version": "1.0", "rule_id": "example.cache", "version": "0.1.0",
@@ -805,6 +1121,9 @@ def main():
     plans = sum(name.startswith("plan-v2-") for name in [*v2, *cli])
     print(f"Generated 2 schemas, {8 + len(v2) + len(cli)} protocol examples ({plans} plan/v2 golden vectors, "
           f"{len(cli) - (plans - len(v2))} CLI-10 fixtures) and 1 experimental rule example.")
+    # Optional AI diagnosis extension: its own contract (schemas/diag/v1), never part of schemas/v1.
+    import runpy
+    print(f"Generated the diag/1 schema and {runpy.run_path(str(ROOT / 'tools/diag_contracts.py'))['generate'](ROOT)} diagnosis examples.")
 
 
 if __name__ == "__main__":

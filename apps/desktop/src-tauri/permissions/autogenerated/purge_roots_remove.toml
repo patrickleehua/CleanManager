@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-purge-roots-remove"
+description = "Enables the purge_roots_remove command without any pre-configured scope."
+commands.allow = ["purge_roots_remove"]
+
+[[permission]]
+identifier = "deny-purge-roots-remove"
+description = "Denies the purge_roots_remove command without any pre-configured scope."
+commands.deny = ["purge_roots_remove"]

@@ -26,6 +26,7 @@ use cm_core::analysis::{
 use cm_core::catalog::{CatalogContext, SkipReason};
 use cm_core::authz::{Policy, PolicyState, Receipt, ReceiptSource, current_principal, policy_covers, receipt_valid};
 use cm_core::error::ErrorCode;
+use cm_core::plan::v2::PLAN_V2_CONTRACT;
 use cm_core::plan::{Plan, PlanInput, build_plan, check_plan, parse_utc};
 use cm_core::recovery::{RECOVERY_CONTRACT, RecoveryKind, RecoveryPlan, RecoveryReceipt};
 use cm_core::rules::{Mode, Tier};
@@ -48,7 +49,7 @@ pub fn now_unix() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn new_id(prefix: &str) -> String {
+pub(crate) fn new_id(prefix: &str) -> String {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     format!("{prefix}_desk_{}_{nanos}", std::process::id())
 }
@@ -515,7 +516,7 @@ pub fn page(l: &Loaded, group: Group, page_size: u32, cursor: Option<&str>) -> I
     Ok(CandidatePageDto { candidate_set_id: set.candidate_set_id.clone(), group, total: members.len() as u64, items, next_cursor: next })
 }
 
-fn policy_digest(stores: &Stores) -> String {
+pub(crate) fn policy_digest(stores: &Stores) -> String {
     let policies = stores.audit.policies().unwrap_or_default();
     cm_core::c14n::digest(&serde_json::to_value(&policies).expect("policies serialize")).expect("plain JSON")
 }
@@ -523,6 +524,23 @@ fn policy_digest(stores: &Stores) -> String {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatedPlanDto {
     pub plan_id: String,
+    /// Selected rows whose observed state changed since discovery: listed, not planned (CLI-11). Omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale_items: Vec<StaleItemDto>,
+}
+
+impl CreatedPlanDto {
+    pub fn new(plan_id: String) -> Self {
+        CreatedPlanDto { plan_id, stale_items: vec![] }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StaleItemDto {
+    pub candidate_id: String,
+    /// `missing` or `changed`.
+    pub reason: &'static str,
+    pub detail: String,
 }
 
 /// Freeze explicitly chosen candidates into a stored plan. The WebView passes ids only; the
@@ -557,7 +575,7 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
     };
     let plan = build_plan(&view, set, selected, mode, &input).map_err(|e| ipc(ErrorCode::PolicyDenied, "plan_refused", e.to_string()))?;
     stores.audit.save_plan(&plan)?;
-    Ok(CreatedPlanDto { plan_id })
+    Ok(CreatedPlanDto::new(plan_id))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -651,7 +669,8 @@ pub struct CliDto {
 pub struct PlanDetailDto {
     pub plan_id: String,
     pub contract: String,
-    /// `cleanup`, `restore` or `purge`.
+    /// `cleanup`, `restore` or `purge` (recovery/v1), or for plan/v2 `manual_trash`, `manual_purge`, `startup`,
+    /// `startup_restore` (other v2 kinds by their raw name).
     pub kind: &'static str,
     pub mode: Option<Mode>,
     pub digest: String,
@@ -680,9 +699,36 @@ pub struct PlanDetailDto {
     /// Issued only while a human approval is still possible (`required` and not stale).
     pub review_token: Option<String>,
     pub cli: CliDto,
+    /// Applying needs an elevated process (system-wide startup items); this tool never elevates itself.
+    pub requires_admin: bool,
+    /// `purge` or `installer` for plans from a built-in catalog, otherwise `None`.
+    pub catalog: Option<&'static str>,
+    /// The raw `plan_kind` of a plan/v2 plan.
+    pub plan_kind_v2: Option<String>,
 }
 
-fn cli(plan_id: &str) -> CliDto {
+/// Built-in catalog a rule-set digest belongs to (`purge`, `installer`).
+pub fn catalog_of(rule_set_digest: &str) -> Option<&'static str> {
+    if cm_core::purge::is_current_digest(rule_set_digest) {
+        Some("purge")
+    } else if cm_core::installer::is_current_digest(rule_set_digest) {
+        Some("installer")
+    } else {
+        None
+    }
+}
+
+/// The rule-set digest a cleanup plan is checked against: built-in catalogs (purge, installers) ship with this
+/// binary and are checked by the core through the plan's own digest, as `cleanmanager plan apply` does; every other
+/// plan binds to the installed rule pack.
+pub fn rules_digest_for(s: &AppState, plan: &Plan) -> Result<String, String> {
+    if cm_core::plan::is_builtin_catalog_digest(&plan.body.rule_set_digest) {
+        return Ok(plan.body.rule_set_digest.clone());
+    }
+    crate::rules::load(s.rules_dir.as_deref()).map(|r| r.digest)
+}
+
+pub(crate) fn cli(plan_id: &str) -> CliDto {
     CliDto {
         show: format!("cleanmanager plan show {plan_id}"),
         review: format!("cleanmanager plan review {plan_id}"),
@@ -690,11 +736,11 @@ fn cli(plan_id: &str) -> CliDto {
     }
 }
 
-fn enum_text<T: Serialize>(v: &T) -> String {
+pub(crate) fn enum_text<T: Serialize>(v: &T) -> String {
     serde_json::to_value(v).ok().and_then(|j| j.as_str().map(str::to_owned)).unwrap_or_default()
 }
 
-fn operation_ref(stores: &Stores, plan_id: &str, digest: &str) -> IpcResult<Option<OperationRefDto>> {
+pub(crate) fn operation_ref(stores: &Stores, plan_id: &str, digest: &str) -> IpcResult<Option<OperationRefDto>> {
     Ok(stores.audit.operation_for_dedupe(&format!("{plan_id}#{digest}"))?.map(|(op, _)| {
         let state = stores.audit.operation_state(&op).unwrap_or_else(|_| "unknown".into());
         OperationRefDto { operation_id: op, state }
@@ -763,11 +809,17 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
             operation: operation_ref(stores, plan_id, &plan.digest)?,
             review_token,
             cli: cli(plan_id),
+            requires_admin: false,
+            catalog: None,
+            plan_kind_v2: None,
         });
+    }
+    if contract == PLAN_V2_CONTRACT {
+        return crate::v2::detail(s, stores, plan_id, contract);
     }
     let plan = stores.audit.load_plan(plan_id)?;
     let authorization = cleanup_authorization(stores, &plan, now)?;
-    let rules_digest = crate::rules::load(s.rules_dir.as_deref()).map(|r| r.digest);
+    let rules_digest = rules_digest_for(s, &plan);
     let stale = match &rules_digest {
         Ok(d) => check_plan(&plan, now, d).err().map(|r| enum_text(&r)),
         Err(_) => Some("rules_unavailable".to_string()),
@@ -830,6 +882,9 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
         operation: operation_ref(stores, plan_id, &plan.digest)?,
         review_token,
         cli: cli(plan_id),
+        requires_admin: false,
+        catalog: catalog_of(&plan.body.rule_set_digest),
+        plan_kind_v2: None,
     })
 }
 
@@ -844,8 +899,14 @@ pub struct PlanItemDto {
     /// Recovery plans: where the object goes back to, and its quarantine record.
     pub original_path_display: Option<String>,
     pub quarantine_id: Option<String>,
-    /// `file`, or `directory` (removed only when empty after its planned contents succeeded).
+    /// `file`, or `directory` (removed only when empty after its planned contents succeeded); plan/v2 also
+    /// `startup_item`, `registry_value` or `other`.
     pub item_kind: String,
+    /// `fs_trash`, `fs_quarantine`, `fs_delete`, `startup_disable`, `startup_enable`, `registry_restore`...;
+    /// `None` for recovery/v1 items.
+    pub action_type: Option<String>,
+    /// Startup and registry items: `user` or `machine`.
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -860,7 +921,18 @@ pub struct PlanItemsDto {
 pub fn items(stores: &Stores, plan_id: &str, page_size: u32, cursor: Option<&str>) -> IpcResult<PlanItemsDto> {
     let size = args::page_size(Some(page_size))? as usize;
     let start = args::offset_cursor(cursor)?;
-    let all: Vec<PlanItemDto> = if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
+    let contract = stores.audit.plan_contract(plan_id)?;
+    if contract == PLAN_V2_CONTRACT {
+        let all = crate::v2::item_rows(&stores.audit.load_plan_v2(plan_id)?);
+        let total = all.len() as u64;
+        let mut items: Vec<PlanItemDto> = all.into_iter().skip(start).take(size + 1).collect();
+        let next = (items.len() > size).then(|| {
+            items.truncate(size);
+            format!("o{}", start + size)
+        });
+        return Ok(PlanItemsDto { plan_id: plan_id.into(), total, items, next_cursor: next });
+    }
+    let all: Vec<PlanItemDto> = if contract == RECOVERY_CONTRACT {
         let plan = stores.audit.load_recovery_plan(plan_id)?;
         plan.body
             .items
@@ -880,11 +952,18 @@ pub fn items(stores: &Stores, plan_id: &str, page_size: u32, cursor: Option<&str
                     item_kind: "file".into(),
                     original_path_display: Some(orig.clone()),
                     quarantine_id: Some(i.quarantine_id.clone()),
+                    action_type: None,
+                    scope: None,
                 }
             })
             .collect()
     } else {
         let plan = stores.audit.load_plan(plan_id)?;
+        let action_type = match plan.body.mode {
+            Mode::Trash => "fs_trash",
+            Mode::Quarantine => "fs_quarantine",
+            Mode::Delete => "fs_delete",
+        };
         plan.body
             .items
             .iter()
@@ -902,11 +981,13 @@ pub fn items(stores: &Stores, plan_id: &str, page_size: u32, cursor: Option<&str
                     item_kind: serde_json::to_value(i).ok().and_then(|v| v["kind"].as_str().map(str::to_owned)).unwrap_or_else(|| "file".into()),
                     original_path_display: None,
                     quarantine_id: None,
+                    action_type: Some(action_type.into()),
+                    scope: None,
                 }
             })
             .collect()
     };
-    let total = if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
+    let total = if contract == RECOVERY_CONTRACT {
         stores.audit.load_recovery_plan(plan_id)?.body.items.len()
     } else {
         stores.audit.load_plan(plan_id)?.body.items.len()
@@ -942,8 +1023,11 @@ pub fn approve(s: &AppState, stores: &Stores, plan_id: &str, token: &str, typed:
         stores.audit.save_recovery_receipt(&receipt)?;
         return recovery_authorization(stores, &plan, now);
     }
+    if stores.audit.plan_contract(plan_id)? == PLAN_V2_CONTRACT {
+        return crate::v2::approve(s, stores, plan_id, token, typed);
+    }
     let plan = stores.audit.load_plan(plan_id)?;
-    let digest = crate::rules::load(s.rules_dir.as_deref()).map_err(|e| ipc(ErrorCode::InternalError, "rules_unavailable", e))?.digest;
+    let digest = rules_digest_for(s, &plan).map_err(|e| ipc(ErrorCode::InternalError, "rules_unavailable", e))?;
     if let Err(r) = check_plan(&plan, now, &digest) {
         return Err(ipc(ErrorCode::PlanStale, "plan_stale", format!("The plan can no longer be approved ({}); create a new plan", enum_text(&r))));
     }
@@ -969,8 +1053,11 @@ pub fn approve(s: &AppState, stores: &Stores, plan_id: &str, token: &str, typed:
 pub fn revoke(stores: &Stores, plan_id: &str) -> IpcResult<AuthorizationDto> {
     let now = now_unix();
     stores.audit.revoke_receipts(plan_id, &now_utc())?;
-    if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
+    let contract = stores.audit.plan_contract(plan_id)?;
+    if contract == RECOVERY_CONTRACT {
         recovery_authorization(stores, &stores.audit.load_recovery_plan(plan_id)?, now)
+    } else if contract == PLAN_V2_CONTRACT {
+        crate::v2::authorization(stores, &stores.audit.load_plan_v2(plan_id)?, now)
     } else {
         cleanup_authorization(stores, &stores.audit.load_plan(plan_id)?, now)
     }
@@ -1061,8 +1148,9 @@ pub fn set_policy_state(stores: &Stores, policy_id: &str, state: PolicyState, co
 
 /// A paused policy template covering exactly this cleanup plan's scope, rule versions and mode.
 pub fn policy_from_plan(stores: &Stores, plan_id: &str) -> IpcResult<Vec<PolicyDto>> {
-    if stores.audit.plan_contract(plan_id)? == RECOVERY_CONTRACT {
-        return Err(ipc(ErrorCode::InvalidArgument, "not_cleanup_plan", "Recovery plans are never covered by a policy"));
+    let contract = stores.audit.plan_contract(plan_id)?;
+    if contract == RECOVERY_CONTRACT || contract == PLAN_V2_CONTRACT {
+        return Err(ipc(ErrorCode::InvalidArgument, "not_cleanup_plan", "Only cleanup plans can be covered by a policy"));
     }
     let plan = stores.audit.load_plan(plan_id)?;
     if plan.rule_refs.is_empty() {

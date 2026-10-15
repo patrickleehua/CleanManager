@@ -114,7 +114,8 @@ def semantics(value):
             if o["action"] == "trash":
                 assert availability in ("system_recycle_bin", "not_applicable", "unknown"), "trash is restored with the system UI only"
             if availability == "in_app_restore":
-                assert o["action"] == "quarantine", "only quarantined objects are restorable in the product"
+                # Quarantined objects, and startup changes through their recorded prior state (recovery plan).
+                assert o["action"] in ("quarantine", "startup"), "only quarantined objects and startup changes are restorable in the product"
             if o["counts"] is None or o["counts"]["unknown"]:
                 assert availability == "unknown", "unconfirmed outcomes cannot claim a recovery path"
     elif kind == "cli_request":
@@ -173,6 +174,11 @@ def semantics(value):
             assert count == sum(i["outcome"] == name for i in value["items"]), "maintenance outcome count mismatch"
         if value["all_clear"]:
             assert value["counts"]["failed"] == 0 and value["counts"]["attention"] == 0, "all_clear with failed or attention tasks"
+    elif kind == "maintenance_history":
+        for run in value["items"]:
+            for name, count in run["counts"].items():
+                assert count == sum(i["outcome"] == name for i in run["items"]), "maintenance outcome count mismatch"
+            assert not run["all_clear"] or (run["counts"]["failed"] == 0 and run["counts"]["attention"] == 0), "all_clear with failed or attention tasks"
     elif kind == "status_snapshot":
         for m in value["metrics"]:
             assert (m["value"] is not None) == (m["availability"] == "available"), "unavailable metrics must be null, never 0"
@@ -382,6 +388,14 @@ def main():
     reject_plan("v2-registry-without-backup", uninstall, lambda b: b["items"][4].update(backup_required=False))
     reject_plan("v2-hklm-without-admin", uninstall, lambda b: b["items"][4].update(hive="HKLM"))
     reject_plan("v2-adapter-shell-string", uninstall, lambda b: b["items"][1].update(command_line="cmd /c del"))
+    # Parity 12.3/7.3/10.x: one process per end plan; unidentified processes carry the AI entry; nothing preselected
+    # in old downloads; "up to date" needs a channel; unknown card sizes explain themselves.
+    reject_plan("v2-process-two-ends", examples["plan-v2-process"], lambda b: b["items"].append(copy.deepcopy(b["items"][0]) | {"action_id": "a02"}))
+    reject_plan("v2-process-policy-matchable", examples["plan-v2-process"], lambda b: b.update(policy_matchable=True))
+    reject("process-unidentified-without-ai-entry", examples["process-list"], lambda x: x["items"][0].update(ai_diagnosis=None))
+    reject("old-download-preselected", examples["old-downloads-review"], lambda x: x["items"][0].update(selected=True))
+    reject("update-latest-without-channel", examples["app-update-list"], lambda x: x["items"][1].update(state="up_to_date"))
+    reject("card-unknown-size-without-note", examples["insight-overview"], lambda x: x["cards"][1].update(size_note=None))
     reject("scan-status-terminal-state", examples["scan-status-running"], lambda x: x.update(state="completed"))
     reject("scan-interrupted-claims-verified", examples["scan-interrupted"], lambda x: x.update(completeness="verified_scope"))
     reject("cancel-receipt-claims-stopped", examples["scan-cancel-receipt"], lambda x: x.update(note="Scan stopped."))
@@ -453,6 +467,10 @@ def main():
     reject("v2-adapter-with-fs-modes", rules_v2["example-package-cache-adapter"], lambda x: x.update(allowed_modes=["delete"]), "rule-v2")
     reject("v2-blocked-with-modes", cache_v2, lambda x: x.update(max_tier="blocked"), "rule-v2")
     reject("registry-without-negative-fixture", registry["example.browser.code-cache@0.1.0"], lambda x: x["fixtures"].update(negative=[]), "tested-registry")
+    # Optional AI diagnosis contract (diag/1): separate schema, own examples and negative cases.
+    import runpy
+    diag_examples, diag_rejected = runpy.run_path(str(ROOT / "tools/diag_contracts.py"))["validate"](ROOT, Draft202012Validator, FormatChecker, load)
+    negative.extend(diag_rejected)
     evidence = ROOT / "docs/evidence"
     bundle = load(evidence / "rea-wiztree-4.33.bundle.json")
     artifact = load(evidence / "wiztree-artifact-summary.json")
@@ -492,7 +510,16 @@ def main():
     dep_doc = (ROOT / "docs/dependencies.md").read_text(encoding="utf-8")
     documented_deps = set(re.findall(r"^\| `([A-Za-z0-9_-]+)` \| ([0-9][^ |]*) \|", dep_doc, re.M))
     assert documented_deps == locked, "docs/dependencies.md differs from Cargo.lock; rerun tools/dependency_inventory.py: " + str(sorted(documented_deps ^ locked))
-    for manifest in [ROOT / "Cargo.toml", *(ROOT / "crates").glob("*/Cargo.toml")]:
+    desktop_doc = (ROOT / "docs/dependencies-desktop.md").read_text(encoding="utf-8")
+    desktop_lock = tomllib.loads((ROOT / "apps/desktop/src-tauri/Cargo.lock").read_text(encoding="utf-8"))
+    desktop_locked = {(pkg["name"], pkg["version"]) for pkg in desktop_lock["package"] if "source" in pkg}
+    desktop_documented = set(re.findall(r"^\| `([A-Za-z0-9_-]+)` \| ([0-9][^ |]*) \|", desktop_doc, re.M))
+    assert desktop_documented == desktop_locked, "docs/dependencies-desktop.md differs from the desktop Cargo.lock; rerun tools/dependency_inventory.py: " + str(sorted(desktop_documented ^ desktop_locked))
+    npm_lock = json.loads((ROOT / "apps/desktop/package-lock.json").read_text(encoding="utf-8"))
+    npm_locked = {(k.rsplit("node_modules/", 1)[1], p["version"]) for k, p in npm_lock["packages"].items() if k}
+    npm_documented = set(re.findall(r"^\| (@?[a-z0-9][^ |`]*) \| ([0-9][^ |]*) \|", desktop_doc, re.M))
+    assert npm_documented == npm_locked, "docs/dependencies-desktop.md differs from package-lock.json; rerun tools/dependency_inventory.py: " + str(sorted(npm_documented ^ npm_locked))
+    for manifest in [ROOT / "Cargo.toml", *(ROOT / "crates").glob("*/Cargo.toml"), ROOT / "apps/desktop/src-tauri/Cargo.toml", ROOT / "apps/desktop/package.json"]:
         assert ".research" not in manifest.read_text(encoding="utf-8"), "build must not reference research copies: " + str(manifest)
     protocol_doc = (ROOT / "docs/cli-protocol.md").read_text(encoding="utf-8")
     exits = load(ROOT / "schemas/v1/exit-codes.json")
@@ -527,7 +554,7 @@ def main():
               "rea_evidence_records_linked": len(records), "rea_unknowns_linked": len(bundle["unknowns"]),
               "reference_probe_cases_matched": len(reproduced["cases"]),
               "planned_test_ids_checked": len(tests), "planned_task_ids_checked": len(tasks),
-              "cli_commands_documented": len(documented),
+              "cli_commands_documented": len(documented), "diagnosis_examples": diag_examples,
               "run_records": len(runs), "locked_crates_documented": len(locked), "production_rules": prod_rules, "production_registry_entries": len(prod_registry), "devices_observed": sum(d["actual"] is not None for d in matrix["devices"])}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

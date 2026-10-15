@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "kind": "insight_overview",
+  "request_id": "req_synthetic",
+  "generated_at": "2026-10-14T12:00:02Z",
+  "old_downloads": {
+    "older_than_days": 90,
+    "item_count": 3,
+    "total_logical_bytes": "734003200",
+    "observed_at": "2026-10-14T12:00:02Z"
+  },
+  "cards": [
+    {
+      "card_id": "i_card_downloads",
+      "kind": "old_downloads",
+      "title": "Downloads older than 90 days",
+      "logical_bytes": "734003200",
+      "count": 3,
+      "size_note": null,
+      "observed_at": "2026-10-14T12:00:02Z",
+      "link": {
+        "view": "insights.downloads",
+        "path": {
+          "platform": "windows",
+          "display": "C:\\Users\\Example\\Downloads",
+          "raw_encoding": "windows_utf16le_base64",
+          "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEQAbwB3AG4AbABvAGEAZABzAA=="
+        },
+        "insight_ids": []
+      }
+    },
+    {
+      "card_id": "i_card_snapshots",
+      "kind": "snapshots",
+      "title": "Restore points and snapshots",
+      "logical_bytes": null,
+      "count": 4,
+      "size_note": "Size unavailable: Requires administrator",
+      "observed_at": "2026-10-14T12:00:00Z",
+      "link": {
+        "view": "insights",
+        "path": null,
+        "insight_ids": [
+          "i_shadow"
+        ]
+      }
+    }
+  ]
+}

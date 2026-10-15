@@ -39,9 +39,20 @@ import type {
   StartScan,
   Summary,
   TreemapLayer,
+  Catalog,
+  CatalogPreview,
+  InsightsList,
+  InstallerLocations,
+  PurgeRoots,
+  Readiness,
+  ReadinessOp,
+  StartupList,
+  StatusSnapshot,
+  TrashInspection,
 } from './types';
+import type { DiagBackend, DiagFinishedEvent } from './diagTypes';
 
-export interface Backend {
+export interface Backend extends DiagBackend {
   capabilities(): Promise<Capabilities>;
   listScanRoots(): Promise<RootOffer[]>;
   chooseFolder(): Promise<RootOffer | null>;
@@ -80,6 +91,25 @@ export interface Backend {
   addProtection(target: ProtectTarget, note: string | null): Promise<ProtectionList>;
   removeProtection(protectionId: string, confirm: string): Promise<ProtectionList>;
   listApps(scanId: string | null): Promise<AppsList>;
+  // Five-tool suite: catalogs (build artifacts, installers), manual trash, startup, insights,
+  // status, permission readiness. Writes still only create plans for the review page.
+  purgeRoots(): Promise<PurgeRoots>;
+  /** Opens the native folder picker in the host; `null` when cancelled. */
+  purgeRootsAdd(): Promise<PurgeRoots | null>;
+  purgeRootsRemove(rootId: string): Promise<PurgeRoots>;
+  purgeScan(): Promise<CatalogPreview>;
+  installerLocations(): Promise<InstallerLocations>;
+  installerScan(): Promise<CatalogPreview>;
+  createCatalogPlan(catalog: Catalog, setId: string, candidateIds: string[], mode: Mode): Promise<{ plan_id: string; stale_items?: { candidate_id: string; reason: string; detail: string }[] }>;
+  trashInspect(scanId: string, entryId: string): Promise<TrashInspection>;
+  trashPlan(scanId: string, entryIds: string[]): Promise<{ plan_id: string }>;
+  startupList(): Promise<StartupList>;
+  startupPlan(itemId: string, operation: 'disable' | 'enable'): Promise<{ plan_id: string }>;
+  insightsList(): Promise<InsightsList>;
+  statusSnapshot(): Promise<StatusSnapshot>;
+  readiness(operation: ReadinessOp): Promise<Readiness>;
+  /** Shows a scanned entry in the platform file manager (path resolved by the host). */
+  revealEntry(scanId: string, entryId: string): Promise<boolean>;
   // Events
   onProgress(cb: (e: ProgressEvent) => void): Promise<() => void>;
   onFinished(cb: (e: FinishedEvent) => void): Promise<() => void>;
@@ -145,11 +175,46 @@ async function tauriBackend(): Promise<Backend> {
     addProtection: (target, note) => call('add_protection', { target, note }),
     removeProtection: (protection_id, confirm) => call('remove_protection', { protection_id, confirm }),
     listApps: (scan_id) => call('list_apps', { scan_id }),
+    purgeRoots: () => call('purge_roots'),
+    purgeRootsAdd: () => call('purge_roots_add'),
+    purgeRootsRemove: (root_id) => call('purge_roots_remove', { root_id }),
+    purgeScan: () => call('purge_scan'),
+    installerLocations: () => call('installer_locations'),
+    installerScan: () => call('installer_scan'),
+    createCatalogPlan: (catalog, candidate_set_id, candidate_ids, mode) => call('create_catalog_plan', { catalog, candidate_set_id, candidate_ids, mode }),
+    trashInspect: (scan_id, entry_id) => call('trash_inspect', { scan_id, entry_id }),
+    trashPlan: (scan_id, entry_ids) => call('trash_plan', { scan_id, entry_ids }),
+    startupList: () => call('startup_list'),
+    startupPlan: (item_id, operation) => call('startup_plan', { item_id, operation }),
+    insightsList: () => call('insights_list'),
+    statusSnapshot: () => call('status_snapshot'),
+    readiness: (operation) => call('readiness', { operation }),
+    revealEntry: (scan_id, entry_id) => call('reveal_entry', { scan_id, entry_id }),
     onProgress: (cb) => listen<ProgressEvent>('scan-progress', (e) => cb(e.payload)),
     onFinished: (cb) => listen<FinishedEvent>('scan-finished', (e) => cb(e.payload)),
     onClosing: (cb) => listen<{ waiting_for: string[] }>('app-closing', (e) => cb(e.payload)),
     onApplyProgress: (cb) => listen<ApplyProgressEvent>('apply-progress', (e) => cb(e.payload)),
     onApplyFinished: (cb) => listen<ApplyFinishedEvent>('apply-finished', (e) => cb(e.payload)),
+    // Optional AI diagnosis: ids only; keys go through the host's system prompt.
+    diagStatus: () => call('diag_status'),
+    diagSaveProvider: (input) => call('diag_save_provider', { input }),
+    diagChooseCli: (kind, model, make_default) => call('diag_choose_cli', { kind, model, make_default }),
+    diagRemoveProvider: (provider_id) => call('diag_remove_provider', { provider_id }),
+    diagSetKey: (provider_id) => call('diag_set_key', { provider_id }),
+    diagForgetKey: (provider_id) => call('diag_forget_key', { provider_id }),
+    diagProbe: (provider_id) => call('diag_probe', { provider_id }),
+    diagPrepare: (scan_id, entry_id, origin, provider_id, disclosure, question) => call('diag_prepare', { scan_id, entry_id, origin, provider_id, disclosure, question }),
+    diagFollowUp: (diagnosis_id, question_id, answer) => call('diag_follow_up', { diagnosis_id, question_id, answer }),
+    diagDiscard: (preview_id) => call('diag_discard', { preview_id }),
+    diagConfirm: (preview_id, payload_digest) => call('diag_confirm', { preview_id, payload_digest }),
+    diagCancel: (diagnosis_id) => call('diag_cancel', { diagnosis_id }),
+    diagGet: (diagnosis_id) => call('diag_get', { diagnosis_id }),
+    diagList: (cursor) => call('diag_list', { cursor }),
+    diagSave: (diagnosis_id) => call('diag_save', { diagnosis_id }),
+    diagRemove: (diagnosis_id) => call('diag_remove', { diagnosis_id }),
+    diagExport: (diagnosis_id) => call('diag_export', { diagnosis_id }),
+    diagHandoff: (diagnosis_id, action, mode) => call('diag_handoff', { diagnosis_id, action, mode }),
+    onDiagFinished: (cb) => listen<DiagFinishedEvent>('diag-finished', (e) => cb(e.payload)),
   };
 }
 

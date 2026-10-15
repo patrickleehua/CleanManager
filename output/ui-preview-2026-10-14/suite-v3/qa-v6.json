@@ -1,0 +1,71 @@
+{
+  "version": "6.0",
+  "status": "browser_checks_passed",
+  "scope": "Synthetic HTML prototype UI only (index-v6.html + suite-v6.js/css over the unchanged v3.4/v4/v5 files). No OS, CLI, helper, model or file-system behaviour validated.",
+  "checked_at": "2026-10-15T09:45:00Z",
+  "environment": {
+    "browser": "Chromium via Playwright MCP (isolated page per run, Cache-Control: no-cache)",
+    "server": "python -m http.server 8766 serving output/ui-preview-2026-10-14",
+    "entry": "http://127.0.0.1:8766/suite-v3/index-v6.html",
+    "theme_switch": "body.dark toggled per pass (same mechanism as the theme button)",
+    "measure": "document.documentElement.scrollWidth vs clientWidth, plus any visible element whose right edge exceeds clientWidth outside a scroll container; open <dialog> checked for its own overflow"
+  },
+  "overflow_pages": {
+    "pages": ["clean", "ai", "purge", "installers", "apps", "uninstall", "updates", "startup", "optimize", "perf", "disk", "insights", "trashbin", "status", "resident", "plans", "activity", "recovery", "agent", "diagnosis", "settings"],
+    "checked": 126,
+    "failures": 0,
+    "console_errors": 0,
+    "results": {
+      "1440/light": "21/21 no horizontal overflow (scrollWidth 1425 = clientWidth 1425)",
+      "1440/dark": "21/21 no horizontal overflow (1425 = 1425)",
+      "390/light": "21/21 no horizontal overflow (375 = 375)",
+      "390/dark": "21/21 no horizontal overflow (375 = 375)",
+      "320/light": "21/21 no horizontal overflow (305 = 305)",
+      "320/dark": "21/21 no horizontal overflow (305 = 305)"
+    },
+    "note": "clientWidth is viewport minus the 15 px classic scrollbar. The first honest run (before fixes) found overflow at 390/320 px on 13–15 pages caused by the sub-tool strip's min-content width; fixed with minmax(0,1fr) on the workspace grid and main{min-width:0}. A temporary overflow-x:clip on html/body was removed so it could not mask results."
+  },
+  "overflow_states": {
+    "states": ["uninstall-stage1-result", "uninstall-stage2-review", "uninstall-stage2-dialog", "uninstall-stage2-result", "optimize-elevation-dialog", "optimize-report-denied", "disk-manual-trash-dialog", "disk-manual-trash-result", "trash-delete-seal", "insights-old-downloads", "insight-detail-drawer", "resident-tray-on", "resident-mac-preview", "status-process-drawer-mac", "updates-batch-result"],
+    "checked": 90,
+    "failures": 0,
+    "page_errors": 0,
+    "extra": "uninstall app variants orphan/edr/portable/codex/git checked at 1440/390/320 × light/dark: 30/30 ok"
+  },
+  "behaviour_checks": [
+    { "check": "no-concept-marker", "result": "pass", "detail": "Text “扩展概念” absent on all 21 pages in all 6 passes; legacy .badge.concept removed, plans no longer flagged concept" },
+    { "check": "nav-order-and-shortcuts", "result": "pass", "detail": "Top nav 清理/软件/优化/分析/状态 with Alt+1–5; rail 计划/活动/恢复/Agent/AI 诊断/设置 with Alt+6–9, Alt+0, Alt+,; Alt+3→#optimize, Alt+5→#status, Alt+6→#plans, Alt+,→#settings" },
+    { "check": "platform-preview", "result": "pass", "detail": "Win/Mac switch keeps names and order; 回收站↔废纸篓, 资源管理器↔访达; Mac-only hardware controls shown in place as 不可用 on Windows" },
+    { "check": "uninstall-two-stage", "result": "pass", "detail": "Stage 1 = app_quit + tool_adapter with estimated leftovers not preauthorised; rescan marks partial; stage 2 preselects only cache/logs (Cursor 5/17, Codex x-cache/x-log); models/state.vscdb/sessions unselected; workspaceStorage shared_owner and anysphere-shared owner_unknown have no checkbox; Codex worktree blocked; registry rows show 先备份; backup-unwritable scenario skips registry rows only" },
+    { "check": "uninstall-quit-timeout", "result": "pass", "detail": "Stuck scenario stops at prompt; 取消卸载 marks remaining steps 未执行 and performs no deletion; force needs a second confirmation" },
+    { "check": "uninstall-stale-result", "result": "pass", "detail": "Switching app while stage 1 runs increments the sequence and the old result never renders (GUI-14)" },
+    { "check": "maintenance-six-outcomes", "result": "pass", "detail": "Elevation allowed: applied 2, unchanged 1, skipped 1 (user protected), unavailable 1, attention 1, failed 1; heading 维护未全部完成. Elevation denied: TRIM and image check become skipped (未授权), user-level tasks continue; one batched dialog listing both admin tasks" },
+    { "check": "maintenance-prohibited-search", "result": "pass", "detail": "Searching 注册表优化 shows no task and the MNT-05 explanation" },
+    { "check": "status-unknown-not-zero", "result": "pass", "detail": "Temperature and fan show 未知 with availability unavailable; disk health permission_required; health score 74 computed over known 85% of weights, weights published" },
+    { "check": "status-protected-processes", "result": "pass", "detail": "lsass/MsMpEng/CleanManager/vmmem end button disabled with reason; unsigned updater_x64.exe shows 用途未识别 and AI 诊断 entry; ending a process requires per-time confirmation" },
+    { "check": "resident-opt-in", "result": "pass", "detail": "Tray off by default; enabling registers login item and starts sampling; disabling stops alerts; keep-awake countdown restores on end; clean screen blocks keys, exits on 2 s Esc hold (verified) or 30 s timeout" },
+    { "check": "manual-trash", "result": "pass", "detail": "Context menu on 素材视频.mov offers 移到回收站; Downloads folder rejected (protected descendant 参考资料); root rejected (hard-deny); plan dialog states trash-only, not policy-matchable, needs approval; folder 安装包 result failed (被占用 Setup.exe PID 7720) with retry and no auto-kill" },
+    { "check": "trash-delete-seal", "result": "pass", "detail": "永久删除 disabled until DELETE and the first 4 digest characters both match; result reports observed free space before/after and 至少 X" },
+    { "check": "insights", "result": "pass", "detail": "Cards show known size or 未知/count with observed time; restore points (Win) and local snapshots (Mac) show count + 大小不可得; detail drawers have no trash action; old downloads list sorted by size with nothing preselected" },
+    { "check": "keyboard", "result": "pass", "detail": "First Tab lands on skip link; checkbox Space toggle keeps focus after re-render (data-f restore); sub-tool Enter navigates and keeps focus; details/summary toggles with Enter; native dialog takes focus and closes on Esc; visible focus outline" }
+  ],
+  "contrast": {
+    "method": "WCAG 2.x relative luminance on token pairs",
+    "light": { "text": 12.41, "muted/surface": 5.57, "muted/bg": 5.23, "accent/tint": 4.51, "warn/warn-bg": 4.89, "danger/danger-bg": 4.82, "accent-ink/accent": 5.15, "white/danger": 5.53 },
+    "dark": { "text": 11.61, "muted/surface": 6.59, "muted/bg": 7.43, "accent/tint": 5.47, "warn/warn-bg": 5.94, "danger/danger-bg": 5.44, "accent-ink/accent": 7.94, "danger-ink/danger": 7.5 }
+  },
+  "screenshots": [
+    "uninstall-v6-desktop.jpg", "uninstall-result-v6-dark.jpg", "uninstall-orphan-v6-desktop.jpg",
+    "optimize-elevation-v6-desktop.jpg", "optimize-report-v6-desktop.jpg",
+    "status-v6-desktop.jpg", "status-v6-narrow-dark.jpg",
+    "resident-v6-desktop.jpg", "resident-mac-v6-320-dark.jpg",
+    "disk-menu-v6-desktop.jpg", "disk-trash-plan-v6-desktop.jpg", "disk-trash-locked-v6-desktop.jpg", "trash-seal-v6-desktop.jpg",
+    "insights-v6-dark.jpg", "insights-v6-narrow.jpg",
+    "clean-v6-320-dark.jpg", "capability-status-v6-desktop.jpg"
+  ],
+  "not_checked": [
+    "Narrator/VoiceOver and WebView2/WKWebView (product task 13.6 / 18.2)",
+    "Real platform behaviour of any adapter, helper, sampler or recycle-bin API",
+    "Legacy v3.4/v4/v5 page internals beyond overflow and concept-marker removal"
+  ]
+}

@@ -18,7 +18,11 @@
 | [plan-v2-uninstall.json](plan-v2-uninstall.json) | 退出应用（询问强制）、卸载器适配、残留、注册表先备份、启动项 |
 | [plan-v2-maintenance.json](plan-v2-maintenance.json) | 维护任务与可逆设置，含需管理员任务 |
 | [plan-v2-startup.json](plan-v2-startup.json) | 停用一个计划任务启动项 |
-| [plan-v2-recovery.json](plan-v2-recovery.json) | 注册表恢复（已存在则跳过）、启动项与设置恢复 |
+| [plan-v2-recovery.json](plan-v2-recovery.json) | 注册表恢复（已存在则跳过）、启动项与设置恢复（启动项恢复须带 backup_id） |
+| [plan-v2-manual-folder.json](plan-v2-manual-folder.json) | 整个目录移入回收站：目标为 directory，`subtree` 绑定已扫描成员摘要 |
+| [plan-v2-startup-disable.json](plan-v2-startup-disable.json) | 停用 Run 启动项：绑定定义位置与观测摘要 |
+| [trash-inspection.json](trash-inspection.json) | 手选条目的只读检查：受保护后代、覆盖缺口、占用进程与可用操作 |
+| [trash-list.json](trash-list.json) | 当前用户回收站对象，含不可由本工具清空的项 |
 | [request-clean-preview.json](request-clean-preview.json) | 非交互 dry-run 请求，只含 default_selected |
 | [preview-clean.json](preview-clean.json) | 三档候选、占用跳过、受保护对象与一致的汇总 |
 | [request-apps-uninstall.json](request-apps-uninstall.json) | 非交互卸载计划请求 |
@@ -32,7 +36,8 @@
 | [status-snapshot.json](status-snapshot.json) | 不可得指标为 null、公开健康分权重 |
 | [protection-list.json](protection-list.json) | 三层保护，仅用户条目可移除 |
 | [insight-list.json](insight-list.json) | 休眠文件与旧下载洞察 |
-| [doctor-report.json](doctor-report.json) | 脱敏诊断报告 |
+| [doctor-report.json](doctor-report.json) | 脱敏诊断报告：分区检查、错误码表、最近错误码与未写出的导出预览 |
+| [plan-from-preview-stale.json](plan-from-preview-stale.json) | 由 dry-run 选择建计划时，扫描后已变化的对象列入 `stale_items`、不进入计划（签名 body 不变） |
 | [scan-status-running.json](scan-status-running.json) | 运行中扫描的状态（不含终态枚举） |
 | [scan-cancel-receipt.json](scan-cancel-receipt.json) | 取消回执，只表示请求已接收 |
 | [scan-interrupted.json](scan-interrupted.json) | 宿主进程退出后的 interrupted 终态，保留已知结果 |
@@ -53,6 +58,7 @@
 | [self-update-result.json](self-update-result.json) | 校验和不符时中止更新 |
 | [self-remove-preview.json](self-remove-preview.json) | 自卸载预览：默认保留配置、保护名单、历史与隔离区 |
 | [completion-powershell.json](completion-powershell.json) | 仅输出、不写入配置的补全脚本 |
+| [completion-install-preview.json](completion-install-preview.json) | 非交互的补全安装：只预览将追加到配置文件的加载行，`written: false` |
 
 这些是独立契约场景，不是连续执行轨迹。`plan.json` 显示尚待授权；操作示例假设另一场景中授权已经通过，授权凭据本身不在可修改的计划 JSON 里。示例规则仍是 experimental（含 `rules/examples/v2` 的 rule 2.0 样例），实测登记样例标记 synthetic；候选文案中的假定应用身份不能证明真实规则已验证。
 

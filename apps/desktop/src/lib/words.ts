@@ -1,6 +1,7 @@
 // One vocabulary for cleanup, plans, execution and recovery. Every risk, state and outcome has
 // words (never colour alone); the same action keeps the same name through the whole flow.
 
+import { onPlatform, words } from './platform';
 import type { Availability, AuthStatus, Counts, Group, ItemStatus, Mode, NotSelectable, PlanKind, PolicyState } from './types';
 
 export const MODE_LABEL: Record<Mode, string> = {
@@ -12,7 +13,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 /** What each mode does to the object and to free space, and how it can be undone. */
 export const MODE_EXPLAIN: Record<Mode, { effect: string; space: string; recovery: string }> = {
   trash: {
-    effect: '交给 Windows 回收站。',
+    effect: '交给系统回收站。',
     space: '回收站仍占用这个卷的空间，清空回收站后才释放。',
     recovery: '在资源管理器的回收站中还原；CleanManager 无法替你还原。',
   },
@@ -32,6 +33,10 @@ export const PLAN_KIND_LABEL: Record<PlanKind, string> = {
   cleanup: '清理计划',
   restore: '恢复计划',
   purge: '永久清空计划',
+  manual_trash: '手选回收站计划',
+  manual_purge: '永久删除回收站项目计划',
+  startup: '启动项计划',
+  startup_restore: '启动项还原计划',
 };
 
 export const RECOVERY_EXPLAIN: Record<'restore' | 'purge', { effect: string; space: string; recovery: string }> = {
@@ -272,3 +277,18 @@ export function digestGroups(digest: string): string[] {
 export function normalizeCode(typed: string): string {
   return typed.replace(/[\s-]/g, '').toLowerCase().slice(0, 8);
 }
+
+// Platform idioms: the bin and file-manager words follow the platform table (GUI-12). The keys
+// (`trash`, `system_recycle_bin`) and what they mean stay identical on every platform.
+onPlatform(() => {
+  const w = words();
+  MODE_LABEL.trash = w.moveToBin;
+  ACTION_LABEL.trash = w.moveToBin;
+  MODE_EXPLAIN.trash = {
+    effect: `交给系统${w.bin}。`,
+    space: `${w.bin}仍占用这个卷的空间，清空${w.bin}后才释放。`,
+    recovery: `${w.restoreFromBin}；CleanManager 无法替你还原。`,
+  };
+  MODE_EXPLAIN.delete = { ...MODE_EXPLAIN.delete, recovery: `无法撤销，没有${w.bin}或隔离副本。` };
+  AVAILABILITY_LABEL.system_recycle_bin = `在系统${w.bin}中还原`;
+});

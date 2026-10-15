@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-purge-scan"
+description = "Enables the purge_scan command without any pre-configured scope."
+commands.allow = ["purge_scan"]
+
+[[permission]]
+identifier = "deny-purge-scan"
+description = "Denies the purge_scan command without any pre-configured scope."
+commands.deny = ["purge_scan"]

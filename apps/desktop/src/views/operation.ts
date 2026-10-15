@@ -11,7 +11,7 @@ import { h, keepFocus, replace } from '../lib/dom';
 import { formatElapsed, formatTime } from '../lib/format';
 import type { IpcError, ItemFilter, Operation, OperationItem } from '../lib/types';
 import { AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, explainCode, operationTone } from '../lib/words';
-import { emptyState, errorLine, pageHead, pill, segBar, statusWord } from './parts';
+import { copyField, emptyState, errorLine, pageHead, pill, segBar, statusWord } from './parts';
 
 const ITEM_PAGE = 100;
 const FILTERS: { key: ItemFilter; label: string }[] = [
@@ -164,7 +164,7 @@ export class OperationPage {
     const counts = live ? live.counts : op.counts;
     const total = live ? live.total : op.total;
     const state = live ? (live.cancelRequested ? 'stopping' : 'running') : op.state;
-    const action = op.plan_kind === 'cleanup' && op.mode ? MODE_LABEL[op.mode] : op.plan_kind === 'unknown' ? '未知计划' : PLAN_KIND_LABEL[op.plan_kind];
+    const action = (op.plan_kind === 'cleanup' || op.plan_kind === 'manual_trash') && op.mode ? MODE_LABEL[op.mode] : op.plan_kind === 'unknown' ? '未知计划' : PLAN_KIND_LABEL[op.plan_kind];
     replace(
       this.body,
       pageHead({
@@ -218,11 +218,22 @@ export class OperationPage {
     const delta = op.observed_free_delta_bytes === null ? null : BigInt(op.observed_free_delta_bytes);
     const deltaText = delta === null ? '空间变化未知' : delta >= 0n ? `+${formatBytes(delta)}` : `−${formatBytes(-delta)}`;
     const quarantine = op.plan_kind === 'cleanup' && op.mode === 'quarantine';
+    // GUI-10: when some outcomes are unconfirmed the processed amount is a lower bound, never exact.
+    const partial = op.counts.unknown > 0 || op.counts.in_flight > 0;
+    const toggles = op.plan_kind === 'startup' || op.plan_kind === 'startup_restore';
     const rows: (HTMLElement | null)[] = [
-      figure('已处理', processed === null ? '—' : formatBytes(processed), `成功项目的逻辑大小，共 ${groupDigits(op.counts.succeeded)} 项`),
+      toggles
+        ? figure('已处理', `${groupDigits(op.counts.succeeded)} 项`, '启动项只改启用记录，不涉及磁盘空间。')
+        : figure(
+            '已处理',
+            processed === null ? '—' : partial ? `至少 ${formatBytes(processed)}` : formatBytes(processed),
+            `成功项目的逻辑大小，共 ${groupDigits(op.counts.succeeded)} 项${partial ? `；另有 ${groupDigits(op.counts.unknown + op.counts.in_flight)} 项结果未确认，未计入` : ''}`,
+          ),
       quarantine ? figure('仍在隔离区', quarantined === null ? '—' : formatBytes(quarantined), '这些文件仍占用同一个卷，没有释放空间。') : null,
       op.mode === 'delete' || op.plan_kind === 'purge' ? figure('估计释放', freed === null ? '—' : formatBytes(freed), '按逻辑大小估计；实际以卷空间观测为准。') : null,
-      figure(
+      toggles
+        ? null
+        : figure(
         '卷可用空间变化',
         deltaText,
         delta === null
@@ -261,7 +272,10 @@ export class OperationPage {
 
   private recoveryLine(op: Operation): HTMLElement | null {
     if (op.counts.succeeded === 0 && !op.needs_reconcile) return null;
-    const key = op.needs_reconcile ? 'unknown' : op.plan_kind === 'cleanup' ? (op.mode === 'quarantine' ? 'in_app_restore' : op.mode === 'trash' ? 'system_recycle_bin' : 'unavailable') : op.plan_kind === 'purge' ? 'unavailable' : 'not_applicable';
+    if ((op.plan_kind === 'startup' || op.plan_kind === 'startup_restore') && !op.needs_reconcile)
+      return h('div', { class: 'recovery-line' }, h('h3', {}, '如何恢复'), h('p', { class: 'small' }, op.plan_kind === 'startup' ? '执行前记录了每一项原来的状态。需要时用下面的命令生成还原计划，同样先审阅再执行。' : '这是一次还原；它本身不再生成新的还原。'), op.plan_kind === 'startup' ? copyField('生成还原计划', `cleanmanager startup restore --operation ${op.operation_id}`) : null);
+    const files = op.plan_kind === 'cleanup' || op.plan_kind === 'manual_trash';
+    const key = op.needs_reconcile ? 'unknown' : files ? (op.mode === 'quarantine' ? 'in_app_restore' : op.mode === 'trash' ? 'system_recycle_bin' : 'unavailable') : op.plan_kind === 'purge' || op.plan_kind === 'manual_purge' ? 'unavailable' : 'not_applicable';
     const action = key === 'in_app_restore' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openActivity('quarantine') }, '打开隔离区') : null;
     return h('div', { class: 'recovery-line' }, h('h3', {}, '如何恢复'), h('p', { class: 'small' }, AVAILABILITY_LABEL[key as keyof typeof AVAILABILITY_LABEL]), action);
   }

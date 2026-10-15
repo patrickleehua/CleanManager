@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-catalog-plan"
+description = "Enables the create_catalog_plan command without any pre-configured scope."
+commands.allow = ["create_catalog_plan"]
+
+[[permission]]
+identifier = "deny-create-catalog-plan"
+description = "Denies the create_catalog_plan command without any pre-configured scope."
+commands.deny = ["create_catalog_plan"]

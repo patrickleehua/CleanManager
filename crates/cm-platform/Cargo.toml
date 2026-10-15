@@ -16,11 +16,23 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
     "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_Security_Cryptography_Catalog", "Win32_Security_Cryptography_Sip",
     "Win32_System_Performance", "Win32_System_Power", "Win32_System_SystemInformation", "Win32_Devices_DeviceAndDriverInstallation",
     # Read-only "is this disk image attached" query for installer cleanup (INC-04).
-    "Win32_Storage_Vhd"] }
+    "Win32_Storage_Vhd",
+    # Which processes hold a file open (manual trash in-use reports, MTR-04): Restart Manager queries only.
+    "Win32_System_RestartManager",
+    # Optional AI diagnosis: provider keys in Credential Manager and the CredUI key prompt (AID-12).
+    "Win32_Security_Credentials", "Win32_Graphics_Gdi", "Win32_System_Com",
+    # App uninstall (UNI-02): close requests to an app's top-level windows (WM_CLOSE) before its uninstaller runs.
+    "Win32_UI_WindowsAndMessaging",
+    # System maintenance (parity 13.1/14.x): the short-lived UAC worker and its user-only named pipe, DNS/DISM entry points
+    # resolved from System32, graceful shell-host restart, read-only diagnosis (process memory, session filter).
+    "Win32_System_Pipes", "Win32_Security_Authorization", "Win32_UI_Shell", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop",
+    "Win32_System_ProcessStatus"] }
 # Shell IFileOperation (recycle-bin moves) for the executor's trash action; read-only IShellLink, Task Scheduler and
 # WMI queries for the startup inventory and disk insights.
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_Storage_FileSystem",
-    "Win32_System_TaskScheduler", "Win32_System_Variant", "Win32_System_Ole", "Win32_System_Wmi", "Win32_System_Com_StructuredStorage"] }
+    "Win32_System_TaskScheduler", "Win32_System_Variant", "Win32_System_Ole", "Win32_System_Wmi", "Win32_System_Com_StructuredStorage",
+    # MSIX/Store app uninstall (UNI-01): PackageManager.RemovePackageAsync for the current user, no PowerShell.
+    "Management_Deployment"] }
 windows-core = "=0.62.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

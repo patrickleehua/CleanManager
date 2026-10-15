@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-save-provider"
+description = "Enables the diag_save_provider command without any pre-configured scope."
+commands.allow = ["diag_save_provider"]
+
+[[permission]]
+identifier = "deny-diag-save-provider"
+description = "Denies the diag_save_provider command without any pre-configured scope."
+commands.deny = ["diag_save_provider"]

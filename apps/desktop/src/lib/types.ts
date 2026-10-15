@@ -271,7 +271,7 @@ export interface PolicyMatch {
   detail: string | null;
 }
 
-export type PlanKind = 'cleanup' | 'restore' | 'purge';
+export type PlanKind = 'cleanup' | 'restore' | 'purge' | 'manual_trash' | 'manual_purge' | 'startup' | 'startup_restore';
 
 export interface PlanDetail {
   plan_id: string;
@@ -302,6 +302,11 @@ export interface PlanDetail {
   operation: { operation_id: string; state: string } | null;
   review_token: string | null;
   cli: { show: string; review: string; apply: string };
+  /** System-wide changes: applying needs an elevated host (the app never elevates itself). */
+  requires_admin?: boolean;
+  /** Built-in catalog of a cleanup plan: build artifacts or installer packages. */
+  catalog?: Catalog | null;
+  plan_kind_v2?: string | null;
 }
 
 export interface PlanItem {
@@ -314,6 +319,10 @@ export interface PlanItem {
   original_path_display: string | null;
   quarantine_id: string | null;
   item_kind: string;
+  /** plan/v2 action, e.g. `fs_trash`, `startup_disable`, `startup_enable`. */
+  action_type?: string | null;
+  /** Startup items: `user` or `machine`. */
+  scope?: string | null;
 }
 
 export interface PlanItems {
@@ -536,4 +545,177 @@ export interface AppsList {
   scan_id: string | null;
   scan_root_display: string | null;
   supported: boolean;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Five-tool suite (D14): catalogs, manual trash, startup, insights, status, readiness.
+
+/** A path as the protocol carries it; the UI only ever shows `display`. */
+export interface PathWire {
+  display: string;
+  [k: string]: unknown;
+}
+
+export interface PurgeRoot {
+  root_id: string;
+  display: string;
+  source: 'default' | 'user';
+  exists: boolean;
+}
+
+export interface PurgeRoots {
+  supported: boolean;
+  roots: PurgeRoot[];
+  recent_days: number;
+  max_depth: number;
+}
+
+export type Catalog = 'purge' | 'installer';
+
+export interface CatalogItem {
+  candidate_set_id: string;
+  candidate_id: string;
+  entry_id: string;
+  name: string;
+  path_display: string;
+  tier: Tier;
+  tier_reason: string;
+  skip_reason: string | null;
+  plannable: boolean;
+  selected_by_default: boolean;
+  allowed_modes: Mode[];
+  logical_bytes: string | null;
+  unknown_size_count: number;
+  rebuild_class: string | null;
+  impact: string;
+  notes: string[];
+  group_label: string;
+}
+
+export interface CatalogPreview {
+  supported: boolean;
+  catalog: Catalog;
+  observed_at: string;
+  sets: { candidate_set_id: string; scan_id: string; root_display: string; source_label: string | null }[];
+  items: CatalogItem[];
+  summary: {
+    default_selected_count: number;
+    default_selected_known_bytes: string;
+    default_selected_unknown_count: number;
+    review_only_count: number;
+    blocked_count: number;
+    skipped_count: number;
+  };
+  issues: Issue[];
+}
+
+export interface InstallerLocations {
+  supported: boolean;
+  locations: { display: string; source_label: string; exists: boolean }[];
+  max_depth: number;
+}
+
+export interface TrashInspection {
+  scan_id: string;
+  entry_id: string;
+  name: string;
+  path_display: string;
+  parent_display: string | null;
+  object_kind: string;
+  cloud: string;
+  logical_bytes: string | null;
+  allocated_bytes: string | null;
+  files: number;
+  directories: number;
+  protected: { path_display: string; reason: string }[];
+  protected_count: number;
+  coverage_gaps: { path_display: string; reason: string }[];
+  gap_count: number;
+  trashable: boolean;
+  refusal: { code: string; reason: string; message: string } | null;
+  holders: string[] | null;
+  recycle_bin_ready: boolean;
+  recycle_bin_problem: string | null;
+  guidance: string;
+}
+
+export interface StartupItem {
+  startup_item_id: string;
+  name: string;
+  source: string;
+  definition: string;
+  target: PathWire | null;
+  publisher: string | null;
+  publisher_evidence: string;
+  scope: string;
+  state: string;
+  toggle_capability: string;
+  protected: boolean;
+  reason: string | null;
+}
+
+export interface StartupList {
+  supported: boolean;
+  is_admin: boolean;
+  items: StartupItem[];
+  issues: Issue[];
+}
+
+export interface Insight {
+  insight_id: string;
+  kind: string;
+  title: string;
+  path: PathWire | null;
+  logical_bytes: string | null;
+  count: number | null;
+  size_basis: string;
+  size_note: string | null;
+  observed_at: string | null;
+  explanation: string;
+  handling: string;
+  guidance: { tool: string; steps: string; requires_admin: boolean; impact: string }[];
+}
+
+export interface InsightsList {
+  supported: boolean;
+  observed_at: string;
+  items: Insight[];
+}
+
+export interface StatusMetric {
+  name: string;
+  availability: string;
+  value: number | null;
+  unit: string;
+  reason: string | null;
+}
+
+export interface StatusSnapshot {
+  supported: boolean;
+  sampled_at?: string;
+  stale?: boolean;
+  metrics?: StatusMetric[];
+  health?: {
+    score: number | null;
+    weights: Record<string, number>;
+    lowered_by: string[];
+    dimensions: { dimension: string; metric: string; value: number | null; full_score_at: number; zero_score_at: number; score: number | null }[];
+  };
+  diagnosis?: { code: string; message: string; link: string | null } | null;
+}
+
+export type ReadinessOp = 'scan' | 'cleanup' | 'purge' | 'installer' | 'trash' | 'startup' | 'apply';
+
+export interface ReadinessCheck {
+  check_id: string;
+  state: 'ready' | 'missing' | 'unknown' | 'not_applicable';
+  blocking: boolean;
+  detail: string | null;
+}
+
+export interface Readiness {
+  platform: string;
+  operation: string;
+  is_admin: boolean | null;
+  checks: ReadinessCheck[];
 }

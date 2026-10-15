@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-status-snapshot"
+description = "Enables the status_snapshot command without any pre-configured scope."
+commands.allow = ["status_snapshot"]
+
+[[permission]]
+identifier = "deny-status-snapshot"
+description = "Denies the status_snapshot command without any pre-configured scope."
+commands.deny = ["status_snapshot"]

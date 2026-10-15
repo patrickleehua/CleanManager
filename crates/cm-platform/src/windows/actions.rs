@@ -882,6 +882,8 @@ impl FileActions for WindowsActions {
         // RESIDUAL RACE: IFileOperation is path based. Identity is re-checked in PreDeleteItem,
         // yet the name could still be swapped before the Shell opens it. Accepted only because
         // a recycled object is recoverable; the outcome is confirmed below via `v.target`.
+        #[cfg(test)]
+        tests::before_shell();
         let shell = shell::recycle(display, t.identity.volume_id.clone(), t.identity.file_id.clone());
         let now = at_path(&v.verbatim, &t.identity.volume_id, &t.identity.file_id);
         let in_bin = final_path(&v.target).is_some_and(|p| p.to_ascii_lowercase().contains("\\$recycle.bin\\"));
@@ -1185,6 +1187,18 @@ fn compare_tree(root: &[u16], members: &[TreeMember<'_>]) -> io::Result<TreeDiff
 /// the private verified-handle helpers above.
 #[path = "recovery.rs"]
 pub mod recovery;
+
+/// Read-only listing of the current user's Recycle Bin for manual purge plans (MTR-03).
+#[path = "recycle_bin.rs"]
+pub mod recycle_bin;
+
+/// Whether the volume holding `path` has a usable recycle bin. Manual trash plans are refused up front without one
+/// (MTR-03): a move is never degraded to a permanent delete.
+pub fn recycle_bin_ready(path: &RawPath) -> Result<(), String> {
+    let u = units(path).ok_or("not a Windows path")?;
+    let (display, _) = full_path(u).map_err(|e| format!("cannot resolve path: {e}"))?;
+    recycle_bin_available(&display)
+}
 
 #[cfg(test)]
 mod tests;

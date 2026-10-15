@@ -1,32 +1,37 @@
 //! Command dispatch. Each command emits exactly one terminal record and maps its outcome to the
-//! stable exit classification (CLI-05).
+//! stable exit classification (CLI-05). Every arm's options must also be declared in
+//! `args::COMMANDS` (the table that completions and the CLI-12 checks are built from); a unit
+//! test compares this file's `p.allow(..)` lists against it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cm_app::scan::{ScanRequest, run_scan};
 use cm_core::capability::CapabilityProvider;
-use cm_core::error::{ErrorCode, ExitClass};
-use cm_core::host::HostProbe;
-use cm_core::model::ScanState;
-use cm_core::protocol::{capabilities_record, record};
-use cm_core::scan::{ScanBackend, ScanOptions};
-use cm_platform::host::OsHostProbe;
-use cm_store::index::ScanStatusView;
+use cm_core::error::ErrorCode;
+use cm_core::protocol::capabilities_record;
 use cm_store::{StoreError, Stores};
-use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::{Map, Value};
 
 use crate::args::Parsed;
 use crate::{Format, emit, fail};
 
 pub fn run(req: &str, p: Parsed) -> ExitCode {
+    // CLI-12: one check for every command group, before any command-specific code runs.
+    if let Err(msg) = p.check_selection_widening() {
+        return fail(req, ErrorCode::InvalidArgument, &msg, p.format);
+    }
     let words: Vec<&str> = p.words.iter().map(String::as_str).collect();
     let result = match words.as_slice() {
         ["capabilities"] => p.allow(&[], &[]).map(|_| capabilities(req, &p)),
-        ["scan"] => p.allow(&["root", "store"], &[]).map(|_| scan(req, &p)),
-        ["scan", "show", id] => p.allow(&["store"], &[]).map(|_| scan_show(req, &p, id)),
-        ["scan", "cancel", id] => p.allow(&["store"], &[]).map(|_| scan_cancel(req, &p, id)),
+        ["scan"] => p.allow(&["root", "store", "timeout", "host-scan-id"], &["detach"]).map(|_| crate::scan_cmd::scan(req, &p)),
+        ["scan", "show", id] => p.allow(&["store"], &[]).map(|_| crate::scan_cmd::scan_show(req, &p, id)),
+        ["scan", "wait", id] => p.allow(&["store", "timeout"], &[]).map(|_| crate::scan_cmd::scan_wait(req, &p, id)),
+        ["scan", "cancel", id] => p.allow(&["store"], &[]).map(|_| crate::scan_cmd::scan_cancel(req, &p, id)),
+        ["entries", "list"] => p.allow(&["scan", "store", "sort", "kind", "parent", "name", "limit", "cursor"], &[]).map(|_| crate::scan_cmd::entries_list(req, &p)),
+        ["completion", "print", shell] => p.allow(&[], &[]).map(|_| crate::completion_cmd::print(req, &p, shell)),
+        ["completion", "install", shell] => p.allow(&["profile"], &[]).map(|_| crate::completion_cmd::install(req, &p, shell)),
+        ["doctor"] => p.allow(&["store", "export"], &["no-redact"]).map(|_| crate::doctor_cmd::doctor(req, &p)),
+        ["help"] => p.allow(&[], &[]).map(|_| crate::completion_cmd::help(req, &p)),
         ["analyze"] => p.allow(&["scan", "store", "rules", "preview-rule"], &[]).map(|_| crate::analysis_cmd::analyze_cmd(req, &p)),
         ["candidates", "list"] => p.allow(&["set", "store", "limit", "cursor"], &[]).map(|_| crate::analysis_cmd::candidates_list(req, &p)),
         ["clean", "list"] => p.allow(&["rules"], &[]).map(|_| crate::clean_cmd::clean_list(req, &p)),
@@ -46,9 +51,38 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["recovery", "plan", "create"] => p.allow(&["store", "restore", "purge"], &[]).map(|_| crate::recovery_cmd::recovery_plan_create(req, &p)),
         ["policy", "create"] => p.allow(&["store", "scope", "rules", "mode"], &[]).map(|_| crate::plan_cmd::policy_create(req, &p)),
         ["apps", "list"] => p.allow(&["limit", "cursor"], &[]).map(|_| crate::apps_cmd::apps_list(req, &p)),
+        ["apps", "updates"] => p.allow(&["store"], &[]).map(|_| crate::updates_cmd::updates_check(req, &p)),
+        ["apps", "updates", "show"] => p.allow(&["store"], &[]).map(|_| crate::updates_cmd::updates_show(req, &p)),
+        ["apps", "updates", "config"] => p.allow(&["store", "checks"], &[]).map(|_| crate::updates_cmd::updates_config(req, &p)),
+        ["apps", "update"] => p.allow(&["store", "app"], &[]).map(|_| crate::updates_cmd::update_plan(req, &p)),
+        ["apps", "uninstall", "list"] => p.allow(&[], &[]).map(|_| crate::uninstall_cmd::list(req, &p)),
+        ["apps", "uninstall", "plan", "create"] => p.allow(&["store", "instance"], &["end-running"]).map(|_| crate::uninstall_cmd::plan_create(req, &p)),
+        ["apps", "uninstall", "leftovers"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::leftovers(req, &p)),
+        ["apps", "uninstall", "leftovers", "plan", "create"] => p.allow(&["store", "operation", "items"], &[]).map(|_| crate::uninstall_cmd::leftovers_plan(req, &p)),
+        ["apps", "uninstall", "orphans"] => p.allow(&[], &[]).map(|_| crate::uninstall_cmd::orphans(req, &p)),
+        ["apps", "uninstall", "restore"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::restore(req, &p)),
         ["startup", "list"] => p.allow(&[], &[]).map(|_| crate::startup_cmd::startup_list(req, &p)),
-        ["status"] => p.allow(&["interval", "count"], &["watch"]).map(|_| crate::status_cmd::status(req, &p)),
+        ["startup", op @ ("disable" | "enable" | "remove-stale"), id] => p.allow(&["store"], &[]).map(|_| crate::startup_cmd::startup_plan(req, &p, op, id)),
+        ["startup", "restore"] => p.allow(&["store", "operation"], &[]).map(|_| crate::startup_cmd::startup_restore(req, &p)),
+        ["trash"] => p.allow(&["scan", "store", "entry"], &[]).map(|_| crate::trash_cmd::trash_plan(req, &p)),
+        ["trash", "inspect"] => p.allow(&["scan", "store", "entry"], &[]).map(|_| crate::trash_cmd::trash_inspect(req, &p)),
+        ["trash", "list"] => p.allow(&[], &[]).map(|_| crate::trash_cmd::trash_list(req, &p)),
+        ["trash", "purge"] => p.allow(&["store", "item"], &[]).map(|_| crate::trash_cmd::trash_purge(req, &p)),
+        ["status"] => p.allow(&["interval", "count", "store"], &["watch"]).map(|_| crate::status_cmd::status(req, &p)),
+        ["status", "alerts"] => p.allow(&["store", "state", "cpu-threshold", "window-seconds", "cooldown-seconds"], &[]).map(|_| crate::status_cmd::status_alerts(req, &p)),
+        ["process", "list"] => p.allow(&["store", "by", "search", "limit"], &[]).map(|_| crate::process_cmd::process_list(req, &p)),
+        ["process", "show", pid] => p.allow(&["store"], &[]).map(|_| crate::process_cmd::process_show(req, &p, pid)),
+        ["process", "pin", name] => p.allow(&["store"], &[]).map(|_| crate::process_cmd::process_pin(req, &p, name, true)),
+        ["process", "unpin", name] => p.allow(&["store"], &[]).map(|_| crate::process_cmd::process_pin(req, &p, name, false)),
+        ["process", "end", pid] => p.allow(&["store"], &[]).map(|_| crate::process_cmd::process_end(req, &p, pid)),
         ["insights"] => p.allow(&[], &[]).map(|_| crate::insights_cmd::insights_list(req, &p)),
+        ["insights", "overview"] => p.allow(&["older-than-days"], &[]).map(|_| crate::insights_cmd::insights_overview(req, &p)),
+        ["insights", "downloads"] => p.allow(&["older-than-days", "limit"], &[]).map(|_| crate::insights_cmd::insights_downloads(req, &p)),
+        ["diag", "config"] => p.allow(&["store"], &[]).map(|_| crate::diag_cmd::diag_config(req, &p)),
+        ["diag", "preview"] => p.allow(&["scan", "store", "entry", "provider", "origin", "disclose", "question"], &[]).map(|_| crate::diag_cmd::diag_preview(req, &p)),
+        ["diag", "create"] => p.allow(&["scan", "store", "entry", "provider", "origin", "disclose", "question", "payload-digest"], &[]).map(|_| crate::diag_cmd::diag_create(req, &p)),
+        ["diag", "show", id] => p.allow(&["store"], &[]).map(|_| crate::diag_cmd::diag_show(req, &p, id)),
+        ["diag", "list"] => p.allow(&["store", "limit", "cursor"], &[]).map(|_| crate::diag_cmd::diag_list(req, &p)),
         ["policy", "list"] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_list(req, &p)),
         ["policy", "enable", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_set_state(req, &p, id, cm_core::authz::PolicyState::Enabled)),
         ["policy", "pause", id] => p.allow(&["store"], &[]).map(|_| crate::plan_cmd::policy_set_state(req, &p, id, cm_core::authz::PolicyState::Paused)),
@@ -69,6 +103,10 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
             p.allow(&["store", "source", "max-depth"], &["dry-run", "non-interactive"]).map(|_| crate::installer_cmd::scan(req, &p))
         }
         ["installer", "plan", "create"] => p.allow(&["store", "set", "mode", "candidates", "source"], &["all-default-selected", "non-interactive"]).map(|_| crate::installer_cmd::plan_create(req, &p)),
+        ["optimize", "list"] => p.allow(&["store", "search"], &[]).map(|_| crate::optimize_cmd::list(req, &p)),
+        ["optimize", "plan", "create"] => p.allow(&["store", "tasks"], &[]).map(|_| crate::optimize_cmd::plan_create(req, &p)),
+        ["optimize", "diagnose"] => p.allow(&["window"], &[]).map(|_| crate::optimize_cmd::diagnose(req, &p)),
+        ["optimize", "history"] => p.allow(&["store", "limit"], &[]).map(|_| crate::optimize_cmd::history(req, &p)),
         [] => Err("missing command".to_string()),
         other => Err(format!("unknown command: {}", other.join(" "))),
     };
@@ -84,7 +122,7 @@ fn capabilities(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn store_dir(p: &Parsed) -> Option<PathBuf> {
+pub fn store_dir(p: &Parsed) -> Option<PathBuf> {
     p.raw_option("store").map(PathBuf::from).or_else(cm_platform::paths::default_store_dir)
 }
 
@@ -103,196 +141,5 @@ pub fn fields(v: Value) -> Map<String, Value> {
     match v {
         Value::Object(m) => m,
         _ => unreachable!(),
-    }
-}
-
-#[cfg(windows)]
-fn backend() -> impl ScanBackend {
-    cm_platform::windows::directory::DirectoryBackend
-}
-
-/// macOS: the portable POSIX walker is the default until the bulk backend's record layout is
-/// verified on real hardware (MVP 5.x); both produce identical row shapes.
-#[cfg(target_os = "macos")]
-fn backend() -> impl ScanBackend {
-    cm_platform::macos::posix::PosixBackend
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
-fn backend() -> impl ScanBackend {
-    UnsupportedBackend
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
-struct UnsupportedBackend;
-
-#[cfg(not(any(windows, target_os = "macos")))]
-impl ScanBackend for UnsupportedBackend {
-    fn name(&self) -> &'static str {
-        "mac.posix"
-    }
-    fn probe(&self, _: &cm_core::path::RawPath) -> cm_core::scan::RootProbe {
-        cm_core::scan::RootProbe {
-            filesystem: None,
-            volume_id: None,
-            backend: "mac.posix".into(),
-            state: cm_core::capability::CapabilityState::Unsupported,
-            reason: "no scan backend for this platform".into(),
-        }
-    }
-    fn scan(&self, _: &cm_core::path::RawPath, _: &mut dyn cm_core::scan::ScanSink, _: &ScanOptions) -> cm_core::scan::ScanReport {
-        cm_core::scan::ScanReport {
-            state: ScanState::Failed,
-            backend: "mac.posix".into(),
-            backend_reason: "no scan backend for this platform".into(),
-            entries: 0,
-            skipped_ranges: 0,
-            boundaries: 0,
-            elevated_read: vec![],
-            issues: vec![cm_core::scan::ScanIssue { code: "unsupported".into(), scope_display: String::new(), message: "no scan backend for this platform".into() }],
-        }
-    }
-}
-
-fn scan(req: &str, p: &Parsed) -> ExitCode {
-    let Some(root_os) = p.raw_option("root") else {
-        return fail(req, ErrorCode::InvalidArgument, "scan needs --root PATH", p.format);
-    };
-    let root = match cm_platform::paths::raw_path(root_os) {
-        Ok(r) => r,
-        Err(e) => return fail(req, ErrorCode::InvalidArgument, &format!("invalid root: {e}"), p.format),
-    };
-    let stores = match open_stores(req, p) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    if std::path::Path::new(root_os).exists()
-        && let Err(e) = stores.ensure_outside(std::path::Path::new(root_os))
-    {
-        return store_error(req, &e, p.format);
-    }
-    let digest: String = Sha256::digest(root.raw_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
-    let host = OsHostProbe.current("cli");
-    let scan_id = format!("s_{}", &req[4..]);
-    let request = ScanRequest { scan_id: scan_id.clone(), scope_id: format!("scope_{digest}"), root, host };
-    let outcome = match run_scan(&stores.index, &backend(), &request, &ScanOptions::default()) {
-        Ok(o) => o,
-        Err(e) => return store_error(req, &e, p.format),
-    };
-    match scan_result(req, &stores, &scan_id) {
-        Ok(v) => {
-            emit(&v, p.format);
-            let class = match outcome.state {
-                ScanState::Completed => ExitClass::Success,
-                ScanState::Partial | ScanState::Interrupted => ExitClass::Partial,
-                ScanState::Cancelled => ExitClass::Error(ErrorCode::Cancelled),
-                _ if outcome.report.issues.iter().any(|i| i.code == "permission_required") => ExitClass::Error(ErrorCode::PermissionRequired),
-                _ if outcome.report.issues.iter().any(|i| i.code == "unsupported") => ExitClass::Error(ErrorCode::Unsupported),
-                _ => ExitClass::Error(ErrorCode::IoError),
-            };
-            ExitCode::from(class.code() as u8)
-        }
-        Err(e) => store_error(req, &e, p.format),
-    }
-}
-
-/// Protocol `scan_result` for a published scan.
-fn scan_result(req: &str, stores: &Stores, scan_id: &str) -> Result<Value, StoreError> {
-    let status = stores.index.scan_status(scan_id)?;
-    let report = stores.index.scan_report(scan_id)?.unwrap_or(Value::Null);
-    let summary = if status.entries_seen > 0 { Some(stores.index.summarize(scan_id, &[1])?) } else { None };
-    let (logical, unknown, allocated) = match summary {
-        Some(s) => (s.logical.known.to_string(), s.logical.unknown_count, s.allocated.exact().map(|b| b.to_string())),
-        None => ("0".to_string(), 0, None),
-    };
-    Ok(record(
-        "scan_result",
-        req,
-        fields(json!({
-            "scan_id": scan_id,
-            "scope_id": status.scope_id,
-            "revision": status.revision,
-            "backend": report["backend"].as_str().unwrap_or("unknown"),
-            "status": status.state,
-            "completeness": status.completeness,
-            "started_at": status.started_at,
-            "finished_at": status.finished_at,
-            "entries_seen": status.entries_seen,
-            "skipped_ranges": status.skipped_ranges,
-            "logical_bytes": logical,
-            "allocated_bytes": allocated,
-            "unknown_size_count": unknown,
-            "issues": report["issues"].as_array().cloned().unwrap_or_default(),
-        })),
-    ))
-}
-
-fn scan_status_record(req: &str, s: &ScanStatusView) -> Value {
-    record(
-        "scan_status",
-        req,
-        fields(json!({
-            "scan_id": s.scan_id,
-            "scope_id": s.scope_id,
-            "state": s.state,
-            "host": {"kind": s.host.kind, "process_id": s.host.pid, "started_at": s.host.started_at, "last_heartbeat_at": s.heartbeat_at},
-            "cancel_requested": s.cancel_requested,
-            "entries_seen": s.entries_seen,
-            "skipped_ranges": s.skipped_ranges,
-            "known_logical_bytes": "0",
-            "last_issue": null,
-        })),
-    )
-}
-
-fn scan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
-    let stores = match open_stores(req, p) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    // A scan whose host exited is reported as interrupted, never as running forever (CLI-09).
-    if let Err(e) = stores.index.reconcile_hosts(|h| OsHostProbe.liveness(h), &cm_core::time::now_utc()) {
-        return store_error(req, &e, p.format);
-    }
-    match stores.index.scan_status(id) {
-        Ok(s) if !s.state.is_terminal() => {
-            emit(&scan_status_record(req, &s), p.format);
-            ExitCode::SUCCESS
-        }
-        Ok(_) => match scan_result(req, &stores, id) {
-            Ok(v) => {
-                emit(&v, p.format);
-                ExitCode::SUCCESS
-            }
-            Err(e) => store_error(req, &e, p.format),
-        },
-        Err(e) => store_error(req, &e, p.format),
-    }
-}
-
-fn scan_cancel(req: &str, p: &Parsed, id: &str) -> ExitCode {
-    let stores = match open_stores(req, p) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    match stores.index.request_cancel(id) {
-        Ok(r) => {
-            emit(
-                &record(
-                    "scan_cancel_receipt",
-                    req,
-                    fields(json!({
-                        "scan_id": r.scan_id,
-                        "accepted": r.accepted,
-                        "state_at_receipt": r.state_at_receipt,
-                        "requested_at": cm_core::time::now_utc(),
-                        "note": "Receipt only: the scan stops at the next safe boundary; query scan show for the terminal record.",
-                    })),
-                ),
-                p.format,
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => store_error(req, &e, p.format),
     }
 }

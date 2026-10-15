@@ -4,17 +4,34 @@
   "request_id": "req_synthetic",
   "operation_id": "op_maint",
   "plan_id": "p_v2_maintenance",
+  "plan_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+  "entry": "cli",
+  "principal": "user:EXAMPLE\\alice",
   "elevation": "declined",
+  "started_at": "2026-10-15T12:00:00Z",
+  "finished_at": "2026-10-15T12:00:02Z",
   "items": [
     {
       "task_id": "windows.dns-flush",
+      "task_version": "1.0.0",
+      "requires_admin": false,
       "outcome": "applied",
-      "reason": "Resolver cache flushed"
+      "code": "flushed",
+      "reason": "DNS resolver cache flushed",
+      "elevated": false,
+      "started_at": "2026-10-15T12:00:01Z",
+      "finished_at": "2026-10-15T12:00:01Z"
     },
     {
       "task_id": "windows.trim-when-due",
+      "task_version": "1.0.0",
+      "requires_admin": true,
       "outcome": "skipped",
-      "reason": "Administrator authorization declined"
+      "code": "elevation_declined",
+      "reason": "administrator authorization was declined; not run",
+      "elevated": false,
+      "started_at": "2026-10-15T12:00:01Z",
+      "finished_at": "2026-10-15T12:00:01Z"
     }
   ],
   "counts": {
@@ -25,5 +42,6 @@
     "attention": 0,
     "failed": 0
   },
-  "all_clear": false
+  "all_clear": true,
+  "undo": "unavailable"
 }

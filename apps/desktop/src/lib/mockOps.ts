@@ -54,7 +54,10 @@ type OpsBackend = Pick<
   | 'listApps'
   | 'onApplyProgress'
   | 'onApplyFinished'
->;
+> & {
+  /** Fixture hook: freeze a plan of any kind (catalog, manual trash, startup) for the review page. */
+  __plan(kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], extra?: Partial<PlanDetail>): string;
+};
 
 const MiB = 1024n * 1024n;
 const GiB = 1024n * MiB;
@@ -290,7 +293,7 @@ export function mockOps(): OpsBackend {
 
   const makePlan = (kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], createdMin: number, extra: Partial<PlanDetail> = {}): MockPlan => {
     planCounter += 1;
-    const plan_id = `${kind === 'cleanup' ? 'p' : 'rp'}_desk_4242_${1760000000000 + planCounter}`;
+    const plan_id = `${kind === 'cleanup' ? 'p' : kind === 'manual_trash' ? 'mp' : kind === 'startup' ? 'sp' : 'rp'}_desk_4242_${1760000000000 + planCounter}`;
     const digest = hex(plan_id);
     const total = items.reduce((a, i) => a + BigInt(i.logical_bytes), 0n);
     const created = iso(createdMin);
@@ -506,6 +509,9 @@ export function mockOps(): OpsBackend {
   };
 
   return {
+    __plan(kind, mode, items, extra = {}) {
+      return makePlan(kind, mode, items, 0, extra).detail.plan_id;
+    },
     async candidateSummary(scanId) {
       await delay(120);
       return analyzed && scanId === 's_preview_1' ? setInfo() : null;

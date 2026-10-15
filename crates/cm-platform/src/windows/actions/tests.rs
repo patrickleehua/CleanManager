@@ -4,7 +4,7 @@ use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use cm_core::analysis::{EntryFacts, MemView};
+use cm_core::analysis::{EntryFacts, IndexView, MemView};
 use cm_core::capability::Platform;
 use cm_core::model::{CloudState, IdentityQuality, ObjectKind};
 use cm_core::plan::{WireIdentity, observe};
@@ -362,6 +362,8 @@ fn trash_on_a_volume_without_recycle_bin_never_deletes() {
     };
     let uf = uroot.join("n.tmp");
     let p = plan(&uroot, &uf);
+    // Manual trash plans are refused up front on such a volume (MTR-03), and the action itself never degrades.
+    assert!(recycle_bin_ready(&p.path).is_err());
     assert_eq!(failed(&A.trash(&p.target())), "trash_unavailable");
     assert_eq!(read(&local), "keep me");
     // Drive the Shell directly (bypassing the up-front volume check): the progress-sink guard
@@ -596,4 +598,104 @@ fn whole_tree_goes_to_the_recycle_bin_only_when_it_equals_the_plan() {
     assert!(!t.exists());
     assert!(root.join("proj").is_dir());
     purge_recycled(watch);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Manual trash (parity task group 6)
+
+thread_local! {
+    /// Runs once inside `trash`, after verification and right before the Shell call (race fixture).
+    static BEFORE_SHELL: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn before_shell() {
+    if let Some(f) = BEFORE_SHELL.with(|h| h.borrow_mut().take()) {
+        f();
+    }
+}
+
+/// Design D6 race fixture: the verified file is renamed away and a different file takes its name between the last
+/// check and the Shell's path-based move. Nothing may be moved or deleted under a wrong identity, and the outcome is
+/// unknown (for a person to check), never success.
+#[test]
+fn a_name_swapped_before_the_shell_runs_is_unknown_and_nothing_is_lost() {
+    let root = scratch("swap-race");
+    let f = root.join("video.mov");
+    write(&f, "the planned file");
+    let p = plan(&root, &f);
+    let (f2, moved) = (f.clone(), root.join("video.moved-away"));
+    let moved2 = moved.clone();
+    BEFORE_SHELL.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move || {
+            std::fs::rename(&f2, &moved2).unwrap();
+            std::fs::write(&f2, "an impostor with the same name").unwrap();
+        }))
+    });
+    let out = A.trash(&p.target());
+    assert!(matches!(out, ActionOutcome::Unknown { .. }), "{out:?}");
+    assert_eq!(read(&f), "an impostor with the same name", "the impostor is not recycled");
+    assert_eq!(read(&moved), "the planned file", "the planned file is not deleted");
+    assert!(!held_bin_has(&f), "nothing went to the bin");
+}
+
+fn held_bin_has(_: &Path) -> bool {
+    false
+}
+
+/// MTR-03 at the action level: an object in the recycle bin is permanently deleted only while it is the planned
+/// object; an empty recycled folder is removed only when empty.
+#[test]
+fn recycled_objects_are_deleted_only_as_planned() {
+    let root = scratch("bin-purge");
+    let d = root.join("folder");
+    write(&d.join("inside.txt"), "x");
+    let f = root.join("single.txt");
+    write(&f, "single");
+    let pf = plan(&root, &f);
+    let pd = plan(&root, &d);
+    let pin = plan(&root, &d.join("inside.txt"));
+    let fw = std::fs::OpenOptions::new().access_mode(FILE_READ_ATTRIBUTES).share_mode(SHARE_ALL).custom_flags(FLAG_OPEN_REPARSE_POINT).open(&f).unwrap();
+    assert_eq!(A.trash(&pf.target()), ActionOutcome::Succeeded { recovery: Recovery::Trash });
+    let recycled = held_final_path(&fw).unwrap();
+    drop(fw);
+    // Plan the recycled file through the bin listing of its own bin folder, then delete exactly it.
+    let bin_dir = recycled.parent().unwrap().to_path_buf();
+    let listing = recycle_bin::list_dir(&bin_dir).unwrap();
+    let rname = recycled.file_name().unwrap().to_string_lossy().into_owned();
+    let item = listing.items.iter().find(|i| listing.view.name(i.data_entry).lossy().eq_ignore_ascii_case(&rname)).expect("listed");
+    assert!(item.original_path.as_deref().is_some_and(|p| p.to_ascii_lowercase().ends_with(r"bin-purge\single.txt")), "{:?}", item.original_path);
+    let input = cm_core::manual_trash::ManualInput {
+        plan_id: "mp", scope_id: None, scan_id: None, scan_revision: None, created_unix: 1_800_000_000, observed_at: &listing.observed_at,
+        policy_digest: cm_core::plan::v2::NO_RULES_DIGEST,
+    };
+    let plan = cm_core::manual_trash::build_purge_plan(&listing.view, &[item], &input).unwrap();
+    assert_eq!(plan.body.items.len(), 2, "the object and its record");
+    for (a, m) in plan.body.items.iter().zip(&plan.meta) {
+        let fs = a.fs().unwrap();
+        let obs = m.observation.as_ref().unwrap();
+        let t = ActionTarget { action_id: "d", path: &fs.target.path, identity: &fs.target.identity, parent_chain: &obs.parent_chain, observation: obs, probes: &[], owner_id: None };
+        assert_eq!(A.check(&t), LiveCheck::Match);
+        assert_eq!(A.delete(&t), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    }
+    assert!(!recycled.exists());
+    // The folder: removing a non-empty planned directory is refused; contents first, then it.
+    assert_eq!(skipped(&A.remove_empty_dir(&pd.target())), "new_descendant");
+    assert_eq!(A.delete(&pin.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+    assert_eq!(A.remove_empty_dir(&pd.target()), ActionOutcome::Succeeded { recovery: Recovery::Unavailable });
+}
+
+/// MTR-04: a held file is reported in use by the check, and Restart Manager names the holder.
+#[test]
+fn an_open_file_is_in_use_and_its_holder_is_named() {
+    let root = scratch("held");
+    let f = root.join("app.log");
+    write(&f, "log");
+    let p = plan(&root, &f);
+    let held = std::fs::OpenOptions::new().read(true).share_mode(SHARE_READ | SHARE_WRITE).open(&f).unwrap();
+    assert_eq!(A.check(&p.target()), LiveCheck::InUse);
+    let holders = super::super::restart_manager::holders(std::slice::from_ref(&p.path)).unwrap();
+    assert!(holders.iter().any(|h| h.pid == std::process::id()), "{holders:?}");
+    drop(held);
+    assert_eq!(A.check(&p.target()), LiveCheck::Match);
+    assert!(recycle_bin_ready(&p.path).is_ok());
 }

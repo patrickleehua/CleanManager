@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-readiness"
+description = "Enables the readiness command without any pre-configured scope."
+commands.allow = ["readiness"]
+
+[[permission]]
+identifier = "deny-readiness"
+description = "Denies the readiness command without any pre-configured scope."
+commands.deny = ["readiness"]

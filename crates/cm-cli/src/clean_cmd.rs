@@ -287,6 +287,11 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
     if selected.is_empty() {
         return fail(req, ErrorCode::PolicyDenied, "nothing to plan: no row is default-selected, unskipped and allowed for this mode", p.format);
     }
+    // CLI-11: rows whose observed state changed since the scan are listed as stale, never planned.
+    let (selected, stale) = split_stale(&a.set.candidates, selected);
+    if selected.is_empty() {
+        return fail(req, ErrorCode::PlanStale, &format!("every selected row changed since the scan ({}); scan again and preview", stale_summary(&stale)), p.format);
+    }
     let view = match stores.index.view(scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),
@@ -308,8 +313,58 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }
-    emit(&crate::plan_cmd::plan_record(req, &stores, &plan), p.format);
+    emit(&with_stale(crate::plan_cmd::plan_record(req, &stores, &plan), &stale), p.format);
     ExitCode::SUCCESS
+}
+
+/// A selected object whose live state no longer matches the scan observation (CLI-11).
+pub(crate) struct Stale {
+    pub object_id: String,
+    pub reason: &'static str,
+    pub detail: String,
+}
+
+/// Live, read-only check of one candidate against its scan observation: gone, or a file whose size changed.
+/// Everything else is re-verified per item by the executor before any action.
+pub(crate) fn stale_reason(c: &Candidate) -> Option<(&'static str, String)> {
+    #[cfg(windows)]
+    let os = cm_platform::windows::purge::os(&c.path);
+    #[cfg(unix)]
+    let os = match &c.path {
+        cm_core::path::RawPath::Unix(b) => Some(PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b))),
+        _ => None,
+    };
+    let os = os?;
+    match std::fs::symlink_metadata(&os) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(("missing", format!("{} no longer exists", c.path.display()))),
+        Ok(m) if m.is_file() && c.logical.unknown_count == 0 && m.len() != c.logical.known.0 => {
+            Some(("changed", format!("{} is {} bytes now, {} when scanned", c.path.display(), m.len(), c.logical.known.0)))
+        }
+        _ => None,
+    }
+}
+
+/// Split a selection into plannable ids and stale rows, keeping order.
+pub(crate) fn split_stale(candidates: &[Candidate], selected: Vec<String>) -> (Vec<String>, Vec<Stale>) {
+    let mut keep = Vec::new();
+    let mut stale = Vec::new();
+    for id in selected {
+        match candidates.iter().find(|c| c.candidate_id == id).and_then(stale_reason) {
+            Some((reason, detail)) => stale.push(Stale { object_id: id, reason, detail }),
+            None => keep.push(id),
+        }
+    }
+    (keep, stale)
+}
+
+pub(crate) fn stale_summary(stale: &[Stale]) -> String {
+    stale.iter().map(|s| format!("{}: {}", s.object_id, s.reason)).collect::<Vec<_>>().join(", ")
+}
+
+/// The plan record plus `stale_items` (outside the signed body, so the digest is unaffected).
+pub(crate) fn with_stale(mut plan: Value, stale: &[Stale]) -> Value {
+    plan["stale_items"] = Value::Array(stale.iter().map(|s| json!({"object_id": s.object_id, "reason": s.reason, "detail": s.detail})).collect());
+    plan
 }
 
 /// Run each row's declared probes and recompute its tier. Blocked and hint rows are not probed

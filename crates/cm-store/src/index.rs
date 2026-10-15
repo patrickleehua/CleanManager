@@ -404,19 +404,44 @@ impl IndexStore {
         Ok(state)
     }
 
-    /// Mark scans whose host process exited as `interrupted` and publish what was committed.
+    /// Mark scans whose host process exited as `interrupted` and publish what was committed. The
+    /// stored report names the exited host (`host_exited`), so later queries explain the state.
     pub fn reconcile_hosts(&self, liveness: impl Fn(&HostRef) -> Liveness, now: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT scan_id, revision, host_kind, host_pid, host_started_at FROM scans WHERE state IN ('created','running','stopping')",
+            "SELECT scan_id, revision, host_kind, host_pid, host_started_at, backend FROM scans WHERE state IN ('created','running','stopping')",
         )?;
-        let rows: Vec<(String, u32, HostRef)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, HostRef { kind: r.get(2)?, pid: r.get(3)?, started_at: r.get(4)? })))?
+        let rows: Vec<(String, u32, HostRef, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, HostRef { kind: r.get(2)?, pid: r.get(3)?, started_at: r.get(4)? }, r.get(5)?)))?
             .collect::<std::result::Result<_, _>>()?;
         drop(stmt);
         let mut interrupted = Vec::new();
-        for (scan_id, revision, host) in rows {
+        for (scan_id, revision, host, backend) in rows {
             if liveness(&host) == Liveness::Exited {
-                self.publish(&scan_id, revision, ScanState::Interrupted, now)?;
+                let report = cm_core::scan::ScanReport {
+                    state: ScanState::Interrupted,
+                    backend,
+                    backend_reason: "the hosting process exited before recording a terminal state".into(),
+                    entries: 0,
+                    skipped_ranges: 0,
+                    boundaries: 0,
+                    elevated_read: vec![],
+                    issues: vec![cm_core::scan::ScanIssue {
+                        code: "host_exited".into(),
+                        scope_display: "scan host".into(),
+                        message: format!(
+                            "{} process {} exited before a terminal record; committed rows are kept and the scan is incomplete",
+                            host.kind, host.pid
+                        ),
+                    }],
+                };
+                let json = serde_json::to_string(&report).expect("report serializes");
+                self.conn.execute("UPDATE scans SET report_json=COALESCE(report_json, ?2) WHERE scan_id=?1", params![scan_id, json])?;
+                match self.publish(&scan_id, revision, ScanState::Interrupted, now) {
+                    Ok(_) => {}
+                    // The host published its own terminal record between the query and now.
+                    Err(StoreError::InvalidState(_)) => continue,
+                    Err(e) => return Err(e),
+                }
                 interrupted.push(scan_id);
             }
         }

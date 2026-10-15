@@ -12,6 +12,7 @@ import { COMPLETENESS_LABEL, formatTime } from '../lib/format';
 import type { Candidate, CandidateSetInfo, Group, IpcError, Mode } from '../lib/types';
 import { GROUP_EXPLAIN, GROUP_LABEL, MODE_EXPLAIN, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LABEL, PROBE_STATE_LABEL, REGISTRY_LABEL } from '../lib/words';
 import { emptyState, errorLine, errorText, exactTitle, groupMark, pageHead, sizeText } from './parts';
+import { selectionBar, sumSizes, tierBadge } from './kit';
 
 const PAGE = 50;
 const GROUPS: Group[] = ['low', 'review', 'pending', 'blocked'];
@@ -232,6 +233,7 @@ export class CleanupPage {
             h('button', { type: 'button', onclick: () => this.app.navigate('disk') }, '浏览磁盘'),
           )
         : h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, ...GROUPS.map((g) => this.groupSection(g))), this.draftPanel()),
+      this.bar(),
     );
   }
 
@@ -364,7 +366,7 @@ export class CleanupPage {
             h('span', { class: 'obj-reason' }, c.row_kind === 'hint' ? h('span', { class: 'row-tag' }, '提示') : null, c.row_kind === 'adapter' ? h('span', { class: 'row-tag' }, '工具清理') : null, c.reasons[0] ?? c.rules[0]),
           ),
           size,
-          h('td', { class: 'col-status' }, why, more),
+          h('td', { class: 'col-status' }, tierBadge(c.tier), why, more),
         ),
       );
       if (open) rows.push(h('tr', { class: 'cdetail', id: `${id}-detail` }, h('td', { colspan: '4' }, this.detail(c))));
@@ -421,8 +423,40 @@ export class CleanupPage {
         c.row_kind === 'hint' ? h('dt', {}, '提示') : null,
         c.row_kind === 'hint' ? h('dd', {}, '这是大项提示，用于帮你决定是否手动处理；它永远不会进入计划。') : null,
       ),
-      h('div', { class: 'card-actions' }, protectEntry, c.rules.length ? protectRule : null),
+      h('div', { class: 'card-actions' }, protectEntry, c.rules.length ? protectRule : null, this.diagButton(c)),
     );
+  }
+
+  /** Optional AI diagnosis of this candidate's object; the plan path stays on this page's rules. */
+  private diagButton(c: Candidate): HTMLElement | null {
+    const scanId = this.app.store.state.scanId;
+    if (!scanId) return null;
+    const name = c.name;
+    return h('button', { type: 'button', class: 'quiet', id: `diag-${c.candidate_id}`, onclick: () => this.app.openDiagnosis({ scanId, entryId: c.entry_id, origin: 'cleanup', name }, 'cleanup') }, icon('diag'), 'AI 诊断');
+  }
+
+  /** The shared bottom selection bar (GUI-09): count, known size, unknown count, next step. */
+  private bar(): HTMLElement {
+    const items = this.draft?.items() ?? [];
+    return selectionBar({
+      count: items.length,
+      sum: sumSizes(items.map((c) => ({ bytes: c.logical_known_bytes, unknown: c.unknown_size_count }))),
+      onClear: () => {
+        this.draft?.clear();
+        this.syncMode();
+        this.app.announce('已清空选择');
+        this.update();
+      },
+      action: {
+        id: 'cleanup-bar-go',
+        text: this.mode ? '生成计划并审阅' : '选择处理方式',
+        disabled: this.creating,
+        onClick: () => {
+          if (this.mode) void this.createPlan();
+          else document.querySelector<HTMLInputElement>('input[name="plan-mode"]:not(:disabled)')?.focus();
+        },
+      },
+    });
   }
 
   private draftPanel(): HTMLElement {

@@ -8,8 +8,10 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 
+use cm_app::plans::{PlanType, plan_type};
 use cm_core::analysis::CandidateSet;
-use cm_core::authz::{Policy, PolicyState, Receipt, ReceiptSource, current_principal, receipt_valid};
+use cm_core::authz::{KindReceipt, Policy, PolicyState, Receipt, ReceiptSource, current_principal, receipt_valid};
+use cm_core::plan::v2::{PlanAction, PlanKind, PlanV2};
 use cm_core::error::ErrorCode;
 use cm_core::plan::{Plan, PlanInput, build_plan, parse_utc};
 use cm_core::protocol::record;
@@ -126,9 +128,10 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Recovery plans are shown, reviewed and revoked by `recovery_cmd`: the stored plan type decides.
-fn is_recovery(stores: &Stores, id: &str) -> bool {
-    stores.audit.plan_contract(id).ok().as_deref() == Some(cm_core::recovery::RECOVERY_CONTRACT)
+/// The stored, authoritative plan type decides who shows, reviews, revokes and applies a plan: `plan/v1` here,
+/// `recovery/v1` in `recovery_cmd`, `plan/v2` by its kind (the `v2_*` functions below and `apply_cmd`).
+pub fn stored_type(stores: &Stores, id: &str) -> Option<PlanType> {
+    plan_type(stores, id).ok()
 }
 
 pub fn plan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
@@ -136,8 +139,10 @@ pub fn plan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
-    if is_recovery(&stores, id) {
-        return crate::recovery_cmd::plan_show(req, p, &stores, id);
+    match stored_type(&stores, id) {
+        Some(PlanType::RecoveryV1) => return crate::recovery_cmd::plan_show(req, p, &stores, id),
+        Some(PlanType::V2(_)) => return v2_show(req, p, &stores, id),
+        _ => {}
     }
     match stores.audit.load_plan(id) {
         Ok(plan) => {
@@ -149,7 +154,7 @@ pub fn plan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
 }
 
 pub fn interactive() -> bool {
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    !crate::args::non_interactive_requested() && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 pub fn prompt(line: &str) -> Option<String> {
@@ -169,8 +174,10 @@ pub fn plan_review(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
-    if is_recovery(&stores, id) {
-        return crate::recovery_cmd::plan_review(req, p, &stores, id);
+    match stored_type(&stores, id) {
+        Some(PlanType::RecoveryV1) => return crate::recovery_cmd::plan_review(req, p, &stores, id),
+        Some(PlanType::V2(_)) => return v2_review(req, p, &stores, id),
+        _ => {}
     }
     let plan = match stores.audit.load_plan(id) {
         Ok(p) => p,
@@ -224,8 +231,10 @@ pub fn plan_revoke(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
-    if is_recovery(&stores, id) {
-        return crate::recovery_cmd::plan_revoke(req, p, &stores, id);
+    match stored_type(&stores, id) {
+        Some(PlanType::RecoveryV1) => return crate::recovery_cmd::plan_revoke(req, p, &stores, id),
+        Some(PlanType::V2(_)) => return v2_revoke(req, p, &stores, id),
+        _ => {}
     }
     let plan = match stores.audit.load_plan(id) {
         Ok(p) => p,
@@ -317,4 +326,178 @@ pub fn policy_list(req: &str, p: &Parsed) -> ExitCode {
     };
     emit(&policy_list_record(req, &stores), p.format);
     ExitCode::SUCCESS
+}
+
+// ---------------------------------------------------------------------------------------------
+// plan/v2 (manual selection, startup, startup recovery): shown, reviewed and revoked by kind.
+
+fn load_v2(req: &str, p: &Parsed, stores: &Stores, id: &str) -> Result<PlanV2, ExitCode> {
+    stores.audit.load_plan_v2(id).map_err(|e| store_error(req, &e, p.format))
+}
+
+/// Authorization state of a plan/v2 plan from stored kind receipts (policies never apply to these kinds).
+pub fn v2_authorization_record(req: &str, stores: &Stores, plan: &PlanV2) -> Value {
+    let (status, r) = cm_app::plans::authorization(stores, plan, &current_principal(), now_unix()).unwrap_or(("required", None));
+    record("authorization_status", req, fields(json!({
+        "plan_id": plan.body.plan_id,
+        "plan_digest": plan.digest,
+        "status": status,
+        "source": r.as_ref().map(|r| r.source),
+        "policy_id": null,
+        "policy_version": null,
+        "principal": r.as_ref().map(|r| r.principal.clone()),
+        "authorized_at": r.as_ref().map(|r| r.created_at.clone()),
+        "expires_at": r.as_ref().map(|r| r.expires_at.clone()),
+        "quota": null,
+    })))
+}
+
+pub fn v2_plan_record(req: &str, stores: &Stores, plan: &PlanV2) -> Value {
+    let auth = v2_authorization_record(req, stores, plan);
+    record("plan", req, fields(json!({"body": plan.body, "plan_digest": plan.digest, "authorization_status": auth["status"]})))
+}
+
+fn v2_show(req: &str, p: &Parsed, stores: &Stores, id: &str) -> ExitCode {
+    match load_v2(req, p, stores, id) {
+        Ok(plan) => {
+            emit(&v2_plan_record(req, stores, &plan), p.format);
+            ExitCode::SUCCESS
+        }
+        Err(c) => c,
+    }
+}
+
+fn v2_revoke(req: &str, p: &Parsed, stores: &Stores, id: &str) -> ExitCode {
+    let plan = match load_v2(req, p, stores, id) {
+        Ok(plan) => plan,
+        Err(c) => return c,
+    };
+    if let Err(e) = stores.audit.revoke_receipts(id, &now_utc()) {
+        return store_error(req, &e, p.format);
+    }
+    emit(&v2_authorization_record(req, stores, &plan), p.format);
+    ExitCode::SUCCESS
+}
+
+pub fn bytes_text(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u + 1 < UNITS.len() {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 { format!("{n} B") } else { format!("{v:.1} {} ({n} bytes)", UNITS[u]) }
+}
+
+/// What a person reads before approving a plan/v2 plan; returns whether an extra irreversibility confirmation is needed.
+fn v2_summary(plan: &PlanV2) -> bool {
+    let b = &plan.body;
+    println!("Plan {}  kind={}  actions={}", b.plan_id, b.plan_kind.as_str(), b.items.len());
+    println!("Expires: {}   Digest: {}", b.expires_at, plan.digest);
+    if b.requires_admin && b.plan_kind == PlanKind::Maintenance {
+        println!("Administrator tasks are marked below: `plan apply` asks Windows once (UAC) for a short-lived worker that runs only them; declining skips them.");
+    } else if b.requires_admin {
+        println!("Needs an administrator: apply it from an elevated terminal (CleanManager never elevates itself).");
+    }
+    let shown = b.items.iter().zip(&plan.meta).take(20);
+    let permanent = b.items.iter().any(|a| matches!(a, PlanAction::FsDelete(_)));
+    match b.plan_kind {
+        PlanKind::Uninstall => {
+            let _ = shown;
+            crate::uninstall_cmd::review_lines(plan).iter().for_each(|l| println!("{l}"));
+        }
+        PlanKind::ManualSelection if permanent => {
+            println!("PERMANENTLY deletes these objects from the Recycle Bin ({}). There is no undo.", bytes_text(b.total_logical()));
+            for (a, m) in shown {
+                let f = a.fs().expect("manual actions are file actions");
+                let was = m.note.as_deref().map(|n| format!("  (was {n})")).unwrap_or_default();
+                println!("  {}  {}  {}{was}", f.action_id, bytes_text(f.target.logical_bytes.0), f.target.path.display());
+            }
+        }
+        PlanKind::ManualSelection => {
+            println!("Moves these objects to the Recycle Bin ({}); nothing is permanently deleted.", bytes_text(b.total_logical()));
+            println!("{}", cm_core::manual_trash::PUT_BACK_GUIDANCE);
+            for (a, _) in shown {
+                let f = a.fs().expect("manual actions are file actions");
+                let inside = f.subtree.as_ref().map(|s| format!("  (folder, {} items inside)", s.items)).unwrap_or_default();
+                println!("  {}  {}  {}{inside}", f.action_id, bytes_text(f.target.logical_bytes.0), f.target.path.display());
+            }
+        }
+        _ => {
+            for (a, m) in shown {
+                let name = m.note.as_deref().unwrap_or("");
+                match a {
+                    PlanAction::StartupToggle(t) => println!("  {}  {:?} {name}  {}  scope={:?}", t.action_id, t.operation, t.definition.as_deref().unwrap_or(""), t.scope),
+                    PlanAction::RegistryRestore(r) => println!("  {}  recreate {}\\{} : {} unless it exists again", r.action_id, r.hive.as_str(), r.key_path, r.value_name.as_deref().unwrap_or("(key)")),
+                    PlanAction::MaintenanceTask(t) => println!("  {}  {}@{}  {name}{}", t.action_id, t.task_id, t.task_version, if t.requires_admin { "  (administrator)" } else { "" }),
+                    PlanAction::ProcessEnd(e) => println!("  {}  end {name}  {}", e.action_id, e.image_path.as_ref().map(|i| i.display()).unwrap_or_default()),
+                    PlanAction::ToolAdapter(t) if b.plan_kind == PlanKind::Update => println!("  {}  {}", t.action_id, cm_app::updates::describe(t, m)),
+                    other => println!("  {}  {}", other.action_id(), other.action_type().as_str()),
+                }
+            }
+            if b.plan_kind == PlanKind::Process {
+                println!("Ends this one process now; anything unsaved in it is lost. It is re-identified (PID, start time, executable) before it is ended.");
+            }
+            if b.plan_kind == PlanKind::Update {
+                println!("Each update first downloads the package and checks its signer against the installed app; a mismatch or a running app skips that item.");
+            }
+            if b.plan_kind == PlanKind::Maintenance {
+                println!("Each task checks first whether it applies and reports applied/unchanged/skipped/unavailable/attention/failed; maintenance is not undone.");
+            }
+            if b.plan_kind == PlanKind::Startup {
+                println!("Only the enable record (as in Task Manager) changes, or a stale Run value after its backup; the prior state is recorded for `startup restore`.");
+            }
+        }
+    }
+    if b.items.len() > 20 {
+        println!("  ... {} more actions (plan show {} lists them all)", b.items.len() - 20, b.plan_id);
+    }
+    permanent
+}
+
+fn v2_review(req: &str, p: &Parsed, stores: &Stores, id: &str) -> ExitCode {
+    let plan = match load_v2(req, p, stores, id) {
+        Ok(plan) => plan,
+        Err(c) => return c,
+    };
+    match cm_core::plan::v2::check_plan_v2(&plan, now_unix()) {
+        Ok(()) => {}
+        Err(cm_core::plan::v2::PlanProblem::Kind(k)) => return fail(req, ErrorCode::PolicyDenied, &format!("plan violates its kind: {k}"), p.format),
+        Err(_) => return fail(req, ErrorCode::PlanStale, "plan expired or changed; create a new plan", p.format),
+    }
+    let permanent = v2_summary(&plan);
+    // MTR-03: a permanent delete needs its own explicit irreversibility confirmation before the digest.
+    if permanent {
+        match prompt("Type DELETE to confirm these objects cannot be recovered, anything else to cancel: ") {
+            Some(a) if a == "DELETE" => {}
+            _ => return fail(req, ErrorCode::Cancelled, "not approved", p.format),
+        }
+    }
+    let code = &plan.digest[..8];
+    match prompt(&format!("Type {code} to approve this exact plan, anything else to cancel: ")) {
+        Some(answer) if answer == code => {}
+        _ => return fail(req, ErrorCode::Cancelled, "not approved", p.format),
+    }
+    let receipt = KindReceipt {
+        receipt_id: format!("r_{}", &req[4..]),
+        plan_id: plan.body.plan_id.clone(),
+        plan_digest: plan.digest.clone(),
+        plan_kind: plan.body.plan_kind,
+        principal: current_principal(),
+        source: ReceiptSource::InteractiveReview,
+        created_at: now_utc(),
+        expires_at: plan.body.expires_at.clone(),
+        revoked_at: None,
+    };
+    if let Err(e) = stores.audit.save_kind_receipt(&receipt) {
+        return store_error(req, &e, p.format);
+    }
+    emit(&v2_authorization_record(req, stores, &plan), p.format);
+    ExitCode::SUCCESS
+}
+
+/// Policy digest bound into new plans of every kind.
+pub fn current_policy_digest(stores: &Stores) -> String {
+    policy_digest(stores)
 }

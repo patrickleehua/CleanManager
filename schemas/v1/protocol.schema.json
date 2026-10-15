@@ -108,6 +108,51 @@
     },
     {
       "$ref": "#/$defs/installer_locations"
+    },
+    {
+      "$ref": "#/$defs/trash_inspection"
+    },
+    {
+      "$ref": "#/$defs/trash_list"
+    },
+    {
+      "$ref": "#/$defs/maintenance_history"
+    },
+    {
+      "$ref": "#/$defs/maintenance_diagnosis"
+    },
+    {
+      "$ref": "#/$defs/process_list"
+    },
+    {
+      "$ref": "#/$defs/process_pins"
+    },
+    {
+      "$ref": "#/$defs/status_alert"
+    },
+    {
+      "$ref": "#/$defs/status_alert_settings"
+    },
+    {
+      "$ref": "#/$defs/insight_overview"
+    },
+    {
+      "$ref": "#/$defs/old_downloads_review"
+    },
+    {
+      "$ref": "#/$defs/app_update_list"
+    },
+    {
+      "$ref": "#/$defs/app_update_settings"
+    },
+    {
+      "$ref": "#/$defs/app_update_plan"
+    },
+    {
+      "$ref": "#/$defs/app_uninstall_list"
+    },
+    {
+      "$ref": "#/$defs/uninstall_leftovers"
     }
   ],
   "$defs": {
@@ -1211,7 +1256,9 @@
                 "quarantine",
                 "delete",
                 "restore",
-                "purge"
+                "purge",
+                "startup",
+                "maintenance"
               ]
             },
             {
@@ -2376,6 +2423,12 @@
               "type": "null"
             }
           ]
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory"
+          ]
         }
       },
       "required": [
@@ -2410,6 +2463,34 @@
         },
         "must_not_follow_links": {
           "const": true
+        },
+        "subtree": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "logical_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            "members_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "items",
+            "logical_bytes",
+            "members_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "trash_entry_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -2442,6 +2523,34 @@
         },
         "must_not_follow_links": {
           "const": true
+        },
+        "subtree": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "logical_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            "members_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "items",
+            "logical_bytes",
+            "members_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "trash_entry_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -2474,6 +2583,34 @@
         },
         "must_not_follow_links": {
           "const": true
+        },
+        "subtree": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "logical_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            "members_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "items",
+            "logical_bytes",
+            "members_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "trash_entry_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -2621,6 +2758,10 @@
         },
         "backup_required": {
           "const": true
+        },
+        "observed_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "required": [
@@ -2660,6 +2801,14 @@
         },
         "on_existing": {
           "const": "skip"
+        },
+        "value_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backup_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "required": [
@@ -2711,6 +2860,18 @@
             "user",
             "system"
           ]
+        },
+        "definition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "backup_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -2790,6 +2951,62 @@
       ],
       "additionalProperties": false
     },
+    "action_process_end": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_type": {
+          "const": "process_end"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "started_at": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action_id",
+        "action_type",
+        "pid",
+        "started_at",
+        "name",
+        "image_path",
+        "image_sha256"
+      ],
+      "additionalProperties": false
+    },
     "plan_action": {
       "oneOf": [
         {
@@ -2821,6 +3038,9 @@
         },
         {
           "$ref": "#/$defs/action_settings_change"
+        },
+        {
+          "$ref": "#/$defs/action_process_end"
         }
       ]
     },
@@ -2842,7 +3062,8 @@
             "maintenance",
             "startup",
             "update",
-            "recovery"
+            "recovery",
+            "process"
           ]
         },
         "policy_matchable": {
@@ -3160,6 +3381,32 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "plan_kind": {
+                "const": "process"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/action_process_end"
+                    }
+                  ]
+                },
+                "maxItems": 1
+              },
+              "policy_matchable": {
+                "const": false
+              }
+            }
+          }
         }
       ]
     },
@@ -3378,6 +3625,53 @@
             "expired",
             "revoked"
           ]
+        },
+        "stale_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "object_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "enum": [
+                  "missing",
+                  "changed"
+                ]
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "object_id",
+              "reason",
+              "detail"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "leftover_estimate": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "bundle",
+              "caches_logs",
+              "settings",
+              "personal_data",
+              "startup",
+              "system"
+            ]
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
         }
       },
       "required": [
@@ -4395,6 +4689,30 @@
       ],
       "additionalProperties": false
     },
+    "params_trash_inspect": {
+      "type": "object",
+      "properties": {
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "scan_id",
+        "entry_id"
+      ],
+      "additionalProperties": false
+    },
+    "params_trash_list": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
     "params_insights_list": {
       "type": "object",
       "properties": {
@@ -4448,25 +4766,74 @@
           "type": "string",
           "minLength": 1
         },
-        "include_groups": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "bundle",
-              "caches_logs",
-              "settings",
-              "personal_data",
-              "startup",
-              "system"
-            ]
-          },
-          "minItems": 1,
-          "uniqueItems": true
+        "end_running": {
+          "type": "boolean"
         }
       },
       "required": [
         "app_instance_id",
-        "include_groups"
+        "end_running"
+      ],
+      "additionalProperties": false
+    },
+    "params_apps_uninstall_list": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "params_apps_uninstall_leftovers": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "params_apps_uninstall_leftovers_plan": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "operation_id",
+        "object_ids"
+      ],
+      "additionalProperties": false
+    },
+    "params_apps_uninstall_orphans": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "params_apps_uninstall_restore_plan": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operation_id"
       ],
       "additionalProperties": false
     },
@@ -4504,6 +4871,197 @@
       ],
       "additionalProperties": false
     },
+    "params_apps_updates_config": {
+      "type": "object",
+      "properties": {
+        "checks_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "checks_enabled"
+      ],
+      "additionalProperties": false
+    },
+    "params_process_list": {
+      "type": "object",
+      "properties": {
+        "sort": {
+          "enum": [
+            "cpu",
+            "memory",
+            "disk",
+            "network",
+            "name"
+          ]
+        },
+        "search": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sort",
+        "search",
+        "limit",
+        "pid"
+      ],
+      "additionalProperties": false
+    },
+    "params_process_pin": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "pinned"
+      ],
+      "additionalProperties": false
+    },
+    "params_process_end_plan": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "pid"
+      ],
+      "additionalProperties": false
+    },
+    "params_status_alerts": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_threshold_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cooldown_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 86400
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "cpu_threshold_percent",
+        "window_seconds",
+        "cooldown_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "params_insights_overview": {
+      "type": "object",
+      "properties": {
+        "older_than_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      },
+      "required": [
+        "older_than_days"
+      ],
+      "additionalProperties": false
+    },
+    "params_insights_downloads": {
+      "type": "object",
+      "properties": {
+        "older_than_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "older_than_days",
+        "limit"
+      ],
+      "additionalProperties": false
+    },
     "params_startup_list": {
       "type": "object",
       "properties": {},
@@ -4532,27 +5090,89 @@
       ],
       "additionalProperties": false
     },
+    "params_startup_restore_plan": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
     "params_optimize_list": {
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "search": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "search"
+      ],
       "additionalProperties": false
     },
     "params_optimize_plan": {
       "type": "object",
       "properties": {
         "task_ids": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "minItems": 1,
-          "uniqueItems": true
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "task_ids"
+      ],
+      "additionalProperties": false
+    },
+    "params_optimize_diagnose": {
+      "type": "object",
+      "properties": {
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        }
+      },
+      "required": [
+        "window_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "params_optimize_history": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "limit"
       ],
       "additionalProperties": false
     },
@@ -4734,15 +5354,32 @@
             "installer.plan",
             "trash.plan",
             "trash.purge_plan",
+            "trash.inspect",
+            "trash.list",
             "insights.list",
             "apps.list",
             "apps.uninstall.plan",
+            "apps.uninstall.list",
+            "apps.uninstall.leftovers",
+            "apps.uninstall.leftovers_plan",
+            "apps.uninstall.orphans",
+            "apps.uninstall.restore_plan",
             "apps.updates.check",
             "apps.updates.plan",
+            "apps.updates.config",
+            "process.list",
+            "process.pin",
+            "process.end_plan",
+            "status.alerts",
+            "insights.overview",
+            "insights.downloads",
             "startup.list",
             "startup.plan",
+            "startup.restore_plan",
             "optimize.list",
             "optimize.plan",
+            "optimize.diagnose",
+            "optimize.history",
             "status.snapshot",
             "status.watch",
             "protect.list",
@@ -4965,6 +5602,38 @@
           "if": {
             "properties": {
               "command": {
+                "const": "trash.inspect"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_trash_inspect"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "trash.list"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_trash_list"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
                 "const": "insights.list"
               }
             }
@@ -5013,6 +5682,86 @@
           "if": {
             "properties": {
               "command": {
+                "const": "apps.uninstall.list"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_list"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.uninstall.leftovers"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_leftovers"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.uninstall.leftovers_plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_leftovers_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.uninstall.orphans"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_orphans"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.uninstall.restore_plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_restore_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
                 "const": "apps.updates.check"
               }
             }
@@ -5037,6 +5786,118 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/params_apps_updates_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.updates.config"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_updates_config"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "process.list"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_process_list"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "process.pin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_process_pin"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "process.end_plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_process_end_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "status.alerts"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_status_alerts"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "insights.overview"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_insights_overview"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "insights.downloads"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_insights_downloads"
               }
             }
           }
@@ -5077,6 +5938,22 @@
           "if": {
             "properties": {
               "command": {
+                "const": "startup.restore_plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_startup_restore_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
                 "const": "optimize.list"
               }
             }
@@ -5101,6 +5978,38 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/params_optimize_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "optimize.diagnose"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_optimize_diagnose"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "optimize.history"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_optimize_history"
               }
             }
           }
@@ -6290,6 +7199,351 @@
       ],
       "additionalProperties": false
     },
+    "trash_inspection": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "trash_inspection"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "parent_display": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "object_kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "reparse",
+            "other"
+          ]
+        },
+        "cloud": {
+          "enum": [
+            "not_cloud",
+            "hydrated",
+            "placeholder",
+            "unknown"
+          ]
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allocated_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "directories": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "protected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "protected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "coverage_gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "gap_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "trashable": {
+          "type": "boolean"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "code",
+                "reason",
+                "message"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "holders": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "available_actions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "show_path",
+              "copy_path",
+              "move_to_trash"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "guidance": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "scan_id",
+        "entry_id",
+        "path",
+        "parent_display",
+        "object_kind",
+        "cloud",
+        "logical_bytes",
+        "allocated_bytes",
+        "files",
+        "directories",
+        "protected",
+        "protected_count",
+        "coverage_gaps",
+        "gap_count",
+        "trashable",
+        "refusal",
+        "holders",
+        "available_actions",
+        "guidance"
+      ],
+      "additionalProperties": false
+    },
+    "trash_list": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "trash_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "trash_item_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "bin_location": {
+                "type": "string",
+                "minLength": 1
+              },
+              "original_path": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "deleted_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "Z$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "object_kind": {
+                "enum": [
+                  "file",
+                  "directory",
+                  "symlink",
+                  "reparse",
+                  "other"
+                ]
+              },
+              "logical_bytes": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "purge_capability": {
+                "enum": [
+                  "available",
+                  "unsupported"
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "trash_item_id",
+              "bin_location",
+              "original_path",
+              "deleted_at",
+              "object_kind",
+              "logical_bytes",
+              "purge_capability",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issue"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "items",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
     "maintenance_task_info": {
       "type": "object",
       "properties": {
@@ -6307,6 +7561,10 @@
             "macos"
           ]
         },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
         "problem": {
           "type": "string",
           "minLength": 1
@@ -6318,9 +7576,19 @@
         "requires_admin": {
           "type": "boolean"
         },
+        "applies_when": {
+          "type": "string",
+          "minLength": 1
+        },
+        "estimated_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
         "applicability": {
           "enum": [
             "applicable",
+            "not_needed",
             "not_applicable",
             "unknown"
           ]
@@ -6338,18 +7606,25 @@
         },
         "user_protected": {
           "type": "boolean"
+        },
+        "reversible": {
+          "const": false
         }
       },
       "required": [
         "task_id",
         "task_version",
         "platform",
+        "title",
         "problem",
         "impact",
         "requires_admin",
+        "applies_when",
+        "estimated_seconds",
         "applicability",
         "applicability_reason",
-        "user_protected"
+        "user_protected",
+        "reversible"
       ],
       "additionalProperties": false
     },
@@ -6366,35 +7641,138 @@
           "type": "string",
           "minLength": 1
         },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos"
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "items": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/maintenance_task_info"
           },
           "minItems": 0
+        },
+        "prohibited": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "elevation": {
+          "enum": [
+            "already_elevated",
+            "one_prompt_per_run"
+          ]
         }
       },
       "required": [
         "schema_version",
         "kind",
         "request_id",
-        "items"
+        "platform",
+        "query",
+        "items",
+        "prohibited",
+        "elevation"
       ],
       "additionalProperties": false
     },
-    "maintenance_report": {
+    "maintenance_task_run": {
       "type": "object",
       "properties": {
-        "schema_version": {
-          "const": "1.0"
-        },
-        "kind": {
-          "const": "maintenance_report"
-        },
-        "request_id": {
+        "task_id": {
           "type": "string",
           "minLength": 1
         },
+        "task_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requires_admin": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "enum": [
+            "applied",
+            "unchanged",
+            "skipped",
+            "unavailable",
+            "attention",
+            "failed"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "task_id",
+        "task_version",
+        "requires_admin",
+        "outcome",
+        "code",
+        "reason",
+        "elevated",
+        "started_at",
+        "finished_at"
+      ],
+      "additionalProperties": false
+    },
+    "maintenance_run": {
+      "type": "object",
+      "properties": {
         "operation_id": {
           "type": "string",
           "minLength": 1
@@ -6403,43 +7781,43 @@
           "type": "string",
           "minLength": 1
         },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "entry": {
+          "enum": [
+            "cli",
+            "desktop"
+          ]
+        },
+        "principal": {
+          "type": "string",
+          "minLength": 1
+        },
         "elevation": {
           "enum": [
             "not_needed",
+            "already_elevated",
             "granted",
-            "declined"
+            "declined",
+            "unavailable"
           ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
         },
         "items": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "task_id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "outcome": {
-                "enum": [
-                  "applied",
-                  "unchanged",
-                  "skipped",
-                  "unavailable",
-                  "attention",
-                  "failed"
-                ]
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "task_id",
-              "outcome",
-              "reason"
-            ],
-            "additionalProperties": false
+            "$ref": "#/$defs/maintenance_task_run"
           },
           "minItems": 0
         },
@@ -6489,6 +7867,137 @@
         },
         "all_clear": {
           "type": "boolean"
+        },
+        "undo": {
+          "const": "unavailable"
+        }
+      },
+      "required": [
+        "operation_id",
+        "plan_id",
+        "plan_digest",
+        "entry",
+        "principal",
+        "elevation",
+        "started_at",
+        "finished_at",
+        "items",
+        "counts",
+        "all_clear",
+        "undo"
+      ],
+      "additionalProperties": false
+    },
+    "maintenance_report": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "maintenance_report"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "entry": {
+          "enum": [
+            "cli",
+            "desktop"
+          ]
+        },
+        "principal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elevation": {
+          "enum": [
+            "not_needed",
+            "already_elevated",
+            "granted",
+            "declined",
+            "unavailable"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenance_task_run"
+          },
+          "minItems": 0
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "applied": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "unchanged": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "unavailable": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attention": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "applied",
+            "unchanged",
+            "skipped",
+            "unavailable",
+            "attention",
+            "failed"
+          ],
+          "additionalProperties": false
+        },
+        "all_clear": {
+          "type": "boolean"
+        },
+        "undo": {
+          "const": "unavailable"
         }
       },
       "required": [
@@ -6497,10 +8006,247 @@
         "request_id",
         "operation_id",
         "plan_id",
+        "plan_digest",
+        "entry",
+        "principal",
         "elevation",
+        "started_at",
+        "finished_at",
         "items",
         "counts",
-        "all_clear"
+        "all_clear",
+        "undo"
+      ],
+      "additionalProperties": false
+    },
+    "maintenance_history": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "maintenance_history"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenance_run"
+          },
+          "minItems": 0
+        },
+        "undo": {
+          "const": "unavailable"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "items",
+        "undo",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "maintenance_diagnosis": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "maintenance_diagnosis"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "read_only": {
+          "const": true
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "enum": [
+                  "runaway_process",
+                  "busy_process",
+                  "memory_pressure",
+                  "commit_pressure",
+                  "low_disk_space",
+                  "idle_virtual_machine",
+                  "attached_disk_image",
+                  "many_startup_items"
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "info",
+                  "warning"
+                ]
+              },
+              "subject": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "process_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "duration_seconds": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "next_step": {
+                "enum": [
+                  "status.processes",
+                  "status.memory",
+                  "analyze",
+                  "startup.list",
+                  "explorer"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "severity",
+              "subject",
+              "detail",
+              "process_id",
+              "duration_seconds",
+              "next_step"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "top_processes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "process_id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "image": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cpu_core_percent": {
+                "type": "number",
+                "minimum": 0
+              },
+              "working_set_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            },
+            "required": [
+              "process_id",
+              "name",
+              "image",
+              "cpu_core_percent",
+              "working_set_bytes"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "memory_load_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "commit_used_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "sampled_at",
+        "window_seconds",
+        "read_only",
+        "findings",
+        "top_processes",
+        "memory_load_percent",
+        "commit_used_percent",
+        "note"
       ],
       "additionalProperties": false
     },
@@ -7165,6 +8911,14 @@
           "items": {
             "type": "object",
             "properties": {
+              "area": {
+                "enum": [
+                  "platform",
+                  "permissions",
+                  "config",
+                  "store"
+                ]
+              },
               "check": {
                 "type": "string",
                 "minLength": 1
@@ -7183,6 +8937,7 @@
               }
             },
             "required": [
+              "area",
               "check",
               "status",
               "detail"
@@ -7190,6 +8945,106 @@
             "additionalProperties": false
           },
           "minItems": 0
+        },
+        "error_codes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "enum": [
+                  "invalid_argument",
+                  "schema_mismatch",
+                  "needs_approval",
+                  "policy_denied",
+                  "permission_required",
+                  "plan_stale",
+                  "cursor_stale",
+                  "conflict",
+                  "unsupported",
+                  "io_error",
+                  "internal_error",
+                  "cancelled",
+                  "protection_unavailable"
+                ]
+              },
+              "exit_code": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "exit_code",
+              "retryable"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "recent_errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "last_seen": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "Z$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "count",
+              "last_seen"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "export": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "written": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "written"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -7201,7 +9056,10 @@
         "engine_version",
         "platform",
         "capabilities",
-        "checks"
+        "checks",
+        "error_codes",
+        "recent_errors",
+        "export"
       ],
       "additionalProperties": false
     },
@@ -7587,6 +9445,14 @@
             "powershell"
           ]
         },
+        "action": {
+          "enum": [
+            "print",
+            "preview",
+            "already_installed",
+            "installed"
+          ]
+        },
         "script": {
           "type": "string",
           "minLength": 1
@@ -7610,9 +9476,1827 @@
         "kind",
         "request_id",
         "shell",
+        "action",
         "script",
         "profile_path",
         "written"
+      ],
+      "additionalProperties": false
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "signed",
+            "catalog_signed",
+            "unsigned",
+            "unknown"
+          ]
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "publisher",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "process_row": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "parent_pid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memory_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disk_bytes_per_sec": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_bytes_per_sec": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        },
+        "owner_app": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identified": {
+          "type": "boolean"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unidentified_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ai_diagnosis": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "const": true
+                },
+                "hint": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "available",
+                "hint"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "end_capability": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "available",
+                "unsupported"
+              ]
+            },
+            "protection": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "critical_system",
+                    "os_critical",
+                    "clean_manager",
+                    "security_software"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "state",
+            "protection",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "pid",
+        "parent_pid",
+        "parent_name",
+        "name",
+        "image_path",
+        "started_at",
+        "cpu_percent",
+        "memory_bytes",
+        "disk_bytes_per_sec",
+        "network_bytes_per_sec",
+        "signature",
+        "owner_app",
+        "identified",
+        "purpose",
+        "unidentified_reason",
+        "ai_diagnosis",
+        "pinned",
+        "end_capability",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "identified": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ai_diagnosis": {
+                "type": "object"
+              },
+              "purpose": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "identified": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "process_list": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "process_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sampled_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "window_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sort": {
+          "enum": [
+            "cpu",
+            "memory",
+            "disk",
+            "network",
+            "name"
+          ]
+        },
+        "search": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "matched": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "unidentified": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/process_row"
+          },
+          "minItems": 0
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "sampled_at",
+        "window_ms",
+        "sort",
+        "search",
+        "total",
+        "matched",
+        "unidentified",
+        "items",
+        "notes"
+      ],
+      "additionalProperties": false
+    },
+    "process_pins": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "process_pins"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "pins"
+      ],
+      "additionalProperties": false
+    },
+    "status_alert": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "status_alert"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_cpu_percent": {
+          "type": "number"
+        },
+        "threshold_percent": {
+          "type": "number"
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "since": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "raised_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "link": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "pid",
+        "name",
+        "image_path",
+        "min_cpu_percent",
+        "threshold_percent",
+        "window_seconds",
+        "since",
+        "raised_at",
+        "link"
+      ],
+      "additionalProperties": false
+    },
+    "status_alert_settings": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "status_alert_settings"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "cpu_threshold_percent": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "cooldown_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "enabled",
+        "cpu_threshold_percent",
+        "window_seconds",
+        "cooldown_seconds",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "insight_card": {
+      "type": "object",
+      "properties": {
+        "card_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "old_downloads",
+            "virtual_machines",
+            "snapshots",
+            "system_files",
+            "component_store",
+            "previous_installation",
+            "update_cache",
+            "developer_tools",
+            "model_libraries",
+            "device_backups"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "enum": [
+                "analyze",
+                "insights.downloads",
+                "insights"
+              ]
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/path"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "insight_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            }
+          },
+          "required": [
+            "view",
+            "path",
+            "insight_ids"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "card_id",
+        "kind",
+        "title",
+        "logical_bytes",
+        "count",
+        "size_note",
+        "observed_at",
+        "link"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "logical_bytes": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_note": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "insight_overview": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "insight_overview"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/insight_card"
+          },
+          "minItems": 0
+        },
+        "old_downloads": {
+          "type": "object",
+          "properties": {
+            "older_than_days": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "item_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "total_logical_bytes": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observed_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            }
+          },
+          "required": [
+            "older_than_days",
+            "item_count",
+            "total_logical_bytes",
+            "observed_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "generated_at",
+        "cards",
+        "old_downloads"
+      ],
+      "additionalProperties": false
+    },
+    "old_downloads_review": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "old_downloads_review"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "older_than_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "logical_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "modified_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              },
+              "age_days": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "installer_like": {
+                "type": "boolean"
+              },
+              "selected": {
+                "const": false
+              }
+            },
+            "required": [
+              "path",
+              "logical_bytes",
+              "modified_at",
+              "age_days",
+              "installer_like",
+              "selected"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "total_logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "shown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "handling": {
+          "const": "manual_trash_review"
+        },
+        "guidance": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "root",
+        "older_than_days",
+        "observed_at",
+        "items",
+        "total_logical_bytes",
+        "item_count",
+        "shown",
+        "note",
+        "handling",
+        "guidance"
+      ],
+      "additionalProperties": false
+    },
+    "app_update": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "current_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "available_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "enum": [
+                "winget",
+                "microsoft_store",
+                "scoop",
+                "self_updater"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "channel_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "update_available",
+            "up_to_date",
+            "cannot_check",
+            "not_checked"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checked_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "route": {
+          "enum": [
+            "package_manager",
+            "open_store",
+            "open_app",
+            "open_official_page",
+            "none"
+          ]
+        },
+        "official_url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "name",
+        "current_version",
+        "available_version",
+        "channel",
+        "channel_id",
+        "state",
+        "reason",
+        "checked_at",
+        "route",
+        "official_url"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "up_to_date",
+                  "update_available"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "channel": {
+                "enum": [
+                  "winget",
+                  "microsoft_store",
+                  "scoop"
+                ]
+              },
+              "checked_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "cannot_check"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "app_update_list": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "app_update_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checks_enabled": {
+          "type": "boolean"
+        },
+        "checked": {
+          "type": "boolean"
+        },
+        "checked_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "update_available": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "up_to_date": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cannot_check": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "not_checked": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "update_available",
+            "up_to_date",
+            "cannot_check",
+            "not_checked"
+          ],
+          "additionalProperties": false
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/app_update"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "checks_enabled",
+        "checked",
+        "checked_at",
+        "counts",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "app_update_settings": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "app_update_settings"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checks_enabled": {
+          "type": "boolean"
+        },
+        "periodic_checks": {
+          "const": false
+        },
+        "last_checked_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "checks_enabled",
+        "periodic_checks",
+        "last_checked_at",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "app_update_plan": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "app_update_plan"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "body": {
+                  "$ref": "#/$defs/plan_body_v2"
+                },
+                "plan_digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "authorization_status": {
+                  "enum": [
+                    "required",
+                    "authorized",
+                    "expired",
+                    "revoked"
+                  ]
+                }
+              },
+              "required": [
+                "body",
+                "plan_digest",
+                "authorization_status"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "routed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app_instance_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "route": {
+                "enum": [
+                  "package_manager",
+                  "open_store",
+                  "open_app",
+                  "open_official_page",
+                  "none"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "app_instance_id",
+              "name",
+              "route",
+              "reason",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "next": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "plan",
+        "routed",
+        "next"
+      ],
+      "additionalProperties": false
+    },
+    "app_uninstall_route": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "enum": [
+            "registry_uninstall",
+            "msi",
+            "msix_store",
+            "scoop",
+            "npm_global",
+            "unknown"
+          ]
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_used_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protected_class": {
+          "type": "boolean"
+        },
+        "uninstall": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "available",
+                "unsupported",
+                "unverified"
+              ]
+            },
+            "adapter": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "adapter_id": {
+                      "enum": [
+                        "windows.registered-uninstaller",
+                        "windows.msiexec-uninstall",
+                        "windows.msix-remove-package",
+                        "winget.uninstall",
+                        "scoop.uninstall",
+                        "npm.uninstall-global"
+                      ]
+                    },
+                    "display": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "package_manager": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "adapter_id",
+                    "display",
+                    "package_manager"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "settings_uri": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "adapter",
+            "reason",
+            "settings_uri"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "name",
+        "version",
+        "publisher",
+        "source",
+        "location",
+        "last_used_at",
+        "protected_class",
+        "uninstall"
+      ],
+      "additionalProperties": false
+    },
+    "app_uninstall_list": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "app_uninstall_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/app_uninstall_route"
+          },
+          "minItems": 0
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issue"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "items",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "uninstall_leftover": {
+      "type": "object",
+      "properties": {
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "directory",
+            "file",
+            "registry_key",
+            "startup_entry",
+            "shortcut",
+            "service"
+          ]
+        },
+        "group": {
+          "enum": [
+            "bundle",
+            "caches_logs",
+            "settings",
+            "personal_data",
+            "startup",
+            "system"
+          ]
+        },
+        "display": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "marker": {
+          "anyOf": [
+            {
+              "enum": [
+                "shared_owner",
+                "owner_unknown",
+                "app_reappeared"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "enum": [
+            "default_selected",
+            "review_only",
+            "blocked",
+            "kept"
+          ]
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requires_admin": {
+          "type": "boolean"
+        },
+        "action": {
+          "enum": [
+            "fs_trash",
+            "registry_backup_delete",
+            "startup_toggle",
+            "manual"
+          ]
+        },
+        "guidance": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "object_id",
+        "kind",
+        "group",
+        "display",
+        "evidence",
+        "marker",
+        "tier",
+        "selected",
+        "warnings",
+        "logical_bytes",
+        "note",
+        "requires_admin",
+        "action",
+        "guidance"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "selected": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "group": {
+                "const": "caches_logs"
+              },
+              "tier": {
+                "const": "default_selected"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "marker"
+            ],
+            "properties": {
+              "marker": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tier": {
+                "const": "kept"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "uninstall_leftovers": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "uninstall_leftovers"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "app": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "app_instance_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "publisher": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "enum": [
+                    "registry_uninstall",
+                    "msi",
+                    "msix",
+                    "scoop",
+                    "npm_global",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "app_instance_id",
+                "name",
+                "publisher",
+                "source"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "enum": [
+                  "bundle",
+                  "caches_logs",
+                  "settings",
+                  "personal_data",
+                  "startup",
+                  "system"
+                ]
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/uninstall_leftover"
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "group",
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "default_selected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "external_references": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation_id",
+        "app",
+        "groups",
+        "default_selected",
+        "external_references"
       ],
       "additionalProperties": false
     }

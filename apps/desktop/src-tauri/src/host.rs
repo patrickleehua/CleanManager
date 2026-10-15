@@ -81,6 +81,8 @@ pub struct AppState {
     pub apply: Mutex<Option<crate::ops::ActiveApply>>,
     /// Where the platform rule pack is read from (see `rules`).
     pub rules_dir: Option<PathBuf>,
+    /// Optional AI diagnosis (see `diag`); `None` without a store directory.
+    pub diag: Option<Arc<cm_app::diag::Service>>,
 }
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -123,6 +125,7 @@ impl AppState {
                 Err(e) => store_problem = Some(e.into()),
             },
         }
+        let diag = store_dir.as_deref().map(|d| Arc::new(cm_app::diag::Service::new(d, cm_platform::credentials::os_store())));
         AppState {
             store_dir,
             startup: StartupInfo { bypass_privileges, store_problem, interrupted, operations_to_reconcile },
@@ -133,6 +136,7 @@ impl AppState {
             reviews: Mutex::new(crate::cleanup::Reviews::default()),
             candidates: Mutex::new(None),
             apply: Mutex::new(None),
+            diag,
             rules_dir,
         }
     }

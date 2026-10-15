@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "kind": "trash_list",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "trash_item_id": "tb_00c0ffee00c0ffee",
+      "bin_location": "D:\\$Recycle.Bin\\S-1-5-21-example\\$RAB12CD.mov",
+      "original_path": "D:\\Videos\\example.mov",
+      "deleted_at": "2026-10-14T09:00:00Z",
+      "object_kind": "file",
+      "logical_bytes": "1048576",
+      "purge_capability": "available",
+      "reason": null
+    },
+    {
+      "trash_item_id": "tb_0badc0de0badc0de",
+      "bin_location": "D:\\$Recycle.Bin\\S-1-5-21-example\\$RCD34EF",
+      "original_path": "D:\\Projects\\linked",
+      "deleted_at": "2026-10-13T09:00:00Z",
+      "object_kind": "directory",
+      "logical_bytes": null,
+      "purge_capability": "unsupported",
+      "reason": "contains a link or special object; empty it with Explorer (Recycle Bin, Delete) instead"
+    }
+  ],
+  "issues": []
+}

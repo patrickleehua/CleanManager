@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "description": "Parity 14.2 real-device records of the Windows maintenance tasks (Windows 11 Enterprise 10.0.26200 x64). Only non-destructive actions were run.",
+  "recorded_at": "2026-10-15T09:28:30Z",
+  "code_commit": "791b6240796381227f9f40231e72c4fbd657c1a6",
+  "binary_sha256": "96afd2536b3404e6768be1b2f3c93e0aa3fd81b78d42ef041234fdd4d004186f",
+  "run_records": [
+    "run_win_maint_dns_flush",
+    "run_win_maint_image_health",
+    "run_win_maint_probes",
+    "run_win_maint_prohibited_search",
+    "run_win_maint_diagnosis",
+    "run_win_maint_history"
+  ],
+  "tasks": [
+    {
+      "task_id": "windows.dns-flush",
+      "status": "real_record",
+      "outcome": "applied",
+      "code": "flushed",
+      "run_id": "run_win_maint_dns_flush"
+    },
+    {
+      "task_id": "windows.image-health-check",
+      "status": "real_record",
+      "outcome": "unchanged",
+      "code": "healthy",
+      "run_id": "run_win_maint_image_health"
+    },
+    {
+      "task_id": "windows.trim-when-due",
+      "status": "probe_only",
+      "probe": "due: C: never optimized; D: never optimized; E: never optimized",
+      "pending": "defrag.exe X: /L was not run by the agent; the scheduled defrag task on this device has never run (LastRunTime all zero), so the task is due. Run it manually through a reviewed plan to record applied."
+    },
+    {
+      "task_id": "windows.icon-cache-rebuild",
+      "status": "probe_only",
+      "probe": "30 cache files, 11 in use now",
+      "pending": "Not run on the real profile; the deletion logic (exclusive open, in-use files kept as attention) is tested on scratch folders."
+    },
+    {
+      "task_id": "windows.shell-restart",
+      "status": "probe_only",
+      "probe": "running: SearchHost.exe, StartMenuExperienceHost.exe",
+      "pending": "Graceful Restart Manager shutdown of StartMenuExperienceHost/SearchHost was not run; whether these hosts accept a graceful close (applied) or refuse (attention) is unverified."
+    }
+  ],
+  "elevation": {
+    "observed": "already_elevated",
+    "pending": "The UAC launcher (ShellExecuteExW runas) was not exercised: the shell was already elevated and tests never prompt. The worker protocol, pipe DACL and PID checks are exercised with an unelevated child (crates/cm-cli/tests/optimize_flow.rs) and in-process (crates/cm-platform/src/windows/elevation/tests.rs)."
+  }
+}

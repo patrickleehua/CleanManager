@@ -1,7 +1,7 @@
 //! Generates the app ACL: only the commands listed here get `allow-*` permissions, and the
 //! capability file grants exactly these to the main window. Anything else is rejected by the
 //! IPC layer before it reaches Rust code. Why each command is safe is documented on its module
-//! (`commands`, `cleanup`, `ops`, `settings`).
+//! (`commands`, `cleanup`, `ops`, `settings`, `suite`, `v2`).
 
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
@@ -39,11 +39,47 @@ fn main() {
         "list_plans",
         "list_quarantine",
         "create_recovery_plan",
+        // Parity suite: purge roots (native dialog), discovery, manual trash, startup, insights, status,
+        // readiness and reveal (ids only; every change is a stored plan reviewed like the others).
+        "purge_roots",
+        "purge_roots_add",
+        "purge_roots_remove",
+        "purge_scan",
+        "installer_locations",
+        "installer_scan",
+        "create_catalog_plan",
+        "trash_inspect",
+        "trash_plan",
+        "startup_list",
+        "startup_plan",
+        "insights_list",
+        "status_snapshot",
+        "readiness",
+        "reveal_entry",
         // Settings and read-only inventory.
         "list_protection",
         "add_protection",
         "remove_protection",
         "list_apps",
+        // Optional AI diagnosis (ids only; keys via the system prompt; CLI paths via the native dialog).
+        "diag_status",
+        "diag_save_provider",
+        "diag_choose_cli",
+        "diag_remove_provider",
+        "diag_set_key",
+        "diag_forget_key",
+        "diag_probe",
+        "diag_prepare",
+        "diag_follow_up",
+        "diag_discard",
+        "diag_confirm",
+        "diag_cancel",
+        "diag_get",
+        "diag_list",
+        "diag_save",
+        "diag_remove",
+        "diag_export",
+        "diag_handoff",
     ])))
     .expect("tauri-build failed");
 }

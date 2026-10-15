@@ -1,0 +1,538 @@
+{
+  "status": "passed",
+  "scope": "Real cleanmanager runs on a temporary synthetic fixture on this machine; records validated against schemas/v1. Not a cleanup test.",
+  "binary": "target\\debug\\cleanmanager.exe",
+  "platform": "Windows 11 AMD64",
+  "outside_v1_schema": [
+    "policy",
+    "policy_list"
+  ],
+  "commands": 33,
+  "failures": [],
+  "results": [
+    {
+      "name": "capabilities",
+      "argv": [
+        "cleanmanager",
+        "capabilities"
+      ],
+      "exit": 0,
+      "kinds": [
+        "capabilities"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "scan",
+      "argv": [
+        "cleanmanager",
+        "scan",
+        "--root",
+        "C:\\Users\\LIBING~1\\AppData\\Local\\Temp\\cm-cli-outputs-bg61izgx\\fixture",
+        "--non-interactive"
+      ],
+      "exit": 0,
+      "kinds": [
+        "scan_result"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "scan jsonl",
+      "argv": [
+        "cleanmanager",
+        "scan",
+        "--root",
+        "C:\\Users\\LIBING~1\\AppData\\Local\\Temp\\cm-cli-outputs-bg61izgx\\fixture",
+        "--format",
+        "jsonl"
+      ],
+      "exit": 0,
+      "kinds": [
+        "progress",
+        "progress",
+        "scan_result"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "scan show",
+      "argv": [
+        "cleanmanager",
+        "scan",
+        "show",
+        "s_6e6c_18dea7b87b5e6014"
+      ],
+      "exit": 0,
+      "kinds": [
+        "scan_result"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "scan wait",
+      "argv": [
+        "cleanmanager",
+        "scan",
+        "wait",
+        "s_6e6c_18dea7b87b5e6014",
+        "--timeout",
+        "5"
+      ],
+      "exit": 0,
+      "kinds": [
+        "scan_result"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "scan cancel (terminal)",
+      "argv": [
+        "cleanmanager",
+        "scan",
+        "cancel",
+        "s_6e6c_18dea7b87b5e6014"
+      ],
+      "exit": 0,
+      "kinds": [
+        "scan_cancel_receipt"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "entries list",
+      "argv": [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--limit",
+        "2"
+      ],
+      "exit": 0,
+      "kinds": [
+        "entries_page"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "entries list page 2",
+      "argv": [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--limit",
+        "2",
+        "--cursor",
+        "eyJ2IjoxLCJzY2FuX2lkIjoic182ZTZjXzE4ZGVhN2I4N2I1ZTYwMTQiLCJyZXZpc2lvbiI6MSwiYmluZGluZyI6Ijc0ODFlZTM4OWI3NGZhOGQ5MmMyODkxY2NkZGIyZDcyNjcyOTIxMGJlMWJlODdmNTgwZWVlYzg3NGFkYzljYjYiLCJsYXN0X2tleSI6IkFBQUFBQUFBQkxZIiwibGFzdF9lbnRyeV9pZCI6NH0"
+      ],
+      "exit": 0,
+      "kinds": [
+        "entries_page"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "entries list foreign cursor",
+      "argv": [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--limit",
+        "3",
+        "--cursor",
+        "eyJ2IjoxLCJzY2FuX2lkIjoic182ZTZjXzE4ZGVhN2I4N2I1ZTYwMTQiLCJyZXZpc2lvbiI6MSwiYmluZGluZyI6Ijc0ODFlZTM4OWI3NGZhOGQ5MmMyODkxY2NkZGIyZDcyNjcyOTIxMGJlMWJlODdmNTgwZWVlYzg3NGFkYzljYjYiLCJsYXN0X2tleSI6IkFBQUFBQUFBQkxZIiwibGFzdF9lbnRyeV9pZCI6NH0"
+      ],
+      "exit": 6,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "entries list files by name",
+      "argv": [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--kind",
+        "file",
+        "--sort",
+        "name_asc",
+        "--limit",
+        "50"
+      ],
+      "exit": 0,
+      "kinds": [
+        "entries_page"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "entries list limit 501",
+      "argv": [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--limit",
+        "501"
+      ],
+      "exit": 2,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "analyze",
+      "argv": [
+        "cleanmanager",
+        "analyze",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014"
+      ],
+      "exit": 0,
+      "kinds": [
+        "analysis_result"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "candidates list",
+      "argv": [
+        "cleanmanager",
+        "candidates",
+        "list",
+        "--set",
+        "cs_b1a48bbaa2221b1c88ddfb9b",
+        "--limit",
+        "10"
+      ],
+      "exit": 0,
+      "kinds": [
+        "candidates_page"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "clean list",
+      "argv": [
+        "cleanmanager",
+        "clean",
+        "list"
+      ],
+      "exit": 0,
+      "kinds": [
+        "cleanup_catalog"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "clean dry-run",
+      "argv": [
+        "cleanmanager",
+        "clean",
+        "--scan",
+        "s_6e6c_18dea7b87b5e6014",
+        "--dry-run",
+        "--non-interactive"
+      ],
+      "exit": 0,
+      "kinds": [
+        "selection_preview"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "operations list",
+      "argv": [
+        "cleanmanager",
+        "operations",
+        "list",
+        "--limit",
+        "5"
+      ],
+      "exit": 0,
+      "kinds": [
+        "operation_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "recovery list",
+      "argv": [
+        "cleanmanager",
+        "recovery",
+        "list"
+      ],
+      "exit": 0,
+      "kinds": [
+        "quarantine_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "protect list",
+      "argv": [
+        "cleanmanager",
+        "protect",
+        "list"
+      ],
+      "exit": 0,
+      "kinds": [
+        "protection_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "protect check",
+      "argv": [
+        "cleanmanager",
+        "protect",
+        "check",
+        "--path",
+        "C:\\Users\\LIBING~1\\AppData\\Local\\Temp\\cm-cli-outputs-bg61izgx\\fixture"
+      ],
+      "exit": 0,
+      "kinds": [
+        "protection_check"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "purge roots",
+      "argv": [
+        "cleanmanager",
+        "purge",
+        "roots"
+      ],
+      "exit": 0,
+      "kinds": [
+        "purge_roots"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "installer locations",
+      "argv": [
+        "cleanmanager",
+        "installer",
+        "locations"
+      ],
+      "exit": 0,
+      "kinds": [
+        "installer_locations"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "doctor",
+      "argv": [
+        "cleanmanager",
+        "doctor"
+      ],
+      "exit": 0,
+      "kinds": [
+        "doctor_report"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "doctor export preview",
+      "argv": [
+        "cleanmanager",
+        "doctor",
+        "--export",
+        "C:\\Users\\LIBING~1\\AppData\\Local\\Temp\\cm-cli-outputs-bg61izgx\\doctor.json"
+      ],
+      "exit": 0,
+      "kinds": [
+        "doctor_report"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "completion print",
+      "argv": [
+        "cleanmanager",
+        "completion",
+        "print",
+        "powershell",
+        "--json"
+      ],
+      "exit": 0,
+      "kinds": [
+        "completion_script"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "completion install preview",
+      "argv": [
+        "cleanmanager",
+        "completion",
+        "install",
+        "bash",
+        "--profile",
+        "C:\\Users\\LIBING~1\\AppData\\Local\\Temp\\cm-cli-outputs-bg61izgx\\bashrc",
+        "--json"
+      ],
+      "exit": 0,
+      "kinds": [
+        "completion_script"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "status",
+      "argv": [
+        "cleanmanager",
+        "status"
+      ],
+      "exit": 0,
+      "kinds": [
+        "status_snapshot"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "insights",
+      "argv": [
+        "cleanmanager",
+        "insights"
+      ],
+      "exit": 0,
+      "kinds": [
+        "insight_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "startup list",
+      "argv": [
+        "cleanmanager",
+        "startup",
+        "list"
+      ],
+      "exit": 0,
+      "kinds": [
+        "startup_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "apps list",
+      "argv": [
+        "cleanmanager",
+        "apps",
+        "list",
+        "--limit",
+        "5"
+      ],
+      "exit": 0,
+      "kinds": [
+        "app_list"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "unknown command",
+      "argv": [
+        "cleanmanager",
+        "frobnicate"
+      ],
+      "exit": 2,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "self-approval flag",
+      "argv": [
+        "cleanmanager",
+        "plan",
+        "apply",
+        "p_x",
+        "--yes",
+        "1"
+      ],
+      "exit": 2,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "short option",
+      "argv": [
+        "cleanmanager",
+        "plan",
+        "apply",
+        "p_x",
+        "-y"
+      ],
+      "exit": 2,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    },
+    {
+      "name": "missing plan",
+      "argv": [
+        "cleanmanager",
+        "plan",
+        "show",
+        "p_missing"
+      ],
+      "exit": 2,
+      "kinds": [
+        "error"
+      ],
+      "valid": true,
+      "problems": []
+    }
+  ]
+}

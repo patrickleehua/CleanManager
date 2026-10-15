@@ -3,6 +3,8 @@
 // no "0 B junk" before a scan, no percentage of an unknown total.
 
 import type { App } from '../main';
+import type { InsightsList } from '../lib/types';
+import { insightCards } from './tools';
 import { toIpcError } from '../lib/api';
 import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
 import { h, keepFocus, replace } from '../lib/dom';
@@ -14,6 +16,8 @@ export class OverviewPage {
   private body: HTMLElement;
   private cancelError: string | null = null;
   private timer: number | null = null;
+  private insights: InsightsList | null = null;
+  private insightsRequested = false;
 
   constructor(private app: App) {
     this.body = h('div', { class: 'overview-body' });
@@ -22,6 +26,35 @@ export class OverviewPage {
 
   activate(): void {
     void this.app.refreshStatus();
+    if (!this.insightsRequested) {
+      this.insightsRequested = true;
+      this.app.backend
+        .insightsList()
+        .then((r) => {
+          this.insights = r;
+          this.update();
+        })
+        .catch(() => (this.insights = null));
+    }
+  }
+
+  /** DIN-03: known large system objects as cards — known size or "unknown", with observation time. */
+  private insightStrip(): HTMLElement | null {
+    const d = this.insights;
+    if (!d || !d.supported || !d.items.length) return null;
+    const open = h('button', { type: 'button', class: 'quiet', id: 'ov-insights' }, '查看空间洞察');
+    open.addEventListener('click', () => this.app.navigate('insights'));
+    return h(
+      'section',
+      { class: 'panel insight-strip', 'aria-labelledby': 'ov-ins-title' },
+      h('div', { class: 'panel-head' }, h('h2', { id: 'ov-ins-title' }, '系统与虚拟化对象'), open),
+      h(
+        'ul',
+        { class: 'insight-cards' },
+        ...insightCards(d.items).map((c) => h('li', { class: 'icard' }, h('span', { class: 'icard-title' }, c.title), h('span', { class: 'icard-size num' }, c.size), h('span', { class: 'icard-meta muted' }, c.observed ? `观测于 ${formatTime(c.observed)}` : '观测时间未知'))),
+      ),
+      h('p', { class: 'muted small' }, '由系统或所属工具管理，只提供说明与官方工具用法，不提供删除。'),
+    );
   }
 
   update(): void {
@@ -65,6 +98,7 @@ export class OverviewPage {
       this.body,
       this.heading(s),
       h('div', { class: 'overview-grid' }, this.stateCard(s), this.knownCard(s), this.coverageCard(s)),
+      this.insightStrip(),
       this.issues(s),
       this.recentList(),
       this.hostCard(),
@@ -78,6 +112,7 @@ export class OverviewPage {
       h('h1', { id: 'overview-title' }, '还没有扫描结果'),
       h('p', { class: 'lede' }, '选择一个文件夹并开始只读扫描后，这里会显示它占用了多少空间、哪些位置没能读取，以及结果的可信程度。'),
       this.newScanButton(true),
+      this.insightStrip(),
     );
   }
 

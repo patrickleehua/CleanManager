@@ -1,4 +1,4 @@
-//! Read-only parity commands (`startup list`, `status`, `insights`): one clean JSON record (or JSONL stream), no
+//! Read-only parity commands (`startup list`, `status`, `insights`, `apps list` and `apps uninstall list`): one clean JSON record (or JSONL stream), no
 //! side effects, unknown values as null with a reason. Structure only: real values differ between machines.
 
 use std::process::Command;
@@ -36,7 +36,13 @@ fn startup_list_is_read_only_inventory() {
     let items = v["items"].as_array().unwrap();
     assert!(!items.is_empty());
     for i in items {
-        assert_ne!(i["toggle_capability"], "available", "toggling is not implemented (11.2)");
+        // 11.2: only Run values and Startup-folder files have a verified mechanism; listing never changes anything.
+        if i["toggle_capability"] == "available" {
+            assert!(matches!(i["source"].as_str(), Some("run_key" | "startup_folder")), "{i}");
+        }
+        if matches!(i["source"].as_str(), Some("scheduled_task" | "store_startup_task")) {
+            assert_ne!(i["toggle_capability"], "available", "no verified toggle: settings page only");
+        }
         if i["protected"] == true {
             assert_eq!(i["toggle_capability"], "unsupported");
         }
@@ -89,6 +95,49 @@ fn insights_offer_guidance_never_trash() {
         assert_eq!(i["logical_bytes"].is_null(), i["size_basis"] == "not_measured");
         assert!(i.get("allowed_modes").is_none());
     }
+}
+
+/// UNI-01: `apps list` reports each instance's uninstall capability as `apps uninstall list` decides it (no longer the
+/// read-only release's blanket `unsupported`); protected instances are never available. Both only read.
+#[cfg(windows)]
+#[test]
+fn apps_list_uninstall_capability_matches_the_uninstall_route() {
+    let (code, out) = run(&["apps", "uninstall", "list", "--json"]);
+    assert!(code == 0 || code == 5, "{out}");
+    let routes: std::collections::BTreeMap<String, serde_json::Value> =
+        single(&out)["items"].as_array().unwrap().iter().map(|i| (i["app_instance_id"].as_str().unwrap().to_owned(), i["uninstall"].clone())).collect();
+    let (mut cursor, mut seen, mut matched) = (None::<String>, 0, 0);
+    loop {
+        let mut args = vec!["apps", "list", "--limit", "500", "--json"];
+        if let Some(c) = &cursor {
+            args.extend(["--cursor", c.as_str()]);
+        }
+        let (code, out) = run(&args);
+        assert_eq!(code, 0, "{out}");
+        let v = single(&out);
+        for a in v["items"].as_array().unwrap() {
+            seen += 1;
+            let cap = &a["uninstall_capability"];
+            assert!(!cap["reason"].as_str().is_some_and(|r| r.starts_with("Read-only first release")), "{a}");
+            if a["protected_class"] == true {
+                assert_ne!(cap["state"], "available", "{a}");
+            }
+            match routes.get(a["app_instance_id"].as_str().unwrap()) {
+                Some(r) if a["protected_class"] == false || r["state"] != "available" => {
+                    assert_eq!(cap["state"], r["state"], "{a} vs {r}");
+                    assert_eq!(cap["reason"], r["reason"], "{a} vs {r}");
+                    matched += 1;
+                }
+                Some(_) => {}
+                None => assert_eq!(cap["state"], "unverified", "no uninstall record of its own: {a}"),
+            }
+        }
+        match v["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert!(seen > 0 && matched > 0, "seen {seen}, matched {matched}");
 }
 
 #[cfg(not(windows))]

@@ -15,14 +15,34 @@
   ],
   "checks": [
     {
-      "check": "protection_list",
+      "area": "config",
+      "check": "config.protection_list",
       "status": "ok",
       "detail": "3 entries"
     },
     {
-      "check": "index_store",
+      "area": "store",
+      "check": "store.open",
       "status": "unknown",
-      "detail": "Synthetic report"
+      "detail": "Synthetic report at ~\\AppData\\Local\\CleanManager\\store"
     }
-  ]
+  ],
+  "error_codes": [
+    {
+      "code": "needs_approval",
+      "exit_code": 3,
+      "retryable": false
+    }
+  ],
+  "recent_errors": [
+    {
+      "code": "precondition_changed",
+      "count": 2,
+      "last_seen": "2026-10-14T12:00:02Z"
+    }
+  ],
+  "export": {
+    "path": "~\\Desktop\\cleanmanager-doctor.json",
+    "written": false
+  }
 }

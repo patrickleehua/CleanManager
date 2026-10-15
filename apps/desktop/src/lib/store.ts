@@ -1,9 +1,31 @@
 // Application state shared by the shell and pages. Pages keep their own view state (filters,
 // path, scroll) in long-lived view objects; this store carries what several pages show.
 
+import type { DiagTarget } from './diagTypes';
 import type { Capabilities, Counts, IpcError, RecentScan, ScanState, ScanStatus } from './types';
 
-export type Page = 'scope' | 'overview' | 'disk' | 'cleanup' | 'plan' | 'operation' | 'apps' | 'activity' | 'settings';
+export type Page =
+  | 'scope'
+  | 'overview'
+  | 'disk'
+  | 'insights'
+  | 'cleanup'
+  | 'purge'
+  | 'installer'
+  | 'recyclebin'
+  | 'plan'
+  | 'operation'
+  | 'apps'
+  | 'uninstall'
+  | 'updates'
+  | 'startup'
+  | 'maintenance'
+  | 'status'
+  | 'processes'
+  | 'activity'
+  | 'agent'
+  | 'settings'
+  | 'diag';
 export type ActivityTab = 'operations' | 'plans' | 'scans' | 'quarantine';
 
 /** The scan hosted by this desktop process (global task area). */
@@ -51,6 +73,11 @@ export interface AppState {
   activityTab: ActivityTab;
   closing: boolean;
   preview: boolean;
+  /** Optional AI diagnosis: the object the workbench is about and the record shown. */
+  diagTarget: DiagTarget | null;
+  diagId: string | null;
+  /** Entry the disk page should locate when it is shown next (diagnosis "locate"). */
+  revealEntry: string | null;
 }
 
 type Listener = (s: AppState, prev: AppState) => void;

@@ -2,28 +2,46 @@
   "schema_version": "1.0",
   "kind": "maintenance_catalog",
   "request_id": "req_synthetic",
+  "platform": "windows",
+  "query": null,
+  "elevation": "one_prompt_per_run",
   "items": [
     {
       "task_id": "windows.dns-flush",
-      "task_version": "0.1.0",
+      "task_version": "1.0.0",
       "platform": "windows",
+      "title": "Flush DNS resolver cache",
       "problem": "Stale name resolution",
       "impact": "First lookups are slower briefly",
       "requires_admin": false,
+      "applies_when": "The Windows DNS client interface is present",
+      "estimated_seconds": 1,
       "applicability": "applicable",
       "applicability_reason": null,
-      "user_protected": false
+      "user_protected": false,
+      "reversible": false
     },
     {
       "task_id": "windows.trim-when-due",
-      "task_version": "0.1.0",
+      "task_version": "1.0.0",
       "platform": "windows",
+      "title": "Retrim solid-state drives when due",
       "problem": "SSD retrim overdue",
       "impact": "Short disk activity",
       "requires_admin": true,
-      "applicability": "not_applicable",
-      "applicability_reason": "Last optimization is within the schedule",
-      "user_protected": false
+      "applies_when": "A fixed SSD volume was last optimized more than 30 days ago",
+      "estimated_seconds": 60,
+      "applicability": "not_needed",
+      "applicability_reason": "C: last optimized 2026-10-10T03:00:00Z",
+      "user_protected": false,
+      "reversible": false
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "registry-optimizer",
+      "title": "Registry cleaning or optimization",
+      "reason": "No measurable benefit and can break applications; there is no task for it"
     }
   ]
 }

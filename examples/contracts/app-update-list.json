@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "kind": "app_update_list",
+  "request_id": "req_synthetic",
+  "checks_enabled": true,
+  "checked": true,
+  "checked_at": "2026-10-14T12:00:02Z",
+  "counts": {
+    "update_available": 1,
+    "up_to_date": 0,
+    "cannot_check": 1,
+    "not_checked": 0
+  },
+  "items": [
+    {
+      "app_instance_id": "app_editor",
+      "name": "Example Editor",
+      "current_version": "1.2.0",
+      "available_version": "1.3.0",
+      "channel": "winget",
+      "channel_id": "Example.Editor",
+      "state": "update_available",
+      "reason": null,
+      "checked_at": "2026-10-14T12:00:02Z",
+      "route": "package_manager",
+      "official_url": null
+    },
+    {
+      "app_instance_id": "app_tool",
+      "name": "Unpackaged Tool",
+      "current_version": "0.9",
+      "available_version": null,
+      "channel": null,
+      "channel_id": null,
+      "state": "cannot_check",
+      "reason": "No update channel: not installed through winget, Microsoft Store or Scoop",
+      "checked_at": "2026-10-14T12:00:02Z",
+      "route": "none",
+      "official_url": null
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-list"
+description = "Enables the diag_list command without any pre-configured scope."
+commands.allow = ["diag_list"]
+
+[[permission]]
+identifier = "deny-diag-list"
+description = "Denies the diag_list command without any pre-configured scope."
+commands.deny = ["diag_list"]

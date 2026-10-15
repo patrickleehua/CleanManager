@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS quarantine_items (
     quarantined_at TEXT NOT NULL,
     reminder_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS registry_backups (
+    backup_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL,
+    action_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    record_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS action_journal (
     operation_id TEXT NOT NULL REFERENCES operations(operation_id),
     action_id TEXT NOT NULL,
@@ -91,6 +101,12 @@ CREATE TABLE IF NOT EXISTS action_journal (
     result_json TEXT,
     result_at TEXT,
     PRIMARY KEY (operation_id, action_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+    operation_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    report_json TEXT NOT NULL
 ) STRICT;
 ";
 
@@ -648,6 +664,144 @@ impl AuditStore {
             params![operation_id, consumed.0 as i64, consumed.1 as i64, unknown.0 as i64, unknown.1 as i64, state],
         )?;
         Ok(())
+    }
+}
+
+/// `plan/v2` plans, their kind-bound receipts and the startup/registry prior-state records (add-mole-parity-suite).
+impl AuditStore {
+    pub fn save_plan_v2(&self, plan: &cm_core::plan::v2::PlanV2) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO plans(plan_id,plan_digest,contract,created_at,expires_at,plan_json) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![plan.body.plan_id, plan.digest, plan.body.engine_contract, plan.body.created_at, plan.body.expires_at,
+                serde_json::to_string(plan).expect("plan serializes")],
+        )?;
+        Ok(())
+    }
+
+    /// A stored `plan/v2` plan whose body still hashes to its digest. Kind rules are re-checked by the caller.
+    pub fn load_plan_v2(&self, plan_id: &str) -> Result<cm_core::plan::v2::PlanV2> {
+        let (contract, text): (String, String) = self
+            .conn
+            .query_row("SELECT contract, plan_json FROM plans WHERE plan_id=?1", [plan_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(plan_id.into()))?;
+        if contract != cm_core::plan::v2::PLAN_V2_CONTRACT {
+            return Err(StoreError::InvalidState(format!("plan {plan_id} is a {contract} plan, not a plan/v2 plan")));
+        }
+        let plan: cm_core::plan::v2::PlanV2 = serde_json::from_str(&text).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
+        if plan.body.digest().ok().as_deref() != Some(plan.digest.as_str()) || plan.body.plan_id != plan_id {
+            return Err(StoreError::AuditUnavailable(format!("plan {plan_id} digest does not match its body")));
+        }
+        Ok(plan)
+    }
+
+    /// Kind receipts share the receipts table (and `revoke_receipts`) with the other receipt types.
+    pub fn save_kind_receipt(&self, r: &cm_core::authz::KindReceipt) -> Result<()> {
+        if self.plan_contract(&r.plan_id)? != cm_core::plan::v2::PLAN_V2_CONTRACT {
+            return Err(StoreError::InvalidState(format!("plan {} is not a plan/v2 plan", r.plan_id)));
+        }
+        self.conn.execute(
+            "INSERT INTO receipts(receipt_id,plan_id,plan_digest,receipt_json,revoked_at) VALUES(?1,?2,?3,?4,NULL)",
+            params![r.receipt_id, r.plan_id, r.plan_digest, serde_json::to_string(r).expect("receipt serializes")],
+        )?;
+        Ok(())
+    }
+
+    /// Kind receipts of a plan. Rows of other receipt types are ignored, never reinterpreted.
+    pub fn kind_receipts_for(&self, plan_id: &str) -> Result<Vec<cm_core::authz::KindReceipt>> {
+        let mut stmt = self.conn.prepare("SELECT receipt_json, revoked_at FROM receipts WHERE plan_id=?1 ORDER BY receipt_id")?;
+        let rows = stmt.query_map([plan_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (json, revoked) = row?;
+            if let Ok(mut rec) = serde_json::from_str::<cm_core::authz::KindReceipt>(&json) {
+                rec.revoked_at = revoked;
+                out.push(rec);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Store a prior-state record before the change it backs up (durable: synchronous FULL, never pruned with the index).
+    pub fn save_startup_backup(&self, operation_id: &str, action_id: &str, plan_id: &str, b: &cm_core::startup::StartupBackup) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO registry_backups(backup_id,operation_id,action_id,plan_id,record_json,record_sha256,state,created_at) VALUES(?1,?2,?3,?4,?5,?6,'recorded',?7)",
+            params![b.backup_id, operation_id, action_id, plan_id, serde_json::to_string(b).expect("backup serializes"), b.sha256(), b.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// A stored prior-state record, verified against the hash recorded with it.
+    pub fn startup_backup(&self, backup_id: &str) -> Result<(cm_core::startup::StartupBackup, String)> {
+        let (json, sha, state): (String, String, String) = self
+            .conn
+            .query_row("SELECT record_json, record_sha256, state FROM registry_backups WHERE backup_id=?1", [backup_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(backup_id.into()))?;
+        let b: cm_core::startup::StartupBackup = serde_json::from_str(&json).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
+        if b.sha256() != sha || b.backup_id != backup_id {
+            return Err(StoreError::AuditUnavailable(format!("backup {backup_id} does not match its recorded hash")));
+        }
+        Ok((b, state))
+    }
+
+    /// Prior-state records written by one operation, in action order: (action_id, record, state).
+    pub fn startup_backups_for_operation(&self, operation_id: &str) -> Result<Vec<(String, cm_core::startup::StartupBackup, String)>> {
+        let mut stmt = self.conn.prepare("SELECT action_id, backup_id FROM registry_backups WHERE operation_id=?1 ORDER BY action_id")?;
+        let ids: Vec<(String, String)> = stmt.query_map([operation_id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<std::result::Result<_, _>>()?;
+        ids.into_iter().map(|(a, id)| self.startup_backup(&id).map(|(b, s)| (a, b, s))).collect()
+    }
+
+    pub fn set_startup_backup_state(&self, backup_id: &str, state: &str) -> Result<()> {
+        self.conn.execute("UPDATE registry_backups SET state=?2 WHERE backup_id=?1", params![backup_id, state])?;
+        Ok(())
+    }
+
+    /// Store an uninstall registry-key backup (UNI-06) in the same durable table, before the delete it backs up.
+    pub fn save_key_backup(&self, operation_id: &str, action_id: &str, plan_id: &str, b: &cm_core::uninstall::KeyBackup) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO registry_backups(backup_id,operation_id,action_id,plan_id,record_json,record_sha256,state,created_at) VALUES(?1,?2,?3,?4,?5,?6,'recorded',?7)",
+            params![b.backup_id, operation_id, action_id, plan_id, serde_json::to_string(b).expect("backup serializes"), b.sha256(), b.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// A stored uninstall key backup, verified against the hash recorded with it: (record, state).
+    pub fn key_backup(&self, backup_id: &str) -> Result<(cm_core::uninstall::KeyBackup, String)> {
+        let (json, sha, state): (String, String, String) = self
+            .conn
+            .query_row("SELECT record_json, record_sha256, state FROM registry_backups WHERE backup_id=?1", [backup_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(backup_id.into()))?;
+        let b: cm_core::uninstall::KeyBackup = serde_json::from_str(&json).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
+        if b.sha256() != sha || b.backup_id != backup_id {
+            return Err(StoreError::AuditUnavailable(format!("backup {backup_id} does not match its recorded hash")));
+        }
+        Ok((b, state))
+    }
+
+    /// Every backup row of one operation (startup and key backups alike): (action_id, backup_id, state).
+    pub fn backup_ids_for_operation(&self, operation_id: &str) -> Result<Vec<(String, String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT action_id, backup_id, state FROM registry_backups WHERE operation_id=?1 ORDER BY action_id")?;
+        let rows = stmt.query_map([operation_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// Maintenance run records (parity MNT-07): one `maintenance_report` per operation, newest first in history.
+impl AuditStore {
+    pub fn save_maintenance_run(&self, operation_id: &str, plan_id: &str, finished_at: &str, report_json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO maintenance_runs(operation_id,plan_id,finished_at,report_json) VALUES(?1,?2,?3,?4)",
+            params![operation_id, plan_id, finished_at, report_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn maintenance_runs(&self, limit: u32) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT report_json FROM maintenance_runs ORDER BY finished_at DESC, operation_id DESC LIMIT ?1")?;
+        let rows = stmt.query_map([limit], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
     }
 }
 

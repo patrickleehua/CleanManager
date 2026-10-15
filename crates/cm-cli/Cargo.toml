@@ -19,5 +19,9 @@ cm-app = { path = "../cm-app" }
 sha2.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# System UI language for human-readable text (LIF-05) and handle inheritance for `scan --detach`; same version as cm-platform.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization"] }
+
 [lints]
 workspace = true

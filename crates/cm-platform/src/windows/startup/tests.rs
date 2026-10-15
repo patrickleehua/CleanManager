@@ -126,9 +126,9 @@ fn startup_folder_entries_from_a_synthetic_folder() {
         make_link(&format!(r"{d2}\Gone.lnk"), &gone2);
         std::fs::remove_file(&gone2).unwrap();
         assert!(link_target(&format!(r"{d2}\Notes.lnk")).unwrap().to_lowercase().ends_with(r"\system32\notepad.exe"));
-        let mut b = Builder { items: Vec::new(), issues: Vec::new(), signers: HashMap::new() };
+        let mut b = Builder { items: Vec::new(), issues: Vec::new(), signers: HashMap::new(), is_admin: false };
         let approved: HashMap<String, bool> = [("run.bat".to_owned(), false)].into_iter().collect();
-        read_folder(&mut b, &d2, StartupScope::User, &approved);
+        read_folder(&mut b, &StartupEnv::default(), &d2, StartupScope::User, Hive::Hkcu, &approved);
         assert!(b.issues.is_empty());
         b.items
     })
@@ -144,7 +144,15 @@ fn startup_folder_entries_from_a_synthetic_folder() {
     assert_eq!(broken.state, StartupState::Broken);
     assert!(broken.reason.as_deref().unwrap().contains("missing"));
     assert_eq!(by_name("run").state, StartupState::Disabled);
-    assert!(items.iter().all(|i| i.toggle_capability != CapabilityState::Available));
+    // 11.2: Startup-folder files toggle through their enable record; the protected one does not.
+    assert_eq!(notes.toggle_capability, CapabilityState::Unsupported);
+    assert!(notes.location.is_none());
+    for n in ["Gone", "run"] {
+        let i = by_name(n);
+        assert_eq!(i.toggle_capability, CapabilityState::Available, "{n}");
+        assert!(matches!(&i.location, Some(StartupLocation::FolderFile { file_name, hive: Hive::Hkcu, .. }) if file_name.starts_with(if n == "run" { "run" } else { "Gone" })));
+        assert!(!i.removable_when_stale, "only Run values are removed");
+    }
 }
 
 /// Real machine: structure only, never specific entries.
@@ -165,8 +173,14 @@ fn real_inventory_is_well_formed() {
         if i.protected {
             assert_eq!(i.toggle_capability, CapabilityState::Unsupported, "{}", i.name);
             assert!(i.reason.is_some());
+        } else if matches!(i.source, StartupSource::ScheduledTask | StartupSource::StoreStartupTask) {
+            assert_eq!(i.toggle_capability, CapabilityState::Unverified, "no verified mechanism: settings page only ({})", i.name);
+            assert!(i.location.is_none() && i.reason.as_deref().is_some_and(|r| r.contains("ms-settings:startupapps")));
+        } else if i.location.is_some() {
+            let expect = if i.scope == StartupScope::System && !super::super::startup_actions::is_elevated() { CapabilityState::PermissionRequired } else { CapabilityState::Available };
+            assert_eq!(i.toggle_capability, expect, "{}", i.name);
         } else {
-            assert_ne!(i.toggle_capability, CapabilityState::Available, "toggling is not implemented in this build");
+            assert_eq!(i.toggle_capability, CapabilityState::Unsupported, "RunOnce/policy entries stay read-only: {}", i.name);
         }
         if i.state == StartupState::Broken {
             assert!(i.target.is_some(), "broken needs a checked target");

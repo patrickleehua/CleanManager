@@ -86,3 +86,23 @@ fn real_insights_are_guidance_only() {
         assert!(s.size_basis == SizeBasis::SystemQuery || s.size_note.is_some());
     }
 }
+
+/// DIN-04 listing: files below Downloads with their modification time; links are not followed; nothing selected.
+#[test]
+fn download_entries_list_files_with_times() {
+    let root = std::env::temp_dir().join(format!("cm-insights-dl-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(r"sub\deeper")).unwrap();
+    std::fs::write(root.join("old.iso"), vec![0u8; 300]).unwrap();
+    std::fs::write(root.join(r"sub\deeper\new.txt"), b"x").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(200 * 86_400);
+    std::fs::File::options().write(true).open(root.join("old.iso")).unwrap().set_modified(old).unwrap();
+    let (entries, note) = download_entries(&root);
+    assert_eq!((entries.len(), note), (2, None));
+    let now = cm_core::plan::parse_utc(&cm_core::time::now_utc()).unwrap();
+    let review = cm_core::insights::old_downloads(raw(&root.to_string_lossy()), entries, now, 90, "t", None);
+    assert_eq!(review.items.len(), 1);
+    assert!(review.items[0].path.display().ends_with("old.iso") && review.items[0].installer_like && !review.items[0].selected);
+    assert!(review.items[0].age_days >= 199);
+    let _ = std::fs::remove_dir_all(&root);
+}

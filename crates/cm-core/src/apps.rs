@@ -7,8 +7,8 @@
 //!   never counted as any instance's exclusive space; shared space is counted once.
 //! - APP-03: a directory without a matching installation record stays `unknown`. Neither a
 //!   missing record nor a name resemblance ever makes it a cleanup candidate.
-//! - APP-04: the first release is read-only; every instance reports uninstall as `unsupported`
-//!   with a reason instead of pretending that deleting a folder is an uninstall.
+//! - APP-04: an instance starts with uninstall `unsupported` (the read-only inventory never pretends that deleting a
+//!   folder is an uninstall); `apps list` then reports the verified route of the uninstall module (UNI-01).
 
 use std::collections::BTreeMap;
 
@@ -21,7 +21,7 @@ use crate::error::CoreError;
 use crate::model::Timestamp;
 use crate::path::RawPath;
 
-/// Reason reported for the uninstall capability in the read-only first release (APP-04).
+/// Default reason of the uninstall capability before a platform resolved the instance's route (APP-04).
 pub const READ_ONLY_REASON: &str =
     "Read-only first release: CleanManager does not run uninstallers or delete package folders; use Windows Settings or the vendor uninstaller";
 

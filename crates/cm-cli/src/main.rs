@@ -6,14 +6,24 @@ mod apps_cmd;
 mod args;
 mod clean_cmd;
 mod commands;
+mod completion_cmd;
+mod diag_cmd;
+mod doctor_cmd;
+mod i18n;
 mod insights_cmd;
 mod installer_cmd;
+mod optimize_cmd;
 mod plan_cmd;
+mod process_cmd;
 mod protect_cmd;
 mod purge_cmd;
 mod recovery_cmd;
+mod scan_cmd;
 mod startup_cmd;
 mod status_cmd;
+mod trash_cmd;
+mod uninstall_cmd;
+mod updates_cmd;
 
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
@@ -38,12 +48,18 @@ pub fn request_id() -> String {
 
 pub fn emit(value: &Value, format: Format) {
     let mut out = std::io::stdout().lock();
-    let text = match format {
-        Format::Json => serde_json::to_string(value).expect("records serialize"),
-        Format::Text => serde_json::to_string_pretty(value).expect("records serialize"),
-    };
-    // UTF-8 without BOM, one terminal record, nothing else on stdout.
-    let _ = writeln!(out, "{text}");
+    match format {
+        // UTF-8 without BOM, one compact record per line, nothing else on stdout. Machine records
+        // never depend on the human language (LIF-05).
+        Format::Json => {
+            let _ = writeln!(out, "{}", serde_json::to_string(value).expect("records serialize"));
+        }
+        // Human text: localized titles/explanations; codes, states and IDs verbatim.
+        Format::Text => {
+            let _ = write!(out, "{}", i18n::render(value));
+        }
+    }
+    let _ = out.flush();
 }
 
 pub fn fail(req: &str, code: ErrorCode, message: &str, format: Format) -> ExitCode {
@@ -56,10 +72,17 @@ fn main() -> ExitCode {
     #[cfg(windows)]
     let _ = cm_platform::windows::privileges::disable_bypass_privileges();
     let raw: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    // The short-lived maintenance worker (parity 13.1): a hidden first argument, never a user command or table row.
+    if raw.first().is_some_and(|a| a == cm_core::maintenance::WORKER_SUBCOMMAND) {
+        return optimize_cmd::worker_main(&raw[1..]);
+    }
     let req = request_id();
     let fallback = if std::io::stdout().is_terminal() { Format::Text } else { Format::Json };
     match args::parse(&raw) {
-        Ok(parsed) => commands::run(&req, parsed),
+        Ok(parsed) => {
+            i18n::set(parsed.lang);
+            commands::run(&req, parsed)
+        }
         Err(msg) => fail(&req, ErrorCode::InvalidArgument, &msg, fallback),
     }
 }

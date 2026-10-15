@@ -1,0 +1,128 @@
+{
+  "schema_version": "1.0",
+  "kind": "uninstall_leftovers",
+  "request_id": "req_synthetic",
+  "operation_id": "op_demo",
+  "app": {
+    "app_instance_id": "app_demo",
+    "name": "Example App",
+    "publisher": "Example Vendor Ltd.",
+    "source": "registry_uninstall"
+  },
+  "groups": [
+    {
+      "group": "caches_logs",
+      "items": [
+        {
+          "object_id": "lo_cache",
+          "kind": "directory",
+          "group": "caches_logs",
+          "display": "C:\\Users\\Example\\AppData\\Roaming\\ExampleApp\\Cache",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": null,
+          "tier": "default_selected",
+          "selected": true,
+          "warnings": [],
+          "logical_bytes": "1048576",
+          "note": null,
+          "requires_admin": false,
+          "action": "fs_trash",
+          "guidance": null
+        }
+      ]
+    },
+    {
+      "group": "personal_data",
+      "items": [
+        {
+          "object_id": "lo_models",
+          "kind": "directory",
+          "group": "personal_data",
+          "display": "C:\\Users\\Example\\AppData\\Roaming\\ExampleApp\\models",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": null,
+          "tier": "review_only",
+          "selected": false,
+          "warnings": [],
+          "logical_bytes": "4294967296",
+          "note": "models: large, usually re-downloadable by the app, but only if you still have access to them",
+          "requires_admin": false,
+          "action": "fs_trash",
+          "guidance": null
+        },
+        {
+          "object_id": "lo_shared",
+          "kind": "directory",
+          "group": "personal_data",
+          "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": "shared_owner",
+          "tier": "kept",
+          "selected": false,
+          "warnings": [],
+          "logical_bytes": null,
+          "note": null,
+          "requires_admin": false,
+          "action": "fs_trash",
+          "guidance": null
+        }
+      ]
+    },
+    {
+      "group": "settings",
+      "items": [
+        {
+          "object_id": "lo_key",
+          "kind": "registry_key",
+          "group": "settings",
+          "display": "HKCU\\SOFTWARE\\ExampleVendor\\ExampleApp",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": null,
+          "tier": "review_only",
+          "selected": false,
+          "warnings": [],
+          "logical_bytes": null,
+          "note": "backed up before it is deleted; restorable from history",
+          "requires_admin": false,
+          "action": "registry_backup_delete",
+          "guidance": null
+        }
+      ]
+    },
+    {
+      "group": "system",
+      "items": [
+        {
+          "object_id": "lo_svc",
+          "kind": "service",
+          "group": "system",
+          "display": "service ExampleAppUpdater",
+          "evidence": [
+            "%APPDATA%\\ExampleApp matches the product name"
+          ],
+          "marker": null,
+          "tier": "review_only",
+          "selected": false,
+          "warnings": [],
+          "logical_bytes": null,
+          "note": null,
+          "requires_admin": false,
+          "action": "manual",
+          "guidance": "CleanManager does not delete services: stop it and run `sc.exe delete ExampleAppUpdater` from an administrator terminal"
+        }
+      ]
+    }
+  ],
+  "default_selected": 1,
+  "external_references": [
+    "C:\\Users\\Example\\.gitconfig mentions C:\\Program Files\\Example App (read-only hint; CleanManager does not edit it)"
+  ]
+}

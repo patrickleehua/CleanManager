@@ -4,7 +4,9 @@
 // revisions only, size-desc with unknown last and entry_id tie-break, bounded pages.
 
 import type { Backend } from './api';
+import { mockDiag } from './mockDiag';
 import { mockOps } from './mockOps';
+import { mockSuite } from './mockSuite';
 import type {
   Entry,
   EntriesPage,
@@ -250,8 +252,21 @@ export function mockBackend(): Backend {
     },
   ];
 
+  const diag = mockDiag((entryId) => {
+    const n = nodes.get(Number(entryId));
+    if (!n) return null;
+    return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
+  });
+  const ops = mockOps();
+  const suite = mockSuite(ops.__plan, (entryId) => {
+    const n = nodes.get(Number(entryId));
+    if (!n) return null;
+    return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
+  });
   return {
-    ...mockOps(),
+    ...ops,
+    ...suite,
+    ...diag,
     preview: true,
     async capabilities() {
       return {

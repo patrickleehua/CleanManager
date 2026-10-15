@@ -169,3 +169,71 @@ fn cm_core_scan(stores: &Stores, request: &ScanRequest) {
     let out = run_scan(&stores.index, &backend, request, &cm_core::scan::ScanOptions::default()).unwrap();
     assert_eq!(out.state, cm_core::model::ScanState::Completed);
 }
+
+/// A manual Recycle Bin plan (plan/v2) goes through the same review page: detail with a review token, every item,
+/// approval with the typed digest prefix, precheck, plan list and revocation. Nothing is applied here, so the real
+/// Recycle Bin is never touched.
+#[test]
+fn manual_trash_plan_is_reviewed_like_any_plan() {
+    let base = std::env::temp_dir().join(format!("cm-desktop-mtr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("root");
+    let store = base.join("store");
+    std::fs::create_dir_all(root.join("old")).unwrap();
+    std::fs::write(root.join("old").join("a.bin"), vec![1u8; 300]).unwrap();
+    std::fs::write(root.join("keep.txt"), b"keep").unwrap();
+    let stores = Stores::open(&store).unwrap();
+    let request = ScanRequest {
+        scan_id: "s_mtr".into(),
+        scope_id: "scope_mtr".into(),
+        root: cm_platform::paths::raw_path(root.as_os_str()).unwrap(),
+        host: cm_platform::host::OsHostProbe.current("desktop"),
+    };
+    cm_core_scan(&stores, &request);
+    let entry: u64 = stores
+        .index
+        .list_entries(&EntryQuery {
+            scan_id: "s_mtr".into(),
+            sort: Sort::NameAsc,
+            filter: Filter { kind: KindFilter::Directory, name_contains: Some("old".into()), parent_entry_id: None },
+            page_size: 5,
+            cursor: None,
+        })
+        .unwrap()
+        .items[0]
+        .entry_id
+        .parse()
+        .unwrap();
+    let s = AppState::with_store(Some(store.clone()), None, None);
+    let ins = crate::suite::win::trash_inspect(&s, "s_mtr", entry).unwrap();
+    assert!(ins.trashable, "{:?}", ins.refusal);
+    assert_eq!((ins.name.as_str(), ins.files, ins.logical_bytes.as_deref()), ("old", 1, Some("300")));
+    let plan_id = crate::suite::win::trash_plan(&s, "s_mtr", &[entry]).unwrap().plan_id;
+    s.with_stores(|st| {
+        let d = cleanup::detail(&s, st, &plan_id)?;
+        assert_eq!((d.kind, d.mode, d.plan_kind_v2.as_deref(), d.requires_admin, d.catalog), ("manual_trash", Some(Mode::Trash), Some("manual_selection"), false, None));
+        assert_eq!((d.authorization.status, d.stale_reason.as_deref(), d.item_count), ("required", None, 1));
+        let token = d.review_token.clone().expect("review token");
+        let items = cleanup::items(st, &plan_id, 50, None)?;
+        let i = &items.items[0];
+        assert_eq!((i.name.as_str(), i.item_kind.as_str(), i.action_type.as_deref(), i.logical_bytes.as_str()), ("old", "directory", Some("fs_trash"), "300"));
+
+        assert_eq!(ops::precheck_for_tests(&s, st, &plan_id).unwrap_err().reason, "needs_approval");
+        assert_eq!(cleanup::approve(&s, st, &plan_id, &token, "00000000").unwrap_err().reason, "confirmation_mismatch");
+        let auth = cleanup::approve(&s, st, &plan_id, &token, &d.digest_prefix)?;
+        assert_eq!((auth.status, auth.source), ("authorized", Some(cm_core::authz::ReceiptSource::InteractiveReview)));
+        ops::precheck_for_tests(&s, st, &plan_id)?;
+        let row = ops::plans(st, 10, None)?.items.into_iter().find(|p| p.plan_id == plan_id).expect("listed");
+        assert_eq!((row.kind, row.authorization, row.problem), ("manual_trash", Some("authorized"), None));
+        assert_eq!(cleanup::policy_from_plan(st, &plan_id).unwrap_err().reason, "not_cleanup_plan");
+
+        assert_eq!(cleanup::revoke(st, &plan_id)?.status, "revoked");
+        assert_eq!(ops::precheck_for_tests(&s, st, &plan_id).unwrap_err().reason, "needs_approval");
+        Ok(())
+    })
+    .unwrap();
+    assert!(root.join("old").join("a.bin").exists(), "creating, approving and revoking touch nothing");
+    drop(stores);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&base);
+}

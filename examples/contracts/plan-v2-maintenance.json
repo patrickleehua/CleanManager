@@ -20,14 +20,14 @@
         "action_id": "a01",
         "action_type": "maintenance_task",
         "task_id": "windows.dns-flush",
-        "task_version": "0.1.0",
+        "task_version": "1.0.0",
         "requires_admin": false
       },
       {
         "action_id": "a02",
         "action_type": "maintenance_task",
         "task_id": "windows.trim-when-due",
-        "task_version": "0.1.0",
+        "task_version": "1.0.0",
         "requires_admin": true
       },
       {
@@ -40,6 +40,6 @@
       }
     ]
   },
-  "plan_digest": "3000553234e07bb230dac531126cfd5ed0415488f8ab441cf6dcee88a293c813",
+  "plan_digest": "e209157e50b93898f88e24a9c162df191cf1dc4e0cef5f3225f66a876001586e",
   "authorization_status": "required"
 }

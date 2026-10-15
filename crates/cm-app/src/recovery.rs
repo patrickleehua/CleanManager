@@ -348,9 +348,9 @@ pub fn reconcile_recovery_operation(stores: &Stores, actions: &dyn RecoveryActio
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryItem {
     pub row: OperationRow,
-    /// Authoritative plan type (`plan/v1`, `recovery/v1`), if the plan is still readable.
+    /// Authoritative plan type (`plan/v1`, `plan/v2`, `recovery/v1`), if the plan is still readable.
     pub contract: Option<String>,
-    /// `trash`, `quarantine`, `delete`, `restore` or `purge`.
+    /// `trash`, `quarantine`, `delete`, `restore`, `purge` or `startup`.
     pub action: Option<String>,
     pub rule_refs: Vec<String>,
     pub report: Option<OperationReport>,
@@ -372,6 +372,13 @@ fn availability(item: &HistoryItem, stores: &Stores) -> Result<(&'static str, St
     }
     if report.succeeded == 0 {
         return Ok(("not_applicable", "Nothing was changed by this operation.".into()));
+    }
+    // plan/v2 kinds describe their own recovery (manual trash → Recycle Bin, startup → recorded prior state).
+    if item.contract.as_deref() == Some(cm_core::plan::v2::PLAN_V2_CONTRACT) {
+        return Ok(match crate::plans::history_facts(stores, &item.row.plan_id, op) {
+            Some((_, availability, guidance)) => (availability, guidance),
+            None => ("unknown", "The plan of this operation cannot be read; recovery availability is unknown.".into()),
+        });
     }
     Ok(match item.action.as_deref() {
         Some("quarantine") => {
@@ -400,6 +407,7 @@ pub fn operation_history(stores: &Stores, page_size: u32, cursor: Option<&str>) 
                 Ok(p) => (Some(match p.body.mode { Mode::Trash => "trash", Mode::Quarantine => "quarantine", Mode::Delete => "delete" }.to_string()), p.rule_refs),
                 Err(_) => (None, vec![]),
             },
+            Some(cm_core::plan::v2::PLAN_V2_CONTRACT) => (crate::plans::history_facts(stores, &row.plan_id, &row.operation_id).map(|f| f.0.to_string()), vec![]),
             Some(cm_core::recovery::RECOVERY_CONTRACT) => {
                 let kind = stores.audit.load_recovery_plan(&row.plan_id).ok().map(|p| settled_state(p.body.recovery_kind));
                 (kind.map(|k| if k == "restored" { "restore".to_string() } else { "purge".to_string() }), vec![])

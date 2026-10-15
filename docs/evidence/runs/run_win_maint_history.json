@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "test_id": "MNT-07",
+  "run_id": "run_win_maint_history",
+  "recorded_at": "2026-10-15T09:28:30Z",
+  "code_commit": "791b6240796381227f9f40231e72c4fbd657c1a6",
+  "binary_sha256": "96afd2536b3404e6768be1b2f3c93e0aa3fd81b78d42ef041234fdd4d004186f",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.maintenance",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "optimize",
+    "history"
+  ],
+  "seed": null,
+  "expected": "The run is recorded with task versions, entry, principal, elevation, per-task outcomes and times, with no undo",
+  "actual": "runs=1 undo=unavailable operations_list_action=['maintenance'] recovery=['unavailable']",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {},
+  "observer": "agent (parity 14.2 evidence)",
+  "limitations": [
+    "Working tree contains uncommitted changes of several concurrent tasks; code_commit is the base commit.",
+    "Debug build of cleanmanager.exe; the shell was elevated, so administrator tasks ran in-process (elevation=already_elevated), not through the UAC worker.",
+    "The interactive-review receipt was written to the store directly (the agent has no TTY), exactly as the CLI integration tests do."
+  ],
+  "status": "passed"
+}

@@ -141,6 +141,35 @@ pub fn receipt_valid(r: &Receipt, plan: &Plan, principal: &str, now_unix: i64) -
         && parse_utc(&r.expires_at).is_some_and(|e| now_unix < e)
 }
 
+/// Authorization of one `plan/v2` plan. It binds the plan kind as well as the digest, and is a distinct type from the
+/// cleanup [`Receipt`] and the quarantine `RecoveryReceipt`: none of them deserializes as another, so an approval of
+/// one kind can never authorize a plan of another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KindReceipt {
+    pub receipt_id: String,
+    pub plan_id: String,
+    pub plan_digest: String,
+    pub plan_kind: crate::plan::v2::PlanKind,
+    pub principal: String,
+    pub source: ReceiptSource,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+}
+
+/// A `plan/v2` receipt authorizes exactly this body. Kinds that can never be policy-matched (everything but cleanup)
+/// accept only an interactive review.
+pub fn kind_receipt_valid(r: &KindReceipt, plan: &crate::plan::v2::PlanV2, principal: &str, now_unix: i64) -> bool {
+    (r.source == ReceiptSource::InteractiveReview || plan.body.plan_kind.policy_matchable())
+        && r.revoked_at.is_none()
+        && r.plan_id == plan.body.plan_id
+        && r.plan_digest == plan.digest
+        && r.plan_kind == plan.body.plan_kind
+        && r.principal == principal
+        && parse_utc(&r.expires_at).is_some_and(|e| now_unix < e)
+}
+
 /// The OS user that authorizations bind to.
 pub fn current_principal() -> String {
     let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "unknown".into());

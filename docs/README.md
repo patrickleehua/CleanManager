@@ -9,17 +9,26 @@
 | [总体分析](architecture-analysis.zh-CN.md) | Rust 是否合适，三个参考项目分别借鉴什么 |
 | [REA 调查与证据](research/rea-investigation.md) | 实际检查了什么，观察值与推断如何区分 |
 | [产品与交互](product-and-ux.md) | 页面、人工/Agent 旅程、部分成功与恢复如何展示 |
+| [视觉标识与信息架构](visual-identity.md) | 原创标志/图标与资源清单、设计令牌与对比度检查、五工具导航与快捷键、平台惯用语、统一选择组件 |
 | [AI 清理诊断扩展](ai-cleanup-diagnostics.md) | 自配 API/CLI、用途与删除影响、依据/追问及原型交互 |
-| [v5 可点击原型](../output/ui-preview-2026-10-14/suite-v3/prototype-v5.md) | 体验路径、视觉接入和浏览器验证范围 |
+| [v6 可点击原型](../output/ui-preview-2026-10-14/suite-v3/prototype-v6.md) | 五工具信息架构、规格/门禁状态、体验路径与浏览器验证（[v5](../output/ui-preview-2026-10-14/suite-v3/prototype-v5.md) 保留作 AI 诊断交互参考） |
 | [OpenSpec 提案](../openspec/changes/define-cleanmanager-mvp/proposal.md) | 首版九项能力、可选 AI 扩展及设计/任务验收规划 |
 | [核心架构](core-architecture.md) | 模块、数据对象、索引、并发和状态机 |
 | [Windows 后端](platforms/windows.md) | NTFS、USN、权限、云占位、应用管理与发布 |
 | [macOS 后端](platforms/macos.md) | 批量枚举、APFS、FSEvents、TCC 与平台限制 |
 | [规则与执行](safety-and-rules.md) | 候选如何成为固定计划，如何授权和核验 |
 | [清理目录](catalog.md) | 第 1 波 Windows 类目、档位计算、占用探测、所属工具委托与实测证据 |
+| [手选移入回收站](manual-trash.md) | manual_selection 计划、系统目录只读、占用进程、回收站内永久删除与放回方式 |
+| [启动项](startup-items.md) | 可逆启停、失效项备份后删除、管理员要求与恢复计划 |
+| [应用卸载](app-uninstall.md) | 两段卸载计划、各平台支持来源、签名核验、运行中处理、残留分组与注册表备份恢复 |
+| [系统状态与洞察卡片](system-status.md) | 进程解释与结束进程、关键进程保护、可选高 CPU 提醒、状态流过期标记、概览卡片与旧下载审阅 |
+| [应用更新](app-updates.md) | 检测通道与“无法检查”、检查开关、签名一致才执行的更新与逐项结果 |
+| [系统维护](system-maintenance.md) | 维护任务目录、六种结果、集中提权、禁止项、只读诊断与运行记录 |
+| [提权边界](privilege-boundary.md) | Windows 短生命周期提权工作进程的命令集、校验、生命周期与移除；macOS helper（规划） |
 | [CLI 与 Agent 协议](cli-protocol.md) | 命令、JSON、退出码、分页和 Skill 边界 |
 | [设计决策](decisions.md) | 关键选择、依据与重新评估条件 |
 | [分发与许可](distribution-and-licensing.md) | 参考代码、第三方包、签名、更新和隐私 |
+| [依赖清单](dependencies.md) · [桌面端依赖清单](dependencies-desktop.md) | 每个锁定依赖的版本、许可、来源与用途（由工具生成并由验证器比对） |
 | [验证计划](verification-plan.md) | 平台、正确性、竞态、性能、恢复如何验收 |
 | [实施路线](roadmap.md) | 任务、依赖、阶段门禁和可领取的第一批工作 |
 | [复现说明](research/reproduction.md) | 如何验证契约、复现分析器探针与 REA 检查 |

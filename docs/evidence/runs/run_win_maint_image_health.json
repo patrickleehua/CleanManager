@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "MNT-03",
+  "run_id": "run_win_maint_image_health",
+  "recorded_at": "2026-10-15T09:28:30Z",
+  "code_commit": "791b6240796381227f9f40231e72c4fbd657c1a6",
+  "binary_sha256": "96afd2536b3404e6768be1b2f3c93e0aa3fd81b78d42ef041234fdd4d004186f",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.maintenance",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "plan",
+    "apply",
+    "mp_19d8_18dea9e350f1a5ac"
+  ],
+  "seed": null,
+  "expected": "windows.image-health-check@1.0.0 runs the read-only DISM CheckHealth and records unchanged when the store is healthy, attention otherwise",
+  "actual": "outcome=unchanged code=healthy reason=no component store corruption was detected (CheckHealth, read-only); cross-check `Dism.exe /Online /Cleanup-Image /CheckHealth`: 'No component store corruption detected.' (exit 0)",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "operation_id": "op_fc8990325c50558a",
+    "dism_image_version": "10.0.26200.9457"
+  },
+  "observer": "agent (parity 14.2 evidence)",
+  "limitations": [
+    "Working tree contains uncommitted changes of several concurrent tasks; code_commit is the base commit.",
+    "Debug build of cleanmanager.exe; the shell was elevated, so administrator tasks ran in-process (elevation=already_elevated), not through the UAC worker.",
+    "The interactive-review receipt was written to the store directly (the agent has no TTY), exactly as the CLI integration tests do.",
+    "Only the healthy state was observable on this device; repairable/not_repairable mapping is covered by unit-level review only."
+  ],
+  "status": "passed"
+}

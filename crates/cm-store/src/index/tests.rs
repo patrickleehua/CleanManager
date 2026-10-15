@@ -277,6 +277,9 @@ fn exited_host_interrupts_scan_and_keeps_committed_results() {
     let status = store.scan_status("s1").unwrap();
     assert_eq!((status.state, status.completeness.as_deref()), (ScanState::Interrupted, Some("partial_scope")));
     assert_eq!(store.list_entries(&query(Sort::LogicalDesc, 5, None)).unwrap().items.len(), 1);
+    let report = store.scan_report("s1").unwrap().expect("interruption is explained");
+    assert_eq!(report["issues"][0]["code"], "host_exited");
+    assert!(store.reconcile_hosts(|_| Liveness::Exited, "t3").unwrap().is_empty(), "terminal scans are not reconciled twice");
 }
 
 #[test]

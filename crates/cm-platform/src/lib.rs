@@ -1,6 +1,7 @@
 //! Platform access for CleanManager. Each OS module implements `cm_core` traits; the core
 //! never calls OS APIs directly.
 
+pub mod credentials;
 pub mod host;
 pub mod paths;
 pub mod protection;

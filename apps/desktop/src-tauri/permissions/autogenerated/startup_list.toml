@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-startup-list"
+description = "Enables the startup_list command without any pre-configured scope."
+commands.allow = ["startup_list"]
+
+[[permission]]
+identifier = "deny-startup-list"
+description = "Denies the startup_list command without any pre-configured scope."
+commands.deny = ["startup_list"]

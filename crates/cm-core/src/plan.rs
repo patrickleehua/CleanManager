@@ -18,6 +18,9 @@ use crate::obs::{NativeTime, ObsContract, ObservationRecord, TimeUnit};
 use crate::path::RawPath;
 use crate::rules::{Mode, Tier};
 
+/// `plan/v2`: plan kinds, typed actions and per-kind allowed actions.
+pub mod v2;
+
 /// Default plan lifetime (PLN-03).
 pub const PLAN_TTL_SECONDS: i64 = 900;
 

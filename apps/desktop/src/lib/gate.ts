@@ -35,4 +35,45 @@ export class RequestGate {
     if (!this.isCurrent(ticket)) return { stale: true };
     return { stale: false, value };
   }
+
+  /** Start a new generation for `work` and resolve it only if nothing newer started meanwhile. */
+  latest<T>(work: Promise<T>): Promise<{ stale: true } | { stale: false; value: T }> {
+    return this.run(this.next(), work);
+  }
+
+  /** Invalidate every outstanding ticket (the view's subject changed or the view closed). */
+  invalidate(): void {
+    this.next();
+  }
 }
+
+/**
+ * GUI-14: an asynchronous result is applied to a view only while it is the newest request *for
+ * the subject the view shows now* (the selected app, the open tab). A result for an older subject
+ * or an older request of the same subject is dropped — it never replaces the current view.
+ */
+export class SubjectGate<K> {
+  private gate = new RequestGate();
+  private subject: K | null = null;
+
+  /** The subject the view shows now. Changing it invalidates every pending result. */
+  show(subject: K): void {
+    if (subject !== this.subject) {
+      this.subject = subject;
+      this.gate.invalidate();
+    }
+  }
+
+  get current(): K | null {
+    return this.subject;
+  }
+
+  /** Load data for `subject`; the value is returned only if the view still shows it. */
+  async load<T>(subject: K, work: Promise<T>): Promise<{ stale: true } | { stale: false; value: T }> {
+    this.show(subject);
+    const r = await this.gate.latest(work);
+    if (r.stale || subject !== this.subject) return { stale: true };
+    return r;
+  }
+}
+

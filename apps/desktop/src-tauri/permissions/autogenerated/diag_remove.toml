@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-remove"
+description = "Enables the diag_remove command without any pre-configured scope."
+commands.allow = ["diag_remove"]
+
+[[permission]]
+identifier = "deny-diag-remove"
+description = "Denies the diag_remove command without any pre-configured scope."
+commands.deny = ["diag_remove"]

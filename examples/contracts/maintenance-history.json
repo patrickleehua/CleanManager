@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "kind": "maintenance_history",
+  "request_id": "req_synthetic",
+  "items": [
+    {
+      "operation_id": "op_maint",
+      "plan_id": "p_v2_maintenance",
+      "plan_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "entry": "cli",
+      "principal": "user:EXAMPLE\\alice",
+      "elevation": "declined",
+      "started_at": "2026-10-15T12:00:00Z",
+      "finished_at": "2026-10-15T12:00:02Z",
+      "items": [
+        {
+          "task_id": "windows.dns-flush",
+          "task_version": "1.0.0",
+          "requires_admin": false,
+          "outcome": "applied",
+          "code": "flushed",
+          "reason": "DNS resolver cache flushed",
+          "elevated": false,
+          "started_at": "2026-10-15T12:00:01Z",
+          "finished_at": "2026-10-15T12:00:01Z"
+        },
+        {
+          "task_id": "windows.trim-when-due",
+          "task_version": "1.0.0",
+          "requires_admin": true,
+          "outcome": "skipped",
+          "code": "elevation_declined",
+          "reason": "administrator authorization was declined; not run",
+          "elevated": false,
+          "started_at": "2026-10-15T12:00:01Z",
+          "finished_at": "2026-10-15T12:00:01Z"
+        }
+      ],
+      "counts": {
+        "applied": 1,
+        "unchanged": 0,
+        "skipped": 1,
+        "unavailable": 0,
+        "attention": 0,
+        "failed": 0
+      },
+      "all_clear": true,
+      "undo": "unavailable"
+    }
+  ],
+  "undo": "unavailable",
+  "note": "Maintenance tasks are not undone; each run lists its tasks, outcomes and reasons."
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-follow-up"
+description = "Enables the diag_follow_up command without any pre-configured scope."
+commands.allow = ["diag_follow_up"]
+
+[[permission]]
+identifier = "deny-diag-follow-up"
+description = "Denies the diag_follow_up command without any pre-configured scope."
+commands.deny = ["diag_follow_up"]

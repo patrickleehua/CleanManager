@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "status_alert",
+  "request_id": "req_synthetic",
+  "pid": 4242,
+  "name": "example-helper.exe",
+  "image_path": "C:\\Users\\Example\\AppData\\Local\\Example\\example-helper.exe",
+  "min_cpu_percent": 91.0,
+  "threshold_percent": 80.0,
+  "window_seconds": 120,
+  "since": "2026-10-14T12:00:00Z",
+  "raised_at": "2026-10-14T12:00:02Z",
+  "link": "status.processes/4242"
+}

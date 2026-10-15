@@ -145,6 +145,34 @@ fn uncancelled_scan_completes_and_publishes_everything() {
     assert_eq!(index.scan_report("ok").unwrap().unwrap()["backend"], "test.scripted");
 }
 
+#[test]
+fn spent_wait_budget_stops_at_a_safe_boundary_without_claiming_rollback() {
+    let dir = scratch("deadline");
+    let db = dir.join("index.db");
+    let index = IndexStore::open(&db).unwrap();
+    let other = IndexStore::open(&db).unwrap();
+    let started_seen = RefCell::new(None);
+    let started = |id: &str| *started_seen.borrow_mut() = Some(other.scan_status(id).unwrap().state);
+    let backend = ScriptedBackend {
+        batches: 5,
+        on_batch: RefCell::new(Box::new(|b| {
+            if b == 2 {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+            }
+        })),
+        after_cancel_seen: RefCell::new(Box::new(|| {})),
+    };
+    // The deadline passes during batch 2, so the next safe boundary stops the scan.
+    let hooks = ScanHooks { started: Some(&started), deadline: Some(Instant::now() + std::time::Duration::from_millis(300)), ..ScanHooks::default() };
+    let out = run_scan_hooked(&index, &backend, &request("t"), &ScanOptions::default(), &hooks).unwrap();
+    assert_eq!(*started_seen.borrow(), Some(ScanState::Running), "the record exists before any batch");
+    assert_eq!(out.state, ScanState::Cancelled);
+    assert!(out.report.issues.iter().any(|i| i.code == TIMEOUT_ISSUE && i.message.contains("nothing was rolled back")));
+    assert!(other.cancel_requested("t").unwrap(), "the timeout is recorded like any other cancel request");
+    assert_eq!(files(&index, "t"), 2, "rows confirmed before the budget ran out are published");
+    assert_eq!(index.scan_report("t").unwrap().unwrap()["issues"][0]["code"], TIMEOUT_ISSUE);
+}
+
 #[cfg(windows)]
 #[test]
 fn volume_going_offline_mid_scan_publishes_partial_results() {

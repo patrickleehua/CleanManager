@@ -1,14 +1,18 @@
 import './styles.css';
 
 import { createBackend, toIpcError, type Backend } from './lib/api';
-import { h, icon, replace } from './lib/dom';
+import { appMark, h, icon, replace } from './lib/dom';
 import { isTerminal, taskTitle } from './lib/format';
 import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
+import type { DiagTarget } from './lib/diagTypes';
 import type { ScanStatus } from './lib/types';
 import { OPERATION_STATE_LABEL } from './lib/words';
+import { EXTENSIONS, TOOLS, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
+import { platform, setPlatform, words } from './lib/platform';
 import { ActivityPage } from './views/activity';
 import { AppsPage } from './views/apps';
 import { CleanupPage } from './views/cleanup';
+import { DiagPage } from './views/diag';
 import { DiskPage } from './views/disk';
 import { OperationPage } from './views/operation';
 import { OverviewPage } from './views/overview';
@@ -16,6 +20,9 @@ import { PlanPage } from './views/plan';
 import { ScopePage } from './views/scope';
 import { SettingsPage } from './views/settings';
 import { ApplyChip, TaskChip } from './views/task';
+import { CatalogPage } from './views/catalog';
+import { InsightsPage, StartupPage, StatusPage, capabilityPages } from './views/tools';
+import { ensureReady } from './views/kit';
 
 export interface App {
   backend: Backend;
@@ -30,6 +37,8 @@ export interface App {
   openActivity(tab: ActivityTab): void;
   /** Apply a stored, authorized plan; opens its result page. */
   applyPlan(planId: string): Promise<void>;
+  /** Optional AI diagnosis of one object (from the cleanup, disk or apps page). */
+  openDiagnosis(target: DiagTarget, from?: Page): void;
   announce(text: string): void;
 }
 
@@ -62,9 +71,6 @@ function cycleTheme(): string {
   return next;
 }
 
-/** Pages whose nav highlight is another page's (detail pages inside a section). */
-const SECTION_OF: Partial<Record<Page, Page>> = { plan: 'cleanup', operation: 'activity', scope: 'overview' };
-
 async function boot(): Promise<void> {
   applyTheme(storedTheme());
   const root = document.getElementById('app')!;
@@ -75,6 +81,11 @@ async function boot(): Promise<void> {
     replace(root, h('div', { class: 'fatal', role: 'alert' }, h('h1', {}, 'CleanManager 无法启动'), h('p', {}, String(e))));
     return;
   }
+
+  // Platform words (GUI-12) are settled before the first page renders.
+  const earlyCaps = await backend.capabilities().catch(() => null);
+  if (earlyCaps?.platform === 'macos' || earlyCaps?.platform === 'windows') setPlatform(earlyCaps.platform);
+  document.documentElement.dataset.platform = platform();
 
   const store = new Store({
     page: 'scope',
@@ -91,6 +102,9 @@ async function boot(): Promise<void> {
     activityTab: 'operations',
     closing: false,
     preview: backend.preview,
+    diagTarget: null,
+    diagId: null,
+    revealEntry: null,
   });
 
   const announcer = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
@@ -127,6 +141,8 @@ async function boot(): Promise<void> {
       }
     },
     async startScan(rootToken) {
+      // GUI-13: explain missing access once before the long task; it never prompts mid-scan.
+      if (!(await ensureReady(app, 'scan', '扫描'))) return;
       const res = await backend.startScan(rootToken);
       store.set({
         task: {
@@ -159,10 +175,15 @@ async function boot(): Promise<void> {
     openOperation(operationId, from) {
       store.set({ operationId, page: 'operation', returnTo: from ?? store.state.page });
     },
+    openDiagnosis(target, from) {
+      // A new object: the workbench starts from its preview; a run elsewhere keeps running.
+      store.set({ diagTarget: target, diagId: null, page: 'diag', returnTo: from ?? store.state.page });
+    },
     openActivity(tab) {
       store.set({ activityTab: tab, page: 'activity' });
     },
     async applyPlan(planId) {
+      if (!(await ensureReady(app, 'apply', '执行'))) return;
       const r = await backend.startApply(planId);
       if (!r.existing) {
         store.set({
@@ -215,42 +236,113 @@ async function boot(): Promise<void> {
     }
     announce(e.status ? `执行结束：${OPERATION_STATE_LABEL[e.status] ?? e.status}` : `执行未能开始：${e.error?.message ?? ''}`);
   });
+  await backend.onDiagFinished((e) => {
+    const word = e.state === 'completed' ? '已完成' : e.state === 'cancelled' ? '已取消' : e.state === 'failed' ? '失败' : e.state;
+    announce(`AI 诊断${word}`);
+    void (pages.diag as DiagPage).finished(e.diagnosis_id);
+  });
   await backend.onClosing((e) => {
     store.set({ closing: true });
     announce(e.waiting_for.includes('operation') ? '正在停止后续操作，当前动作结束后关闭窗口' : '正在安全停止扫描，完成后关闭窗口');
   });
 
-  // Shell.
+  // Shell: five tools, then the extensions (D14). Every entry keeps its place on every platform.
+  const caps = capabilityPages(app);
   const pages: Record<Page, { el: HTMLElement; update(): void; activate?(): void }> = {
     scope: new ScopePage(app),
     overview: new OverviewPage(app),
     disk: new DiskPage(app),
+    insights: new InsightsPage(app),
     cleanup: new CleanupPage(app),
+    purge: new CatalogPage(app, 'purge'),
+    installer: new CatalogPage(app, 'installer'),
+    recyclebin: caps.recyclebin,
     plan: new PlanPage(app),
     operation: new OperationPage(app),
     apps: new AppsPage(app),
+    uninstall: caps.uninstall,
+    updates: caps.updates,
+    startup: new StartupPage(app),
+    maintenance: caps.maintenance,
+    status: new StatusPage(app),
+    processes: caps.processes,
     activity: new ActivityPage(app),
+    agent: caps.agent,
     settings: new SettingsPage(app),
+    diag: new DiagPage(app),
   };
-  const navItems: { page: Page; label: string; icon: string }[] = [
-    { page: 'overview', label: '概览', icon: 'overview' },
-    { page: 'disk', label: '磁盘', icon: 'disk' },
-    { page: 'cleanup', label: '清理', icon: 'cleanup' },
-    { page: 'apps', label: '应用', icon: 'apps' },
-    { page: 'activity', label: '活动', icon: 'activity' },
-  ];
-  const navButtons = navItems.map((n) =>
-    h('button', { class: 'nav-item', type: 'button', 'data-page': n.page, onclick: () => app.navigate(n.page) }, icon(n.icon), h('span', {}, n.label)),
+  const w = words();
+  const lastSection = new Map<ToolId, Page>();
+  const openTool = (id: ToolId) => {
+    const t = toolOf(id);
+    app.navigate(lastSection.get(id) ?? t.sections[0].page);
+  };
+  const openExt = (id: ExtId) => {
+    const e = EXTENSIONS.find((x) => x.id === id)!;
+    if (e.tab) app.openActivity(e.tab);
+    else if (e.page === 'diag') {
+      store.set({ diagTarget: null, diagId: null, returnTo: store.state.page === 'diag' ? store.state.returnTo : store.state.page });
+      app.navigate('diag');
+    } else app.navigate(e.page);
+  };
+  const keyHint = (key: string) => shortcutLabel(key, w.mod);
+  const ariaKeys = (key: string) => `${platform() === 'macos' ? 'Meta' : 'Control'}+${key}`;
+  const toolButtons = TOOLS.map((t) =>
+    h(
+      'button',
+      { class: 'nav-item tool-item', type: 'button', 'data-tool': t.id, 'aria-keyshortcuts': ariaKeys(t.key), title: `${t.label}：${t.blurb}（${keyHint(t.key)}）`, onclick: () => openTool(t.id) },
+      icon(t.icon),
+      h('span', { class: 'nav-label' }, t.label),
+      h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(t.key)),
+    ),
   );
-  const settingsBtn = h('button', { class: 'icon-btn', type: 'button', 'data-page': 'settings', title: '设置', 'aria-label': '设置' }, icon('settings'));
-  settingsBtn.addEventListener('click', () => app.navigate('settings'));
+  const extNav = h('nav', { class: 'ext-nav', id: 'ext-nav', 'aria-label': '扩展' });
+  const moreBtn = h('button', { class: 'nav-item more-item', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'ext-nav', title: '扩展：计划、活动、恢复、Agent、AI 诊断、设置' }, icon('ext-plans'), h('span', { class: 'nav-label' }, '更多'));
+  const closeMore = () => {
+    extNav.classList.remove('open');
+    moreBtn.setAttribute('aria-expanded', 'false');
+  };
+  const extButtons = EXTENSIONS.map((e) =>
+    h(
+      'button',
+      { class: 'nav-item ext-item', type: 'button', 'data-ext': e.id, 'aria-keyshortcuts': ariaKeys(e.key), title: `${e.label}（${keyHint(e.key)}）`, onclick: () => (closeMore(), openExt(e.id)) },
+      icon(e.icon),
+      h('span', { class: 'nav-label' }, e.label),
+      h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(e.key)),
+    ),
+  );
+  replace(extNav, h('p', { class: 'nav-group-label', 'aria-hidden': 'true' }, '扩展'), ...extButtons);
+  moreBtn.addEventListener('click', () => {
+    const open = !extNav.classList.contains('open');
+    extNav.classList.toggle('open', open);
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) requestAnimationFrame(() => extButtons[0].focus());
+  });
+  extNav.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && extNav.classList.contains('open')) {
+      closeMore();
+      moreBtn.focus();
+    }
+  });
   const themeBtn = h('button', { class: 'icon-btn', type: 'button', title: '主题：跟随系统', 'aria-label': '切换主题（当前跟随系统）' }, icon('theme'));
-  themeBtn.addEventListener('click', () => {
-    const t = cycleTheme();
+  const syncThemeLabel = (t: string) => {
     const label = t === 'system' ? '跟随系统' : t === 'dark' ? '深色' : '浅色';
     themeBtn.title = `主题：${label}`;
     themeBtn.setAttribute('aria-label', `切换主题（当前${label}）`);
-  });
+  };
+  syncThemeLabel(document.documentElement.dataset.theme ?? 'system');
+  themeBtn.addEventListener('click', () => syncThemeLabel(cycleTheme()));
+  const keysBtn = h('button', { class: 'icon-btn', type: 'button', title: '键盘快捷键（?）', 'aria-label': '键盘快捷键', 'aria-keyshortcuts': 'Shift+?' }, icon('keyboard'));
+  const sidebar = h(
+    'aside',
+    { class: 'sidebar', 'aria-label': 'CleanManager' },
+    h('div', { class: 'brand' }, appMark(28), h('span', { class: 'brand-name' }, 'CleanManager')),
+    h('nav', { class: 'tool-nav', 'aria-label': '工具' }, ...toolButtons, moreBtn),
+    extNav,
+  );
+  // Theme and shortcut sheet sit at the foot of the extension group (inside the "更多" menu on narrow windows).
+  extNav.append(h('div', { class: 'side-foot' }, keysBtn, themeBtn));
+  const sectionNav = h('nav', { class: 'section-nav', 'aria-label': '分区' });
   const chip = new TaskChip(app);
   const applyChip = new ApplyChip(app);
   const main = h('main', { id: 'main', tabindex: '-1' });
@@ -259,29 +351,105 @@ async function boot(): Promise<void> {
     : null;
   const closingBanner = h('div', { class: 'closing-banner', role: 'alert', hidden: true }, '正在安全停止。扫描会发布已确认的结果，执行会停止派发后续动作；完成后窗口关闭。');
   const skip = h('a', { class: 'skip-link', href: '#main' }, '跳到主要内容');
-  const header = h(
-    'header',
-    { class: 'topbar' },
-    h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }), h('span', { class: 'brand-name' }, 'CleanManager')),
-    h('nav', { class: 'nav', 'aria-label': '主要页面' }, ...navButtons),
-    h('div', { class: 'topbar-tools' }, applyChip.el, chip.el, settingsBtn, themeBtn),
-  );
-  replace(root, skip, previewBanner, header, closingBanner, main, announcer);
+  const header = h('header', { class: 'topbar' }, sectionNav, h('div', { class: 'topbar-tools' }, applyChip.el, chip.el));
+  replace(root, skip, h('div', { class: 'shell' }, sidebar, h('div', { class: 'main-col' }, previewBanner, header, closingBanner, main)), announcer);
+
+  const showShortcuts = () => {
+    if (document.querySelector('dialog.shortcuts[open]')) return;
+    const row = (keys: string, what: string) => h('tr', {}, h('td', {}, h('kbd', {}, keys)), h('td', {}, what));
+    const dlg = h(
+      'dialog',
+      { class: 'cm-dialog shortcuts', 'aria-labelledby': 'keys-title' },
+      h('div', { class: 'dlg-head' }, h('h2', { id: 'keys-title' }, '键盘快捷键'), h('p', { class: 'muted' }, '两个平台相同：Windows 用 Ctrl，macOS 用 ⌘。')),
+      h(
+        'table',
+        { class: 'keys-table' },
+        h('caption', { class: 'sr-only' }, '快捷键与对应入口'),
+        h(
+          'tbody',
+          {},
+          ...TOOLS.map((t) => row(keyHint(t.key), `${t.label}：${t.blurb}`)),
+          ...EXTENSIONS.map((e) => row(keyHint(e.key), e.label)),
+          row(`${keyHint('PageUp')} / ${keyHint('PageDown')}`, '当前工具的上一个 / 下一个分区'),
+          row('?', '显示这张表'),
+          row('Esc', '关闭对话框或菜单'),
+        ),
+      ),
+      h('div', { class: 'dlg-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dlg.close() }, '关闭')),
+    ) as HTMLDialogElement;
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.append(dlg);
+    dlg.showModal();
+  };
+  keysBtn.addEventListener('click', () => showShortcuts());
+
+  // Keyboard: one map on both platforms (Ctrl on Windows, ⌘ on macOS); see docs/visual-identity.md.
+  const inField = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+  document.addEventListener('keydown', (e) => {
+    const target = shortcutFor(e, platform() === 'macos');
+    if (!target) return;
+    if (target.kind === 'help') {
+      if (inField(e.target) || document.querySelector('dialog[open]')) return;
+      e.preventDefault();
+      showShortcuts();
+      return;
+    }
+    if (document.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    if (target.kind === 'tool') openTool(target.tool.id);
+    else if (target.kind === 'ext') openExt(target.ext.id);
+    else {
+      const t = toolForPage(store.state.page);
+      if (!t || t.sections.length < 2) return;
+      const i = t.sections.findIndex((x) => x.page === store.state.page);
+      const next = t.sections[(i + target.step + t.sections.length) % t.sections.length];
+      app.navigate(next.page);
+      requestAnimationFrame(() => (sectionNav.querySelector('[aria-current="page"]') as HTMLElement | null)?.focus());
+    }
+  });
 
   let current: Page | null = null;
   const render = () => {
     const s = store.state;
-    const section = s.page === 'plan' && s.returnTo === 'activity' ? 'activity' : (SECTION_OF[s.page] ?? s.page);
-    for (const b of [...navButtons, settingsBtn]) {
-      const active = b.dataset.page === section;
-      b.classList.toggle('active', active);
-      if (active) b.setAttribute('aria-current', 'page');
+    const place = placeOf(s.page, s.activityTab, s.returnTo);
+    const toolId = place && 'tool' in place ? place.tool : null;
+    const extId = place && 'ext' in place ? place.ext : null;
+    if (toolId && toolForPage(s.page)) lastSection.set(toolId, s.page);
+    for (const b of toolButtons) {
+      const on = b.dataset.tool === toolId;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
       else b.removeAttribute('aria-current');
+    }
+    for (const b of extButtons) {
+      const on = b.dataset.ext === extId;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    }
+    moreBtn.classList.toggle('active', !!extId);
+    // Section tabs of the current tool (detail pages keep their tool's sections visible).
+    const tool = toolId ? toolOf(toolId) : null;
+    const ext = extId ? EXTENSIONS.find((x) => x.id === extId) : null;
+    const sectionKey = tool ? `${tool.id}:${s.page}` : `ext:${extId ?? ''}`;
+    if (sectionNav.dataset.key !== sectionKey) {
+      sectionNav.dataset.key = sectionKey;
+      sectionNav.setAttribute('aria-label', tool ? `${tool.label}分区` : '当前位置');
+      replace(
+        sectionNav,
+        tool ? h('span', { class: 'section-tool' }, icon(tool.icon), tool.label) : ext ? h('span', { class: 'section-tool' }, icon(ext.icon), ext.label) : null,
+        ...(tool && tool.sections.length > 1
+          ? tool.sections.map((sec) =>
+              h('button', { type: 'button', class: 'section-tab', 'aria-current': sec.page === s.page ? 'page' : null, onclick: () => app.navigate(sec.page) }, sec.label),
+            )
+          : []),
+      );
     }
     closingBanner.hidden = !s.closing;
     if (current !== s.page) {
       replace(main, pages[s.page].el);
       current = s.page;
+      closeMore();
       pages[s.page].activate?.();
       window.scrollTo({ top: 0 });
     }
@@ -292,12 +460,8 @@ async function boot(): Promise<void> {
   store.subscribe(render);
 
   // Startup: capabilities, scans recorded in the store, an operation still running here.
-  const [caps, recent, active] = await Promise.all([
-    backend.capabilities().catch(() => null),
-    backend.recentScans().catch(() => []),
-    backend.activeApply().catch(() => null),
-  ]);
-  store.set({ caps, recent });
+  const [recent, active] = await Promise.all([backend.recentScans().catch(() => []), backend.activeApply().catch(() => null)]);
+  store.set({ caps: earlyCaps, recent });
   if (active?.running) {
     store.set({
       apply: { planId: active.plan_id, operationId: active.operation_id, total: active.total, counts: { ...EMPTY_COUNTS }, cancelRequested: active.cancel_requested, running: true, status: null, error: null, dismissed: false },
@@ -327,7 +491,23 @@ function routeFromHash(app: App): void {
   if (page === 'plan' && arg) app.openPlan(arg, 'cleanup');
   else if (page === 'operation' && arg) app.openOperation(arg, 'activity');
   else if (page === 'activity') app.openActivity((arg as ActivityTab) || 'operations');
-  else if (['scope', 'overview', 'disk', 'cleanup', 'apps', 'settings'].includes(page)) app.navigate(page as Page);
+  else if (page === 'diag') {
+    // `#diag` history, `#diag=unconfigured`, `#diag=completed|failed|cancelled|expired|running`,
+    // `#diag=video` (a target ready to preview). Fixture states only.
+    const seed = (app.backend as unknown as { seed?: (s: string, sc?: string) => string | null }).seed;
+    const entry = location.hash.match(/entry:(\d+)/)?.[1];
+    if (entry) app.openDiagnosis({ scanId: 's_preview_1', entryId: entry, origin: 'disk', name: '' }, 'disk');
+    else if (arg === 'video' || arg === 'cache') app.openDiagnosis({ scanId: 's_preview_1', entryId: arg === 'video' ? '5' : 'c', origin: arg === 'video' ? 'disk' : 'cleanup', name: arg === 'video' ? 'drone_raw_0412.mov' : 'Code Cache' }, arg === 'video' ? 'disk' : 'cleanup');
+    else if (arg && seed) {
+      const id = seed(arg, arg === 'expired' ? 'cache' : 'cache');
+      if (id) app.store.set({ diagId: id, diagTarget: { scanId: 's_preview_1', entryId: 'c', origin: 'cleanup', name: 'Code Cache' }, page: 'diag', returnTo: 'cleanup' });
+      else app.store.set({ diagTarget: { scanId: 's_preview_1', entryId: '5', origin: 'disk', name: 'drone_raw_0412.mov' }, diagId: null, page: 'diag', returnTo: 'disk' });
+    } else app.navigate('diag');
+  }
+  else if (
+    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'status', 'processes', 'agent', 'settings'].includes(page)
+  )
+    app.navigate(page as Page);
 }
 
 void boot();

@@ -7,7 +7,7 @@
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { formatBytes, groupDigits } from '../lib/bytes';
-import { h, keepFocus, replace } from '../lib/dom';
+import { h, icon, keepFocus, replace } from '../lib/dom';
 import type { AppItem, AppsList, IpcError } from '../lib/types';
 import { emptyState, errorLine, exactTitle, metaRow, pageHead, pill } from './parts';
 
@@ -196,6 +196,19 @@ export class AppsPage {
       ),
       h('h3', {}, '身份依据'),
       h('ul', { class: 'evidence' }, ...a.evidence.map((e) => h('li', { class: 'path' }, e))),
+      this.diagButton(a),
+    );
+  }
+
+  /** Optional AI diagnosis of the app's install location (only when it is in the bound scan). */
+  private diagButton(a: AppItem): HTMLElement | null {
+    const scanId = this.app.store.state.scanId;
+    const entryId = a.size.entry_id;
+    if (!scanId || !entryId) return null;
+    return h(
+      'div',
+      { class: 'card-actions' },
+      h('button', { type: 'button', class: 'quiet', id: 'app-diag', onclick: () => this.app.openDiagnosis({ scanId, entryId, origin: 'apps', name: a.name }, 'apps') }, icon('diag'), 'AI 诊断安装位置'),
     );
   }
 }

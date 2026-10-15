@@ -1,0 +1,158 @@
+{
+  "contract": "diag/1",
+  "kind": "diagnosis_preview",
+  "request_id": "req_synthetic",
+  "preview": {
+    "preview_id": "pv_11111111111111111111",
+    "state": "preparing",
+    "request": {
+      "contract": "diag/1",
+      "object": {
+        "scan_id": "s_demo",
+        "revision": 1,
+        "entry_id": "42",
+        "origin": "disk",
+        "candidate_id": null,
+        "app_instance_id": null
+      },
+      "observed_at": "2026-10-14T12:00:00Z",
+      "observation_fingerprint": "e69798d92bae758a91ac0d0866dfeede34b85952fec3dbf854c970a1c6944fb6",
+      "disclosure": {
+        "full_path": false,
+        "child_summary": false
+      },
+      "question": "这个视频还能删吗？",
+      "statements": [
+        {
+          "statement_id": "u1",
+          "question_id": "q1",
+          "text": "已经备份到移动硬盘了",
+          "at": "2026-10-15T09:30:00Z"
+        }
+      ],
+      "parent_diagnosis_id": null,
+      "prompt_template": "diag-prompt/1"
+    },
+    "evidence": {
+      "version": "diag-evidence/1",
+      "subject": {
+        "kind": "file",
+        "name": "[email] 素材 A-cam.mov",
+        "extension": "mov",
+        "location": "%USERPROFILE%\\Videos\\Wedding 2025",
+        "logical_bytes": "42000000000",
+        "allocated_bytes": "42000000000",
+        "size_basis": "entity",
+        "modified_at": "2026-05-28T20:26:40Z",
+        "link_count": 1,
+        "cloud": "not_cloud",
+        "identity_quality": "strong"
+      },
+      "children": null,
+      "children_omitted": 0,
+      "items": [
+        {
+          "evidence_id": "ev_1",
+          "layer": "observation",
+          "code": "observation.scan",
+          "text": "索引观察时间 2026-10-14T12:00:00Z；这次扫描范围已完整读取。"
+        },
+        {
+          "evidence_id": "ev_2",
+          "layer": "observation",
+          "code": "observation.size",
+          "text": "逻辑大小 39.1 GiB（42000000000 字节），分配大小 39.1 GiB（42000000000 字节）。"
+        },
+        {
+          "evidence_id": "ev_3",
+          "layer": "rule",
+          "code": "rule.none",
+          "text": "没有已启用的清理规则匹配这个对象；这不说明它是垃圾，也不说明它重要。"
+        },
+        {
+          "evidence_id": "ev_4",
+          "layer": "protection",
+          "code": "protection.none",
+          "text": "硬性保护、默认保护类别和你的保护名单都没有命中。"
+        },
+        {
+          "evidence_id": "ev_5",
+          "layer": "ownership",
+          "code": "ownership.none",
+          "text": "没有安装记录指向这个位置；这不证明它是残留文件。"
+        },
+        {
+          "evidence_id": "ev_6",
+          "layer": "user_statement",
+          "code": "user.statement",
+          "text": "用户陈述（未经核验）：已经备份到移动硬盘了"
+        }
+      ],
+      "gaps": [
+        {
+          "gap_id": "gap_1",
+          "code": "name_redacted",
+          "text": "名称中的敏感片段已脱敏。"
+        },
+        {
+          "gap_id": "gap_2",
+          "code": "backup_unknown",
+          "text": "CleanManager 不检测备份；是否已有可用备份未知。"
+        },
+        {
+          "gap_id": "gap_3",
+          "code": "usage_unknown",
+          "text": "未检测是否有程序或工程正在使用它。"
+        },
+        {
+          "gap_id": "gap_4",
+          "code": "reclaim_unknown",
+          "text": "删除后实际能释放多少空间未知（共享块、硬链接、回收站等）。"
+        }
+      ],
+      "redactions": [
+        {
+          "field": "subject.name",
+          "rule": "email"
+        },
+        {
+          "field": "subject.location",
+          "rule": "user_profile"
+        }
+      ],
+      "excluded": [
+        "file_contents",
+        "directory_tree",
+        "credentials",
+        "sessions",
+        "cloud_hydration"
+      ]
+    },
+    "destination": {
+      "provider_id": "anthropic-default",
+      "label": "Anthropic API",
+      "kind": "anthropic",
+      "mode": "api",
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "executable": null,
+      "model": "claude-opus-5-5",
+      "template": "diag-prompt/1"
+    },
+    "payload": {
+      "transport": "https_post",
+      "target": "https://api.anthropic.com/v1/messages",
+      "headers": [
+        "content-type: application/json",
+        "anthropic-version: 2023-06-01",
+        "x-api-key: <stored in the system credential store as CleanManager:diag:anthropic-default>"
+      ],
+      "argv": [],
+      "body": "{\"max_tokens\":16000,\"messages\":[{\"content\":\"{\\\"answer_format\\\":\\\"diag-answer/1\\\",\\\"evidence\\\":{\\\"children\\\":null,\\\"children_omitted\\\":0,\\\"excluded\\\":[\\\"file_contents\\\",\\\"directory_tree\\\",\\\"credentials\\\",\\\"sessions\\\",\\\"cloud_hydration\\\"],\\\"gaps\\\":[{\\\"code\\\":\\\"name_redacted\\\",\\\"gap_id\\\":\\\"gap_1\\\",\\\"text\\\":\\\"名称中的敏感片段已脱敏。\\\"},{\\\"code\\\":\\\"backup_unknown\\\",\\\"gap_id\\\":\\\"gap_2\\\",\\\"text\\\":\\\"CleanManager 不检测备份；是否已有可用备份未知。\\\"},{\\\"code\\\":\\\"usage_unknown\\\",\\\"gap_id\\\":\\\"gap_3\\\",\\\"text\\\":\\\"未检测是否有程序或工程正在使用它。\\\"},{\\\"code\\\":\\\"reclaim_unknown\\\",\\\"gap_id\\\":\\\"gap_4\\\",\\\"text\\\":\\\"删除后实际能释放多少空间未知（共享块、硬链接、回收站等）。\\\"}],\\\"items\\\":[{\\\"code\\\":\\\"observation.scan\\\",\\\"evidence_id\\\":\\\"ev_1\\\",\\\"layer\\\":\\\"observation\\\",\\\"text\\\":\\\"索引观察时间 2026-10-14T12:00:00Z；这次扫描范围已完整读取。\\\"},{\\\"code\\\":\\\"observation.size\\\",\\\"evidence_id\\\":\\\"ev_2\\\",\\\"layer\\\":\\\"observation\\\",\\\"text\\\":\\\"逻辑大小 39.1 GiB（42000000000 字节），分配大小 39.1 GiB（42000000000 字节）。\\\"},{\\\"code\\\":\\\"rule.none\\\",\\\"evidence_id\\\":\\\"ev_3\\\",\\\"layer\\\":\\\"rule\\\",\\\"text\\\":\\\"没有已启用的清理规则匹配这个对象；这不说明它是垃圾，也不说明它重要。\\\"},{\\\"code\\\":\\\"protection.none\\\",\\\"evidence_id\\\":\\\"ev_4\\\",\\\"layer\\\":\\\"protection\\\",\\\"text\\\":\\\"硬性保护、默认保护类别和你的保护名单都没有命中。\\\"},{\\\"code\\\":\\\"ownership.none\\\",\\\"evidence_id\\\":\\\"ev_5\\\",\\\"layer\\\":\\\"ownership\\\",\\\"text\\\":\\\"没有安装记录指向这个位置；这不证明它是残留文件。\\\"},{\\\"code\\\":\\\"user.statement\\\",\\\"evidence_id\\\":\\\"ev_6\\\",\\\"layer\\\":\\\"user_statement\\\",\\\"text\\\":\\\"用户陈述（未经核验）：已经备份到移动硬盘了\\\"}],\\\"redactions\\\":[{\\\"field\\\":\\\"subject.name\\\",\\\"rule\\\":\\\"email\\\"},{\\\"field\\\":\\\"subject.location\\\",\\\"rule\\\":\\\"user_profile\\\"}],\\\"subject\\\":{\\\"allocated_bytes\\\":\\\"42000000000\\\",\\\"cloud\\\":\\\"not_cloud\\\",\\\"extension\\\":\\\"mov\\\",\\\"identity_quality\\\":\\\"strong\\\",\\\"kind\\\":\\\"file\\\",\\\"link_count\\\":1,\\\"location\\\":\\\"%USERPROFILE%\\\\\\\\Videos\\\\\\\\Wedding 2025\\\",\\\"logical_bytes\\\":\\\"42000000000\\\",\\\"modified_at\\\":\\\"2026-05-28T20:26:40Z\\\",\\\"name\\\":\\\"[email] 素材 A-cam.mov\\\",\\\"size_basis\\\":\\\"entity\\\"},\\\"version\\\":\\\"diag-evidence/1\\\"},\\\"language\\\":\\\"zh-CN\\\",\\\"question\\\":\\\"这个视频还能删吗？\\\",\\\"task\\\":\\\"explain_one_object\\\",\\\"template\\\":\\\"diag-prompt/1\\\",\\\"user_statements\\\":[{\\\"question_id\\\":\\\"q1\\\",\\\"statement_id\\\":\\\"u1\\\",\\\"text\\\":\\\"已经备份到移动硬盘了\\\"}]}\",\"role\":\"user\"}],\"model\":\"claude-opus-5-5\",\"output_config\":{\"effort\":\"medium\"},\"system\":\"<diag-prompt/1 system text>\"}"
+    },
+    "payload_digest": "8e57012441067003df33ed899a9b269773f368eb9556ac31c7e28b045f6cc735",
+    "payload_bytes": 2684,
+    "contains_user_additions": true,
+    "created_at": "2026-10-15T09:30:00Z",
+    "expires_at": "2026-10-15T09:40:00Z"
+  }
+}

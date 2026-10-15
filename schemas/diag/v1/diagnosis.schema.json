@@ -1,0 +1,1866 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cleanmanager:diagnosis:1",
+  "title": "CleanManager optional AI diagnosis record (diag/1)",
+  "description": "Optional extension, separate from the v1 protocol. Errors use the v1 error record. Examples are synthetic.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/diagnosis_preview"
+    },
+    {
+      "$ref": "#/$defs/diagnosis_record"
+    },
+    {
+      "$ref": "#/$defs/diagnosis_list"
+    },
+    {
+      "$ref": "#/$defs/diagnosis_config"
+    }
+  ],
+  "$defs": {
+    "object_ref": {
+      "type": "object",
+      "properties": {
+        "scan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "entry_id": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "origin": {
+          "enum": [
+            "cleanup",
+            "disk",
+            "apps"
+          ]
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "app_instance_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "scan_id",
+        "revision",
+        "entry_id",
+        "origin",
+        "candidate_id",
+        "app_instance_id"
+      ],
+      "additionalProperties": false
+    },
+    "disclosure": {
+      "type": "object",
+      "properties": {
+        "full_path": {
+          "type": "boolean"
+        },
+        "child_summary": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "full_path",
+        "child_summary"
+      ],
+      "additionalProperties": false
+    },
+    "user_statement": {
+      "type": "object",
+      "properties": {
+        "statement_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 280,
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "statement_id",
+        "question_id",
+        "text",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "diag/1"
+        },
+        "object": {
+          "$ref": "#/$defs/object_ref"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "observation_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "disclosure": {
+          "$ref": "#/$defs/disclosure"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 280,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/user_statement"
+          },
+          "minItems": 0,
+          "maxItems": 8
+        },
+        "parent_diagnosis_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^dg_[0-9a-f]{20}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_template": {
+          "const": "diag-prompt/1"
+        }
+      },
+      "required": [
+        "contract",
+        "object",
+        "observed_at",
+        "observation_fingerprint",
+        "disclosure",
+        "question",
+        "statements",
+        "parent_diagnosis_id",
+        "prompt_template"
+      ],
+      "additionalProperties": false
+    },
+    "evidence_item": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^ev_[1-9][0-9]*$"
+        },
+        "layer": {
+          "enum": [
+            "observation",
+            "rule",
+            "protection",
+            "ownership",
+            "coverage",
+            "user_statement"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 240
+        }
+      },
+      "required": [
+        "evidence_id",
+        "layer",
+        "code",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "gap_id": {
+          "type": "string",
+          "pattern": "^gap_[1-9][0-9]*$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 240
+        }
+      },
+      "required": [
+        "gap_id",
+        "code",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "redaction": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule": {
+          "enum": [
+            "user_profile",
+            "email",
+            "long_number",
+            "secret_like",
+            "control_characters",
+            "instruction_like",
+            "truncated",
+            "parent_components"
+          ]
+        }
+      },
+      "required": [
+        "field",
+        "rule"
+      ],
+      "additionalProperties": false
+    },
+    "subject": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "reparse",
+            "other"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "extension": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z0-9]{1,10}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allocated_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_basis": {
+          "enum": [
+            "entity",
+            "subtree_known",
+            "unknown"
+          ]
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cloud": {
+          "enum": [
+            "not_cloud",
+            "hydrated",
+            "placeholder",
+            "unknown"
+          ]
+        },
+        "identity_quality": {
+          "enum": [
+            "strong",
+            "weak"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "extension",
+        "location",
+        "logical_bytes",
+        "allocated_bytes",
+        "size_basis",
+        "modified_at",
+        "link_count",
+        "cloud",
+        "identity_quality"
+      ],
+      "additionalProperties": false
+    },
+    "child_summary": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "reparse",
+            "other"
+          ]
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "logical_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "diag-evidence/1"
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "children": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/child_summary"
+              },
+              "minItems": 0,
+              "maxItems": 5
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "children_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_item"
+          },
+          "minItems": 0,
+          "maxItems": 24
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          },
+          "minItems": 0,
+          "maxItems": 12
+        },
+        "redactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/redaction"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "file_contents",
+              "directory_tree",
+              "credentials",
+              "sessions",
+              "cloud_hydration"
+            ]
+          },
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "version",
+        "subject",
+        "children",
+        "children_omitted",
+        "items",
+        "gaps",
+        "redactions",
+        "excluded"
+      ],
+      "additionalProperties": false
+    },
+    "answer": {
+      "type": "object",
+      "properties": {
+        "answer_version": {
+          "const": "diag-answer/1"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 280,
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "maxLength": 600,
+          "minLength": 1
+        },
+        "recommendation": {
+          "enum": [
+            "reviewable",
+            "needs_context",
+            "keep",
+            "unsupported"
+          ]
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 6
+        },
+        "deletion_impact": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "rebuild_cost": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "basis": {
+                "enum": [
+                  "observation",
+                  "rule",
+                  "user_statement",
+                  "inference"
+                ]
+              },
+              "refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^(ev|gap)_[1-9][0-9]*$"
+                },
+                "minItems": 0,
+                "maxItems": 6,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "text",
+              "basis",
+              "refs"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 6
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "enum": [
+                  "review_plan",
+                  "keep",
+                  "protect",
+                  "locate",
+                  "verify",
+                  "app_management",
+                  "archive"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "action",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 5
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "question_id": {
+                "type": "string",
+                "pattern": "^q[1-3]$"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "choices": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 60
+                },
+                "minItems": 0,
+                "maxItems": 4
+              }
+            },
+            "required": [
+              "question_id",
+              "text",
+              "choices"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "answer_version",
+        "summary",
+        "purpose",
+        "recommendation",
+        "conditions",
+        "deletion_impact",
+        "rebuild_cost",
+        "claims",
+        "gaps",
+        "alternatives",
+        "questions"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/answer"
+        },
+        "model_recommendation": {
+          "enum": [
+            "reviewable",
+            "needs_context",
+            "keep",
+            "unsupported"
+          ]
+        },
+        "effective_recommendation": {
+          "enum": [
+            "reviewable",
+            "needs_context",
+            "keep",
+            "unsupported"
+          ]
+        },
+        "grounding": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "user_statement",
+                  "inference",
+                  "unsupported",
+                  "conflicts_with_facts"
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "index",
+              "status",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "enum": [
+                  "protected_object",
+                  "not_a_candidate",
+                  "candidate_not_plannable",
+                  "partial_evidence",
+                  "unverified_backup_claim",
+                  "unverified_usage_claim",
+                  "unverified_reclaim_claim",
+                  "safe_to_delete_claim",
+                  "rule_claim_without_rule"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "code",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "sanitized": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "enum": [
+                  "command_text",
+                  "approval_instruction",
+                  "unknown_reference",
+                  "unverified_safety_claim",
+                  "truncated",
+                  "dropped_item"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "answer",
+        "model_recommendation",
+        "effective_recommendation",
+        "grounding",
+        "conflicts",
+        "sanitized"
+      ],
+      "additionalProperties": false
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "reparse",
+            "other"
+          ]
+        },
+        "volume_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "protection": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protection_checked": {
+          "type": "boolean"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowed",
+                "protected_reviewable",
+                "pending_evidence",
+                "blocked"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plannable": {
+          "type": "boolean"
+        },
+        "partial_evidence": {
+          "type": "boolean"
+        },
+        "cloud_placeholder": {
+          "type": "boolean"
+        },
+        "hard_links": {
+          "type": "boolean"
+        },
+        "app_instance_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "entry_id",
+        "kind",
+        "volume_id",
+        "file_id",
+        "object_fingerprint",
+        "protection",
+        "protection_checked",
+        "candidate_id",
+        "candidate_state",
+        "plannable",
+        "partial_evidence",
+        "cloud_placeholder",
+        "hard_links",
+        "app_instance_ids",
+        "rule_refs"
+      ],
+      "additionalProperties": false
+    },
+    "destination": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "kind": {
+          "enum": [
+            "anthropic",
+            "openai_compatible",
+            "claude_code_cli",
+            "codex_cli"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "api",
+            "cli"
+          ]
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 400
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        },
+        "template": {
+          "const": "diag-prompt/1"
+        }
+      },
+      "required": [
+        "provider_id",
+        "label",
+        "kind",
+        "mode",
+        "endpoint",
+        "executable",
+        "model",
+        "template"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "enum": [
+            "https_post",
+            "http_post_loopback",
+            "process_stdin"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300,
+            "not": {
+              "pattern": "(?i)(sk-ant-|bearer [a-z0-9_-]{16,})"
+            }
+          },
+          "minItems": 0,
+          "maxItems": 8
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "minItems": 0,
+          "maxItems": 40
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 49152
+        }
+      },
+      "required": [
+        "transport",
+        "target",
+        "headers",
+        "argv",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "preview_id": {
+          "type": "string",
+          "pattern": "^pv_[0-9a-f]{20}$"
+        },
+        "state": {
+          "const": "preparing"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "payload_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "payload_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 49152
+        },
+        "contains_user_additions": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "preview_id",
+        "state",
+        "request",
+        "evidence",
+        "destination",
+        "payload",
+        "payload_digest",
+        "payload_bytes",
+        "contains_user_additions",
+        "created_at",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "review_plan",
+            "keep",
+            "protect",
+            "locate",
+            "verify",
+            "app_management",
+            "archive"
+          ]
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "suggested_by_model": {
+          "type": "boolean"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "scan_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "entry_id": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                },
+                "candidate_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "app_instance_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "scan_id",
+                "entry_id",
+                "candidate_id",
+                "app_instance_id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "available",
+        "reason",
+        "suggested_by_model",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis": {
+      "type": "object",
+      "properties": {
+        "diagnosis_id": {
+          "type": "string",
+          "pattern": "^dg_[0-9a-f]{20}$"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "completed",
+            "cancelled",
+            "failed",
+            "expired"
+          ]
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "facts": {
+          "$ref": "#/$defs/facts"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "payload_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "retention": {
+          "enum": [
+            "session",
+            "saved"
+          ]
+        },
+        "retain_until": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "enum": [
+                    "not_configured",
+                    "credential_missing",
+                    "credential_store_unavailable",
+                    "auth_failed",
+                    "model_unavailable",
+                    "rate_limited",
+                    "provider_error",
+                    "refused",
+                    "timeout",
+                    "network",
+                    "output_too_large",
+                    "invalid_structure",
+                    "unsupported_mode",
+                    "process_failed"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 280
+                },
+                "retryable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "retryable"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "freshness": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "current",
+                "stale",
+                "unknown"
+              ]
+            },
+            "checked_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0,
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "state",
+            "checked_at",
+            "reasons"
+          ],
+          "additionalProperties": false
+        },
+        "handoff": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handoff"
+          },
+          "minItems": 0,
+          "maxItems": 7
+        }
+      },
+      "required": [
+        "diagnosis_id",
+        "state",
+        "request",
+        "evidence",
+        "facts",
+        "destination",
+        "payload_digest",
+        "created_at",
+        "updated_at",
+        "finished_at",
+        "expires_at",
+        "retention",
+        "retain_until",
+        "result",
+        "failure",
+        "freshness",
+        "handoff"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "completed",
+                  "expired"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result"
+              },
+              "failure": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "null"
+              },
+              "failure": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "not_configured",
+                      "credential_missing",
+                      "credential_store_unavailable",
+                      "auth_failed",
+                      "model_unavailable",
+                      "rate_limited",
+                      "provider_error",
+                      "refused",
+                      "timeout",
+                      "network",
+                      "output_too_large",
+                      "invalid_structure",
+                      "unsupported_mode",
+                      "process_failed"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 280
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "running",
+                  "cancelled"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "null"
+              },
+              "failure": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "running"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "finished_at": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "finished_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "retention": {
+                "const": "session"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "retain_until": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "retain_until": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "diagnosis_id": {
+          "type": "string",
+          "pattern": "^dg_[0-9a-f]{20}$"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "completed",
+            "cancelled",
+            "failed",
+            "expired"
+          ]
+        },
+        "object": {
+          "$ref": "#/$defs/object_ref"
+        },
+        "subject_name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effective_recommendation": {
+          "anyOf": [
+            {
+              "enum": [
+                "reviewable",
+                "needs_context",
+                "keep",
+                "unsupported"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "retention": {
+          "enum": [
+            "session",
+            "saved"
+          ]
+        },
+        "parent_diagnosis_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^dg_[0-9a-f]{20}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "diagnosis_id",
+        "state",
+        "object",
+        "subject_name",
+        "provider_id",
+        "model",
+        "effective_recommendation",
+        "created_at",
+        "retention",
+        "parent_diagnosis_id"
+      ],
+      "additionalProperties": false
+    },
+    "provider_status": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "kind": {
+          "enum": [
+            "anthropic",
+            "openai_compatible",
+            "claude_code_cli",
+            "codex_cli"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "api",
+            "cli"
+          ]
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 400
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "credential": {
+          "enum": [
+            "present",
+            "absent",
+            "not_required",
+            "unavailable"
+          ]
+        },
+        "support": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "unverified"
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 280
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "provider_id",
+        "label",
+        "kind",
+        "mode",
+        "endpoint",
+        "executable",
+        "model",
+        "credential",
+        "support",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis_preview": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "diag/1"
+        },
+        "kind": {
+          "const": "diagnosis_preview"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preview": {
+          "$ref": "#/$defs/preview"
+        }
+      },
+      "required": [
+        "contract",
+        "kind",
+        "request_id",
+        "preview"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis_record": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "diag/1"
+        },
+        "kind": {
+          "const": "diagnosis_record"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "diagnosis": {
+          "$ref": "#/$defs/diagnosis"
+        }
+      },
+      "required": [
+        "contract",
+        "kind",
+        "request_id",
+        "diagnosis"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis_list": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "diag/1"
+        },
+        "kind": {
+          "const": "diagnosis_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/summary"
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "kind",
+        "request_id",
+        "items",
+        "next_cursor"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis_config": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "diag/1"
+        },
+        "kind": {
+          "const": "diagnosis_config"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "credential_store": {
+          "type": "string",
+          "minLength": 1
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provider_status"
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "default_provider_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "kind",
+        "request_id",
+        "configured",
+        "credential_store",
+        "providers",
+        "default_provider_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

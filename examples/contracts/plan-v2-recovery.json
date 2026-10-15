@@ -30,7 +30,8 @@
         "startup_item_id": "st_demo",
         "source": "run_key",
         "operation": "restore",
-        "scope": "user"
+        "scope": "user",
+        "backup_id": "rb_demo_toggle"
       },
       {
         "action_id": "a03",
@@ -42,6 +43,6 @@
       }
     ]
   },
-  "plan_digest": "bee0b1d423c7313d9bc306b09df2d51e9a9b34c49131bc843b9d60fd82fea5fd",
+  "plan_digest": "2b72a432be8230044d8b853eca014d55324963b443089d5885bf79e2873bb50e",
   "authorization_status": "required"
 }

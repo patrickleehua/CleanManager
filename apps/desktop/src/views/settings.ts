@@ -11,6 +11,7 @@ import { h, keepFocus, replace } from '../lib/dom';
 import { ERROR_HINT, formatTime } from '../lib/format';
 import type { IpcError, Policy, ProtectionItem, ProtectionList } from '../lib/types';
 import { LAYER_LABEL, MATCH_LABEL, MODE_LABEL, POLICY_STATE_LABEL } from '../lib/words';
+import { DiagSettings } from './diagSettings';
 import { confirmInline, copyField, errorLine, errorText, pageHead, pill } from './parts';
 
 type Pending = { kind: 'remove'; id: string } | { kind: 'enable'; id: string } | { kind: 'revoke'; id: string } | null;
@@ -20,6 +21,7 @@ const SECTIONS = [
   { id: 'set-protection', label: '保护清单' },
   { id: 'set-policies', label: '有限策略' },
   { id: 'set-data', label: '数据与 CLI' },
+  { id: 'set-diag', label: 'AI 诊断' },
 ];
 
 export class SettingsPage {
@@ -33,14 +35,17 @@ export class SettingsPage {
   private saveError: string | null = null;
   private saved: string | null = null;
   private busy = false;
+  private diag: DiagSettings;
 
   constructor(private app: App) {
+    this.diag = new DiagSettings(app);
     this.body = h('div', { class: 'settings-body' });
     this.el = h('section', { class: 'page page-settings', 'aria-labelledby': 'settings-title' }, this.body);
   }
 
   activate(): void {
     void this.reload();
+    void this.diag.reload();
   }
 
   update(): void {
@@ -119,7 +124,7 @@ export class SettingsPage {
       pageHead({ id: 'settings-title', title: '设置' }),
       this.saveError ? h('div', { class: 'notice warn', role: 'alert' }, h('span', {}, this.saveError)) : null,
       this.saved ? h('div', { class: 'notice', role: 'status' }, h('span', {}, this.saved)) : null,
-      h('div', { class: 'settings-layout' }, nav, h('div', { class: 'settings-main' }, this.caps(), this.protectionSection(), this.policySection(), this.dataSection())),
+      h('div', { class: 'settings-layout' }, nav, h('div', { class: 'settings-main' }, this.caps(), this.protectionSection(), this.policySection(), this.dataSection(), this.diag.el)),
     );
   }
 
@@ -327,6 +332,10 @@ export class SettingsPage {
       copyField('列出计划与执行', 'cleanmanager operations list'),
       copyField('查看隔离区', 'cleanmanager recovery list'),
       copyField('列出保护项', 'cleanmanager protect list'),
+      h('h3', {}, '构建产物扫描根目录'),
+      h('p', { class: 'muted small' }, '与命令行 purge roots 使用同一份设置；在“清理 › 构建产物”中添加或移除。'),
+      h('div', { class: 'card-actions' }, h('button', { type: 'button', id: 'set-purge-roots', onclick: () => this.app.navigate('purge') }, '管理扫描根目录')),
+      copyField('在终端中查看', 'cleanmanager purge roots'),
     );
   }
 }

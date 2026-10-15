@@ -5,6 +5,7 @@
 //! - STS-02: the health score is a weighted mean of five dimensions with the public weights and thresholds below.
 //!   Its only input is the metric list: cleanup candidates, scan results or plans cannot change it.
 //! - STS-03: one diagnosis line, chosen by a fixed priority; `normal` when nothing crosses a threshold.
+//! - STS-06: stream records keep the time they were sampled; a repeated (not re-sampled) record is `stale`.
 
 use serde::{Deserialize, Serialize};
 
@@ -257,6 +258,35 @@ impl StatusSnapshot {
     }
 }
 
+/// What each tick of a status stream emits (STS-06). The sampler hands finished samples to [`StreamTicker::offer`];
+/// every tick emits the newest sample once as fresh, and if no newer sample finished since, the same sample again
+/// with `stale: true` and its original `sampled_at`: a slow sampler never makes an old value look current.
+#[derive(Debug, Clone, Default)]
+pub struct StreamTicker {
+    last: Option<StatusSnapshot>,
+    fresh: bool,
+}
+
+impl StreamTicker {
+    pub fn offer(&mut self, snapshot: StatusSnapshot) {
+        self.last = Some(snapshot);
+        self.fresh = true;
+    }
+
+    /// A sample finished since the last tick.
+    pub fn has_fresh(&self) -> bool {
+        self.fresh
+    }
+
+    /// `None` until the first sample finished.
+    pub fn tick(&mut self) -> Option<StatusSnapshot> {
+        let mut s = self.last.clone()?;
+        s.stale = !self.fresh;
+        self.fresh = false;
+        Some(s)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +395,23 @@ mod tests {
         ms.push(Metric::value(names::BATTERY_HEALTH, 50.0, "percent"));
         set(&mut ms, names::BATTERY_ON_AC, 1.0);
         assert_eq!(diagnoses(&ms, None)[0].code, "battery_worn");
+    }
+
+    /// STS-06: a tick without a newer sample repeats the old one marked stale, with its original time.
+    #[test]
+    fn stale_ticks_keep_the_original_sample_time() {
+        let mut t = StreamTicker::default();
+        assert!(t.tick().is_none(), "nothing is invented before the first sample");
+        t.offer(StatusSnapshot::new("2026-10-15T08:00:00Z".into(), healthy(), None));
+        let a = t.tick().unwrap();
+        assert_eq!((a.sampled_at.as_str(), a.stale), ("2026-10-15T08:00:00Z", false));
+        let b = t.tick().unwrap();
+        assert_eq!((b.sampled_at.as_str(), b.stale), ("2026-10-15T08:00:00Z", true));
+        assert_eq!(b.to_wire()["sampled_at"], "2026-10-15T08:00:00Z");
+        assert_eq!(b.to_wire()["stale"], true);
+        t.offer(StatusSnapshot::new("2026-10-15T08:00:05Z".into(), healthy(), None));
+        let c = t.tick().unwrap();
+        assert_eq!((c.sampled_at.as_str(), c.stale), ("2026-10-15T08:00:05Z", false));
     }
 
     #[test]

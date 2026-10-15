@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-confirm"
+description = "Enables the diag_confirm command without any pre-configured scope."
+commands.allow = ["diag_confirm"]
+
+[[permission]]
+identifier = "deny-diag-confirm"
+description = "Denies the diag_confirm command without any pre-configured scope."
+commands.deny = ["diag_confirm"]

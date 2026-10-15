@@ -11,17 +11,23 @@
 //! Safety boundary: registry keys are opened with `KEY_READ` only, files are only listed, stat'ed or read, COM
 //! objects are only queried, and nothing is executed: command lines are split into a program path for display and
 //! an existence check, never started. The publisher is the signer of a verified Authenticode signature with
-//! revocation and network retrieval disabled. Enable/disable is task 11.2 and does not exist here.
+//! revocation and network retrieval disabled. Changes (11.2/11.3) live in `startup_actions.rs`; this module stays
+//! read-only and only reports, per item, the verified location a change would use and whether it is available.
+//!
+//! Tests point the registry at a throwaway key (`StartupEnv::registry_root`, under `HKCU\Software\CleanManagerTest\`)
+//! and the Startup folders at temporary directories, so real startup entries are never touched by a test.
 
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
+use std::path::PathBuf;
 
 use cm_core::apps::{InventoryIssue, clean_text};
 use cm_core::capability::CapabilityState;
 use cm_core::path::RawPath;
+use cm_core::plan::v2::Hive;
 use cm_core::startup::{
-    PublisherEvidence, StartupItem, StartupScope, StartupSource, TOGGLE_NOT_IMPLEMENTED, TargetCheck, approval_enabled, fold_state, is_script_host,
-    item_id, normalize, protected_reason, split_command,
+    ADMIN_REQUIRED, OPEN_SETTINGS_GUIDANCE, PublisherEvidence, RegView, StartupItem, StartupLocation, StartupScope, StartupSource, TargetCheck,
+    approval_enabled, fold_state, is_script_host, item_id, normalize, protected_reason, split_command, toggle_capability,
 };
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
 use windows_sys::Win32::System::Registry::{
@@ -29,10 +35,86 @@ use windows_sys::Win32::System::Registry::{
     RegEnumValueW, RegOpenKeyExW, RegQueryValueExW,
 };
 
-const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+pub(crate) const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_ONCE: &str = r"Software\Microsoft\Windows\CurrentVersion\RunOnce";
 const POLICY_RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run";
-const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
+pub(crate) const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
+/// Only redirection roots below this key are accepted (tests).
+pub const TEST_ROOT_PREFIX: &str = r"Software\CleanManagerTest\";
+
+/// Where startup definitions are read from (and, in `startup_actions`, written to).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StartupEnv {
+    /// Empty: the real HKCU/HKLM. Otherwise a throwaway key under `HKCU\Software\CleanManagerTest\` that holds `HKCU\…`
+    /// and `HKLM\…` copies of the keys; scheduled and packaged-app tasks are then not read.
+    pub registry_root: String,
+    /// Replacement Startup folders (user, common). Used only when given; with a redirected registry the real folders
+    /// are never read.
+    pub user_folder: Option<PathBuf>,
+    pub common_folder: Option<PathBuf>,
+    /// Whether this process may change machine-wide entries (an elevated token). Never acquired by this tool.
+    pub is_admin: bool,
+}
+
+impl StartupEnv {
+    /// The real hives and folders, with the process token's elevation.
+    pub fn real() -> StartupEnv {
+        StartupEnv { is_admin: super::startup_actions::is_elevated(), ..Default::default() }
+    }
+
+    /// The real environment unless the test variables redirect it: `CM_STARTUP_TEST_ROOT` (a key under
+    /// `HKCU\Software\CleanManagerTest\`), `CM_STARTUP_TEST_FOLDER` (user Startup folder) and `CM_ASSUME_STANDARD_USER=1`
+    /// (decide as a non-administrator; only ever restricts).
+    pub fn from_process() -> Result<StartupEnv, String> {
+        let mut env = StartupEnv::real();
+        if let Ok(root) = std::env::var("CM_STARTUP_TEST_ROOT") {
+            env.registry_root = Self::checked_root(&root)?;
+            env.user_folder = std::env::var_os("CM_STARTUP_TEST_FOLDER").map(PathBuf::from);
+        }
+        if std::env::var("CM_ASSUME_STANDARD_USER").is_ok_and(|v| v == "1") {
+            env.is_admin = false;
+        }
+        Ok(env)
+    }
+
+    /// Accept only a key strictly below the test prefix, without traversal or unusual characters.
+    pub fn checked_root(root: &str) -> Result<String, String> {
+        let r = root.trim_end_matches('\\');
+        let ok = r.len() > TEST_ROOT_PREFIX.len()
+            && r.is_char_boundary(TEST_ROOT_PREFIX.len())
+            && r[..TEST_ROOT_PREFIX.len()].eq_ignore_ascii_case(TEST_ROOT_PREFIX)
+            && r.split('\\').all(|c| !c.is_empty() && c != "." && c != ".." && c.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_. ".contains(ch)));
+        if ok { Ok(r.to_owned()) } else { Err(format!(r"startup test root must be a key under HKCU\{TEST_ROOT_PREFIX}")) }
+    }
+
+    pub fn is_redirected(&self) -> bool {
+        !self.registry_root.is_empty()
+    }
+
+    /// Physical (root key, subkey, view flags) of a logical key in `hive`.
+    pub(crate) fn physical(&self, hive: Hive, path: &str, view: RegView) -> (HKEY, String, u32) {
+        if self.is_redirected() {
+            return (HKEY_CURRENT_USER, format!(r"{}\{}\{path}", self.registry_root, hive.as_str()), 0);
+        }
+        let root = if hive == Hive::Hklm { HKEY_LOCAL_MACHINE } else { HKEY_CURRENT_USER };
+        let flags = match view {
+            RegView::Default => 0,
+            RegView::Wow64_64 => KEY_WOW64_64KEY,
+            RegView::Wow64_32 => KEY_WOW64_32KEY,
+        };
+        (root, path.to_owned(), flags)
+    }
+
+    pub(crate) fn open(&self, hive: Hive, path: &str, view: RegView) -> Result<RegKey, u32> {
+        let (root, sub, flags) = self.physical(hive, path, view);
+        RegKey::open(root, &sub, flags)
+    }
+
+    /// Display form of a logical key as it is physically read.
+    pub(crate) fn label(&self, hive: Hive, path: &str) -> String {
+        if self.is_redirected() { format!(r"HKCU\{}\{}\{path}", self.registry_root, hive.as_str()) } else { format!(r"{}\{path}", hive.as_str()) }
+    }
+}
 const SYSTEM_APP_DATA: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
 const PACKAGES: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
 
@@ -202,7 +284,7 @@ fn check_path(path: &str) -> TargetCheck {
 
 /// Resolve a startup command to a target path and its check. Bare program names are looked up in the Windows
 /// and System32 directories only (no PATH search, no App Paths); unresolved bare names stay unknown.
-fn resolve_command(command: &str) -> (Option<String>, TargetCheck, Option<&'static str>) {
+pub(crate) fn resolve_command(command: &str) -> (Option<String>, TargetCheck, Option<&'static str>) {
     let exists = |p: &str| expand_env(p).is_some_and(|e| check_path(&e) == TargetCheck::Exists);
     let Some(split) = split_command(command, &exists) else { return (None, TargetCheck::Unchecked, Some("Command line is empty")) };
     let Some(program) = expand_env(&split.program) else { return (None, TargetCheck::Unchecked, Some("Command uses an undefined environment variable")) };
@@ -280,6 +362,7 @@ struct Builder {
     items: Vec<StartupItem>,
     issues: Vec<InventoryIssue>,
     signers: HashMap<String, Option<String>>,
+    is_admin: bool,
 }
 
 /// One observed entry before protection and state folding.
@@ -296,6 +379,10 @@ struct Entry {
     /// Read-only regardless of the target (RunOnce, policy, policy-managed packaged tasks).
     fixed: Option<&'static str>,
     note: Option<&'static str>,
+    /// Verified change mechanism (Run values, Startup-folder files); `None` = settings page only.
+    location: Option<StartupLocation>,
+    /// A `Run` value: removable after backup when stale.
+    removable: bool,
 }
 
 impl Builder {
@@ -322,12 +409,17 @@ impl Builder {
         let (state, state_note) = fold_state(e.enabled, e.check);
         let protected = protected_reason(&e.name, publisher.as_ref().map(|p| p.0.as_str()), e.target.as_deref(), e.task_path.as_deref());
         let (toggle, protected_flag, reason) = match (protected, e.fixed) {
-            (Some(why), _) => (CapabilityState::Unsupported, true, Some(why.to_owned())),
-            (None, Some(why)) => (CapabilityState::Unsupported, false, Some(why.to_owned())),
-            (None, None) => (CapabilityState::Unverified, false, None),
+            (Some(why), _) => (CapabilityState::Unsupported, true, Some(why)),
+            (None, Some(why)) => (CapabilityState::Unsupported, false, Some(why)),
+            (None, None) => match toggle_capability(false, e.location.is_some(), e.scope, self.is_admin) {
+                CapabilityState::Unverified => (CapabilityState::Unverified, false, Some(OPEN_SETTINGS_GUIDANCE)),
+                CapabilityState::PermissionRequired => (CapabilityState::PermissionRequired, false, Some(ADMIN_REQUIRED)),
+                other => (other, false, None),
+            },
         };
-        let reason = [reason.as_deref(), state_note, e.note].into_iter().flatten().collect::<Vec<_>>().join("; ");
-        let reason = if reason.is_empty() && toggle == CapabilityState::Unverified { Some(TOGGLE_NOT_IMPLEMENTED.to_owned()) } else { clean_text(&reason) };
+        let changeable = protected.is_none() && e.fixed.is_none();
+        let reason = [reason, state_note, e.note].into_iter().flatten().collect::<Vec<_>>().join("; ");
+        let reason = clean_text(&reason);
         self.items.push(StartupItem {
             item_id: item_id(e.source, e.scope, &e.definition),
             name: clean_text(&e.name).unwrap_or_else(|| "(unnamed)".into()),
@@ -341,6 +433,8 @@ impl Builder {
             toggle_capability: toggle,
             protected: protected_flag,
             reason,
+            location: if changeable { e.location } else { None },
+            removable_when_stale: changeable && e.removable,
         });
     }
 }
@@ -353,33 +447,36 @@ fn view_label(view: u32) -> &'static str {
 }
 
 /// Enabled flags recorded by Explorer under `StartupApproved\{sub}`, keyed by lower-case value name.
-fn approvals(root: HKEY, sub: &str) -> HashMap<String, bool> {
-    let Ok(key) = RegKey::open(root, &format!(r"{APPROVED}\{sub}"), KEY_WOW64_64KEY) else { return HashMap::new() };
+fn approvals(env: &StartupEnv, hive: Hive, sub: &str) -> HashMap<String, bool> {
+    let Ok(key) = env.open(hive, &format!(r"{APPROVED}\{sub}"), RegView::Wow64_64) else { return HashMap::new() };
     key.values().unwrap_or_default().into_iter().filter_map(|(n, _, d)| approval_enabled(&d).map(|e| (n.to_lowercase(), e))).collect()
 }
 
-/// (hive, hive label, key path, view flag, scope, StartupApproved flags, fixed read-only reason).
-type RunLocation<'a> = (HKEY, &'a str, &'a str, u32, StartupScope, Option<&'a HashMap<String, bool>>, Option<&'static str>);
+/// (hive, key path, view, scope, StartupApproved sub-key of its enable records, fixed read-only reason).
+type RunLocation<'a> = (Hive, &'a str, RegView, StartupScope, Option<&'a str>, Option<&'static str>);
 
-fn read_run_keys(b: &mut Builder) {
-    let user_approved = approvals(HKEY_CURRENT_USER, "Run");
-    let machine_approved = approvals(HKEY_LOCAL_MACHINE, "Run");
-    let machine_approved32 = approvals(HKEY_LOCAL_MACHINE, "Run32");
+fn read_run_keys(b: &mut Builder, env: &StartupEnv) {
     let once: Option<&'static str> = Some("RunOnce entries run a single time, often as installer steps, and stay read-only");
     let policy: Option<&'static str> = Some("Set by policy; change it with Group Policy or the managing tool");
     let locations: [RunLocation; 8] = [
-        (HKEY_CURRENT_USER, "HKCU", RUN, 0, StartupScope::User, Some(&user_approved), None),
-        (HKEY_CURRENT_USER, "HKCU", RUN_ONCE, 0, StartupScope::User, None, once),
-        (HKEY_CURRENT_USER, "HKCU", POLICY_RUN, 0, StartupScope::User, None, policy),
-        (HKEY_LOCAL_MACHINE, "HKLM", RUN, KEY_WOW64_64KEY, StartupScope::System, Some(&machine_approved), None),
-        (HKEY_LOCAL_MACHINE, "HKLM", RUN, KEY_WOW64_32KEY, StartupScope::System, Some(&machine_approved32), None),
-        (HKEY_LOCAL_MACHINE, "HKLM", RUN_ONCE, KEY_WOW64_64KEY, StartupScope::System, None, once),
-        (HKEY_LOCAL_MACHINE, "HKLM", RUN_ONCE, KEY_WOW64_32KEY, StartupScope::System, None, once),
-        (HKEY_LOCAL_MACHINE, "HKLM", POLICY_RUN, KEY_WOW64_64KEY, StartupScope::System, None, policy),
+        (Hive::Hkcu, RUN, RegView::Default, StartupScope::User, Some("Run"), None),
+        (Hive::Hkcu, RUN_ONCE, RegView::Default, StartupScope::User, None, once),
+        (Hive::Hkcu, POLICY_RUN, RegView::Default, StartupScope::User, None, policy),
+        (Hive::Hklm, RUN, RegView::Wow64_64, StartupScope::System, Some("Run"), None),
+        (Hive::Hklm, RUN, RegView::Wow64_32, StartupScope::System, Some("Run32"), None),
+        (Hive::Hklm, RUN_ONCE, RegView::Wow64_64, StartupScope::System, None, once),
+        (Hive::Hklm, RUN_ONCE, RegView::Wow64_32, StartupScope::System, None, once),
+        (Hive::Hklm, POLICY_RUN, RegView::Wow64_64, StartupScope::System, None, policy),
     ];
-    for (root, hive, path, view, scope, approved, fixed) in locations {
-        let source = format!(r"{hive}\{path}{}", view_label(view));
-        let key = match RegKey::open(root, path, view) {
+    for (hive, path, view, scope, approval_sub, fixed) in locations {
+        // A redirected (test) registry has a single view.
+        if env.is_redirected() && view == RegView::Wow64_32 {
+            continue;
+        }
+        let view_flag = if view == RegView::Wow64_32 { KEY_WOW64_32KEY } else { 0 };
+        let source = format!("{}{}", env.label(hive, path), view_label(view_flag));
+        let approved = approval_sub.map(|sub| approvals(env, hive, sub));
+        let key = match env.open(hive, path, view) {
             Ok(k) => k,
             Err(ERROR_FILE_NOT_FOUND) => continue,
             Err(rc) => {
@@ -400,8 +497,11 @@ fn read_run_keys(b: &mut Builder) {
             }
             let command = utf16_data(&data);
             let (target, check, note) = resolve_command(&command);
-            let enabled = approved.and_then(|a| a.get(&name.to_lowercase()).copied()).unwrap_or(true);
+            let enabled = approved.as_ref().and_then(|a| a.get(&name.to_lowercase()).copied()).unwrap_or(true);
             let shown = if name.is_empty() { "(Default)".to_owned() } else { name.clone() };
+            let location = approval_sub.filter(|_| !name.is_empty()).map(|sub| StartupLocation::RunValue {
+                root: env.registry_root.clone(), hive, view, key: path.to_owned(), value_name: name.clone(), approval_key: format!(r"{APPROVED}\{sub}"),
+            });
             b.push(Entry {
                 source: StartupSource::RunKey,
                 scope,
@@ -414,6 +514,8 @@ fn read_run_keys(b: &mut Builder) {
                 task_path: None,
                 fixed,
                 note,
+                removable: location.is_some(),
+                location,
             });
         }
     }
@@ -448,22 +550,29 @@ fn known_folder(id: &windows::core::GUID) -> Option<String> {
     }
 }
 
-fn read_startup_folders(b: &mut Builder) {
+fn read_startup_folders(b: &mut Builder, env: &StartupEnv) {
     use windows::Win32::UI::Shell::{FOLDERID_CommonStartup, FOLDERID_Startup};
     let folders = [
-        (FOLDERID_Startup, StartupScope::User, approvals(HKEY_CURRENT_USER, "StartupFolder")),
-        (FOLDERID_CommonStartup, StartupScope::System, approvals(HKEY_LOCAL_MACHINE, "StartupFolder")),
+        (FOLDERID_Startup, StartupScope::User, Hive::Hkcu, &env.user_folder),
+        (FOLDERID_CommonStartup, StartupScope::System, Hive::Hklm, &env.common_folder),
     ];
-    for (id, scope, approved) in folders {
-        match known_folder(&id) {
-            Some(dir) => read_folder(b, &dir, scope, &approved),
+    for (id, scope, hive, replacement) in folders {
+        let dir = match replacement {
+            Some(p) => Some(p.to_string_lossy().into_owned()),
+            // A redirected (test) registry never reads the real folders.
+            None if env.is_redirected() => continue,
+            None => known_folder(&id),
+        };
+        let approved = approvals(env, hive, "StartupFolder");
+        match dir {
+            Some(dir) => read_folder(b, env, &dir, scope, hive, &approved),
             None => b.issue("known_folder_unavailable", &format!("{scope:?} Startup folder"), "the Startup folder location could not be resolved".into()),
         }
     }
 }
 
 /// Entries of one Startup folder; `approved` holds Explorer's per-file enabled flags (lower-case file names).
-fn read_folder(b: &mut Builder, dir: &str, scope: StartupScope, approved: &HashMap<String, bool>) {
+fn read_folder(b: &mut Builder, env: &StartupEnv, dir: &str, scope: StartupScope, hive: Hive, approved: &HashMap<String, bool>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -489,6 +598,9 @@ fn read_folder(b: &mut Builder, dir: &str, scope: StartupScope, approved: &HashM
             (Some(full.clone()), TargetCheck::Exists, None)
         };
         let stem = std::path::Path::new(&file_name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(file_name.clone());
+        let location = raw(dir).map(|folder| StartupLocation::FolderFile {
+            root: env.registry_root.clone(), hive, folder, file_name: file_name.clone(), approval_key: format!(r"{APPROVED}\StartupFolder"),
+        });
         b.push(Entry {
             source: StartupSource::StartupFolder,
             scope,
@@ -501,6 +613,8 @@ fn read_folder(b: &mut Builder, dir: &str, scope: StartupScope, approved: &HashM
             task_path: None,
             fixed: None,
             note,
+            location,
+            removable: false,
         });
     }
 }
@@ -644,6 +758,8 @@ fn task_entry(b: &mut Builder, task: &windows::Win32::System::TaskScheduler::IRe
             task_path: Some(path),
             fixed: None,
             note,
+            location: None,
+            removable: false,
         });
     }
 }
@@ -727,6 +843,8 @@ fn read_store_tasks(b: &mut Builder) {
                 task_path: None,
                 fixed,
                 note,
+                location: None,
+                removable: false,
             });
         }
     }
@@ -753,12 +871,20 @@ pub(crate) fn on_com_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
 /// Read-only inventory of startup items on this machine. Sources that fail are reported as issues (the list is
 /// then incomplete, not empty). Nothing is enabled, disabled, deleted, started or written.
 pub fn inventory() -> (Vec<StartupItem>, Vec<InventoryIssue>) {
-    let out = on_com_thread(|| {
-        let mut b = Builder { items: Vec::new(), issues: Vec::new(), signers: HashMap::new() };
-        read_run_keys(&mut b);
-        read_startup_folders(&mut b);
-        read_tasks(&mut b);
-        read_store_tasks(&mut b);
+    inventory_with(&StartupEnv::real())
+}
+
+/// [`inventory`] of an explicit environment (a redirected test registry reads only its Run keys and given folders).
+pub fn inventory_with(env: &StartupEnv) -> (Vec<StartupItem>, Vec<InventoryIssue>) {
+    let env = env.clone();
+    let out = on_com_thread(move || {
+        let mut b = Builder { items: Vec::new(), issues: Vec::new(), signers: HashMap::new(), is_admin: env.is_admin };
+        read_run_keys(&mut b, &env);
+        read_startup_folders(&mut b, &env);
+        if !env.is_redirected() {
+            read_tasks(&mut b);
+            read_store_tasks(&mut b);
+        }
         (b.items, b.issues)
     });
     match out {

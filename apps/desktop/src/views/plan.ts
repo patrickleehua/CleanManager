@@ -25,6 +25,52 @@ import {
   normalizeCode,
 } from '../lib/words';
 import { copyField, emptyState, errorLine, pageHead, pill, type Tone } from './parts';
+import { EXTENSIONS, TOOLS } from '../lib/nav';
+import { words } from '../lib/platform';
+import type { Page } from '../lib/store';
+
+const STARTUP_EXPLAIN = {
+  effect: '只修改系统的启用记录（与任务管理器中的“启动应用”相同），不删除程序、快捷方式或它的设置。',
+  space: '不影响磁盘空间。',
+  recovery: '执行前记录每一项原来的状态；之后可以在“活动”中为这次执行生成还原计划。',
+};
+
+/** What a plan of this kind does, in one line, and how it reads on the execute button. */
+function kindVerb(d: PlanDetail, items: PlanItem[]): { verb: string; run: string; permanent: boolean } {
+  const n = groupDigits(d.item_count);
+  switch (d.kind) {
+    case 'cleanup':
+      return {
+        verb: `${d.mode ? MODE_LABEL[d.mode] : '处理'}：${n} 个${d.catalog === 'purge' ? '构建产物中的文件' : d.catalog === 'installer' ? '安装包' : '文件'}`,
+        run: `执行：${d.mode ? MODE_LABEL[d.mode] : '处理'}（${n} 项）`,
+        permanent: d.mode === 'delete',
+      };
+    case 'manual_trash':
+      return { verb: `${words().moveToBin}：${n} 个手选对象`, run: `执行：${words().moveToBin}（${n} 项）`, permanent: false };
+    case 'manual_purge':
+      return { verb: `从${words().bin}永久删除：${n} 个对象`, run: `执行：永久删除 ${n} 项`, permanent: true };
+    case 'startup': {
+      const disable = items.every((i) => i.action_type === 'startup_disable');
+      const enable = items.every((i) => i.action_type === 'startup_enable');
+      const what = disable ? '停用' : enable ? '启用' : '修改';
+      const name = d.item_count === 1 && items[0] ? `“${items[0].name}”` : `${n} 个启动项`;
+      return { verb: `${what}启动项：${name}`, run: `执行：${what}${d.item_count === 1 ? '这个启动项' : ` ${n} 个启动项`}`, permanent: false };
+    }
+    case 'startup_restore':
+      return { verb: `还原启动项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
+    case 'restore':
+      return { verb: `恢复到原位置：${n} 个对象`, run: `执行：恢复 ${n} 项`, permanent: false };
+    default:
+      return { verb: `永久清空：${n} 个隔离对象`, run: `执行：永久清空 ${n} 项`, permanent: true };
+  }
+}
+
+/** Human name of the page a plan was opened from (its back link). */
+function pageName(p: Page): string {
+  for (const t of TOOLS) for (const sec of t.sections) if (sec.page === p) return sec.label;
+  const ext = EXTENSIONS.find((e) => e.page === p);
+  return ext ? ext.label : p === 'plan' ? '计划' : '上一页';
+}
 
 const ITEM_PAGE = 100;
 
@@ -138,7 +184,7 @@ export class PlanPage {
       this.app.announce('已批准这份计划。它还没有执行');
       await this.load(d.plan_id, false);
       // Permanent actions never take the default focus; the safe path stays first.
-      const permanent = d.mode === 'delete' || d.kind === 'purge';
+      const permanent = kindVerb(d, this.items).permanent;
       requestAnimationFrame(() => document.getElementById(permanent ? 'auth-title' : 'plan-apply')?.focus());
     } catch (e) {
       this.actionError = toIpcError(e);
@@ -200,6 +246,7 @@ export class PlanPage {
   private back(): { label: string; onClick: () => void } {
     const from = this.app.store.state.returnTo;
     if (from === 'activity') return { label: '返回活动', onClick: () => this.app.navigate('activity') };
+    if (from && from !== 'plan' && from !== 'operation') return { label: `返回${pageName(from)}`, onClick: () => this.app.navigate(from) };
     return { label: '返回清理候选', onClick: () => this.app.navigate('cleanup') };
   }
 
@@ -223,7 +270,7 @@ export class PlanPage {
       this.body,
       pageHead({
         id: 'plan-title',
-        title: `审阅${PLAN_KIND_LABEL[d.kind]}`,
+        title: `审阅${d.catalog === 'purge' ? '构建产物清理计划' : d.catalog === 'installer' ? '安装包清理计划' : PLAN_KIND_LABEL[d.kind]}`,
         back: this.back(),
         meta: [
           h('code', { class: 'selectable' }, d.plan_id),
@@ -255,10 +302,18 @@ export class PlanPage {
   }
 
   private statement(d: PlanDetail): HTMLElement {
-    const n = groupDigits(d.item_count);
-    const explain = d.kind === 'cleanup' && d.mode ? MODE_EXPLAIN[d.mode] : d.kind === 'cleanup' ? null : RECOVERY_EXPLAIN[d.kind];
-    const verb = d.kind === 'cleanup' && d.mode ? `${MODE_LABEL[d.mode]}：${n} 个文件` : d.kind === 'restore' ? `恢复到原位置：${n} 个对象` : `永久清空：${n} 个隔离对象`;
-    const kind = d.kind === 'cleanup' ? (d.mode ?? 'trash') : d.kind === 'purge' ? 'delete' : 'restore';
+    const { verb, permanent } = kindVerb(d, this.items);
+    const explain =
+      (d.kind === 'cleanup' || d.kind === 'manual_trash') && d.mode
+        ? MODE_EXPLAIN[d.mode]
+        : d.kind === 'startup' || d.kind === 'startup_restore'
+          ? STARTUP_EXPLAIN
+          : d.kind === 'manual_purge'
+            ? MODE_EXPLAIN.delete
+            : d.kind === 'restore' || d.kind === 'purge'
+              ? RECOVERY_EXPLAIN[d.kind]
+              : null;
+    const kind = permanent ? 'delete' : d.mode ?? 'restore';
     return h(
       'div',
       { class: 'statement', 'data-mode': kind },
@@ -282,12 +337,17 @@ export class PlanPage {
     const total = parseBytes(d.total_logical_bytes);
     const facts: (HTMLElement | null)[] = [];
     const fact = (k: string, ...v: (Node | string | null)[]) => facts.push(h('dt', {}, k), h('dd', {}, ...v));
+    if (d.kind === 'manual_trash') {
+      fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}；按条目编号选择，不按路径`));
+    }
+    if (d.requires_admin) fact('权限', `需要${words().admin}`, h('small', {}, 'CleanManager 不会自动提权；没有管理员权限时执行会被拒绝，不会部分修改。'));
     if (d.kind === 'cleanup') {
       fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}`));
-      fact('规则版本', d.rule_refs.length ? h('span', { class: 'rule-list' }, ...d.rule_refs.map((r) => h('code', { class: 'selectable' }, r))) : '—');
+      fact(d.catalog ? '内置目录规则' : '规则版本', d.rule_refs.length ? h('span', { class: 'rule-list' }, ...d.rule_refs.map((r) => h('code', { class: 'selectable' }, r))) : '—');
     }
     fact('对象', `${groupDigits(d.item_count)} 项`, d.kind === 'cleanup' ? h('small', {}, `其中 ${groupDigits(d.default_selected_items)} 项来自低风险规则`) : null);
-    fact('已知逻辑大小', total === null ? '未知' : formatBytes(total), h('small', {}, total === null ? '计划中不允许大小未知的文件' : formatExactBytes(total)));
+    if (d.kind !== 'startup' && d.kind !== 'startup_restore')
+      fact('已知逻辑大小', total === null ? '未知' : formatBytes(total), h('small', {}, total === null ? '计划中不允许大小未知的文件' : formatExactBytes(total)));
     if (d.allocated_known_bytes !== null)
       fact('分配大小', d.allocated_unknown_count ? `至少 ${formatBytes(d.allocated_known_bytes)}，${d.allocated_unknown_count} 项未知` : formatBytes(d.allocated_known_bytes));
     fact('冻结于', formatTime(d.created_at));
@@ -315,6 +375,12 @@ export class PlanPage {
         lines.push('来源候选集已被新的分析替换，无法逐类对照未包含的候选；清单本身不受影响。');
       }
       lines.push('执行时逐项复查：已变化、正被占用、所属应用在运行或已受保护的对象会被跳过，不会替换成别的文件。');
+    } else if (d.kind === 'manual_trash' || d.kind === 'manual_purge') {
+      lines.push('只包含你在磁盘页手动选中的对象；没有规则会自动扩大这份清单，也没有策略会匹配它。');
+      lines.push('执行前逐项核对身份；对象已变化、正被占用或其中出现受保护对象时跳过，不会替换成别的文件。');
+    } else if (d.kind === 'startup' || d.kind === 'startup_restore') {
+      lines.push('不包含程序文件、快捷方式、计划任务本身或应用设置；只改启用记录。');
+      lines.push('执行前再次读取该项；状态在此期间被改变时跳过，不覆盖。');
     } else {
       lines.push('只包含所选的隔离项；隔离区中的其他对象不受影响。');
       lines.push(d.kind === 'restore' ? '原位置已有同名对象时跳过，不覆盖、不改名到其他位置。' : '清空不会恢复任何对象；需要恢复的项目请另建恢复计划。');
@@ -323,7 +389,9 @@ export class PlanPage {
   }
 
   private itemsPanel(d: PlanDetail): HTMLElement {
-    const recovery = d.kind !== 'cleanup';
+    const recovery = d.kind === 'restore' || d.kind === 'purge';
+    const toggles = d.kind === 'startup' || d.kind === 'startup_restore';
+    const ACTION: Record<string, string> = { startup_disable: '停用', startup_enable: '启用', registry_restore: '还原', fs_trash: words().moveToBin, fs_delete: '永久删除' };
     const rows = this.items.map((i) =>
       h(
         'tr',
@@ -334,8 +402,9 @@ export class PlanPage {
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, i.name, i.item_kind === 'directory' ? h('span', { class: 'muted small' }, '（空文件夹，内容成功后才移除）') : null),
           h('span', { class: 'obj-path path' }, recovery ? `回到 ${i.original_path_display ?? '—'}` : i.path_display),
+          d.kind !== 'cleanup' && i.action_type && ACTION[i.action_type] ? h('span', { class: 'obj-reason' }, ACTION[i.action_type], i.scope ? `（${i.scope === 'user' ? '当前用户' : '所有用户'}）` : '') : null,
         ),
-        h('td', { class: 'col-size num', title: formatExactBytes(parseBytes(i.logical_bytes)) }, formatBytes(i.logical_bytes)),
+        h('td', { class: 'col-size num', title: toggles ? '' : formatExactBytes(parseBytes(i.logical_bytes)) }, toggles ? '—' : formatBytes(i.logical_bytes)),
       ),
     );
     return h(
@@ -365,7 +434,7 @@ export class PlanPage {
 
   private authPanel(d: PlanDetail): HTMLElement {
     const a = d.authorization;
-    const danger = d.mode === 'delete' || d.kind === 'purge';
+    const { run, permanent: danger } = kindVerb(d, this.items);
     const blocks: (HTMLElement | null)[] = [];
     blocks.push(
       h(
@@ -382,8 +451,7 @@ export class PlanPage {
     } else if (a.status === 'required' && d.review_token) {
       blocks.push(this.seal(d, danger));
     } else if (a.status === 'authorized' && !d.stale_reason) {
-      const label = d.kind === 'cleanup' && d.mode ? `执行：${MODE_LABEL[d.mode]}（${groupDigits(d.item_count)} 项）` : d.kind === 'restore' ? `执行：恢复 ${groupDigits(d.item_count)} 项` : `执行：永久清空 ${groupDigits(d.item_count)} 项`;
-      const apply = h('button', { type: 'button', id: 'plan-apply', class: `${danger ? 'danger' : 'primary'} wide`, disabled: this.busy }, label);
+      const apply = h('button', { type: 'button', id: 'plan-apply', class: `${danger ? 'danger' : 'primary'} wide`, disabled: this.busy }, run);
       apply.addEventListener('click', () => void this.apply());
       const revoke = h('button', { type: 'button', class: 'quiet', id: 'plan-revoke', disabled: this.busy }, '撤销批准');
       revoke.addEventListener('click', () => void this.revoke());
@@ -395,7 +463,7 @@ export class PlanPage {
     } else {
       blocks.push(
         h('p', { class: 'small' }, a.status === 'revoked' ? '批准已撤销，这份计划不能执行。' : d.stale_reason ? (STALE_LABEL[d.stale_reason] ?? d.stale_reason) : '这份计划不能再批准。'),
-        h('button', { type: 'button', class: 'wide', onclick: () => this.app.navigate(d.kind === 'cleanup' ? 'cleanup' : 'activity') }, d.kind === 'cleanup' ? '回到清理候选' : '回到隔离区'),
+        h('button', { type: 'button', class: 'wide', onclick: () => this.back().onClick() }, this.back().label),
       );
     }
     blocks.push(errorLine(this.actionError));
@@ -404,8 +472,10 @@ export class PlanPage {
       { class: 'panel work-aside auth-panel', 'aria-labelledby': 'auth-title' },
       h('h2', { id: 'auth-title', tabindex: '-1' }, '授权'),
       ...blocks,
-      d.kind === 'cleanup' ? this.policies(d) : h('p', { class: 'muted small' }, '恢复与清空计划只能由人工审阅授权，任何策略都不会匹配它们。'),
-      this.handoff(d),
+      d.kind === 'cleanup' && !d.catalog
+        ? this.policies(d)
+        : h('p', { class: 'muted small' }, d.kind === 'cleanup' ? '构建产物与安装包计划只能由人工审阅授权。' : '这类计划只能由人工审阅授权，任何策略都不会匹配它们。'),
+      d.cli.show ? this.handoff(d) : null,
     );
   }
 

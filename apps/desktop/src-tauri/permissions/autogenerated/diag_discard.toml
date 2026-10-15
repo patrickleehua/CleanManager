@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-discard"
+description = "Enables the diag_discard command without any pre-configured scope."
+commands.allow = ["diag_discard"]
+
+[[permission]]
+identifier = "deny-diag-discard"
+description = "Denies the diag_discard command without any pre-configured scope."
+commands.deny = ["diag_discard"]

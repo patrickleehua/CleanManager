@@ -211,6 +211,11 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         }
         _ => return fail(req, ErrorCode::InvalidArgument, "pass exactly one of --candidates ID,ID or --all-default-selected (installer: or --source LABEL)", p.format),
     };
+    // CLI-11: previewed rows whose observed state changed since discovery are listed as stale, not planned.
+    let (selected, stale) = crate::clean_cmd::split_stale(&set.candidates, selected);
+    if selected.is_empty() {
+        return fail(req, ErrorCode::PlanStale, &format!("every selected item changed since discovery ({}); run the preview again", crate::clean_cmd::stale_summary(&stale)), p.format);
+    }
     let view = match stores.index.view(&set.scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),
@@ -236,7 +241,7 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }
-    emit(&crate::plan_cmd::plan_record(req, &stores, &plan), p.format);
+    emit(&crate::clean_cmd::with_stale(crate::plan_cmd::plan_record(req, &stores, &plan), &stale), p.format);
     ExitCode::SUCCESS
 }
 

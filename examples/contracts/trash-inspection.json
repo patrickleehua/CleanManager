@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "kind": "trash_inspection",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "entry_id": "1842",
+  "path": {
+    "platform": "windows",
+    "display": "D:\\Projects\\old-renders",
+    "raw_encoding": "windows_utf16le_base64",
+    "raw_base64": "RAA6AFwAUAByAG8AagBlAGMAdABzAFwAbwBsAGQALQByAGUAbgBkAGUAcgBzAA=="
+  },
+  "parent_display": "D:\\Projects",
+  "object_kind": "directory",
+  "cloud": "not_cloud",
+  "logical_bytes": "1048576",
+  "allocated_bytes": null,
+  "files": 40,
+  "directories": 2,
+  "protected": [
+    {
+      "path": {
+        "platform": "windows",
+        "display": "D:\\Projects\\old-renders\\.git",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "RAA6AFwAUAByAG8AagBlAGMAdABzAFwAbwBsAGQALQByAGUAbgBkAGUAcgBzAFwALgBnAGkAdAA="
+      },
+      "reason": "default protection class source_worktree"
+    }
+  ],
+  "protected_count": 1,
+  "coverage_gaps": [],
+  "gap_count": 0,
+  "trashable": false,
+  "refusal": {
+    "code": "policy_denied",
+    "reason": "protected_descendants",
+    "message": "1 protected object(s) inside; select unprotected descendants instead"
+  },
+  "holders": null,
+  "available_actions": [
+    "show_path",
+    "copy_path"
+  ],
+  "guidance": "Show or copy the path; reveal it in Explorer from the desktop app. Nothing was opened or downloaded."
+}

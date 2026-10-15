@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>CleanManager · 五工具交互原型 v6</title><link rel="icon" href="data:,"><link rel="stylesheet" href="style.css?v=3.4"><link rel="stylesheet" href="features-v4.css?v=4.0"><link rel="stylesheet" href="ai-diagnostics-v5.css?v=5.0"><link rel="stylesheet" href="suite-v6.css?v=6.2"></head>
+<body>
+<a class="v6-skip" href="#main" onclick="event.preventDefault();document.getElementById('main').focus()">跳到页面内容</a>
+<header class="topbar">
+  <a class="brand" href="#clean" aria-label="CleanManager 清理"><span class="brand-mark v6-mark" aria-hidden="true"></span>CleanManager</a>
+  <nav id="mainNav" aria-label="五个工具"></nav>
+  <div class="header-tools"><span class="demo-badge">交互演示 v6</span><button class="icon-button v6-platform" id="platformButton" aria-label="预览平台：Windows，点击切换到 macOS" title="切换预览平台">Win</button><button class="icon-button" id="commandButton" title="跳转功能 · Ctrl K" aria-label="跳转功能">⌕</button><button class="icon-button" id="trayButton" title="托盘面板预览" aria-label="托盘面板预览">▤</button><button class="icon-button" id="themeButton" title="切换浅色/深色" aria-label="切换浅色或深色主题">◐</button></div>
+</header>
+<div class="workspace">
+  <aside class="rail" aria-label="扩展入口"><nav class="v6-rail" id="v6Rail" aria-label="扩展入口"></nav><div class="rail-top" hidden></div><div class="rail-bottom" hidden></div></aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div id="selectionBar" class="selection-bar" hidden></div>
+<button id="taskChip" class="task-chip" hidden aria-live="polite"></button>
+<aside id="drawer" class="drawer" hidden aria-label="详情"><div id="drawerContent"></div></aside>
+<div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+<dialog id="dialog" aria-labelledby="dialogTitle"><div id="dialogContent"></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="contextMenu" class="context-menu" hidden></div>
+<div id="v6Live" class="sr-only" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+<script src="app.js?v=3.4"></script>
+<script src="features-v4.js?v=4.0"></script>
+<script src="ai-diagnostics-v5.js?v=5.0"></script>
+<script src="suite-v6.js?v=6.2"></script>
+</body></html>

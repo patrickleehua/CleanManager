@@ -343,5 +343,113 @@ pub fn list() -> Vec<Insight> {
     out.items
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Overview cards and old downloads (parity 7.3, DIN-03/04). Read-only: directory listings and bounded walks that do
+// not follow links; nothing is opened for data.
+
+/// Upper bound of the Downloads listing and of each measured tool directory.
+pub const DOWNLOADS_LIMIT: usize = 20_000;
+pub const CARD_WALK_LIMIT: usize = 200_000;
+
+/// The user's Downloads folder (known folder).
+pub fn downloads_root() -> Option<RawPath> {
+    super::installer::declared_locations().into_iter().find(|(_, label)| *label == "downloads").map(|(p, _)| p)
+}
+
+/// Files below `root` (subfolders up to 3 levels; links not followed), at most [`DOWNLOADS_LIMIT`] entries.
+/// The note says why the list may be incomplete.
+pub fn download_entries(root: &std::path::Path) -> (Vec<cm_core::insights::DownloadEntry>, Option<String>) {
+    let mut out = Vec::new();
+    let mut seen = 0usize;
+    let mut denied = 0usize;
+    let mut stack = vec![(root.to_path_buf(), 0u32)];
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            denied += 1;
+            continue;
+        };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > DOWNLOADS_LIMIT {
+                return (out, Some(format!("Listing stopped after {DOWNLOADS_LIMIT} entries; open Downloads in disk analysis for the rest")));
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                if depth < 3 {
+                    stack.push((e.path(), depth + 1));
+                }
+                continue;
+            }
+            let Ok(m) = e.metadata() else { continue };
+            let Some(modified) = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) else { continue };
+            if let Some(path) = raw(&e.path().to_string_lossy()) {
+                out.push(cm_core::insights::DownloadEntry { path, logical_bytes: m.len(), modified_unix: modified.as_secs() as i64 });
+            }
+        }
+    }
+    let note = (denied > 0).then(|| format!("{denied} folder(s) could not be read"));
+    (out, note)
+}
+
+/// The old-downloads review of this user's Downloads folder.
+pub fn old_downloads(days: u32) -> cm_core::insights::OldDownloadsReview {
+    let now = cm_core::time::now_utc();
+    let now_unix = cm_core::plan::parse_utc(&now).unwrap_or(0);
+    match downloads_root() {
+        Some(root) => {
+            let (entries, note) = download_entries(std::path::Path::new(&root.display()));
+            cm_core::insights::old_downloads(Some(root), entries, now_unix, days, &now, note)
+        }
+        None => cm_core::insights::old_downloads(None, Vec::new(), now_unix, days, &now, Some("The Downloads folder could not be resolved".into())),
+    }
+}
+
+/// Fixed tool directories for the developer-tool, model-library and device-backup cards: (card, label, env base, rest).
+const CARD_DIRS: &[(cm_core::insights::CardKind, &str, &str, &str)] = {
+    use cm_core::insights::CardKind::{DeveloperTools as D, DeviceBackups as B, ModelLibraries as M};
+    &[
+        (D, "Cargo registry", "USERPROFILE", r".cargo\registry"),
+        (D, "Rust toolchains", "USERPROFILE", r".rustup\toolchains"),
+        (D, "npm cache", "LOCALAPPDATA", "npm-cache"),
+        (D, "pip cache", "LOCALAPPDATA", r"pip\Cache"),
+        (D, "uv cache", "LOCALAPPDATA", r"uv\cache"),
+        (D, "Gradle caches", "USERPROFILE", r".gradle\caches"),
+        (D, "Maven repository", "USERPROFILE", r".m2\repository"),
+        (D, "NuGet packages", "USERPROFILE", r".nuget\packages"),
+        (D, "Yarn cache", "LOCALAPPDATA", r"Yarn\Cache"),
+        (D, "pnpm store", "LOCALAPPDATA", r"pnpm\store"),
+        (D, "Go module cache", "USERPROFILE", r"go\pkg\mod"),
+        (M, "Ollama models", "USERPROFILE", r".ollama\models"),
+        (M, "Hugging Face cache", "USERPROFILE", r".cache\huggingface"),
+        (M, "LM Studio models", "USERPROFILE", r".lmstudio\models"),
+        (M, "LM Studio models (old location)", "USERPROFILE", r".cache\lm-studio\models"),
+        (B, "Apple device backups", "APPDATA", r"Apple Computer\MobileSync\Backup"),
+        (B, "Apple device backups (Store iTunes)", "USERPROFILE", r"Apple\MobileSync\Backup"),
+    ]
+};
+
+/// Existing card directories, each measured by a bounded walk (unknown with a reason past the limit).
+pub fn card_dirs() -> Vec<cm_core::insights::MeasuredDir> {
+    let mut out = Vec::new();
+    for (card, label, env, rest) in CARD_DIRS {
+        let Some(base) = std::env::var_os(env) else { continue };
+        let dir = std::path::PathBuf::from(base).join(rest);
+        if !dir.is_dir() {
+            continue;
+        }
+        let d = dir.to_string_lossy().into_owned();
+        let Some(path) = raw(&d) else { continue };
+        let size = match walk_size(&d, CARD_WALK_LIMIT) {
+            Ok((bytes, _)) => Measured::Bytes { bytes, basis: SizeBasis::DirectoryWalk },
+            Err(why) => Measured::Unknown(why),
+        };
+        out.push(cm_core::insights::MeasuredDir { card: *card, label: (*label).into(), path, size, observed_at: cm_core::time::now_utc() });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests;

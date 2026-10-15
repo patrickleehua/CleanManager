@@ -1,0 +1,306 @@
+{
+  "contract": "diag/1",
+  "kind": "diagnosis_record",
+  "request_id": "req_synthetic",
+  "diagnosis": {
+    "diagnosis_id": "dg_aaaaaaaaaaaaaaaaaaaa",
+    "state": "completed",
+    "request": {
+      "contract": "diag/1",
+      "object": {
+        "scan_id": "s_demo",
+        "revision": 1,
+        "entry_id": "42",
+        "origin": "disk",
+        "candidate_id": null,
+        "app_instance_id": null
+      },
+      "observed_at": "2026-10-14T12:00:00Z",
+      "observation_fingerprint": "e69798d92bae758a91ac0d0866dfeede34b85952fec3dbf854c970a1c6944fb6",
+      "disclosure": {
+        "full_path": false,
+        "child_summary": false
+      },
+      "question": "这个视频还能删吗？",
+      "statements": [
+        {
+          "statement_id": "u1",
+          "question_id": "q1",
+          "text": "已经备份到移动硬盘了",
+          "at": "2026-10-15T09:30:00Z"
+        }
+      ],
+      "parent_diagnosis_id": null,
+      "prompt_template": "diag-prompt/1"
+    },
+    "evidence": {
+      "version": "diag-evidence/1",
+      "subject": {
+        "kind": "file",
+        "name": "[email] 素材 A-cam.mov",
+        "extension": "mov",
+        "location": "%USERPROFILE%\\Videos\\Wedding 2025",
+        "logical_bytes": "42000000000",
+        "allocated_bytes": "42000000000",
+        "size_basis": "entity",
+        "modified_at": "2026-05-28T20:26:40Z",
+        "link_count": 1,
+        "cloud": "not_cloud",
+        "identity_quality": "strong"
+      },
+      "children": null,
+      "children_omitted": 0,
+      "items": [
+        {
+          "evidence_id": "ev_1",
+          "layer": "observation",
+          "code": "observation.scan",
+          "text": "索引观察时间 2026-10-14T12:00:00Z；这次扫描范围已完整读取。"
+        },
+        {
+          "evidence_id": "ev_2",
+          "layer": "observation",
+          "code": "observation.size",
+          "text": "逻辑大小 39.1 GiB（42000000000 字节），分配大小 39.1 GiB（42000000000 字节）。"
+        },
+        {
+          "evidence_id": "ev_3",
+          "layer": "rule",
+          "code": "rule.none",
+          "text": "没有已启用的清理规则匹配这个对象；这不说明它是垃圾，也不说明它重要。"
+        },
+        {
+          "evidence_id": "ev_4",
+          "layer": "protection",
+          "code": "protection.none",
+          "text": "硬性保护、默认保护类别和你的保护名单都没有命中。"
+        },
+        {
+          "evidence_id": "ev_5",
+          "layer": "ownership",
+          "code": "ownership.none",
+          "text": "没有安装记录指向这个位置；这不证明它是残留文件。"
+        },
+        {
+          "evidence_id": "ev_6",
+          "layer": "user_statement",
+          "code": "user.statement",
+          "text": "用户陈述（未经核验）：已经备份到移动硬盘了"
+        }
+      ],
+      "gaps": [
+        {
+          "gap_id": "gap_1",
+          "code": "name_redacted",
+          "text": "名称中的敏感片段已脱敏。"
+        },
+        {
+          "gap_id": "gap_2",
+          "code": "backup_unknown",
+          "text": "CleanManager 不检测备份；是否已有可用备份未知。"
+        },
+        {
+          "gap_id": "gap_3",
+          "code": "usage_unknown",
+          "text": "未检测是否有程序或工程正在使用它。"
+        },
+        {
+          "gap_id": "gap_4",
+          "code": "reclaim_unknown",
+          "text": "删除后实际能释放多少空间未知（共享块、硬链接、回收站等）。"
+        }
+      ],
+      "redactions": [
+        {
+          "field": "subject.name",
+          "rule": "email"
+        },
+        {
+          "field": "subject.location",
+          "rule": "user_profile"
+        }
+      ],
+      "excluded": [
+        "file_contents",
+        "directory_tree",
+        "credentials",
+        "sessions",
+        "cloud_hydration"
+      ]
+    },
+    "facts": {
+      "entry_id": "42",
+      "kind": "file",
+      "volume_id": "synthetic-volume",
+      "file_id": "ntfs64:b0e40e1b1be07244",
+      "object_fingerprint": "16e21453440a98a8dfecc41885aa93d978303ff1a9eac1db4997b212c783b867",
+      "protection": null,
+      "protection_checked": true,
+      "candidate_id": null,
+      "candidate_state": null,
+      "plannable": false,
+      "partial_evidence": false,
+      "cloud_placeholder": false,
+      "hard_links": false,
+      "app_instance_ids": [],
+      "rule_refs": []
+    },
+    "destination": {
+      "provider_id": "anthropic-default",
+      "label": "Anthropic API",
+      "kind": "anthropic",
+      "mode": "api",
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "executable": null,
+      "model": "claude-opus-5-5",
+      "template": "diag-prompt/1"
+    },
+    "payload_digest": "cf323b79c0adafb22ec53ac6b85575e0f76a3d4f4f7dc9c29f445057320f8fb1",
+    "created_at": "2026-10-15T09:30:00Z",
+    "updated_at": "2026-10-15T09:30:12Z",
+    "finished_at": "2026-10-15T09:30:12Z",
+    "expires_at": "2026-10-16T09:30:12Z",
+    "retention": "session",
+    "retain_until": "2026-10-16T09:30:00Z",
+    "result": {
+      "answer": {
+        "answer_version": "diag-answer/1",
+        "summary": "这是个人拍摄素材；在确认备份可读且没有剪辑工程引用前，建议保留。",
+        "purpose": "看起来是一段相机原始素材，常被剪辑工程引用。",
+        "recommendation": "needs_context",
+        "conditions": [
+          "备份可读",
+          "工程不再引用"
+        ],
+        "deletion_impact": "删除后无法从本机恢复；若工程仍引用它，工程会缺素材。",
+        "rebuild_cost": "无法重建，只能从备份恢复。",
+        "claims": [
+          {
+            "text": "用户说已经备份到移动硬盘",
+            "basis": "user_statement",
+            "refs": [
+              "ev_6"
+            ]
+          },
+          {
+            "text": "没有清理规则覆盖它",
+            "basis": "rule",
+            "refs": [
+              "ev_3"
+            ]
+          }
+        ],
+        "gaps": [],
+        "alternatives": [
+          {
+            "action": "verify",
+            "text": "打开备份确认文件可读"
+          },
+          {
+            "action": "keep",
+            "text": "确认前保留"
+          }
+        ],
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "剪辑工程是否仍引用这段素材？",
+            "choices": [
+              "仍在使用",
+              "已完成导出",
+              "不确定"
+            ]
+          }
+        ]
+      },
+      "model_recommendation": "needs_context",
+      "effective_recommendation": "needs_context",
+      "grounding": [
+        {
+          "index": 0,
+          "status": "user_statement",
+          "note": "你的陈述，CleanManager 未核验"
+        },
+        {
+          "index": 1,
+          "status": "conflicts_with_facts",
+          "note": "本机没有规则匹配这个对象"
+        }
+      ],
+      "conflicts": [
+        {
+          "code": "rule_claim_without_rule",
+          "text": "回答引用了清理规则，但没有已启用规则匹配该对象。"
+        }
+      ],
+      "sanitized": []
+    },
+    "failure": null,
+    "freshness": {
+      "state": "current",
+      "checked_at": "2026-10-15T09:30:12Z",
+      "reasons": []
+    },
+    "handoff": [
+      {
+        "action": "review_plan",
+        "available": false,
+        "reason": "没有已启用规则的候选；本扩展不开放任意路径删除。",
+        "suggested_by_model": false,
+        "target": null
+      },
+      {
+        "action": "keep",
+        "available": true,
+        "reason": "不做任何操作，文件保持原状。",
+        "suggested_by_model": true,
+        "target": null
+      },
+      {
+        "action": "protect",
+        "available": true,
+        "reason": "加入你的保护名单；以后的规则与策略都不会选中它。",
+        "suggested_by_model": false,
+        "target": {
+          "scan_id": "s_demo",
+          "entry_id": "42",
+          "candidate_id": null,
+          "app_instance_id": null
+        }
+      },
+      {
+        "action": "locate",
+        "available": true,
+        "reason": "在磁盘视图中定位（只读）。",
+        "suggested_by_model": false,
+        "target": {
+          "scan_id": "s_demo",
+          "entry_id": "42",
+          "candidate_id": null,
+          "app_instance_id": null
+        }
+      },
+      {
+        "action": "verify",
+        "available": true,
+        "reason": "按核实清单确认备份、引用与来源。",
+        "suggested_by_model": true,
+        "target": null
+      },
+      {
+        "action": "app_management",
+        "available": false,
+        "reason": "没有安装记录关联到这个位置。",
+        "suggested_by_model": false,
+        "target": null
+      },
+      {
+        "action": "archive",
+        "available": false,
+        "reason": "CleanManager 不移动或归档文件；请使用你自己的备份工具。",
+        "suggested_by_model": false,
+        "target": null
+      }
+    ]
+  }
+}

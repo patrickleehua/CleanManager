@@ -4,6 +4,8 @@
 // entry_id, frozen to one revision, and survives paging, filtering and drilling.
 
 import type { App } from '../main';
+import { words } from '../lib/platform';
+import { reviewTrash } from './trash';
 import { toIpcError } from '../lib/api';
 import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
@@ -132,6 +134,23 @@ export class DiskPage {
     if (status.scan_id !== this.scanId || status.revision !== this.revision) {
       this.bind(status.scan_id, status.revision!, status.root_entry_id!, status.root_display ?? '扫描根目录');
     }
+    if (s.revealEntry) {
+      const id = s.revealEntry;
+      queueMicrotask(() => this.app.store.set({ revealEntry: null }));
+      void this.reveal(id);
+    }
+  }
+
+  /** Locate an entry named by another page (AI diagnosis "locate"): this layer first, then the
+   *  whole revision by size. Read-only. */
+  private async reveal(id: string): Promise<void> {
+    await this.locate(id, true);
+    if (this.grid.active === id) return;
+    this.scope = 'all';
+    this.name = '';
+    this.renderControls();
+    this.reloadAll();
+    await this.locate(id);
   }
 
   // ---- binding and queries -------------------------------------------------------------
@@ -481,6 +500,12 @@ export class DiskPage {
     open?.addEventListener('click', () => this.drill(e));
     const sel = h('button', { type: 'button', id: 'detail-select' }, this.selection.has(e.entry_id) ? '取消选择' : '选择');
     sel.addEventListener('click', () => this.toggle(e));
+    // Optional AI diagnosis of this one object (no rule needed). Sends nothing until previewed.
+    const diag = this.scanId ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: '解释这个对象的用途与删除后果' }, icon('diag'), 'AI 诊断') : null;
+    diag?.addEventListener('click', () => this.app.openDiagnosis({ scanId: this.scanId!, entryId: e.entry_id, origin: 'disk', name: e.name }, 'disk'));
+    // Platform idiom (GUI-12): show the object in the file manager; the host resolves the path from the index.
+    const reveal = this.scanId ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
+    reveal?.addEventListener('click', () => void this.app.backend.revealEntry(this.scanId!, e.entry_id).catch(() => this.app.announce(`无法${words().reveal}`)));
     replace(
       this.details,
       h('h2', { class: 'detail-name' }, e.name),
@@ -502,7 +527,7 @@ export class DiskPage {
         h('dd', {}, e.identity_quality === 'strong' ? '卷 + 文件 ID' : '较弱（仅供浏览，不作执行依据）'),
       ),
       e.boundary ? h('p', { class: 'notice' }, '这是一个链接或云端边界。扫描记录了它，但没有进入其中，也不会把目标的大小算进来。') : null,
-      h('div', { class: 'card-actions' }, open, sel),
+      h('div', { class: 'card-actions' }, open, sel, diag, reveal),
     );
   }
 
@@ -514,6 +539,8 @@ export class DiskPage {
     const visible = new Set(this.rows.map((r) => r.entry_id));
     const hidden = [...this.selection.keys()].filter((id) => !visible.has(id)).length;
     const clear = h('button', { type: 'button', id: 'sel-clear', class: 'quiet' }, '清除选择');
+    const trash = h('button', { type: 'button', id: 'sel-trash', class: 'primary' }, `${words().moveToBin}…`);
+    trash.addEventListener('click', () => void reviewTrash(this.app, this.scanId!, [...this.selection.values()]));
     clear.addEventListener('click', () => this.clearSelection());
     const toggleList = h('button', { type: 'button', id: 'sel-list', class: 'quiet', 'aria-expanded': this.showSelected ? 'true' : 'false' }, this.showSelected ? '收起已选' : '查看全部已选');
     toggleList.addEventListener('click', () => {
@@ -539,7 +566,7 @@ export class DiskPage {
         : this.summaryError
           ? h('p', { class: 'form-error' }, this.summaryError)
           : h('p', { class: 'muted' }, '正在汇总…'),
-      h('p', { class: 'muted small' }, '选择只用于查看汇总。此版本不提供删除；清理需要经过规则分析和计划审阅。'),
+      h('p', { class: 'muted small' }, `可以把选中的对象${words().moveToBin}：先逐项检查保护与占用，再生成计划，由你审阅批准后才会移动。`),
       this.showSelected
         ? h(
             'ul',
@@ -547,7 +574,7 @@ export class DiskPage {
             ...[...this.selection.values()].map((e) => h('li', {}, h('span', { class: 'path' }, e.path_display), h('span', { class: 'num' }, formatBytes(e.logical_bytes)))),
           )
         : null,
-      h('div', { class: 'card-actions' }, toggleList, clear),
+      h('div', { class: 'card-actions' }, trash, toggleList, clear),
     );
   }
 

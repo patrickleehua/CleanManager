@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diag-probe"
+description = "Enables the diag_probe command without any pre-configured scope."
+commands.allow = ["diag_probe"]
+
+[[permission]]
+identifier = "deny-diag-probe"
+description = "Denies the diag_probe command without any pre-configured scope."
+commands.deny = ["diag_probe"]
