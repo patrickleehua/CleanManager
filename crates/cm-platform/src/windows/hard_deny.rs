@@ -9,7 +9,11 @@
 //!   object's own identity (links are not followed), the identity of every ancestor, the
 //!   object's real path, and the resolution of every symlink/junction/mount point on the way.
 //!   Only name-surrogate reparse points are followed, so cloud placeholders are never recalled.
+//!   Objects reached through a network redirector (an SMB share of a local folder, a mapped
+//!   drive) report no volume GUID; they are compared as the local volume with the same serial,
+//!   so a loopback share cannot alias its way around a hard-deny root.
 
+use std::collections::HashMap;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -18,8 +22,8 @@ use cm_core::path::RawPath;
 use cm_core::protect::{self, HardDenyClass, HardDenyRoot, HardDenySet, IdentityChain, LinkResolution, ObjectIdentity, ProtectionDecision, ResolvedTarget};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_TAG_INFO, FileAttributeTagInfo, GetDriveTypeW, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
-    GetLogicalDrives,
+    CreateFileW, FILE_ATTRIBUTE_TAG_INFO, FileAttributeTagInfo, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetDriveTypeW,
+    GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetLogicalDrives,
 };
 
 use super::directory::identity_of;
@@ -46,6 +50,60 @@ fn env_path(name: &str) -> Option<PathBuf> {
 
 fn identity(path: &[u16]) -> io::Result<ObjectIdentity> {
     identity_of(path).map(|(v, f)| ObjectIdentity::new(v, f))
+}
+
+/// Serial part of a `win.directory` volume id (`<volume GUID>|<serial>`).
+fn serial_part(volume_id: &str) -> Option<&str> {
+    volume_id.find('|').map(|i| &volume_id[i..])
+}
+
+/// Volume id of every mounted local volume, keyed by its serial part.
+fn local_volume_ids() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut buf = [0u16; 64];
+    // SAFETY: the buffer length is passed in characters; the handle is closed below.
+    let h = unsafe { FindFirstVolumeW(buf.as_mut_ptr(), buf.len() as u32) };
+    if h == INVALID_HANDLE_VALUE {
+        return out;
+    }
+    loop {
+        let name = &buf[..buf.iter().position(|u| *u == 0).unwrap_or(buf.len())];
+        // Volumes without media or that cannot be opened are simply not mapped.
+        if let Ok((volume_id, _)) = identity_of(name)
+            && let Some(serial) = serial_part(&volume_id)
+        {
+            out.entry(serial.to_owned()).or_insert_with(|| volume_id.clone());
+        }
+        // SAFETY: handle from FindFirstVolumeW; buffer length in characters.
+        if unsafe { FindNextVolumeW(h, buf.as_mut_ptr(), buf.len() as u32) } == 0 {
+            break;
+        }
+    }
+    // SAFETY: handle from FindFirstVolumeW, closed exactly once.
+    unsafe { FindVolumeClose(h) };
+    out
+}
+
+/// Identifies chain members in the form the hard-deny roots use. An identity without a volume
+/// GUID (SMB or another redirector) is mapped to the local volume with the same serial: over a
+/// loopback share the file ID is the local one, so the object then matches its local root. A
+/// serial collision with a truly remote volume can only add denials.
+#[derive(Default)]
+struct Identifier {
+    local: Option<HashMap<String, String>>,
+}
+
+impl Identifier {
+    fn identity(&mut self, path: &[u16]) -> io::Result<ObjectIdentity> {
+        let mut id = identity(path)?;
+        if id.volume_id.starts_with('|') {
+            let local = self.local.get_or_insert_with(local_volume_ids);
+            if let Some(v) = local.get(&id.volume_id) {
+                id.volume_id = v.clone();
+            }
+        }
+        Ok(id)
+    }
 }
 
 /// Candidate hard-deny locations for this machine, before identity resolution.
@@ -143,7 +201,7 @@ pub fn hard_deny_roots() -> Vec<HardDenyRoot> {
         let units = wide(&path);
         let Ok(id) = identity(&units) else { continue };
         let display = path.display().to_string();
-        if let Some(t) = is_name_surrogate(&units).then(|| resolve_link(&units).ok()).flatten() {
+        if let Some(t) = is_name_surrogate(&units).then(|| resolve_link(&units, &mut Identifier::default()).ok()).flatten() {
             out.push(HardDenyRoot { class, volume_id: t.object.volume_id, file_id: t.object.file_id, display: display.clone() });
         }
         out.push(HardDenyRoot { class, volume_id: id.volume_id, file_id: id.file_id, display });
@@ -246,14 +304,14 @@ fn final_path(h: HANDLE) -> io::Result<Vec<u16>> {
     Err(io::Error::last_os_error())
 }
 
-fn resolve_link(link: &[u16]) -> Result<ResolvedTarget, String> {
+fn resolve_link(link: &[u16], ids: &mut Identifier) -> Result<ResolvedTarget, String> {
     let h = Followed::open(link).map_err(|e| format!("target cannot be opened: {e}"))?;
     let real = final_path(h.0).map_err(|e| format!("target path unavailable: {e}"))?;
     drop(h);
     let chain = prefixes(&real).ok_or("target path has an unknown form")?;
     let (object_path, ancestors) = chain.split_last().ok_or("empty target path")?;
-    let object = identity(object_path).map_err(|e| format!("target cannot be identified: {e}"))?;
-    let ancestors = ancestors.iter().map(|a| identity(a)).collect::<io::Result<Vec<_>>>().map_err(|e| format!("target ancestor cannot be identified: {e}"))?;
+    let object = ids.identity(object_path).map_err(|e| format!("target cannot be identified: {e}"))?;
+    let ancestors = ancestors.iter().map(|a| ids.identity(a)).collect::<io::Result<Vec<_>>>().map_err(|e| format!("target ancestor cannot be identified: {e}"))?;
     let path = RawPath::windows(real).map_err(|e| e.to_string())?;
     Ok(ResolvedTarget { path, object, ancestors })
 }
@@ -265,11 +323,12 @@ pub fn identity_chain(path: &[u16]) -> IdentityChain {
     let Ok((_, verbatim)) = full_path(path) else { return chain };
     let Some(all) = prefixes(&verbatim) else { return chain };
     let last = all.len() - 1;
+    let mut ids = Identifier::default();
     for (i, p) in all.iter().enumerate() {
-        let id = identity(p).ok();
+        let id = ids.identity(p).ok();
         if i > 0 && is_name_surrogate(p) {
             let link = RawPath::windows(p.clone()).unwrap_or_else(|_| RawPath::Windows(vec![u16::from(b'?')]));
-            chain.links.push(LinkResolution { link, on_object: i == last, target: resolve_link(p) });
+            chain.links.push(LinkResolution { link, on_object: i == last, target: resolve_link(p, &mut ids) });
         }
         if i == last {
             chain.object = id;
@@ -286,3 +345,6 @@ pub fn identity_chain(path: &[u16]) -> IdentityChain {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod corpus_tests;

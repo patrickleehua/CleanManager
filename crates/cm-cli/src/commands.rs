@@ -20,6 +20,11 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
     if let Err(msg) = p.check_selection_widening() {
         return fail(req, ErrorCode::InvalidArgument, &msg, p.format);
     }
+    // LIF-01: write commands hold the lifecycle lock shared, so no update swaps files under them.
+    let _lifecycle = match crate::self_cmd::write_guard(req, &p) {
+        Ok(g) => g,
+        Err(code) => return code,
+    };
     let words: Vec<&str> = p.words.iter().map(String::as_str).collect();
     let result = match words.as_slice() {
         ["capabilities"] => p.allow(&[], &[]).map(|_| capabilities(req, &p)),
@@ -31,6 +36,9 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["completion", "print", shell] => p.allow(&[], &[]).map(|_| crate::completion_cmd::print(req, &p, shell)),
         ["completion", "install", shell] => p.allow(&["profile"], &[]).map(|_| crate::completion_cmd::install(req, &p, shell)),
         ["doctor"] => p.allow(&["store", "export"], &["no-redact"]).map(|_| crate::doctor_cmd::doctor(req, &p)),
+        ["self", "update"] => p.allow(&["store", "manifest"], &["check"]).map(|_| crate::self_cmd::self_update(req, &p)),
+        ["self", "install"] => p.allow(&["store", "dir"], &["add-to-path"]).map(|_| crate::self_cmd::self_install(req, &p)),
+        ["self", "uninstall"] => p.allow(&["store", "install-dir"], &["remove-user-data"]).map(|_| crate::self_cmd::self_uninstall(req, &p)),
         ["help"] => p.allow(&[], &[]).map(|_| crate::completion_cmd::help(req, &p)),
         ["analyze"] => p.allow(&["scan", "store", "rules", "preview-rule"], &[]).map(|_| crate::analysis_cmd::analyze_cmd(req, &p)),
         ["candidates", "list"] => p.allow(&["set", "store", "limit", "cursor"], &[]).map(|_| crate::analysis_cmd::candidates_list(req, &p)),
@@ -58,7 +66,7 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["apps", "uninstall", "list"] => p.allow(&[], &[]).map(|_| crate::uninstall_cmd::list(req, &p)),
         ["apps", "uninstall", "plan", "create"] => p.allow(&["store", "instance"], &["end-running"]).map(|_| crate::uninstall_cmd::plan_create(req, &p)),
         ["apps", "uninstall", "leftovers"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::leftovers(req, &p)),
-        ["apps", "uninstall", "leftovers", "plan", "create"] => p.allow(&["store", "operation", "items"], &[]).map(|_| crate::uninstall_cmd::leftovers_plan(req, &p)),
+        ["apps", "uninstall", "leftovers", "plan", "create"] => p.allow(&["store", "operation", "items", "exclude"], &[]).map(|_| crate::uninstall_cmd::leftovers_plan(req, &p)),
         ["apps", "uninstall", "orphans"] => p.allow(&[], &[]).map(|_| crate::uninstall_cmd::orphans(req, &p)),
         ["apps", "uninstall", "restore"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::restore(req, &p)),
         ["startup", "list"] => p.allow(&[], &[]).map(|_| crate::startup_cmd::startup_list(req, &p)),

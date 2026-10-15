@@ -74,7 +74,7 @@ Schema 与验证器共同保证：
 
 | 优先级 | 层 | 内容 | 能否移除 |
 | --- | --- | --- | --- |
-| 1 | 硬拒绝（`hard_deny`，版本 `hard-deny/3`） | 文本预过滤（相对路径、`..`、控制/格式字符、设备与管理共享路径、ADS、保留名、系统目录表）＋按“卷 + 文件身份”比较的平台根：Windows 系统目录、Program Files、ProgramData 根、用户根与各用户主目录根、凭据与 Vault、卷根与卷元数据、回收站根、Recovery、Config.Msi、终端安全软件数据、本工具存储与各卷隔离区（`.cleanmanager-quarantine`）；macOS `/System`、`/bin`、`/sbin`、`/usr`（`/usr/local` 之下除外）、`/private/etc`、`/private/var/db`、`/Library/Apple`、钥匙串、TCC、`/Library/SystemExtensions`、`/Library/Updates`、`/Users` 与各主目录根（仅本身）、卷根与卷元数据、废纸篓根、本工具存储。对象或任一祖先是链接/junction/挂载点时，再用解析后的真实位置检查；解析失败即拒绝 | 不能 |
+| 1 | 硬拒绝（`hard_deny`，版本 `hard-deny/4`） | 文本预过滤（相对路径、`..`、控制/格式字符、设备与管理共享路径、ADS、保留名、系统目录表，macOS `/.vol` 文件 ID 路径与 `/.nofollow`、`/.resolve` 解析前缀）＋按“卷 + 文件身份”比较的平台根：Windows 系统目录、Program Files、ProgramData 根、用户根与各用户主目录根、凭据与 Vault、卷根与卷元数据、回收站根、Recovery、Config.Msi、终端安全软件数据、本工具存储与各卷隔离区（`.cleanmanager-quarantine`）；macOS `/System`、`/bin`、`/sbin`、`/usr`（`/usr/local` 之下除外）、`/private/etc`、`/private/var/db`、`/Library/Apple`、钥匙串、TCC、`/Library/SystemExtensions`、`/Library/Updates`、`/Users` 与各主目录根（仅本身）、卷根与卷元数据、废纸篓根、本工具存储。对象或任一祖先是链接/junction/挂载点时，再用解析后的真实位置检查；解析失败即拒绝。经 SMB 共享或网络映射盘到达的对象没有卷 GUID，按卷序列号映射回同序列号的本机卷后比较，回环共享不能绕过身份比较。回归语料见 [危险路径语料](../tests/corpus/dangerous-paths.json) | 不能 |
 | 2 | 默认保护类目（`default_category`，版本 `protection/2`） | 凭据、数据库及 WAL/SHM、浏览器站点存储、AI 会话/配置、Git worktree、模型权重、身份解析出的用户文档与系统修复目录（MVP ANA-03） | 不能 |
 | 3 | 用户保护名单（`user`） | `exact`（对象本身）、`descendants`（路径及其下全部，`--path` 默认）、`ancestors`（路径及其所有上级目录）、`glob`（单段 `*`/`?` 与整段 `**`，根必须是字面量）、`rule`（某规则的全部动作）、`maintenance_task`（某维护任务/启动项） | 仅交互终端 |
 

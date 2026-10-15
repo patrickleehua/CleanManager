@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use cm_core::rules::{RegistryEntry, Rule, RuleSet};
 
-/// Where the rule pack is read from: `CM_RULES_DIR`, then `rules` next to the executable, then
-/// the repository's `rules` directory this build was compiled from (development runs).
+/// Where the rule pack is read from: `CM_RULES_DIR`, then `rules` next to the executable (release
+/// bundles ship it there as a resource), then — debug builds only — the repository's `rules`
+/// directory this build was compiled from. Release builds never embed or read a build-machine path.
 pub fn locate() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CM_RULES_DIR") {
         return Some(PathBuf::from(dir));
@@ -20,8 +21,14 @@ pub fn locate() -> Option<PathBuf> {
             return Some(beside);
         }
     }
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../rules");
-    repo.is_dir().then_some(repo)
+    #[cfg(debug_assertions)]
+    {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../rules");
+        if repo.is_dir() {
+            return Some(repo);
+        }
+    }
+    None
 }
 
 fn read_json_files(dir: &Path) -> Result<Vec<(PathBuf, String)>, String> {

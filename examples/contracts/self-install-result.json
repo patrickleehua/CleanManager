@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "kind": "self_install_result",
+  "request_id": "req_synthetic",
+  "status": "preview",
+  "version": "0.0.0-design-example",
+  "install_dir": "D:\\Tools\\CleanManager",
+  "files": 40,
+  "path_conflicts": [
+    {
+      "path": "C:\\Users\\<user>\\scoop\\shims\\cleanmanager.exe",
+      "relation": "different"
+    }
+  ],
+  "path_entry": "refused_conflict",
+  "reason": "1 other cleanmanager program(s) on PATH are left untouched",
+  "requires_interactive_confirmation": true
+}

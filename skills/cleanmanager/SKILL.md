@@ -67,6 +67,7 @@ All groups follow preview -> fixed plan -> human approval -> apply. Full example
 | optimize (maintenance) | `optimize list`, `optimize diagnose`, `optimize history` | `optimize plan create --tasks` only when explicitly asked |
 | apps | `apps list`, `apps updates show`, `apps uninstall list/leftovers/orphans` | uninstall (two separately reviewed plans), `apps update`, `apps updates` checks and `apps updates config` only when explicitly asked |
 | scans, history | `scan show/wait`, `entries list`, `operations list/show` | `scan cancel` |
+| self (CleanManager itself) | `self update --check`, `doctor` | `self update`, `self install`, `self uninstall` only when the user asks; install/uninstall act only after the person confirms in their own terminal |
 | diag (optional AI diagnosis) | `diag config`, `diag preview`, `diag show/list` | `diag create` only after the user accepted that exact preview - see [references/diagnosis.md](references/diagnosis.md) |
 
 Uninstall is two plans: the app's own uninstaller first, then - after `apps uninstall leftovers` - a separate leftovers plan; personal data, settings and models are never preselected (scenario 9 in [references/scenarios.md](references/scenarios.md)). Check `cleanmanager capabilities --json` and `cleanmanager help` for what this build implements; groups not listed there answer `unsupported` or `invalid_argument`.

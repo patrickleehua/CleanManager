@@ -15,7 +15,7 @@ use crate::Format;
 use crate::i18n::Lang;
 
 /// Options that take no value.
-const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running"];
+const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running", "check", "add-to-path", "remove-user-data"];
 
 /// Accepted by every command: output format, human-text language, no input waiting, no colour.
 pub const GLOBAL_OPTIONS: &[&str] = &["format", "lang"];
@@ -88,7 +88,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c(&["apps", "uninstall", "list"], None, &[], &[], "Uninstall route per instance, or why there is none (read-only)", "各实例的卸载方式或不可卸载原因（只读）"),
     w(&["apps", "uninstall", "plan", "create"], None, &["store", "instance"], &["end-running"], "Plan quitting and uninstalling an app (review required; --end-running only in a terminal)", "生成退出并卸载应用的计划（需审阅；--end-running 仅限终端）"),
     c(&["apps", "uninstall", "leftovers"], None, &["store", "operation"], &[], "Grouped leftovers after an uninstall operation (read-only)", "卸载操作后的分组残留（只读）"),
-    w(&["apps", "uninstall", "leftovers", "plan", "create"], None, &["store", "operation", "items"], &[], "Plan removing leftovers: caches/logs plus --items IDs (review required)", "生成残留清理计划：缓存/日志及 --items 指定对象（需审阅）"),
+    w(&["apps", "uninstall", "leftovers", "plan", "create"], None, &["store", "operation", "items", "exclude"], &[], "Plan removing leftovers: caches/logs (minus --exclude) plus --items IDs (review required)", "生成残留清理计划：缓存/日志（去掉 --exclude）及 --items 指定对象（需审阅）"),
     c(&["apps", "uninstall", "orphans"], None, &[], &[], "Leftovers of apps removed earlier (review_only, read-only)", "早先移除应用的孤立残留（仅审阅，只读）"),
     w(&["apps", "uninstall", "restore"], None, &["store", "operation"], &[], "Plan restoring registry keys and startup values a leftovers operation removed", "生成恢复残留操作删除的注册表键与启动值的计划"),
     c(&["startup", "list"], None, &[], &[], "Startup and background items (read-only)", "启动项与后台项（只读）"),
@@ -144,6 +144,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     c(&["completion", "print"], Some("SHELL"), &[], &[], "Print a completion script to stdout", "向标准输出打印补全脚本"),
     w(&["completion", "install"], Some("SHELL"), &["profile"], &[], "Preview, then append completion to a shell profile after terminal confirmation", "预览补全安装，终端确认后才写入配置文件"),
     c(&["doctor"], None, &["store", "export"], &["no-redact"], "Read-only diagnostic report (redacted; export after preview)", "只读诊断报告（默认脱敏，预览后导出）"),
+    // Product lifecycle (LIF-01/02, MVP 14.1): verified self-update, chosen install directory, reviewed self-uninstall.
+    w(&["self", "update"], None, &["store", "manifest"], &["check"], "Verify the signed release manifest (--check) or update this copy; package-manager copies get their command", "校验签名发布清单（--check）或更新本副本；包管理器安装给出其命令"),
+    w(&["self", "install"], None, &["store", "dir"], &["add-to-path"], "Preview copying this release into --dir; installs only after terminal confirmation, never over files", "预览把本发行版复制到 --dir；终端确认后才安装，绝不覆盖文件"),
+    w(&["self", "uninstall"], None, &["store", "install-dir"], &["remove-user-data"], "Reviewed removal plan of CleanManager's own footprint; removes only after terminal confirmation", "CleanManager 自身足迹的移除计划；终端确认后才移除"),
     c(&["help"], None, &[], &[], "Human-readable command list", "人类可读的命令列表"),
 ];
 
@@ -161,7 +165,7 @@ pub const OPTION_VALUES: &[(&str, &[&str])] = &[
 ];
 
 /// Option values that are filesystem paths (completions offer files).
-pub const PATH_OPTIONS: &[&str] = &["root", "store", "path", "rules", "profile", "export", "volume"];
+pub const PATH_OPTIONS: &[&str] = &["root", "store", "path", "rules", "profile", "export", "volume", "dir", "install-dir", "manifest"];
 
 /// Values of positional arguments that are closed sets.
 pub const ARG_VALUES: &[(&str, &[&str])] = &[("SHELL", &["bash", "zsh", "fish", "powershell"])];

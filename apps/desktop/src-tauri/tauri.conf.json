@@ -34,6 +34,10 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../../rules/windows/": "rules/windows/",
+      "../../../rules/registry/": "rules/registry/"
+    }
   }
 }

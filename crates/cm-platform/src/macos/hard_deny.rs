@@ -204,6 +204,9 @@ pub fn identity_chain(path: &[u8]) -> IdentityChain {
 }
 
 #[cfg(test)]
+mod corpus_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -229,7 +232,9 @@ mod tests {
     #[test]
     fn a_symlink_into_a_system_directory_is_denied_and_usr_local_is_rule_territory() {
         let hard = hard_deny_set();
-        let dir = std::env::temp_dir().join(format!("cm-hd-{}", std::process::id()));
+        // `$TMPDIR` is reached through the `/var` symlink, whose target `/private/var` is itself a
+        // hard-deny root (ancestor links only add denials): use the real `/private/var/...` path.
+        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("cm-hd-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let link = dir.join("sys");

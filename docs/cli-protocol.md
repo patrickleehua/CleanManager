@@ -86,9 +86,10 @@
 | `protect.check` | `protect check --path P [--rule ID]` | protection_check | 无 |
 | `doctor.report` | `doctor [--export PATH] [--no-redact]`（已实现） | doctor_report | 无（导出文件需终端确认） |
 | `completion.generate` | `completion print SHELL`；`completion install SHELL [--profile PATH]`（已实现） | completion_script | 仅在终端确认写入时修改 shell 配置 |
-| `self.update.check` | `self update --check` | release_info | 仅访问发布清单 |
-| `self.update.apply` | `self update` | self_update_result | 校验签名与校验和后替换本工具程序 |
-| `self.remove.preview` | `self remove` | self_remove_preview；实际移除只在终端交互确认后进行 | 无 |
+| `self.update.check` | `self update --check [--manifest URL\|PATH]`（已实现；见 [安装与更新](install.md)） | release_info；包管理器安装为 `use_package_manager` 并给出其命令 | 仅读取签名发布清单 |
+| `self.update.apply` | `self update [--manifest URL\|PATH]`（已实现） | self_update_result | 校验签名、版本、存储兼容与逐文件校验和并试运行新程序后，原子替换本工具程序（失败回滚）；持有生命周期独占锁 |
+| `self.install` | `self install --dir PATH [--add-to-path]`（已实现 Windows） | self_install_result；目录非空或已有安装为 conflict | 仅终端输入 install 后复制到新目录；`--add-to-path` 只追加用户 PATH 且 PATH 上有不同的 cleanmanager 时拒绝 |
+| `self.remove.preview` | `self uninstall [--install-dir PATH] [--remove-user-data]`（已实现） | self_remove_preview；实际移除只在终端输入 uninstall 且计划摘要未变时进行 | 无（预览）；确认后只移除本工具自身足迹 |
 
 ### 构建产物与安装包（已实现，Windows）
 
@@ -253,6 +254,9 @@ cleanmanager apps uninstall leftovers --operation op_demo --json      # uninstal
 
 - **Shell 补全**（LIF-03）：`completion print bash|zsh|fish|powershell` 由参数表生成（命令词逐级补全、各命令的选项、`--format`/`--mode`/`--sort` 等的取值、路径选项补全文件；内部选项不出现）。`--format text` 输出裸脚本，例如 `eval "$(cleanmanager completion print bash --format text)"`。`completion install SHELL [--profile PATH]` 先显示将追加的带标记的加载行和目标文件；JSON、非交互或无终端时只返回 `action: preview`、`written: false`，文件不被创建或修改；只有终端内输入 `append` 才追加（`action: installed`），已安装时为 `already_installed`。PowerShell 默认配置文件是 `Documents\PowerShell\Microsoft.PowerShell_profile.ps1`，文档目录被重定向时传 `--profile $PROFILE`。
 - **Doctor**（LIF-04）：`doctor` 只读，报告版本、平台、能力矩阵、权限上下文（是否启用了绕过 ACL 的特权）、配置有效性（规则包与实测登记、保护名单、构建产物设置）、完整错误码与退出码表、操作历史中最近的非成功动作代码及存储自检（SQLite quick_check、索引/审计结构版本、隔离与待核对操作计数）；不读取文件内容、环境变量或凭据，没有存储目录时不创建。默认脱敏：用户主目录替换为 `~`，用户名与计算机名（含 Windows 8.3 短名形式）替换为 `<user>`/`<host>`；`--no-redact` 关闭。`--export PATH` 在 JSON/非交互时只返回带 `export.written: false` 的预览；终端内显示完整报告并输入 `export` 后才以新文件写出（已存在则拒绝覆盖）。
+- **自更新**（LIF-01）：`self update --check` 与 `self update` 只在人运行时访问更新通道（构建时嵌入的 `CM_UPDATE_MANIFEST_URL`，或 `--manifest` 给出的 HTTPS 地址/本地文件）。信封的 Ed25519 签名必须由构建时嵌入的发布公钥验证；随后核对产品、目标平台、版本（只升不降）与存储结构兼容，逐文件比对大小与 SHA-256（内存与落盘各一次），试运行新程序（`capabilities` 报告的版本须等于清单版本），最后逐个顶层条目改名替换并保留旧版本于 `.cleanmanager-update-backup\<版本>`；任何一步失败都不改动当前版本（`verification_failed`/`incompatible`），替换中失败则全部改回（`rolled_back`；改回本身失败为 `rollback_incomplete` 并给出备份位置）。winget、Scoop、npm、cargo、Homebrew 安装只返回 `use_package_manager` 与 `manager_command`，从不访问网络或改动文件；没有发布清单的开发构建为 `cannot_check`。退出码：成功/最新/可更新/包管理器 0，校验或兼容失败 3，被锁 6，无通道/无密钥/非发行布局 7，下载失败与回滚 8。
+- **单实例锁**：`<store>\lifecycle.lock` 是操作系统文件锁（进程退出即释放）。`self update`/`self install`/确认后的 `self uninstall` 独占持有；其他所有写命令（参数表中 `writes` 的命令）在整个运行期间共享持有，因此更新不会在写操作进行中替换程序或迁移存储，更新期间新的写命令立即以 `conflict` 失败。
+- **安装与自卸载**（MVP 14.1、LIF-02）：见 [安装与更新](install.md)。`self install` 与 `self uninstall` 在 JSON、非交互或无终端时只返回预览；`self uninstall` 默认保留配置、保护名单、操作历史（含注册表/启动项备份）与隔离区，隔离区非空时给出数量、大小与恢复/清空命令，`--remove-user-data` 只在隔离区为空且无待核对操作时生效。
 - **语言**（LIF-05）：人类可读文本（`--format text` 的标题与说明、提示、`help`）提供简体中文与英文；kind、code、status/state、字段名与所有取值不本地化，机器 JSON 在任何语言下逐字节相同（`crates/cm-cli/tests/cli_contract.rs` 比较 en、zh-CN 与环境变量三种设置）。error 的 `message` 始终是英文诊断文本。
 
 ## 可选扩展：AI 诊断

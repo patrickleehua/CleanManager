@@ -107,6 +107,9 @@
       "$ref": "#/$defs/cleanup_catalog"
     },
     {
+      "$ref": "#/$defs/self_install_result"
+    },
+    {
       "$ref": "#/$defs/installer_locations"
     },
     {
@@ -5299,20 +5302,41 @@
     },
     "params_self_update_check": {
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "manifest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "manifest"
+      ],
       "additionalProperties": false
     },
     "params_self_update_apply": {
       "type": "object",
       "properties": {
-        "release_id": {
-          "type": "string",
-          "minLength": 1
+        "manifest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
-        "release_id"
+        "manifest"
       ],
       "additionalProperties": false
     },
@@ -5321,10 +5345,39 @@
       "properties": {
         "keep_user_data": {
           "type": "boolean"
+        },
+        "install_dir": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
-        "keep_user_data"
+        "keep_user_data",
+        "install_dir"
+      ],
+      "additionalProperties": false
+    },
+    "params_self_install": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "add_to_path": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dir",
+        "add_to_path"
       ],
       "additionalProperties": false
     },
@@ -5390,7 +5443,8 @@
             "completion.generate",
             "self.update.check",
             "self.update.apply",
-            "self.remove.preview"
+            "self.remove.preview",
+            "self.install"
           ]
         },
         "params": {
@@ -6186,6 +6240,22 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/params_self_remove_preview"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "self.install"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_self_install"
               }
             }
           }
@@ -9213,6 +9283,9 @@
             "homebrew",
             "winget",
             "scoop",
+            "npm",
+            "cargo",
+            "unpackaged",
             "desktop_bundle"
           ]
         },
@@ -9221,7 +9294,9 @@
             "update_available",
             "up_to_date",
             "use_package_manager",
-            "cannot_check"
+            "cannot_check",
+            "verification_failed",
+            "incompatible"
           ]
         },
         "reason": {
@@ -9239,6 +9314,17 @@
           "type": "string",
           "format": "date-time",
           "pattern": "Z$"
+        },
+        "manager_command": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -9251,7 +9337,8 @@
         "install_method",
         "status",
         "reason",
-        "checked_at"
+        "checked_at",
+        "manager_command"
       ],
       "additionalProperties": false
     },
@@ -9271,9 +9358,14 @@
         "status": {
           "enum": [
             "updated",
+            "up_to_date",
             "verification_failed",
             "locked",
-            "use_package_manager"
+            "use_package_manager",
+            "cannot_check",
+            "incompatible",
+            "rolled_back",
+            "rollback_incomplete"
           ]
         },
         "from_version": {
@@ -9307,6 +9399,40 @@
               "type": "null"
             }
           ]
+        },
+        "install_method": {
+          "enum": [
+            "standalone",
+            "homebrew",
+            "winget",
+            "scoop",
+            "npm",
+            "cargo",
+            "unpackaged",
+            "desktop_bundle"
+          ]
+        },
+        "manager_command": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backup_path": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -9318,7 +9444,10 @@
         "to_version",
         "signature_verified",
         "checksum_verified",
-        "reason"
+        "reason",
+        "install_method",
+        "manager_command",
+        "backup_path"
       ],
       "additionalProperties": false
     },
@@ -9335,11 +9464,22 @@
           "type": "string",
           "minLength": 1
         },
+        "status": {
+          "enum": [
+            "preview",
+            "removed",
+            "partial"
+          ]
+        },
         "remove": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
+              "item_id": {
+                "type": "string",
+                "minLength": 1
+              },
               "component": {
                 "enum": [
                   "cli",
@@ -9347,17 +9487,58 @@
                   "resident",
                   "helper",
                   "caches",
-                  "startup_entry"
+                  "startup_entry",
+                  "system_setting",
+                  "user_data"
+                ]
+              },
+              "action": {
+                "enum": [
+                  "remove_file",
+                  "remove_empty_dir",
+                  "remove_path_entry",
+                  "remove_profile_block",
+                  "remove_credential"
                 ]
               },
               "display": {
                 "type": "string",
                 "minLength": 1
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "removed",
+                      "scheduled",
+                      "skipped",
+                      "failed"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
+              "item_id",
               "component",
-              "display"
+              "action",
+              "display",
+              "outcome",
+              "reason"
             ],
             "additionalProperties": false
           },
@@ -9407,6 +9588,63 @@
           },
           "minItems": 0
         },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "install_method": {
+          "enum": [
+            "standalone",
+            "homebrew",
+            "winget",
+            "scoop",
+            "npm",
+            "cargo",
+            "unpackaged",
+            "desktop_bundle"
+          ]
+        },
+        "uninstall_command": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "requires_interactive_confirmation": {
           "const": true
         }
@@ -9415,11 +9653,114 @@
         "schema_version",
         "kind",
         "request_id",
+        "status",
         "remove",
         "keep",
         "quarantine_items",
         "quarantine_logical_bytes",
         "system_settings_to_restore",
+        "warnings",
+        "notes",
+        "install_method",
+        "uninstall_command",
+        "plan_digest",
+        "requires_interactive_confirmation"
+      ],
+      "additionalProperties": false
+    },
+    "self_install_result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "self_install_result"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "preview",
+            "installed"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "install_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "path_conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "relation": {
+                "enum": [
+                  "same_release",
+                  "different"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "relation"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "path_entry": {
+          "enum": [
+            "not_requested",
+            "would_add",
+            "added",
+            "already_present",
+            "refused_conflict",
+            "unsupported",
+            "failed"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requires_interactive_confirmation": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "status",
+        "version",
+        "install_dir",
+        "files",
+        "path_conflicts",
+        "path_entry",
+        "reason",
         "requires_interactive_confirmation"
       ],
       "additionalProperties": false

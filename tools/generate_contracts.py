@@ -322,7 +322,10 @@ def main():
         "protect.check": obj({"path": ref("path"), "rule_id": nullable(STR)}),
         "doctor.report": obj({"redact": {"type": "boolean"}}),
         "completion.generate": obj({"shell": enum("bash", "zsh", "fish", "powershell"), "write_profile": {"type": "boolean"}}),
-        "self.update.check": obj({}), "self.update.apply": obj({"release_id": STR}), "self.remove.preview": obj({"keep_user_data": {"type": "boolean"}}),
+        # LIF-01/02, MVP 14.1: `manifest` overrides the build's update channel (URL or local path of a signed envelope).
+        "self.update.check": obj({"manifest": nullable(STR)}), "self.update.apply": obj({"manifest": nullable(STR)}),
+        "self.remove.preview": obj({"keep_user_data": {"type": "boolean"}, "install_dir": nullable(STR)}),
+        "self.install": obj({"dir": STR, "add_to_path": {"type": "boolean"}}),
     }
     defs["protection_entry_input"] = obj({"match": enum("exact", "glob", "descendants", "ancestors", "rule", "maintenance_task"),
         "path": nullable(ref("path")), "glob": nullable({"type": "string", "minLength": 1, "maxLength": 260}),
@@ -458,17 +461,30 @@ def main():
     defs["installer_locations"] = record("installer_locations", {"locations": arr(obj({"path": ref("path"),
         "source_label": enum("downloads", "desktop", "browser_downloads"), "exists": {"type": "boolean"}})),
         "max_depth": {"type": "integer", "minimum": 1, "maximum": 4}})
-    install_method = enum("standalone", "homebrew", "winget", "scoop", "desktop_bundle")
+    # LIF-01: how this copy was installed; package-manager copies are never replaced (`manager_command` names their update).
+    install_method = enum("standalone", "homebrew", "winget", "scoop", "npm", "cargo", "unpackaged", "desktop_bundle")
     defs["release_info"] = record("release_info", {"current_version": STR, "latest_version": nullable(STR), "release_id": nullable(STR),
-        "install_method": install_method, "status": enum("update_available", "up_to_date", "use_package_manager", "cannot_check"),
-        "reason": nullable(STR), "checked_at": TIME})
-    defs["self_update_result"] = record("self_update_result", {"status": enum("updated", "verification_failed", "locked",
-        "use_package_manager"), "from_version": STR, "to_version": nullable(STR), "signature_verified": {"type": "boolean"},
-        "checksum_verified": {"type": "boolean"}, "reason": nullable(STR)})
-    defs["self_remove_preview"] = record("self_remove_preview", {"remove": arr(obj({"component": enum("cli", "desktop", "resident",
-        "helper", "caches", "startup_entry"), "display": STR})), "keep": arr(obj({"data": enum("configuration", "protection_list",
-        "history", "quarantine", "registry_backups"), "display": STR})), "quarantine_items": COUNT, "quarantine_logical_bytes": UINT,
-        "system_settings_to_restore": arr(STR), "requires_interactive_confirmation": {"const": True}})
+        "install_method": install_method, "status": enum("update_available", "up_to_date", "use_package_manager", "cannot_check",
+        "verification_failed", "incompatible"), "reason": nullable(STR), "checked_at": TIME, "manager_command": nullable(STR)})
+    defs["self_update_result"] = record("self_update_result", {"status": enum("updated", "up_to_date", "verification_failed", "locked",
+        "use_package_manager", "cannot_check", "incompatible", "rolled_back", "rollback_incomplete"), "from_version": STR,
+        "to_version": nullable(STR), "signature_verified": {"type": "boolean"}, "checksum_verified": {"type": "boolean"},
+        "reason": nullable(STR), "install_method": install_method, "manager_command": nullable(STR), "backup_path": nullable(STR)})
+    # LIF-02/RES-07: the reviewed self-uninstall plan; removal happens only after a typed terminal confirmation of this digest.
+    defs["self_remove_preview"] = record("self_remove_preview", {"status": enum("preview", "removed", "partial"),
+        "remove": arr(obj({"item_id": STR, "component": enum("cli", "desktop", "resident", "helper", "caches", "startup_entry",
+            "system_setting", "user_data"), "action": enum("remove_file", "remove_empty_dir", "remove_path_entry", "remove_profile_block",
+            "remove_credential"), "display": STR, "outcome": nullable(enum("removed", "scheduled", "skipped", "failed")),
+            "reason": nullable(STR)})),
+        "keep": arr(obj({"data": enum("configuration", "protection_list", "history", "quarantine", "registry_backups"), "display": STR})),
+        "quarantine_items": COUNT, "quarantine_logical_bytes": UINT, "system_settings_to_restore": arr(STR),
+        "warnings": arr(obj({"code": STR, "message": STR})), "notes": arr(STR), "install_method": install_method,
+        "uninstall_command": nullable(STR), "plan_digest": HASH, "requires_interactive_confirmation": {"const": True}})
+    # MVP 14.1: copy this release into a chosen directory; never over files; other `cleanmanager` programs on PATH are reported.
+    defs["self_install_result"] = record("self_install_result", {"status": enum("preview", "installed"), "version": STR,
+        "install_dir": STR, "files": COUNT, "path_conflicts": arr(obj({"path": STR, "relation": enum("same_release", "different")})),
+        "path_entry": enum("not_requested", "would_add", "added", "already_present", "refused_conflict", "unsupported", "failed"),
+        "reason": nullable(STR), "requires_interactive_confirmation": {"const": True}})
     # LIF-03: `print` and `preview` never write; only a typed terminal confirmation reaches `installed`.
     defs["completion_script"] = record("completion_script", {"shell": enum("bash", "zsh", "fish", "powershell"),
         "action": enum("print", "preview", "already_installed", "installed"), "script": STR,
@@ -478,7 +494,7 @@ def main():
              "authorization_status", "operation_status", "operation_cancel_receipt", "quarantine_list", "operation_list",
              "cli_request", "selection_preview", "app_list", "startup_list", "maintenance_catalog", "maintenance_report",
              "status_snapshot", "protection_list", "protection_check", "insight_list", "doctor_report", "purge_roots", "release_info",
-             "self_update_result", "self_remove_preview", "completion_script", "cleanup_catalog"]
+             "self_update_result", "self_remove_preview", "completion_script", "cleanup_catalog", "self_install_result"]
     kinds.append("installer_locations")  # INC-01 declared locations
     kinds += ["trash_inspection", "trash_list"]  # MTR-02..05 read models
     kinds += ["maintenance_history", "maintenance_diagnosis"]  # MNT-06/07
@@ -857,15 +873,28 @@ def main():
             {"action_id": "a01", "action_type": "app_quit", "app_instance_id": "app_demo", "app_identity": "Example.App", "force": "ask_user"},
             {"action_id": "a02", **adapter, "adapter_id": "example.adapter.winget-upgrade", "argv": ["upgrade", "--id", "Example.App", "--exact"]}]),
         "release-info": rec("release_info", current_version="0.0.0-design-example", latest_version=None, release_id=None,
-            install_method="winget", status="use_package_manager", reason="Installed by a package manager", checked_at=t1),
+            install_method="winget", status="use_package_manager", reason="Installed by a package manager", checked_at=t1,
+            manager_command="winget upgrade --id Example.CleanManager --exact"),
         "self-update-result": rec("self_update_result", status="verification_failed", from_version="0.0.0-design-example",
-            to_version=None, signature_verified=True, checksum_verified=False, reason="Checksum did not match the signed manifest"),
-        "self-remove-preview": rec("self_remove_preview", remove=[{"component": "cli", "display": "Command-line tool"},
-            {"component": "resident", "display": "Tray component and its login entry"}],
+            to_version="0.0.1-design-example", signature_verified=True, checksum_verified=False,
+            reason="checksum of cleanmanager.exe does not match the signed manifest; nothing was replaced", install_method="standalone",
+            manager_command=None, backup_path=None),
+        "self-remove-preview": rec("self_remove_preview", status="preview", remove=[
+                {"item_id": "i001", "component": "system_setting", "action": "remove_path_entry", "display": r"user PATH entry D:\Tools\CleanManager",
+                 "outcome": None, "reason": None},
+                {"item_id": "i002", "component": "caches", "action": "remove_file", "display": r"~\AppData\Local\CleanManager\store\index.db",
+                 "outcome": None, "reason": None},
+                {"item_id": "i003", "component": "cli", "action": "remove_file", "display": r"D:\Tools\CleanManager\cleanmanager.exe",
+                 "outcome": None, "reason": None}],
             keep=[{"data": "configuration", "display": "Settings"}, {"data": "protection_list", "display": "Protection list"},
                   {"data": "history", "display": "Operation history"}, {"data": "quarantine", "display": "Quarantine items"}],
-            quarantine_items=2, quarantine_logical_bytes="2097152", system_settings_to_restore=["display.keep_awake"],
-            requires_interactive_confirmation=True),
+            quarantine_items=2, quarantine_logical_bytes="2097152", system_settings_to_restore=[r"user PATH entry D:\Tools\CleanManager"],
+            warnings=[{"code": "quarantine_not_empty", "message": "the quarantine still holds 2 item(s), 2097152 bytes; restore, purge or keep them"}],
+            notes=["This build installs no service, scheduled task, startup entry, helper or background process."],
+            install_method="standalone", uninstall_command=None, plan_digest="0" * 64, requires_interactive_confirmation=True),
+        "self-install-result": rec("self_install_result", status="preview", version="0.0.0-design-example", install_dir=r"D:\Tools\CleanManager",
+            files=40, path_conflicts=[{"path": r"C:\Users\<user>\scoop\shims\cleanmanager.exe", "relation": "different"}],
+            path_entry="refused_conflict", reason="1 other cleanmanager program(s) on PATH are left untouched", requires_interactive_confirmation=True),
         "completion-powershell": rec("completion_script", shell="powershell", action="print", script="# synthetic completion script",
             profile_path=None, written=False),
         "completion-install-preview": rec("completion_script", shell="powershell", action="preview",

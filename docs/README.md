@@ -29,6 +29,8 @@
 | [设计决策](decisions.md) | 关键选择、依据与重新评估条件 |
 | [分发与许可](distribution-and-licensing.md) | 参考代码、第三方包、签名、更新和隐私 |
 | [依赖清单](dependencies.md) · [桌面端依赖清单](dependencies-desktop.md) | 每个锁定依赖的版本、许可、来源与用途（由工具生成并由验证器比对） |
+| [安装、更新与卸载](install.md) | 发行布局、自选安装目录与 PATH 冲突、签名自更新与回滚、存储迁移、保留数据的自卸载 |
+| [隐私说明](privacy.md) · [第三方声明](third-party-notices.md) | 本机保存什么、什么只在你操作时离开本机；随发行包分发的第三方组件与许可（由锁文件生成） |
 | [验证计划](verification-plan.md) | 平台、正确性、竞态、性能、恢复如何验收 |
 | [实施路线](roadmap.md) | 任务、依赖、阶段门禁和可领取的第一批工作 |
 | [复现说明](research/reproduction.md) | 如何验证契约、复现分析器探针与 REA 检查 |

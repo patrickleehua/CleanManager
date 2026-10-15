@@ -519,6 +519,13 @@ def main():
     npm_locked = {(k.rsplit("node_modules/", 1)[1], p["version"]) for k, p in npm_lock["packages"].items() if k}
     npm_documented = set(re.findall(r"^\| (@?[a-z0-9][^ |`]*) \| ([0-9][^ |]*) \|", desktop_doc, re.M))
     assert npm_documented == npm_locked, "docs/dependencies-desktop.md differs from package-lock.json; rerun tools/dependency_inventory.py: " + str(sorted(npm_documented ^ npm_locked))
+    # MVP 14.3: release notices are generated from the same lock files and name their digests.
+    notices_doc = (ROOT / "docs/third-party-notices.md").read_text(encoding="utf-8")
+    for lock_path in ("Cargo.lock", "apps/desktop/src-tauri/Cargo.lock", "apps/desktop/package-lock.json"):
+        digest = hashlib.sha256((ROOT / lock_path).read_bytes()).hexdigest()
+        assert f"`{lock_path}`：`{digest}`" in notices_doc, f"docs/third-party-notices.md is stale for {lock_path}; rerun tools/dependency_inventory.py"
+    noticed = set(re.findall(r"^\| `([A-Za-z0-9_-]+)` \| ([0-9][^ |]*) \|", notices_doc, re.M))
+    assert noticed and noticed <= (locked | desktop_locked), "docs/third-party-notices.md names crates that are not locked: " + str(sorted(noticed - (locked | desktop_locked)))
     for manifest in [ROOT / "Cargo.toml", *(ROOT / "crates").glob("*/Cargo.toml"), ROOT / "apps/desktop/src-tauri/Cargo.toml", ROOT / "apps/desktop/package.json"]:
         assert ".research" not in manifest.read_text(encoding="utf-8"), "build must not reference research copies: " + str(manifest)
     protocol_doc = (ROOT / "docs/cli-protocol.md").read_text(encoding="utf-8")

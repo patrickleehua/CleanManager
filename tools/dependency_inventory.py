@@ -18,7 +18,8 @@ PURPOSE = {
     "windows": "COM bindings for the Shell IFileOperation recycle-bin action and its progress sink",
     "windows-core": "Required by the windows crate COM implement macro (referenced by name)",
     "libc": "macOS system calls (process liveness via kill/proc_pidinfo, later POSIX scan backend)",
-    "ureq": "Blocking HTTP client for the optional AI diagnosis API adapters only (native-tls: OS TLS stack and trust store; no redirects, no retries)",
+    "ureq": "Blocking HTTP client for the optional AI diagnosis API adapters and the person-initiated CLI self-update download (native-tls: OS TLS stack and trust store; diagnosis: no redirects, no retries; self-update: https only, at most 5 redirects, size-bounded)",
+    "ed25519-dalek": "Ed25519 signature verification of the CLI self-update manifest with release keys embedded at build time (LIF-01); vetted dalek-cryptography implementation, verification only (no default features, no key generation)",
 }
 
 
@@ -143,5 +144,17 @@ def desktop():
     print(f"Documented {len(crate_rows)} desktop crates and {len(npm_rows)} npm packages.")
 
 
+def notices():
+    """Regenerate docs/third-party-notices.md from the same lock files (MVP 14.3)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("generate_notices", ROOT / "tools" / "generate_notices.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cli, desktop, npm = mod.collect()
+    mod.write_markdown(cli, desktop, npm)
+    print(f"Listed {len(cli)} CLI, {len(desktop)} desktop crates and {len(npm)} runtime npm packages in docs/third-party-notices.md.")
+
+
 if __name__ == "__main__":
     main()
+    notices()

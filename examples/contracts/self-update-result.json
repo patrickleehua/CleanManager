@@ -4,8 +4,11 @@
   "request_id": "req_synthetic",
   "status": "verification_failed",
   "from_version": "0.0.0-design-example",
-  "to_version": null,
+  "to_version": "0.0.1-design-example",
   "signature_verified": true,
   "checksum_verified": false,
-  "reason": "Checksum did not match the signed manifest"
+  "reason": "checksum of cleanmanager.exe does not match the signed manifest; nothing was replaced",
+  "install_method": "standalone",
+  "manager_command": null,
+  "backup_path": null
 }

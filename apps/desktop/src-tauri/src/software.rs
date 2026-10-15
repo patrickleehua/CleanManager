@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use cm_core::error::ErrorCode;
-use cm_core::plan::v2::{HeaderInput, PlanKind, PlanV2};
+use cm_core::plan::v2::{PlanKind, PlanV2};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -230,47 +230,6 @@ pub fn split_selection(all: &[cm_core::uninstall::Leftover], chosen: &[String]) 
     (extra, dropped)
 }
 
-/// Index of the chosen leftover an action of a leftovers plan was built from (`f{n:04}{i:04}`, `k{n:07}`, `s{n:07}`).
-pub fn leftover_index(action_id: &str) -> Option<usize> {
-    let (head, rest) = action_id.split_at_checked(1)?;
-    match head {
-        "f" => rest.get(..4)?.parse().ok(),
-        "k" | "s" => rest.parse().ok(),
-        _ => None,
-    }
-}
-
-/// The core always plans its preselected caches and logs; a person may clear some of them. The plan is built again
-/// without the actions of those objects (same header facts, a new id); `None` when nothing would remain.
-pub fn without_cleared(plan: &PlanV2, picked: &[cm_core::uninstall::Leftover], cleared: &[String], plan_id: &str, now: i64) -> IpcResult<Option<PlanV2>> {
-    let mut items = Vec::new();
-    let mut meta = Vec::new();
-    for (a, m) in plan.body.items.iter().zip(&plan.meta) {
-        let Some(l) = leftover_index(a.action_id()).and_then(|n| picked.get(n)) else {
-            return Err(ipc(ErrorCode::InternalError, "internal", format!("action {} does not name a leftover", a.action_id())));
-        };
-        if !cleared.contains(&l.object_id) {
-            items.push(a.clone());
-            meta.push(m.clone());
-        }
-    }
-    if items.is_empty() {
-        return Ok(None);
-    }
-    let b = &plan.body;
-    let header = HeaderInput {
-        plan_id,
-        plan_kind: PlanKind::Uninstall,
-        created_unix: now,
-        scope_id: b.scope_id.as_deref(),
-        scan_id: b.scan_id.as_deref(),
-        scan_revision: b.scan_revision,
-        rule_set_digest: &b.rule_set_digest,
-        policy_digest: &b.policy_digest,
-    };
-    cm_core::plan::v2::build(&header, items, meta).map(Some).map_err(|e| ipc(ErrorCode::InternalError, "internal", e.to_string()))
-}
-
 /// The app name of a stored uninstall plan (stage 1), for recent runs.
 fn plan_app(plan: &PlanV2) -> Option<String> {
     plan.meta.iter().find_map(|m| match &m.uninstall {
@@ -421,16 +380,7 @@ mod win {
         let pdigest = crate::cleanup::policy_digest(&st);
         let host = cm_platform::host::OsHostProbe.current("desktop");
         let now = now_unix();
-        let (plan, picked) = cm_app::uninstall::create_leftovers_plan(&st, &env, operation_id, &extra, &host, &plan_id, now, &pdigest).map_err(|r| refused(&r))?;
-        let plan = if cleared.is_empty() {
-            plan
-        } else {
-            // The first plan (with the cleared objects) is never approved here and expires on its own.
-            let id = new_id("lp");
-            let rebuilt = without_cleared(&plan, &picked, &cleared, &id, now)?.ok_or_else(|| ipc(ErrorCode::InvalidArgument, "invalid_argument", "Nothing is selected; choose at least one leftover"))?;
-            st.audit.save_plan_v2(&rebuilt)?;
-            rebuilt
-        };
+        let (plan, _) = cm_app::uninstall::create_leftovers_plan(&st, &env, operation_id, &extra, &cleared, &host, &plan_id, now, &pdigest).map_err(|r| refused(&r))?;
         note_plan(s, &plan.body.plan_id, json!({"app_name": identity.name, "operation_id": operation_id}));
         Ok(CreatedPlanDto::new(plan.body.plan_id.clone()))
     }
@@ -649,7 +599,6 @@ pub async fn open_system_page(target: String) -> IpcResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cm_core::plan::v2::{ActionMeta, Hive, NO_RULES_DIGEST, PlanAction, RegistryBackupDeleteAction, build};
     use cm_core::uninstall::{Binding, Group, Leftover, LeftoverKind, Marker};
 
     fn lo(id: &str, group: Group, tier: &str, selected: bool, binding: Binding) -> Leftover {
@@ -701,42 +650,5 @@ mod tests {
         assert_eq!(cleared, ["lo_b"]);
         let (extra, cleared) = split_selection(&all, &["lo_a".into(), "lo_b".into()]);
         assert!(extra.is_empty() && cleared.is_empty());
-    }
-
-    #[test]
-    fn leftover_action_ids_point_back_to_their_object() {
-        assert_eq!(leftover_index("f00030002"), Some(3));
-        assert_eq!(leftover_index("k0000012"), Some(12));
-        assert_eq!(leftover_index("s0000001"), Some(1));
-        assert_eq!(leftover_index("q0000000"), None);
-        assert_eq!(leftover_index(""), None);
-    }
-
-    fn key(n: usize, path: &str) -> PlanAction {
-        PlanAction::RegistryBackupDelete(RegistryBackupDeleteAction {
-            action_id: format!("k{n:07}"), hive: Hive::Hkcu, key_path: path.into(), value_name: None, owner_evidence: "exact product key".into(), backup_required: true,
-            observed_sha256: Some("d".repeat(64)),
-        })
-    }
-
-    #[test]
-    fn cleared_preselections_are_left_out_of_a_rebuilt_plan() {
-        let header = HeaderInput {
-            plan_id: "lp_first", plan_kind: PlanKind::Uninstall, created_unix: 1_800_000_000, scope_id: None, scan_id: None, scan_revision: None,
-            rule_set_digest: NO_RULES_DIGEST, policy_digest: "pd",
-        };
-        let meta = |p: &str| {
-            let location = cm_core::uninstall::RegLocation { root: String::new(), hive: Hive::Hkcu, view: cm_core::startup::RegView::Default, key_path: p.into() };
-            ActionMeta { uninstall: Some(cm_core::uninstall::UninstallMeta::RegistryKey { location }), ..Default::default() }
-        };
-        let plan = build(&header, vec![key(0, "Software\\Tools\\Cache"), key(1, "Software\\Tools")], vec![meta("Software\\Tools\\Cache"), meta("Software\\Tools")]).unwrap();
-        let reg = |id: &str| lo(id, Group::CachesLogs, "default_selected", true, path());
-        let picked = vec![reg("lo_cache"), reg("lo_key")];
-        let rebuilt = without_cleared(&plan, &picked, &["lo_cache".into()], "lp_second", 1_800_000_100).unwrap().unwrap();
-        assert_eq!(rebuilt.body.plan_id, "lp_second");
-        assert_eq!(rebuilt.body.items.len(), 1);
-        assert_eq!(rebuilt.body.items[0].action_id(), "k0000001");
-        assert_ne!(rebuilt.digest, plan.digest);
-        assert!(without_cleared(&plan, &picked, &["lo_cache".into(), "lo_key".into()], "lp_third", 1_800_000_100).unwrap().is_none());
     }
 }

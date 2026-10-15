@@ -16,17 +16,22 @@
 | `block-buffer` | 0.10.4 | MIT OR Apache-2.0 | crates.io | Transitive: required by digest |
 | `bytes` | 1.12.1 | MIT | crates.io | Transitive: required by http |
 | `cc` | 1.8.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys, openssl-sys |
-| `cfg-if` | 1.0.5 | MIT OR Apache-2.0 | crates.io | Transitive: required by getrandom, openssl, sha2 |
+| `cfg-if` | 1.0.5 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek, getrandom, openssl, sha2 |
 | `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by security-framework |
 | `core-foundation-sys` | 0.8.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by core-foundation, security-framework, security-framework-sys |
-| `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | crates.io | Transitive: required by sha2 |
+| `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek, sha2 |
 | `crypto-common` | 0.1.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by digest |
+| `curve25519-dalek` | 4.1.3 | BSD-3-Clause | crates.io | Transitive: required by ed25519-dalek |
+| `curve25519-dalek-derive` | 0.1.1 | MIT/Apache-2.0 | crates.io | Transitive: required by curve25519-dalek |
 | `der` | 0.8.2 | Apache-2.0 OR MIT | crates.io | Transitive: required by ureq |
-| `digest` | 0.10.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by sha2 |
+| `digest` | 0.10.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek, sha2 |
+| `ed25519` | 2.2.3 | Apache-2.0 OR MIT | crates.io | Transitive: required by ed25519-dalek |
+| `ed25519-dalek` | 2.2.0 | BSD-3-Clause | crates.io | Ed25519 signature verification of the CLI self-update manifest with release keys embedded at build time (LIF-01); vetted dalek-cryptography implementation, verification only (no default features, no key generation) |
 | `errno` | 0.3.14 | MIT OR Apache-2.0 | crates.io | Transitive: required by rustix |
 | `fallible-iterator` | 0.3.0 | MIT/Apache-2.0 | crates.io | Transitive: required by rusqlite |
 | `fallible-streaming-iterator` | 0.1.9 | MIT/Apache-2.0 | crates.io | Transitive: required by rusqlite |
 | `fastrand` | 2.5.0 | Apache-2.0 OR MIT | crates.io | Transitive: required by tempfile |
+| `fiat-crypto` | 0.2.9 | MIT OR Apache-2.0 OR BSD-1-Clause | crates.io | Transitive: required by curve25519-dalek |
 | `find-msvc-tools` | 0.1.14 | MIT OR Apache-2.0 | crates.io | Transitive: required by cc |
 | `foldhash` | 0.1.5 | Zlib | crates.io | Transitive: required by hashbrown |
 | `foreign-types` | 0.3.2 | MIT/Apache-2.0 | crates.io | Transitive: required by openssl |
@@ -52,30 +57,34 @@
 | `pem-rfc7468` | 1.0.0 | Apache-2.0 OR MIT | crates.io | Transitive: required by der |
 | `percent-encoding` | 2.3.2 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq |
 | `pkg-config` | 0.3.34 | MIT OR Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys, openssl-sys |
-| `proc-macro2` | 1.0.107 | MIT OR Apache-2.0 | crates.io | Transitive: required by openssl-macros, quote, serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
-| `quote` | 1.0.47 | MIT OR Apache-2.0 | crates.io | Transitive: required by openssl-macros, serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
+| `proc-macro2` | 1.0.107 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek-derive, openssl-macros, quote, serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
+| `quote` | 1.0.47 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek-derive, openssl-macros, serde_derive, syn, thiserror-impl, windows-implement, windows-interface |
 | `r-efi` | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | crates.io | Transitive: required by getrandom |
 | `rusqlite` | 0.37.0 | MIT | crates.io | SQLite access for the rebuildable scan index and the separate audit store (bundled SQLite, no system library) |
+| `rustc_version` | 0.4.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek |
 | `rustix` | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io | Transitive: required by tempfile |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq |
 | `schannel` | 0.1.29 | MIT | crates.io | Transitive: required by native-tls |
 | `security-framework` | 3.7.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls |
 | `security-framework-sys` | 2.17.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls, security-framework |
+| `semver` | 1.0.28 | MIT OR Apache-2.0 | crates.io | Transitive: required by rustc_version |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Typed (de)serialization of protocol records, manifests and rules |
 | `serde_core` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde, serde_json |
 | `serde_derive` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde, serde_core |
 | `serde_json` | 1.0.154 | MIT OR Apache-2.0 | crates.io | Strict JSON input/output for the machine protocol (CLI-03/04) |
 | `sha2` | 0.10.9 | MIT OR Apache-2.0 | crates.io | SHA-256 for plan digests (CM-C14N-v1) and fixture/sentinel hashes |
 | `shlex` | 2.0.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by cc |
+| `signature` | 2.2.0 | Apache-2.0 OR MIT | crates.io | Transitive: required by ed25519 |
 | `smallvec` | 1.16.3 | MIT OR Apache-2.0 | crates.io | Transitive: required by rusqlite |
-| `syn` | 2.0.119 | MIT OR Apache-2.0 | crates.io | Transitive: required by openssl-macros, windows-implement, windows-interface |
+| `subtle` | 2.6.1 | BSD-3-Clause | crates.io | Transitive: required by curve25519-dalek, ed25519-dalek |
+| `syn` | 2.0.119 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek-derive, openssl-macros, windows-implement, windows-interface |
 | `syn` | 3.0.9 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde_derive, thiserror-impl |
 | `tempfile` | 3.27.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls |
 | `thiserror` | 2.0.21 | MIT OR Apache-2.0 | crates.io | Typed error enums in cm-core and cm-store |
 | `thiserror-impl` | 2.0.21 | MIT OR Apache-2.0 | crates.io | Transitive: required by thiserror |
 | `typenum` | 1.20.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by crypto-common, generic-array |
 | `unicode-ident` | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io | Transitive: required by proc-macro2, syn |
-| `ureq` | 3.4.2 | MIT OR Apache-2.0 | crates.io | Blocking HTTP client for the optional AI diagnosis API adapters only (native-tls: OS TLS stack and trust store; no redirects, no retries) |
+| `ureq` | 3.4.2 | MIT OR Apache-2.0 | crates.io | Blocking HTTP client for the optional AI diagnosis API adapters and the person-initiated CLI self-update download (native-tls: OS TLS stack and trust store; diagnosis: no redirects, no retries; self-update: https only, at most 5 redirects, size-bounded) |
 | `ureq-proto` | 0.6.4 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq |
 | `utf8-zero` | 0.8.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq |
 | `vcpkg` | 0.2.15 | MIT/Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys, openssl-sys |

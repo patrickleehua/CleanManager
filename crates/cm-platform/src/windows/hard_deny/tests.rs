@@ -151,6 +151,42 @@ fn hard_deny_unresolvable_link_is_denied() {
     assert_hard_denied(&check_path(&raw(&link), &chain, &set), "dangling junction");
 }
 
+/// `\\localhost\C$` stands in for any SMB share of a local folder (Windows itself creates a
+/// `Users` share when public folder sharing is on, and mapped drives can point at either). The
+/// text filter only knows administrative shares by name, so for `\\host\Users\me\AppData\...`
+/// the identity layer is the only guard. Over SMB the handle has no volume GUID, so the
+/// identities must still be matched to the local volume by serial (regression: they were not,
+/// and every path through a loopback share was `Allowed`).
+#[test]
+fn hard_deny_smb_loopback_alias_is_denied_by_identity() {
+    let set = hard_deny_set();
+    let sys = system_root();
+    let text = sys.display().to_string();
+    let share_root = format!(r"\\localhost\{}$", &text[..1]);
+    if !Path::new(&format!(r"{share_root}\")).exists() {
+        eprintln!("loopback administrative share {share_root} is not reachable; SMB alias case skipped");
+        return;
+    }
+    let mut cases = vec![format!("{share_root}{}", &text[2..]), format!("{share_root}{}\\System32\\drivers", &text[2..])];
+    if let Some(profile) = env_path("USERPROFILE") {
+        let p = profile.display().to_string();
+        cases.push(format!("{share_root}{}", &p[2..]));
+        let protect = profile.join("AppData").join("Roaming").join("Microsoft").join("Protect");
+        if protect.exists() {
+            cases.push(format!("{share_root}{}", &protect.display().to_string()[2..]));
+        }
+    }
+    for unc in cases {
+        let units: Vec<u16> = unc.encode_utf16().collect();
+        let mut chain = identity_chain(&units);
+        assert!(chain.object.is_some(), "{unc} should be identifiable over SMB: {chain:?}");
+        // The real path `\\?\UNC\localhost\C$\...` is caught by the text filter; drop it so only
+        // the identities decide, as for a share whose name the text filter does not know.
+        chain.real_path = None;
+        assert_hard_denied(&check_identity(&chain, &set), &unc);
+    }
+}
+
 #[test]
 fn hard_deny_ordinary_temp_directory_is_allowed() {
     let set = hard_deny_set();

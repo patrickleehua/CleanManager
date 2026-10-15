@@ -1,52 +1,159 @@
-# Controlled unit/contract checks only. CI results never update real-device, signing or
-# permission acceptance records (docs/evidence/device-matrix.json is only validated here).
+# CleanManager CI: controlled unit, contract and synthetic-fixture checks on Windows x64 and
+# macOS arm64 (define-cleanmanager-mvp 1.5, add-mole-parity-suite 2.2).
+#
+# What a green run means — and what it never means:
+# - It covers only what runs inside a hosted runner: `cargo test` (including the dangerous-path
+#   corpus, its mutation/property fuzzing and the runner-local hard-deny identity tests), clippy,
+#   contract/inventory regeneration, the docs validator and the desktop webview build/tests.
+# - It NEVER marks real-device, signing/notarization or OS-permission (UAC, Full Disk Access,
+#   TCC, SIP) acceptance as done. Hosted runners are not the reference devices: CI must not
+#   write or update docs/evidence/device-matrix.json, docs/evidence/runs/** or any acceptance
+#   record, and the last step fails the job if anything tracked changed during the run.
+# - The runner's actual OS image and CPU architecture are logged (and put in the job summary)
+#   so a result is never attributed to the wrong platform.
 name: ci
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
 jobs:
   test:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2025
+          - name: windows-x64
+            os: windows-latest
             expected_arch: X64
-          - os: macos-15
+            expected_uname: x86_64
+          - name: macos-arm64
+            os: macos-14
             expected_arch: ARM64
+            expected_uname: arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
     steps:
+      # LF working tree on every OS (as in development); CRLF written by generators on Windows is
+      # normalized when git compares, so the idempotence checks below see content changes only.
+      - name: Configure line endings
+        run: git config --global core.autocrlf input
+
       - uses: actions/checkout@v4
+
       - name: Record actual runner and architecture
-        shell: bash
         run: |
+          arch="$(uname -m)"
           echo "runner.os=${{ runner.os }} runner.arch=${{ runner.arch }} image=${ImageOS:-unknown} ${ImageVersion:-}"
+          echo "uname -m: ${arch}"
           uname -a
-          if [ "${{ runner.arch }}" != "${{ matrix.expected_arch }}" ]; then
-            echo "::warning::runner architecture ${{ runner.arch }} differs from expected ${{ matrix.expected_arch }}"
+          {
+            echo "### Runner"
+            echo "- job: ${{ matrix.name }} (requested \`${{ matrix.os }}\`)"
+            echo "- runner.os / runner.arch: ${{ runner.os }} / ${{ runner.arch }}"
+            echo "- uname -m: \`${arch}\`"
+            echo "- image: ${ImageOS:-unknown} ${ImageVersion:-}"
+            echo "- scope: hosted-runner unit/contract checks only; no real-device, signing or permission acceptance"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ runner.arch }}" != "${{ matrix.expected_arch }}" ] || [ "${arch}" != "${{ matrix.expected_uname }}" ]; then
+            echo "::warning::runner architecture ${{ runner.arch }}/${arch} differs from the expected ${{ matrix.expected_arch }}/${{ matrix.expected_uname }}"
           fi
-      - name: Install pinned Rust toolchain
-        shell: bash
+
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: |
-          rustup show active-toolchain || rustup toolchain install
+          # rustup >= 1.28 installs the toolchain named in rust-toolchain.toml; older rustup does
+          # so implicitly on first use.
+          rustup toolchain install || rustup show
+          rustup show active-toolchain
           rustc -vV
           cargo -V
+          cargo clippy -V
+
+      - name: C compiler for bundled SQLite (rusqlite)
+        run: cc --version || gcc --version || echo "MSVC toolchain (cl.exe) is used on Windows"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ matrix.name }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.name }}-
+
+      # PRT-03/04/05: tests/corpus/dangerous-paths.json against the modelled machine (cm-core),
+      # deterministic mutation + property fuzzing, and this runner's own hard-deny identities
+      # with real junction/symlink fixtures (cm-platform). Any Allowed entry fails the job.
+      # Listed separately so the result is visible; the full suite below runs them again.
+      - name: Dangerous-path corpus and protection fuzzing
+        run: cargo test --locked -p cm-fixtures -p cm-core -p cm-platform -- corpus property smb_loopback file_id_and_resolution --nocapture
+
       - name: Unit and integration tests
-        run: cargo test --locked --workspace
+        run: cargo test --workspace --locked
+
       - name: Lints
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Document and contract validation
-        shell: bash
+
+      - name: Python dependencies for the validators
+        run: python -m pip install --target .research/python-deps -r requirements-docs.txt
+
+      - name: Contract generation is idempotent
         run: |
-          python -m pip install --target .research/python-deps -r requirements-docs.txt
           python tools/generate_contracts.py
           git diff --exit-code -- schemas examples rules
-          python tools/validate_docs.py
+          test -z "$(git status --porcelain --untracked-files=all -- schemas examples rules)"
+
+      - name: Dependency inventory is current
+        run: |
+          python tools/dependency_inventory.py
+          git diff --exit-code -- docs/dependencies.md docs/dependencies-desktop.md
+
+      - name: Documentation validator
+        # No --output: the committed docs/evidence/document-validation.json is not rewritten here.
+        run: python tools/validate_docs.py
+
+      - name: Standalone CLI package smoke test (Windows)
+        # MVP 14.1: the packaged CLI runs outside the source tree with its own rule pack; unsigned, not a release.
+        if: runner.os == 'Windows'
+        run: python tools/package_release.py --smoke
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Desktop webview build and tests
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: CI changed no tracked file (and no acceptance record)
+        if: always()
+        run: |
+          git diff --exit-code
+          git diff --exit-code -- docs/evidence

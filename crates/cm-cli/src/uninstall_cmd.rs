@@ -153,6 +153,7 @@ mod imp {
     pub fn leftovers_plan(req: &str, p: &Parsed) -> ExitCode {
         let Some(op) = p.option("operation") else { return fail(req, ErrorCode::InvalidArgument, "needs --operation OP_ID (the uninstall operation)", p.format) };
         let extra = p.option("items").map(ids).unwrap_or_default();
+        let exclude = p.option("exclude").map(ids).unwrap_or_default();
         let env = match env(req, p) {
             Ok(e) => e,
             Err(c) => return c,
@@ -164,7 +165,7 @@ mod imp {
         let plan_id = format!("lp_{}", &req[4..]);
         let pdigest = crate::plan_cmd::current_policy_digest(&stores);
         let host = cm_core::host::HostProbe::current(&cm_platform::host::OsHostProbe, "cli");
-        match cm_app::uninstall::create_leftovers_plan(&stores, &env, op, &extra, &host, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+        match cm_app::uninstall::create_leftovers_plan(&stores, &env, op, &extra, &exclude, &host, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
             Ok((plan, _)) => {
                 emit(&crate::plan_cmd::v2_plan_record(req, &stores, &plan), p.format);
                 ExitCode::SUCCESS

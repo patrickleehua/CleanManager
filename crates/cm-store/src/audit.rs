@@ -112,13 +112,15 @@ CREATE TABLE IF NOT EXISTS maintenance_runs (
 
 impl AuditStore {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         let check: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if check != "ok" {
             return Err(StoreError::AuditUnavailable(format!("integrity check: {check}")));
         }
+        // Older schemas are migrated (transactionally, after a copy) before the current schema applies.
+        crate::migrate::prepare(&mut conn, crate::migrate::StoreKind::Audit, path)?;
         conn.execute_batch(SCHEMA)?;
         let found: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).optional()?;
@@ -802,6 +804,12 @@ impl AuditStore {
         let mut stmt = self.conn.prepare("SELECT report_json FROM maintenance_runs ORDER BY finished_at DESC, operation_id DESC LIMIT ?1")?;
         let rows = stmt.query_map([limit], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
         Ok(rows)
+    }
+
+    /// Registry/startup backups not yet restored (kept so earlier removals stay restorable; LIF-02).
+    pub fn retained_backup_count(&self) -> Result<u64> {
+        let n: i64 = self.conn.query_row("SELECT count(*) FROM registry_backups WHERE state <> 'restored'", [], |r| r.get(0))?;
+        Ok(n as u64)
     }
 }
 

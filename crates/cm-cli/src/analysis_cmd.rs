@@ -21,13 +21,16 @@ use crate::args::Parsed;
 use crate::commands::{fields, open_stores, store_error};
 use crate::{emit, fail};
 
+/// `CM_RULES_DIR`, then `rules` next to the program; only debug builds fall back to the source tree (14.1).
 pub fn default_rules_dir() -> PathBuf {
-    std::env::var_os("CM_RULES_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules"))
+    crate::release::rules_dir()
 }
 
 fn read_json_files(dir: &Path) -> Result<Vec<(PathBuf, String)>, String> {
+    // The rule pack compiled into the program (standalone installs, MVP 14.1).
+    if let Some(files) = crate::release::embedded_json_files(dir) {
+        return Ok(files);
+    }
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else { return Ok(out) };
     for e in rd.filter_map(Result::ok) {

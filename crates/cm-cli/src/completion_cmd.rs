@@ -21,8 +21,8 @@ use crate::i18n::{Lang, t};
 use crate::{Format, emit, fail};
 
 pub const SHELLS: &[&str] = &["bash", "zsh", "fish", "powershell"];
-const BEGIN: &str = "# >>> cleanmanager completion >>>";
-const END: &str = "# <<< cleanmanager completion <<<";
+pub(crate) const BEGIN: &str = "# >>> cleanmanager completion >>>";
+pub(crate) const END: &str = "# <<< cleanmanager completion <<<";
 
 /// What completion offers after a sequence of command words.
 pub struct Model {
@@ -268,7 +268,7 @@ fn home() -> Option<PathBuf> {
 }
 
 /// The shell's usual per-user profile. PowerShell users with a redirected Documents folder pass `--profile $PROFILE`.
-fn default_profile(shell: &str) -> Option<PathBuf> {
+pub(crate) fn default_profile(shell: &str) -> Option<PathBuf> {
     let h = home()?;
     Some(match shell {
         "bash" => h.join(".bashrc"),

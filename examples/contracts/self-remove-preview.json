@@ -2,14 +2,31 @@
   "schema_version": "1.0",
   "kind": "self_remove_preview",
   "request_id": "req_synthetic",
+  "status": "preview",
   "remove": [
     {
-      "component": "cli",
-      "display": "Command-line tool"
+      "item_id": "i001",
+      "component": "system_setting",
+      "action": "remove_path_entry",
+      "display": "user PATH entry D:\\Tools\\CleanManager",
+      "outcome": null,
+      "reason": null
     },
     {
-      "component": "resident",
-      "display": "Tray component and its login entry"
+      "item_id": "i002",
+      "component": "caches",
+      "action": "remove_file",
+      "display": "~\\AppData\\Local\\CleanManager\\store\\index.db",
+      "outcome": null,
+      "reason": null
+    },
+    {
+      "item_id": "i003",
+      "component": "cli",
+      "action": "remove_file",
+      "display": "D:\\Tools\\CleanManager\\cleanmanager.exe",
+      "outcome": null,
+      "reason": null
     }
   ],
   "keep": [
@@ -33,7 +50,19 @@
   "quarantine_items": 2,
   "quarantine_logical_bytes": "2097152",
   "system_settings_to_restore": [
-    "display.keep_awake"
+    "user PATH entry D:\\Tools\\CleanManager"
   ],
+  "warnings": [
+    {
+      "code": "quarantine_not_empty",
+      "message": "the quarantine still holds 2 item(s), 2097152 bytes; restore, purge or keep them"
+    }
+  ],
+  "notes": [
+    "This build installs no service, scheduled task, startup entry, helper or background process."
+  ],
+  "install_method": "standalone",
+  "uninstall_command": null,
+  "plan_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "requires_interactive_confirmation": true
 }

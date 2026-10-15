@@ -24,7 +24,7 @@ use crate::path::RawPath;
 use crate::rules::glob_match;
 
 /// Version of the hard-deny policy; bump when the textual tables or root classes change.
-pub const HARD_DENY_VERSION: &str = "hard-deny/3";
+pub const HARD_DENY_VERSION: &str = "hard-deny/4";
 /// Only protection-file schema version this build reads and writes.
 pub const PROTECTION_FILE_SCHEMA_VERSION: u32 = 1;
 
@@ -648,6 +648,13 @@ const UNIX_LOCATIONS: Table = &[
     (&["lib"], Subtree, "system libraries"),
     (&["lib64"], Subtree, "system libraries"),
     (&["network"], Subtree, "network volumes"),
+    // `/.vol/<device>/<inode>[/name]` opens any object by file ID (volfs), so no other entry of
+    // this table would ever see `/System` or `/private/var/db` in such a path, and its identity
+    // chain lists volfs directories instead of the object's real ancestors.
+    (&[".vol"], Subtree, "file-ID (volfs) namespace"),
+    // `/.nofollow/...` and `/.resolve/<flags>/...` re-enter path resolution with options.
+    (&[".nofollow"], Subtree, "path-resolution prefix"),
+    (&[".resolve"], Subtree, "path-resolution prefix"),
     (&["private", "etc"], Subtree, "system configuration"),
     (&["private", "var"], Exact, "system data root"),
     (&["private", "var", "db"], Subtree, "system databases"),

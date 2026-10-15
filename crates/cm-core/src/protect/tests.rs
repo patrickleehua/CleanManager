@@ -97,6 +97,16 @@ fn protect_prefilter_unix_denies_and_allows() {
     }
 }
 
+#[test]
+fn protect_prefilter_unix_denies_file_id_and_resolution_namespaces() {
+    // Regression (corpus 2.2): `/.vol/<dev>/<inode>` reaches any object by file ID, e.g. a
+    // directory inside /private/var/db, without any protected name in the path.
+    for p in ["/.vol/16777234/2", "/.vol/16777234/1234567/dslocal", "/.VOL/1/2/x", "/.nofollow/System/Library", "/.resolve/1/private/var/db/x"] {
+        assert!(matches!(prefilter(&unix(p)), Err(TextualDeny::ProtectedLocation(_))), "{p}");
+    }
+    assert_eq!(prefilter(&unix("/Users/alice/Library/Caches/.vol/x")), Ok(()), "only at the root");
+}
+
 // ---- identity checks ----------------------------------------------------------------------
 
 #[test]

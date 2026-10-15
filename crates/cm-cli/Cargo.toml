@@ -3,7 +3,8 @@ name = "cm-cli"
 description = "Standalone CleanManager command-line entry point (no GUI dependency)."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# 1.89: OS file locks (`File::try_lock`/`try_lock_shared`) for the lifecycle lock (LIF-01); the pinned toolchain is newer.
+rust-version = "1.89"
 license.workspace = true
 publish.workspace = true
 
@@ -18,10 +19,17 @@ cm-store = { path = "../cm-store" }
 cm-app = { path = "../cm-app" }
 sha2.workspace = true
 serde_json.workspace = true
+base64.workspace = true
+# Self-update (LIF-01): verify the Ed25519 signature of the release manifest with keys embedded at build time.
+# Verification only; no key generation (no rand) and no precomputed tables.
+ed25519-dalek = { version = "2.2.0", default-features = false }
+# Self-update downloads only when a person runs `self update`: same version/features as cm-app (OS TLS stack, no bundled roots).
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no-default"] }
 
 [target.'cfg(windows)'.dependencies]
 # System UI language for human-readable text (LIF-05) and handle inheritance for `scan --detach`; same version as cm-platform.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization"] }
+# `self install --add-to-path` / `self uninstall`: the user PATH value (HKCU\Environment) and the WM_SETTINGCHANGE broadcast.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
 [lints]
 workspace = true

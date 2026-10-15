@@ -8,5 +8,6 @@
   "install_method": "winget",
   "status": "use_package_manager",
   "reason": "Installed by a package manager",
-  "checked_at": "2026-10-14T12:00:02Z"
+  "checked_at": "2026-10-14T12:00:02Z",
+  "manager_command": "winget upgrade --id Example.CleanManager --exact"
 }

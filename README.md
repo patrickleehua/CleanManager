@@ -46,9 +46,10 @@ cargo install --locked --path crates/cm-cli      # 安装到 ~/.cargo/bin（需�
 cleanmanager capabilities --json                 # 冒烟：一条 capabilities 记录，退出 0
 ```
 
-- 数据：索引、计划、授权与操作历史存放在 `%LOCALAPPDATA%\CleanManager\store`（macOS 为 `~/Library/Application Support/CleanManager/store`），在扫描范围之外；用 `--store DIR` 或环境变量 `CM_STORE_DIR` 另指。规则包当前从构建时源码树的 `rules/` 读取，或用 `CM_RULES_DIR` 指定（打包发布属 MVP 14.1）。
+- 数据：索引、计划、授权与操作历史存放在 `%LOCALAPPDATA%\CleanManager\store`（macOS 为 `~/Library/Application Support/CleanManager/store`），在扫描范围之外；用 `--store DIR` 或环境变量 `CM_STORE_DIR` 另指。规则包依次取 `CM_RULES_DIR`、程序旁的 `rules` 目录、编译进程序的规则包，从不读取源码树。
 - 输出：stdout 不是终端时默认一条 JSON 记录（`--json`、`--format jsonl|text` 显式选择）；人类可读文本支持 `--lang zh-CN|en`，机器 JSON 不随语言变化。命令表见 `cleanmanager help --format text`，协议见 [CLI 与 Agent 协议](docs/cli-protocol.md)。
 - 补全：`cleanmanager completion install powershell`（或 bash、zsh、fish）先预览要追加到配置文件的内容，在终端输入 `append` 才写入；也可以只打印：`cleanmanager completion print bash --format text`。
+- 发行与生命周期：`python -I tools/package_release.py` 生成 `target/release-dist/` 下的 zip；`cleanmanager self install --dir D:\Tools\CleanManager` 预览安装到自选目录（不覆盖、报告 PATH 冲突），`cleanmanager self update --check` 校验签名发布清单，`cleanmanager self uninstall` 显示保留用户数据的移除计划。见 [安装、更新与卸载](docs/install.md) 与 [隐私说明](docs/privacy.md)。
 - 诊断：`cleanmanager doctor --format text` 输出脱敏的只读报告，`--export FILE` 预览后经终端确认才写出，可附在问题反馈中。
 - Agent：把 [skills/cleanmanager](skills/cleanmanager/SKILL.md) 复制到 `~/.claude/skills/`（或 Codex 的技能目录），或导入打包件 `skills/dist/cleanmanager.skill`（`python -I tools/package_skill.py` 重新生成）。
 

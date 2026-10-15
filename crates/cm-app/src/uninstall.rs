@@ -363,9 +363,15 @@ mod win {
     /// Stage 2: freeze default-selected leftovers plus explicitly named objects into a separately reviewed `uninstall` plan.
     #[allow(clippy::too_many_arguments)]
     pub fn create_leftovers_plan(
-        stores: &Stores, env: &UninstallEnv, operation_id: &str, extra: &[String], host: &HostRef, plan_id: &str, now: i64, policy_digest: &str,
+        stores: &Stores, env: &UninstallEnv, operation_id: &str, extra: &[String], exclude: &[String], host: &HostRef, plan_id: &str, now: i64, policy_digest: &str,
     ) -> Result<(PlanV2, Vec<Leftover>), Refused> {
         let (_, all) = leftovers(stores, env, operation_id).map(|(i, l, _)| (i, l))?;
+        // UNI-05: a person may clear preselected caches/logs; only preselected objects can be excluded.
+        for x in exclude {
+            if !all.iter().any(|l| &l.object_id == x && l.selected) {
+                return Err(Refused::new("invalid_argument", format!("{x} is not a preselected leftover of this operation (only caches/logs chosen by default can be excluded)")));
+            }
+        }
         for x in extra {
             match all.iter().find(|l| &l.object_id == x) {
                 None => return Err(Refused::new("invalid_argument", format!("{x} is not a leftover of this operation (use object ids from `apps uninstall leftovers`)"))),
@@ -378,7 +384,7 @@ mod win {
                 Some(_) => {}
             }
         }
-        let chosen: Vec<Leftover> = all.iter().filter(|l| l.selected || extra.contains(&l.object_id)).cloned().collect();
+        let chosen: Vec<Leftover> = all.iter().filter(|l| (l.selected && !exclude.contains(&l.object_id)) || extra.contains(&l.object_id)).cloned().collect();
         if chosen.is_empty() {
             return Err(Refused::new("invalid_argument", "nothing is selected: no cache or log leftovers were found; name objects with --items to include them"));
         }

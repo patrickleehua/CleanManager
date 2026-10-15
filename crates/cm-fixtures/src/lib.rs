@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod dangerous_paths;
+
 pub const GENERATOR: &str = concat!("cm-fixtures ", env!("CARGO_PKG_VERSION"));
 pub const ROOT_MARKER: &str = ".cm-fixture-root.json";
 pub const SENTINEL_MARKER: &str = ".cm-sentinel.json";

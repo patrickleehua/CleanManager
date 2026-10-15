@@ -342,6 +342,18 @@ fn two_stage_uninstall_with_fixture_uninstaller_leftovers_and_restore() {
     assert_eq!(types.iter().filter(|t| **t == "startup_toggle").count(), 1);
     let (_, err) = fx.cli(&["apps", "uninstall", "leftovers", "plan", "create", "--operation", &op, "--items", "lo_nope"]);
     assert_eq!(err["code"], "invalid_argument");
+    // UNI-05: a person may clear preselected caches/logs (--exclude); anything not preselected cannot be excluded.
+    let (cache, logs) = (item(r"FooApp\Cache"), item(r"Local\FooApp"));
+    let id = |v: &Value| v["object_id"].as_str().unwrap().to_owned();
+    let (_, err) = fx.cli(&["apps", "uninstall", "leftovers", "plan", "create", "--operation", &op, "--exclude", &id(&key)]);
+    assert_eq!(err["code"], "invalid_argument", "{err}");
+    let (_, err) = fx.cli(&["apps", "uninstall", "leftovers", "plan", "create", "--operation", &op, "--exclude", &format!("{},{}", id(&cache), id(&logs))]);
+    assert_eq!(err["code"], "invalid_argument", "nothing left to plan: {err}");
+    let (code, xplan) = fx.cli(&["apps", "uninstall", "leftovers", "plan", "create", "--operation", &op, "--exclude", &id(&cache), "--items", &id(&menu)]);
+    assert_eq!(code, 0, "{xplan}");
+    let notes: Vec<String> = xplan["body"]["items"].as_array().unwrap().iter().map(|a| a.to_string().to_ascii_lowercase()).collect();
+    assert!(!notes.iter().any(|n| n.contains(r"fooapp\\cache")), "the cleared cache is not planned: {xplan}");
+    assert!(notes.iter().any(|n| n.contains("fooapp.lnk")), "{xplan}");
     approve(&fx.store, &lplan);
     // UNI-09: one teardown step fails (the Start menu shortcut is held open): every step is reported on its own and the
     // operation is partial, never completed.

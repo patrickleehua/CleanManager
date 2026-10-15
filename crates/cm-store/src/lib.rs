@@ -9,6 +9,7 @@
 
 pub mod audit;
 pub mod index;
+pub mod migrate;
 
 use std::path::{Path, PathBuf};
 

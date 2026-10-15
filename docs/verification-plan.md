@@ -230,6 +230,20 @@ G0 首先要求语义正确、部分结果可解释、扫描无目标内容写�
 
 仓库提供 [文档验证器](../tools/validate_docs.py)，用于 Schema/合成示例与链接检查；该脚本的 `passed` 只具有文档契约含义，不能复制进产品测试状态。2026-10-14 执行 `python -B tools/validate_docs.py` 返回 passed：2 schemas、8 协议示例、1 规则示例、9 个负例拒绝、127 个本地链接、16 个 Markdown 文件、6 条 REA 记录、2 个 REA 未决项、2 个既有探针匹配。另用只读检查确认本计划 ID 唯一、平台引用完整。以上计数是该日期的检查快照，后续修改应重新运行并记录新结果。
 
+### 10.1 持续集成（CI）映射与状态
+
+[CI 工作流](../.github/workflows/ci.yml)定义两个 job：`windows-x64`（`windows-latest`）与 `macos-arm64`（`macos-14`），Rust 工具链取自 [rust-toolchain.toml](../rust-toolchain.toml)。每个 job 先记录实际 `runner.os`、`runner.arch`、`uname -m` 与镜像版本（同时写入 job summary），与预期架构不符时告警。
+
+| CI 步骤 | 对应任务/需求 | 通过只说明 |
+| --- | --- | --- |
+| 危险路径语料与保护模糊测试 | add-mole-parity-suite 2.2（PRT-03/04/05） | [危险路径语料](../tests/corpus/dangerous-paths.json)全部条目在 cm-core 模型机上被拒绝（含确定性变异，以及“解析到硬拒绝根内的路径绝不 Allowed”的性质测试）；runner 本机的硬拒绝身份链在真实 junction/符号链接/挂载点夹具上全部拒绝 |
+| `cargo test --workspace --locked`、`cargo clippy --workspace --all-targets -- -D warnings` | define-cleanmanager-mvp 1.5 | 受控单元、契约与合成夹具测试和 lint 通过 |
+| 契约生成幂等、依赖清单、文档验证器 | define-cleanmanager-mvp 1.5 | `schemas/`、`examples/`、`rules/` 与依赖清单和生成器一致；文档契约检查通过 |
+| 桌面 `npm ci`、`npm run build`、`npm test` | define-cleanmanager-mvp 1.5 | webview 类型检查、构建与 vitest 通过 |
+| 最后一步：CI 未改动任何受跟踪文件 | 证据边界 | CI 没有写入 `docs/evidence/**`、设备矩阵或运行记录 |
+
+CI 通过**不**改变第 5–9 节任何用例状态，也不把真机、签名/公证或系统权限（UAC、FDA/TCC、SIP）验收标为完成；托管 runner 不是 ENV-WIN-X64 / ENV-MAC-ARM64 参考设备。**截至 2026-10-15 该工作流从未运行**：仓库没有 Git 远端，只做过 YAML 解析检查。等价命令已在本地 Windows x64 主机执行；macOS 一侧只有 `cargo check --target aarch64-apple-darwin` 编译检查，本机硬拒绝语料测试将在首次 macOS 运行时第一次执行。首次远端运行结果应单独登记。
+
 ## 11. 阶段门槛、偏差处理与未决点
 
 | 门槛 | 必须取得的证据 | 当前结论 |

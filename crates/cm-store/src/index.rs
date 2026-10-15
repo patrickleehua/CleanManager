@@ -269,7 +269,7 @@ pub struct IndexStore {
 
 impl IndexStore {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
         let check: String = conn
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| StoreError::IndexCorrupt(e.to_string()))?;
@@ -277,6 +277,8 @@ impl IndexStore {
             return Err(StoreError::IndexCorrupt(check));
         }
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // Older schemas are migrated in one transaction; an unmigratable index is reported as incompatible (rebuildable).
+        crate::migrate::prepare(&mut conn, crate::migrate::StoreKind::Index, path)?;
         conn.execute_batch(SCHEMA).map_err(|e| StoreError::IndexCorrupt(e.to_string()))?;
         let found: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).optional()?;
