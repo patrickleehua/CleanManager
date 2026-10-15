@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-updates-list"
+description = "Enables the updates_list command without any pre-configured scope."
+commands.allow = ["updates_list"]
+
+[[permission]]
+identifier = "deny-updates-list"
+description = "Denies the updates_list command without any pre-configured scope."
+commands.deny = ["updates_list"]

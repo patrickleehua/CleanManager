@@ -1,5 +1,7 @@
 // IPC shapes (mirrors src-tauri/src/dto.rs). Byte counts are decimal strings or null.
 
+import type { UpdateRouted } from './suiteTypes';
+
 export type ScanState = 'created' | 'running' | 'stopping' | 'completed' | 'partial' | 'cancelled' | 'failed' | 'interrupted';
 export type ObjectKind = 'file' | 'directory' | 'symlink' | 'reparse' | 'other';
 export type SortKey = 'logical_desc' | 'allocated_desc' | 'name_asc';
@@ -271,7 +273,20 @@ export interface PolicyMatch {
   detail: string | null;
 }
 
-export type PlanKind = 'cleanup' | 'restore' | 'purge' | 'manual_trash' | 'manual_purge' | 'startup' | 'startup_restore';
+export type PlanKind =
+  | 'cleanup'
+  | 'restore'
+  | 'purge'
+  | 'manual_trash'
+  | 'manual_purge'
+  | 'startup'
+  | 'startup_restore'
+  | 'uninstall'
+  | 'uninstall_leftovers'
+  | 'uninstall_restore'
+  | 'update'
+  | 'process'
+  | 'maintenance';
 
 export interface PlanDetail {
   plan_id: string;
@@ -307,6 +322,29 @@ export interface PlanDetail {
   /** Built-in catalog of a cleanup plan: build artifacts or installer packages. */
   catalog?: Catalog | null;
   plan_kind_v2?: string | null;
+  /** Only a terminal review can approve it: `permanent_delete` or `end_processes`. */
+  terminal_only?: 'permanent_delete' | 'end_processes' | null;
+  /** Kind-specific review facts (uninstall stage and app, maintenance elevation, notes from plan creation). */
+  kind_detail?: KindDetail | null;
+}
+
+export interface KindDetail {
+  stage?: 'uninstall' | 'leftovers';
+  app?: { name: string; publisher: string | null; version: string | null; source: string; adapter: string; signer: string | null } | null;
+  may_end_processes?: boolean;
+  registry_keys?: number;
+  admin_tasks?: number;
+  is_admin?: boolean | null;
+  noted?: {
+    app_name?: string;
+    leftover_estimate?: Record<string, number>;
+    operation_id?: string;
+    routed?: UpdateRouted[];
+    pid?: number;
+    name?: string;
+    purpose?: string | null;
+    unidentified_reason?: string | null;
+  } | null;
 }
 
 export interface PlanItem {
@@ -323,6 +361,8 @@ export interface PlanItem {
   action_type?: string | null;
   /** Startup items: `user` or `machine`. */
   scope?: string | null;
+  /** Kind-specific facts (update target, uninstaller, process identity, maintenance task, leftover group). */
+  detail?: Record<string, unknown> | null;
 }
 
 export interface PlanItems {
@@ -702,9 +742,23 @@ export interface StatusSnapshot {
     dimensions: { dimension: string; metric: string; value: number | null; full_score_at: number; zero_score_at: number; score: number | null }[];
   };
   diagnosis?: { code: string; message: string; link: string | null } | null;
+  /** STS-05: sustained-CPU alerts raised with this sample (only while alerts are on). */
+  alerts?: CpuAlert[];
 }
 
-export type ReadinessOp = 'scan' | 'cleanup' | 'purge' | 'installer' | 'trash' | 'startup' | 'apply';
+export interface CpuAlert {
+  pid: number;
+  name: string;
+  image_path: string | null;
+  min_cpu_percent: number;
+  threshold_percent: number;
+  window_seconds: number;
+  since: string;
+  raised_at: string;
+  link: string;
+}
+
+export type ReadinessOp = 'scan' | 'cleanup' | 'purge' | 'installer' | 'trash' | 'startup' | 'apply' | 'uninstall' | 'update' | 'maintenance' | 'process';
 
 export interface ReadinessCheck {
   check_id: string;

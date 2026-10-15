@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "python.install-manager.downloads@1.0.0",
+  "rule_id": "python.install-manager.downloads",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "tool",
+    "id": "python.install-manager",
+    "name": "Python install manager"
+  },
+  "version_range": {
+    "min_inclusive": "26.4",
+    "max_exclusive": "26.5"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real Python\\_cache runtime download (*.zip) matched"
+    ],
+    "negative": [
+      "Installed runtimes (pythoncore-*), bin shims, non-zip files and nested archives are not matched"
+    ]
+  },
+  "known_effects": [
+    "Reinstalling the same runtime downloads it again."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_python_install_manager_downloads"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

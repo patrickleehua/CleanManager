@@ -6,6 +6,7 @@
 import type { Backend } from './api';
 import { mockDiag } from './mockDiag';
 import { mockOps } from './mockOps';
+import { mockSoftware } from './mockSoftware';
 import { mockSuite } from './mockSuite';
 import type {
   Entry,
@@ -263,11 +264,24 @@ export function mockBackend(): Backend {
     if (!n) return null;
     return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
   });
+  const soft = mockSoftware(ops.__plan, ops.__seed);
+  let alerted = false;
   return {
     ...ops,
     ...suite,
+    ...soft,
     ...diag,
     preview: true,
+    async statusSnapshot() {
+      const snap = await suite.statusSnapshot();
+      // STS-05 preview: with alerts on, one sustained-CPU alert is raised once (then the cooldown holds).
+      if (soft.__alertsOn() && !alerted) {
+        alerted = true;
+        const at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+        snap.alerts = [{ pid: 18872, name: 'node.exe', image_path: 'C:\\Program Files\\nodejs\\node.exe', min_cpu_percent: 86.5, threshold_percent: 80, window_seconds: 120, since: at, raised_at: at, link: 'status.processes?pid=18872' }];
+      }
+      return snap;
+    },
     async capabilities() {
       return {
         platform: 'windows',

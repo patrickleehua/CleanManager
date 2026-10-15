@@ -1,0 +1,49 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "docker.desktop.data-disk",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "windows"
+  ],
+  "category": "large_items",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "app",
+    "id": "docker.desktop"
+  },
+  "root_resolver": "app_support",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": "*.vhdx",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 2
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "review_only_row",
+  "adapter_ref": null,
+  "allowed_modes": [],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Docker Desktop's WSL data disk (images, containers, volumes, build cache). Shown as a large item only.",
+    "regeneration": "Not regenerated: the disk holds all container data. Reclaim space with Docker's own prune commands or Docker Desktop's Troubleshoot > Clean / Purge data.",
+    "offline_effect": "Removing it would delete every image, container and volume; this row can never be selected."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": [
+    "run_win_catalog_docker_desktop_data_disk"
+  ]
+}

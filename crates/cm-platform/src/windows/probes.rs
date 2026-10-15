@@ -36,6 +36,21 @@ const OWNER_PROCESSES: &[(&str, &[&str])] = &[
     ("microsoft.vscode", &["Code.exe"]),
     ("go", &["go.exe"]),
     ("cargo", &["cargo.exe"]),
+    // Catalog wave 2 (communication, media/games, cloud, virtualization, package managers).
+    ("bytedance.feishu", &["Feishu.exe", "Lark.exe"]),
+    ("tencent.wechat", &["Weixin.exe", "WeChat.exe", "WeChatAppEx.exe"]),
+    ("netease.uu-remote", &["GameViewer.exe"]),
+    ("docker.desktop", &["Docker Desktop.exe", "com.docker.backend.exe", "com.docker.build.exe"]),
+    ("microsoft.onedrive", &["OneDrive.exe"]),
+    ("microsoft.teams", &["ms-teams.exe", "Teams.exe"]),
+    ("slack", &["slack.exe"]),
+    ("discord", &["Discord.exe"]),
+    ("valve.steam", &["steam.exe", "steamwebhelper.exe"]),
+    ("epicgames.launcher", &["EpicGamesLauncher.exe", "EpicWebHelper.exe"]),
+    ("adobe.creative-cloud", &["Adobe Premiere Pro.exe", "AfterFX.exe", "Adobe Media Encoder.exe", "Audition.exe"]),
+    ("pnpm", &["pnpm.exe"]),
+    ("python.install-manager", &["py.exe", "pymanager.exe", "pyw.exe"]),
+    ("microsoft.winget", &["winget.exe", "WindowsPackageManagerServer.exe"]),
 ];
 
 pub fn owner_processes(owner: &str) -> Option<&'static [&'static str]> {
@@ -109,6 +124,39 @@ pub fn probe_owner(owner: Option<&str>, snap: &ProcessSnapshot) -> ProbeResult {
             None => ProbeResult::new(P, ProbeState::NotInUse, format!("{} not running", exes.join(", "))),
         },
     }
+}
+
+/// `elevated_token`: administrator-only locations are attempted only with administrator rights.
+/// Without one (elevation refused or never requested) the answer is `unknown`, so the object is
+/// skipped rather than tried and half-done; the tool never elevates itself for a catalog row.
+pub fn probe_elevation(elevated: bool) -> ProbeResult {
+    const P: &str = "elevated_token";
+    if elevated {
+        ProbeResult::new(P, ProbeState::NotInUse, "this process holds an elevated administrator token")
+    } else {
+        ProbeResult::new(P, ProbeState::Unknown, "administrator rights required: this process is not elevated (elevation refused or not requested); skipped")
+    }
+}
+
+/// Whether this process can act as an administrator right now: an elevated token **and** the
+/// Administrators group enabled in it. A restricted token derived from an elevated one (for
+/// example `runas /trustlevel`) still reports `TokenIsElevated` but has the group deny-only, so
+/// it is not an administrator here.
+pub fn has_admin_rights() -> bool {
+    use windows_sys::Win32::Security::{CheckTokenMembership, CreateWellKnownSid, SECURITY_MAX_SID_SIZE, WinBuiltinAdministratorsSid};
+    if !super::startup_actions::is_elevated() {
+        return false;
+    }
+    let mut sid = [0u8; SECURITY_MAX_SID_SIZE as usize];
+    let mut size = sid.len() as u32;
+    // SAFETY: well-known SID written into a buffer of the documented maximum size.
+    if unsafe { CreateWellKnownSid(WinBuiltinAdministratorsSid, std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut size) } == 0 {
+        return false;
+    }
+    let mut member = 0i32;
+    // SAFETY: null token = the calling thread's effective token; valid SID and out-pointer.
+    let ok = unsafe { CheckTokenMembership(std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut member) };
+    ok != 0 && member != 0
 }
 
 /// Live state of a single file's handles.
@@ -256,6 +304,7 @@ pub fn probe_candidate(path: &RawPath, probes: &[String], owner: Option<&str>, s
             "open_database_handle" => probe_open_files(&p, true),
             "incomplete_download_handle" => probe_downloads(&p),
             "endpoint_security_path" => probe_endpoint(&p),
+            "elevated_token" => probe_elevation(has_admin_rights()),
             other => ProbeResult::new(other, ProbeState::Unknown, "probe not available on Windows in this build"),
         })
         .collect()
@@ -272,6 +321,12 @@ pub fn execution_check(t: &ActionTarget<'_>) -> Option<LiveCheck> {
                 let r = probe_endpoint(&path);
                 if r.state != ProbeState::NotInUse {
                     return Some(LiveCheck::Protected(r.detail));
+                }
+            }
+            "elevated_token" => {
+                let r = probe_elevation(has_admin_rights());
+                if r.state != ProbeState::NotInUse {
+                    return Some(LiveCheck::Unknown(r.detail));
                 }
             }
             "incomplete_download_handle" => {

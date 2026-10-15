@@ -518,10 +518,13 @@ pub fn history(stores: &Stores, page_size: u32, cursor: Option<&str>) -> IpcResu
         items: items
             .into_iter()
             .map(|h| HistoryItemDto {
+                // plan/v2 kinds without a file action word (uninstall, update, process) are named by their kind.
+                action: h.action.clone().or_else(|| {
+                    (h.contract.as_deref() == Some(PLAN_V2_CONTRACT)).then(|| stores.audit.load_plan_v2(&h.row.plan_id).ok().map(|p| crate::v2::kind_name(&p).to_owned())).flatten()
+                }),
                 operation_id: h.row.operation_id,
                 plan_id: h.row.plan_id,
                 contract: h.contract,
-                action: h.action,
                 state: h.row.state,
                 started_at: h.row.started_at,
                 finished_at: h.row.finished_at,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-list"
+description = "Enables the uninstall_list command without any pre-configured scope."
+commands.allow = ["uninstall_list"]
+
+[[permission]]
+identifier = "deny-uninstall-list"
+description = "Denies the uninstall_list command without any pre-configured scope."
+commands.deny = ["uninstall_list"]

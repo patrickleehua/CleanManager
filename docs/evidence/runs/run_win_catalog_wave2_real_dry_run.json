@@ -1,0 +1,245 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-06",
+  "run_id": "run_win_catalog_wave2_real_dry_run",
+  "recorded_at": "2026-10-15T10:25:10Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "--scan",
+    "ID",
+    "--dry-run",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "clean --dry-run over the real Feishu, WeChat web view, Docker Desktop, UU Remote, AMD shader, pnpm and Python install-manager locations: every wave-2 row is review-only and never preselected, every declared probe is answered, owner_process agrees with the live process list, and any in_use/unknown probe skips the row",
+  "actual": "rows=18 skipped=4 problems=[]",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "rows": [
+      {
+        "rule_id": "bytedance.feishu.code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\CodeCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "bytedance.feishu.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\GrShaderCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "bytedance.feishu.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\ShaderCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "tencent.wechat.web-code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\game\\Code Cache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "tencent.wechat.web-code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\multitab\\Code Cache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "tencent.wechat.web-code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\web_shell\\Code Cache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "docker.desktop.http-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\Cache\\Cache_Data",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "docker.desktop.code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\Code Cache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "docker.desktop.gpu-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\GPUCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "netease.uu-remote.http-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Cache\\Cache_Data",
+        "tier": "review_only",
+        "skip_reason": "in_use",
+        "probes": {
+          "open_file_handle": "in_use",
+          "owner_process": "in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "netease.uu-remote.code-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Code Cache",
+        "tier": "review_only",
+        "skip_reason": "in_use",
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "in_use"
+        },
+        "registry_status": "covered"
+      },
+      {
+        "rule_id": "amd.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DX9Cache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "amd.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DxCache",
+        "tier": "review_only",
+        "skip_reason": "in_use",
+        "probes": {
+          "open_file_handle": "in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "amd.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DxcCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "amd.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\OglCache",
+        "tier": "review_only",
+        "skip_reason": "in_use",
+        "probes": {
+          "open_file_handle": "in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "amd.shader-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\VkCache",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "pnpm.metadata-cache",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\pnpm-cache\\metadata-v1.3",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use"
+        },
+        "registry_status": "version_untested"
+      },
+      {
+        "rule_id": "python.install-manager.downloads",
+        "path": "C:\\Users\\libinghua\\AppData\\Local\\Python\\_cache\\pythoncore-3.15-64-3.15.0.zip",
+        "tier": "review_only",
+        "skip_reason": null,
+        "probes": {
+          "open_file_handle": "not_in_use",
+          "owner_process": "not_in_use"
+        },
+        "registry_status": "version_untested"
+      }
+    ]
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Preview only: no plan was created and nothing was changed."
+  ],
+  "status": "passed"
+}

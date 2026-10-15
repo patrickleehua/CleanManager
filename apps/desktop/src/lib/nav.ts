@@ -64,8 +64,11 @@ export const TOOLS: Tool[] = [
     label: '优化',
     icon: 'tool-optimize',
     key: '3',
-    blurb: '系统维护任务',
-    sections: [{ page: 'maintenance', label: '维护任务' }],
+    blurb: '系统维护任务与只读性能诊断',
+    sections: [
+      { page: 'maintenance', label: '维护任务' },
+      { page: 'diagnosis', label: '性能诊断' },
+    ],
   },
   {
     id: 'analyze',

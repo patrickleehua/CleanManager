@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-05",
+  "run_id": "run_win_catalog_docker_engine_unused_data",
+  "recorded_at": "2026-10-15T10:25:06Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "none",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "list"
+  ],
+  "seed": null,
+  "expected": "docker.engine.unused-data: validate against a real installation on this device",
+  "actual": "not validated: docker.system-prune adapter unavailable: Docker Desktop is installed per user (Local AppData\\Programs, user-writable), not in Program Files, and there is no engine data; the cleanup command was never run and the disk is never deleted directly",
+  "terminal_state": "not_run",
+  "exit_code": null,
+  "measurements": {
+    "observed": {
+      "adapter_status": "unavailable",
+      "reason": "Docker Desktop (docker CLI) not found in a trusted location: C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe does not exist",
+      "docker_wsl_present": false
+    }
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "docker.system-prune adapter unavailable: Docker Desktop is installed per user (Local AppData\\Programs, user-writable), not in Program Files, and there is no engine data; the cleanup command was never run and the disk is never deleted directly"
+  ],
+  "status": "incomplete"
+}

@@ -73,6 +73,10 @@ const ICONS: Record<string, string> = {
   warn: 'M12 4.2 20.5 19H3.5L12 4.2ZM12 10v4M12 16.8h.01',
   lock: 'M7 11V8.5a5 5 0 0 1 10 0V11M6 11h12v9H6zM12 14.5v2',
   refresh: 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.7h-3.7',
+  // A drawing pin (kept on top), an outward arrow (opens a system page), a terminal prompt.
+  pin: 'M9 4.5h6M10 4.5v5.2L7.5 13h9L14 9.7V4.5M12 13v6.5',
+  external: 'M13.5 5.5h5v5M18.5 5.5 11 13M16.5 13.5v4.5c0 .6-.4 1-1 1H6.5c-.6 0-1-.4-1-1V9c0-.6.4-1 1-1H11',
+  terminal: 'M4 5.5h16v13H4zM7.5 10l2.6 2.2-2.6 2.2M12.5 14.5h4',
 };
 
 /** The CleanManager mark: a sweep arc that gathers one particle (original artwork). */

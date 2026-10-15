@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "windows.wer.machine-report-queue@1.0.0",
+  "rule_id": "windows.wer.machine-report-queue",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "system",
+    "id": "windows.wer.machine",
+    "name": "Windows Error Reporting (machine-wide)"
+  },
+  "version_range": {
+    "min_inclusive": "10.0.26200",
+    "max_exclusive": "10.0.26201"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old report folder in ProgramData WER ReportQueue is a review-only candidate"
+    ],
+    "negative": [
+      "A report folder from today, a loose file and the WER Temp folder are not matched",
+      "Real ReportQueue reports on this device are newer than 7 days and were correctly not candidates",
+      "Without administrator rights the row is skipped (elevated_token probe; run_win_catalog_admin_skip_e2e)"
+    ]
+  },
+  "known_effects": [
+    "Error history is lost; queued reports are not sent. Administrator only: skipped when elevation is refused."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_windows_wer_machine_report_queue"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

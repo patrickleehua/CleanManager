@@ -56,8 +56,17 @@ type OpsBackend = Pick<
   | 'onApplyFinished'
 > & {
   /** Fixture hook: freeze a plan of any kind (catalog, manual trash, startup) for the review page. */
-  __plan(kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], extra?: Partial<PlanDetail>): string;
+  __plan(kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], extra?: Partial<PlanDetail>, script?: Scripted[], onDone?: (operationId: string, items: OperationItem[]) => void): string;
+  /** Fixture hook: record a finished operation of a stored plan with these per-item results. */
+  __seed(planId: string, results: Scripted[], state: string, minutesAgo: number): string;
 };
+
+/** A scripted per-item result for preview runs (uninstall, update, process, maintenance fixtures). */
+export interface Scripted {
+  status: OperationItem['status'];
+  code: string;
+  message: string;
+}
 
 const MiB = 1024n * 1024n;
 const GiB = 1024n * MiB;
@@ -203,6 +212,8 @@ interface MockPlan {
   receipt: boolean;
   revoked: boolean;
   modes?: Mode;
+  script?: Scripted[];
+  onDone?: (operationId: string, items: OperationItem[]) => void;
 }
 
 interface MockOp {
@@ -293,7 +304,8 @@ export function mockOps(): OpsBackend {
 
   const makePlan = (kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], createdMin: number, extra: Partial<PlanDetail> = {}): MockPlan => {
     planCounter += 1;
-    const plan_id = `${kind === 'cleanup' ? 'p' : kind === 'manual_trash' ? 'mp' : kind === 'startup' ? 'sp' : 'rp'}_desk_4242_${1760000000000 + planCounter}`;
+    const prefix: Partial<Record<PlanDetail['kind'], string>> = { cleanup: 'p', manual_trash: 'mp', startup: 'sp', uninstall: 'up', uninstall_leftovers: 'lp', update: 'ud', process: 'pp', maintenance: 'mt' };
+    const plan_id = `${prefix[kind] ?? 'rp'}_desk_4242_${1760000000000 + planCounter}`;
     const digest = hex(plan_id);
     const total = items.reduce((a, i) => a + BigInt(i.logical_bytes), 0n);
     const created = iso(createdMin);
@@ -477,7 +489,7 @@ export function mockOps(): OpsBackend {
       .sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
 
   const protection: ProtectionItem[] = [
-    { protection_id: 'hd_textual', layer: 'hard_deny', match: 'glob', display: 'System directories, volume and share roots, device and administrative paths (hard-deny/3)', removable: false, note: null, added_at: null },
+    { protection_id: 'hd_textual', layer: 'hard_deny', match: 'glob', display: 'System directories, volume and share roots, device and administrative paths (hard-deny/4)', removable: false, note: null, added_at: null },
     { protection_id: 'hd_3c1f09ab22e1', layer: 'hard_deny', match: 'descendants', display: 'C:\\Windows (system_root)', removable: false, note: null, added_at: null },
     { protection_id: 'hd_8a0e4410bc93', layer: 'hard_deny', match: 'descendants', display: 'C:\\Program Files (program_files)', removable: false, note: null, added_at: null },
     { protection_id: 'hd_1d77e02f6a50', layer: 'hard_deny', match: 'exact', display: 'C:\\Users\\Lin (user_profile_root)', removable: false, note: null, added_at: null },
@@ -509,8 +521,55 @@ export function mockOps(): OpsBackend {
   };
 
   return {
-    __plan(kind, mode, items, extra = {}) {
-      return makePlan(kind, mode, items, 0, extra).detail.plan_id;
+    __plan(kind, mode, items, extra = {}, script, onDone) {
+      const p = makePlan(kind, mode, items, 0, extra);
+      p.script = script;
+      p.onDone = onDone;
+      return p.detail.plan_id;
+    },
+    __seed(planId, results, state, minutesAgo) {
+      const p = plans.get(planId)!;
+      p.receipt = true;
+      const opId = `op_${p.detail.digest.slice(0, 16)}`;
+      const items: OperationItem[] = p.items.map((it, i) => ({
+        action_id: it.action_id,
+        name: it.name,
+        path_display: it.path_display,
+        original_path_display: null,
+        logical_bytes: it.logical_bytes,
+        status: results[i]?.status ?? 'succeeded',
+        code: results[i]?.code ?? 'done',
+        message: results[i]?.message ?? '',
+        recovery: 'not_applicable',
+      }));
+      ops.set(opId, {
+        items,
+        op: {
+          operation_id: opId,
+          plan_id: planId,
+          plan_kind: p.detail.kind,
+          mode: p.detail.mode,
+          state,
+          running_here: false,
+          cancel_requested: false,
+          started_at: iso(-minutesAgo),
+          finished_at: iso(-minutesAgo + 3),
+          authorization_source: 'interactive_review',
+          total: items.length,
+          counts: counts(items),
+          report_available: true,
+          processed_logical_bytes: '0',
+          quarantined_logical_bytes: '0',
+          estimated_freed_bytes: '0',
+          volume_free_before_bytes: null,
+          volume_free_after_bytes: null,
+          observed_free_delta_bytes: null,
+          needs_reconcile: false,
+        },
+      });
+      p.detail.operation = { operation_id: opId, state };
+      p.onDone?.(opId, items);
+      return opId;
     },
     async candidateSummary(scanId) {
       await delay(120);
@@ -670,9 +729,15 @@ export function mockOps(): OpsBackend {
         const cur = active!;
         if (i < items.length) {
           const it = items[i];
+          const scripted = p.script?.[i];
           if (cur.cancel) {
             it.status = 'not_started';
             it.code = 'cancelled';
+          } else if (scripted) {
+            it.status = scripted.status;
+            it.code = scripted.code;
+            it.message = scripted.message;
+            it.recovery = 'not_applicable';
           } else if (p.detail.kind === 'restore' && it.name === 'data_1') {
             it.status = 'skipped';
             it.code = 'target_conflict';
@@ -693,8 +758,10 @@ export function mockOps(): OpsBackend {
         clearInterval(tick);
         const c = counts(items);
         const processed = items.filter((x) => x.status === 'succeeded').reduce((a, x) => a + BigInt(x.logical_bytes ?? '0'), 0n);
+        // Uninstall: never complete while the rescan found something left (UNI-03/09).
+        const leftover = items.some((x) => x.code === 'leftovers_remain' || x.code === 'restart_required' || x.code === 'attention');
         Object.assign(op, {
-          state: c.succeeded === items.length ? 'completed' : cur.cancel ? 'cancelled' : 'partial',
+          state: cur.cancel ? 'cancelled' : c.succeeded === items.length && !leftover ? 'completed' : c.succeeded === 0 && c.failed > 0 ? 'failed' : 'partial',
           running_here: false,
           finished_at: iso(0),
           report_available: true,
@@ -735,6 +802,7 @@ export function mockOps(): OpsBackend {
           }
         }
         cur.running = false;
+        p.onDone?.(opId, items);
         finished.forEach((cb) => cb({ plan_id: planId, operation_id: opId, status: op.state, error: null }));
       }, 380);
       return { plan_id: planId, operation_id: opId, total: items.length, existing: false };

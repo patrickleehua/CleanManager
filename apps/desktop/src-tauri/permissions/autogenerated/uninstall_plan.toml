@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-plan"
+description = "Enables the uninstall_plan command without any pre-configured scope."
+commands.allow = ["uninstall_plan"]
+
+[[permission]]
+identifier = "deny-uninstall-plan"
+description = "Denies the uninstall_plan command without any pre-configured scope."
+commands.deny = ["uninstall_plan"]

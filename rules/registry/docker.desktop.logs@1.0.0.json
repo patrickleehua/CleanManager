@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "docker.desktop.logs@1.0.0",
+  "rule_id": "docker.desktop.logs",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "docker.desktop",
+    "name": "Docker Desktop"
+  },
+  "version_range": {
+    "min_inclusive": "4.95",
+    "max_exclusive": "4.96"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old *.log files in Docker\\log\\host and \\vm are review-only candidates"
+    ],
+    "negative": [
+      "Logs written today, audit JSON files and logs two folders deep are not matched",
+      "Real logs on this device are newer than 7 days and were correctly not candidates"
+    ]
+  },
+  "known_effects": [
+    "Past Docker Desktop logs are no longer available for diagnostics."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_docker_desktop_logs"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

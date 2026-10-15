@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-restore-plan"
+description = "Enables the uninstall_restore_plan command without any pre-configured scope."
+commands.allow = ["uninstall_restore_plan"]
+
+[[permission]]
+identifier = "deny-uninstall-restore-plan"
+description = "Denies the uninstall_restore_plan command without any pre-configured scope."
+commands.deny = ["uninstall_restore_plan"]

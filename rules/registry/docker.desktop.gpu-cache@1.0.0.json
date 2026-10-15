@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "docker.desktop.gpu-cache@1.0.0",
+  "rule_id": "docker.desktop.gpu-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "docker.desktop",
+    "name": "Docker Desktop"
+  },
+  "version_range": {
+    "min_inclusive": "4.95",
+    "max_exclusive": "4.96"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real %APPDATA%\\Docker Desktop\\GPUCache matched as the only candidate"
+    ],
+    "negative": [
+      "The other cache folders, Local Storage, a nested Default\\GPUCache and settings are not matched"
+    ]
+  },
+  "known_effects": [
+    "Rebuilt when the dashboard is drawn. Skipped while Docker Desktop runs."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_docker_desktop_gpu_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

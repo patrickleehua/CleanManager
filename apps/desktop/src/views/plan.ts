@@ -28,6 +28,9 @@ import { copyField, emptyState, errorLine, pageHead, pill, type Tone } from './p
 import { EXTENSIONS, TOOLS } from '../lib/nav';
 import { words } from '../lib/platform';
 import type { Page } from '../lib/store';
+import { LEFTOVER_GROUP, ROUTE_WORD, TASK_WORDS } from '../lib/suiteWords';
+import { noticeLine, stageSteps } from './kit';
+import { UNINSTALL_STEPS } from './uninstall';
 
 const STARTUP_EXPLAIN = {
   effect: '只修改系统的启用记录（与任务管理器中的“启动应用”相同），不删除程序、快捷方式或它的设置。',
@@ -58,6 +61,24 @@ function kindVerb(d: PlanDetail, items: PlanItem[]): { verb: string; run: string
     }
     case 'startup_restore':
       return { verb: `还原启动项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
+    case 'uninstall': {
+      const name = d.kind_detail?.app?.name ?? items[0]?.name ?? '应用';
+      return { verb: `卸载“${name}”：先请它退出，再运行它自己的卸载程序`, run: `执行：卸载 ${name}`, permanent: false };
+    }
+    case 'uninstall_leftovers': {
+      const name = d.kind_detail?.noted?.app_name;
+      return { verb: `处理${name ? `“${name}”的` : ''}卸载残留：${n} 个动作`, run: `执行：处理 ${n} 项残留`, permanent: false };
+    }
+    case 'uninstall_restore':
+      return { verb: `从备份还原注册表项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
+    case 'update':
+      return { verb: `更新 ${n} 个应用`, run: `执行：更新 ${n} 个应用`, permanent: false };
+    case 'process': {
+      const name = d.kind_detail?.noted?.name ?? items[0]?.name ?? '进程';
+      return { verb: `结束进程：${items[0]?.name ?? name}`, run: '执行：结束这个进程', permanent: true };
+    }
+    case 'maintenance':
+      return { verb: `运行 ${n} 项维护任务`, run: `执行：运行 ${n} 项维护任务`, permanent: false };
     case 'restore':
       return { verb: `恢复到原位置：${n} 个对象`, run: `执行：恢复 ${n} 项`, permanent: false };
     default:
@@ -71,6 +92,46 @@ function pageName(p: Page): string {
   const ext = EXTENSIONS.find((e) => e.page === p);
   return ext ? ext.label : p === 'plan' ? '计划' : '上一页';
 }
+
+/** What plans of the newer kinds do, in the same three lines as the file modes. */
+const KIND_EXPLAIN: Partial<Record<PlanDetail['kind'], { effect: string; space: string; recovery: string }>> = {
+  uninstall: {
+    effect: '先请应用退出并等待；应用没有退出时什么都不做。然后运行它自己的卸载程序（保留它的界面），记录退出码和耗时，再重新检查安装目录和卸载登记。',
+    space: '卸载程序删除的内容不经过 CleanManager；留下的文件在下一步单独审阅。',
+    recovery: '卸载无法由 CleanManager 撤销；需要时重新安装这个应用。',
+  },
+  uninstall_leftovers: {
+    effect: '文件与文件夹移到回收站；注册表项先把整棵键备份到 CleanManager 的记录中再删除；启动项先备份再移除。',
+    space: '回收站仍占用这个卷的空间，清空回收站后才释放。',
+    recovery: '文件在回收站中还原；注册表项与启动项可以用“生成还原计划”从备份放回，目标已被重新创建时跳过，不覆盖。',
+  },
+  uninstall_restore: {
+    effect: '从执行时保存的备份重新创建注册表项与启动值。',
+    space: '不影响磁盘空间。',
+    recovery: '目标已被重新创建时跳过该项，从不覆盖。',
+  },
+  update: {
+    effect: '逐个应用执行：下载这个确切版本，验证安装包签名者与已安装应用一致，然后升级并回读版本。',
+    space: '新版本可能比旧版本略大；下载的安装包放在临时目录。',
+    recovery: '更新不能由 CleanManager 撤销；签名不一致或无法验证时不安装，原应用不变。',
+  },
+  process: {
+    effect: '执行前按 PID、启动时间和程序文件重新核对这个进程，相符才结束它。',
+    space: '不影响磁盘空间。',
+    recovery: '无法撤销：进程中未保存的工作会丢失。需要时重新打开该程序。',
+  },
+  maintenance: {
+    effect: '按顺序运行列出的固定任务；每项运行前再次只读探测，不适用的跳过并说明原因。',
+    space: '维护不承诺释放空间，也不承诺“加速”。',
+    recovery: '维护操作没有通用撤销；每项结果和原因都记录在运行记录中。',
+  },
+};
+
+/** Kinds whose actions are not about space: no size column or figure. */
+const NO_SPACE = new Set<PlanDetail['kind']>(['startup', 'startup_restore', 'uninstall', 'uninstall_restore', 'update', 'process', 'maintenance']);
+
+/** Item kinds that have a size (files and folders); registry keys and startup entries do not. */
+const SIZED = new Set(['file', 'directory']);
 
 const ITEM_PAGE = 100;
 
@@ -218,7 +279,7 @@ export class PlanPage {
     this.actionError = null;
     this.update();
     try {
-      await this.app.applyPlan(d.plan_id);
+      await this.app.applyPlan(d.plan_id, d.kind === 'maintenance' ? 'maintenance' : 'apply');
     } catch (e) {
       this.actionError = toIpcError(e);
     } finally {
@@ -279,6 +340,7 @@ export class PlanPage {
           h('span', { 'data-countdown': '' }, left > 0 ? `剩余 ${formatCountdown(left)}` : '已过期'),
         ],
       }),
+      d.kind === 'uninstall' || d.kind === 'uninstall_leftovers' ? stageSteps('卸载分两步，每步单独审阅', UNINSTALL_STEPS, d.kind === 'uninstall' ? 0 : 1) : null,
       this.notices(d),
       h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.ledger(d), this.itemsPanel(d)), this.authPanel(d)),
     );
@@ -312,8 +374,8 @@ export class PlanPage {
             ? MODE_EXPLAIN.delete
             : d.kind === 'restore' || d.kind === 'purge'
               ? RECOVERY_EXPLAIN[d.kind]
-              : null;
-    const kind = permanent ? 'delete' : d.mode ?? 'restore';
+              : (KIND_EXPLAIN[d.kind] ?? null);
+    const kind = permanent ? 'delete' : d.kind === 'uninstall_leftovers' ? 'trash' : d.kind === 'uninstall' || d.kind === 'update' || d.kind === 'maintenance' ? 'review' : (d.mode ?? 'restore');
     return h(
       'div',
       { class: 'statement', 'data-mode': kind },
@@ -340,13 +402,27 @@ export class PlanPage {
     if (d.kind === 'manual_trash') {
       fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}；按条目编号选择，不按路径`));
     }
-    if (d.requires_admin) fact('权限', `需要${words().admin}`, h('small', {}, 'CleanManager 不会自动提权；没有管理员权限时执行会被拒绝，不会部分修改。'));
+    if (d.kind === 'maintenance' && d.kind_detail?.admin_tasks)
+      fact('权限', `${d.kind_detail.admin_tasks} 项需要${words().admin}`, h('small', {}, d.kind_detail.is_admin ? 'CleanManager 已以管理员身份运行，这些任务直接执行。' : '执行开始、任何任务运行之前，Windows 会询问一次；只授权这份计划中的这些任务。拒绝只跳过它们，其余照常运行。'));
+    else if (d.requires_admin) fact('权限', `需要${words().admin}`, h('small', {}, 'CleanManager 不会自动提权；没有管理员权限时执行会被拒绝，不会部分修改。'));
+    const kd = d.kind_detail;
+    if (d.kind === 'uninstall' && kd?.app) {
+      fact('应用', kd.app.name, h('small', {}, [kd.app.publisher, kd.app.version ? `版本 ${kd.app.version}` : null].filter(Boolean).join(' · ')));
+      fact('卸载方式', kd.app.adapter, h('small', {}, kd.app.signer ? `签名者 ${kd.app.signer}，执行前再核验一次程序文件的摘要与签名` : '执行前再核验一次程序文件的摘要'));
+      const est = kd.noted?.leftover_estimate;
+      if (est && Object.keys(est).length)
+        fact('可能留下', Object.entries(est).map(([g, n]) => `${LEFTOVER_GROUP[g]?.title ?? g} ${n}`).join('，'), h('small', {}, '这是估计，不在这份计划里，也不被授权；卸载后在第 2 步单独审阅。'));
+    }
+    if (d.kind === 'uninstall_leftovers' && kd?.registry_keys) fact('注册表', `${kd.registry_keys} 个键`, h('small', {}, '执行时先备份整棵键，备份失败就不删除；之后可以生成还原计划。'));
+    if (d.kind === 'process' && kd?.noted) {
+      fact('进程', `${kd.noted.name ?? ''}（PID ${kd.noted.pid ?? '—'}）`, h('small', {}, kd.noted.purpose ?? (kd.noted.unidentified_reason ? `未识别：${kd.noted.unidentified_reason}` : '')));
+    }
     if (d.kind === 'cleanup') {
       fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}`));
       fact(d.catalog ? '内置目录规则' : '规则版本', d.rule_refs.length ? h('span', { class: 'rule-list' }, ...d.rule_refs.map((r) => h('code', { class: 'selectable' }, r))) : '—');
     }
     fact('对象', `${groupDigits(d.item_count)} 项`, d.kind === 'cleanup' ? h('small', {}, `其中 ${groupDigits(d.default_selected_items)} 项来自低风险规则`) : null);
-    if (d.kind !== 'startup' && d.kind !== 'startup_restore')
+    if (!NO_SPACE.has(d.kind))
       fact('已知逻辑大小', total === null ? '未知' : formatBytes(total), h('small', {}, total === null ? '计划中不允许大小未知的文件' : formatExactBytes(total)));
     if (d.allocated_known_bytes !== null)
       fact('分配大小', d.allocated_unknown_count ? `至少 ${formatBytes(d.allocated_known_bytes)}，${d.allocated_unknown_count} 项未知` : formatBytes(d.allocated_known_bytes));
@@ -381,6 +457,24 @@ export class PlanPage {
     } else if (d.kind === 'startup' || d.kind === 'startup_restore') {
       lines.push('不包含程序文件、快捷方式、计划任务本身或应用设置；只改启用记录。');
       lines.push('执行前再次读取该项；状态在此期间被改变时跳过，不覆盖。');
+    } else if (d.kind === 'uninstall') {
+      lines.push('不包含任何残留：卸载后留下的文件、注册表项和启动项在第 2 步单独审阅，单独批准。');
+      lines.push('不会强制结束应用。应用没有退出时，卸载程序不运行，也不删除任何东西。');
+      lines.push('执行前再次核对卸载登记、程序文件的摘要和签名者；有任何变化就跳过。');
+    } else if (d.kind === 'uninstall_leftovers') {
+      lines.push('只包含你在残留审阅中选中的对象；保留、已阻止和需要手动处理的对象不在其中。');
+      lines.push('文件夹只移走其中的内容，空文件夹保留；对象已变化、正被占用或受保护时跳过。');
+    } else if (d.kind === 'update') {
+      const routed = d.kind_detail?.noted?.routed ?? [];
+      lines.push('只包含能用包管理器验证的更新；商店、自带更新器和无法验证签名的应用不在其中。');
+      if (routed.length) lines.push(`另有 ${routed.length} 个应用不在计划中：${routed.map((r) => `${r.name}（${ROUTE_WORD[r.route]}）`).join('、')}。`);
+      lines.push('正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。');
+    } else if (d.kind === 'process') {
+      lines.push('只包含这一个进程；它启动的其他进程不受影响。');
+      lines.push('PID 被复用或程序被替换时跳过，不会结束别的进程。');
+    } else if (d.kind === 'maintenance') {
+      lines.push('只包含列出的任务；搜索时出现的“不提供的操作”（如注册表优化）永远不是任务。');
+      lines.push('你保护的任务、与审阅时版本不同的任务都会被跳过并说明原因。');
     } else {
       lines.push('只包含所选的隔离项；隔离区中的其他对象不受影响。');
       lines.push(d.kind === 'restore' ? '原位置已有同名对象时跳过，不覆盖、不改名到其他位置。' : '清空不会恢复任何对象；需要恢复的项目请另建恢复计划。');
@@ -390,8 +484,29 @@ export class PlanPage {
 
   private itemsPanel(d: PlanDetail): HTMLElement {
     const recovery = d.kind === 'restore' || d.kind === 'purge';
-    const toggles = d.kind === 'startup' || d.kind === 'startup_restore';
-    const ACTION: Record<string, string> = { startup_disable: '停用', startup_enable: '启用', registry_restore: '还原', fs_trash: words().moveToBin, fs_delete: '永久删除' };
+    const toggles = NO_SPACE.has(d.kind);
+    const ACTION: Record<string, string> = {
+      startup_disable: '停用',
+      startup_enable: '启用',
+      startup_remove_with_backup: '先备份，再移除启动项',
+      registry_restore: '从备份还原',
+      registry_backup_delete: '先备份，再删除注册表项',
+      fs_trash: words().moveToBin,
+      fs_delete: '永久删除',
+      app_quit: '请应用退出（不强制结束）',
+      process_end: '结束这个进程',
+    };
+    const actionText = (i: PlanItem): string | null => {
+      if (i.item_kind === 'uninstaller') return '运行它自己的卸载程序，记录退出码，再重新检查';
+      if (i.item_kind === 'app_update') {
+        const det = i.detail ?? {};
+        return `经 ${String(det.channel ?? '包管理器')} 更新；安装包签名者必须是 ${String(det.installed_signer ?? '已安装应用的签名者')}`;
+      }
+      if (i.item_kind === 'maintenance_task') return i.scope === 'machine' ? `需要${words().admin}` : '以当前用户运行';
+      if (i.action_type && ACTION[i.action_type]) return ACTION[i.action_type];
+      return null;
+    };
+    const nameOf = (i: PlanItem): string => (i.item_kind === 'maintenance_task' ? (TASK_WORDS[String(i.detail?.task_id ?? '')]?.title ?? i.name) : i.name);
     const rows = this.items.map((i) =>
       h(
         'tr',
@@ -400,11 +515,12 @@ export class PlanPage {
         h(
           'td',
           { class: 'col-object' },
-          h('span', { class: 'obj-name' }, i.name, i.item_kind === 'directory' ? h('span', { class: 'muted small' }, '（空文件夹，内容成功后才移除）') : null),
+          h('span', { class: 'obj-name' }, nameOf(i), i.item_kind === 'directory' && d.kind !== 'uninstall_leftovers' ? h('span', { class: 'muted small' }, '（空文件夹，内容成功后才移除）') : null),
           h('span', { class: 'obj-path path' }, recovery ? `回到 ${i.original_path_display ?? '—'}` : i.path_display),
-          d.kind !== 'cleanup' && i.action_type && ACTION[i.action_type] ? h('span', { class: 'obj-reason' }, ACTION[i.action_type], i.scope ? `（${i.scope === 'user' ? '当前用户' : '所有用户'}）` : '') : null,
+          d.kind !== 'cleanup' && actionText(i) ? h('span', { class: 'obj-reason' }, actionText(i), i.scope && i.item_kind !== 'maintenance_task' ? `（${i.scope === 'user' ? '当前用户' : '所有用户'}）` : '') : null,
+          i.detail?.command ? h('span', { class: 'obj-reason muted' }, h('code', {}, String(i.detail.command))) : null,
         ),
-        h('td', { class: 'col-size num', title: toggles ? '' : formatExactBytes(parseBytes(i.logical_bytes)) }, toggles ? '—' : formatBytes(i.logical_bytes)),
+        toggles ? null : h('td', { class: 'col-size num', title: SIZED.has(i.item_kind) ? formatExactBytes(parseBytes(i.logical_bytes)) : '' }, SIZED.has(i.item_kind) ? formatBytes(i.logical_bytes) : '—'),
       ),
     );
     return h(
@@ -420,7 +536,7 @@ export class PlanPage {
               'table',
               { class: 'data-table' },
               h('caption', { class: 'sr-only' }, '计划中的全部动作'),
-              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-id' }, '动作'), h('th', { scope: 'col' }, '对象'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'))),
+              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-id' }, '动作'), h('th', { scope: 'col' }, '对象'), toggles ? null : h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'))),
               h('tbody', {}, ...rows),
             ),
           )
@@ -448,6 +564,17 @@ export class PlanPage {
     );
     if (d.operation) {
       blocks.push(h('button', { type: 'button', class: 'primary wide', onclick: () => this.app.openOperation(d.operation!.operation_id, 'plan') }, '查看执行结果'));
+    } else if (a.status === 'required' && d.terminal_only) {
+      blocks.push(
+        noticeLine(
+          d.terminal_only === 'end_processes'
+            ? '这份计划可能在执行时结束仍在运行的进程，需要你在终端中输入 END 确认。这个窗口不批准、也不执行它。'
+            : '这份计划会永久删除对象，需要在终端中额外确认不可恢复。这个窗口不批准、也不执行它。',
+          'warn',
+        ),
+        copyField('在终端中审阅并批准', d.cli.review),
+        copyField('在终端中执行', d.cli.apply),
+      );
     } else if (a.status === 'required' && d.review_token) {
       blocks.push(this.seal(d, danger));
     } else if (a.status === 'authorized' && !d.stale_reason) {
@@ -457,7 +584,7 @@ export class PlanPage {
       revoke.addEventListener('click', () => void this.revoke());
       blocks.push(
         apply,
-        h('p', { class: 'muted small' }, d.mode === 'quarantine' ? '此操作不立即释放空间。执行中可以停止后续操作；已完成的项目不会自动撤销。' : danger ? '永久删除无法撤销。执行中可以停止后续操作；已删除的不会恢复。' : '执行中可以停止后续操作；已完成的项目不会自动撤销。'),
+        h('p', { class: 'muted small' }, d.mode === 'quarantine' ? '此操作不立即释放空间。执行中可以停止后续操作；已完成的项目不会自动撤销。' : danger ? (d.kind === 'process' ? '结束进程无法撤销，其中未保存的工作会丢失。' : '永久删除无法撤销。执行中可以停止后续操作；已删除的不会恢复。') : '执行中可以停止后续操作；已完成的项目不会自动撤销。'),
         revoke,
       );
     } else {

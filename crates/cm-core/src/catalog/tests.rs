@@ -176,3 +176,40 @@ fn merging_keeps_the_stricter_inputs() {
     a.merge(&b);
     assert_eq!((a.rule_max, a.registry, a.dependency), (Tier::ReviewOnly, RegistryStatus::VersionUntested, true));
 }
+
+fn shipped(dir: &str) -> Vec<String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
+    let mut paths: Vec<_> = std::fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    paths.sort();
+    paths.into_iter().map(|p| std::fs::read_to_string(p).unwrap()).collect()
+}
+
+/// The shipped Windows pack (waves 1 and 2) loads with its tested registry, and the catalog
+/// invariants hold for every rule: probes are known kinds, administrator rules can be skipped,
+/// nothing that needs the network or holds records is default-selected.
+#[test]
+fn shipped_windows_pack_loads_with_its_registry() {
+    let registry: BTreeMap<String, RegistryEntry> =
+        shipped("rules/registry").iter().map(|t| serde_json::from_str::<RegistryEntry>(t).unwrap()).map(|e| (e.registry_id.clone(), e)).collect();
+    let rules: Vec<Rule> = shipped("rules/windows").iter().map(|t| Rule::parse(t).unwrap()).collect();
+    let set = crate::rules::RuleSet::new(rules.clone(), &registry).expect("pack and registry agree");
+    for r in &rules {
+        assert!(r.probes.iter().all(|p| PROBE_KINDS.contains(&p.as_str())), "{}: unknown probe kind", r.rule_id);
+        assert!(category(&r.category).is_some(), "{}: unknown category", r.rule_id);
+        if r.requires_admin {
+            assert!(r.probes.iter().any(|p| p == "elevated_token"), "{}", r.rule_id);
+        }
+        if r.max_tier == Tier::DefaultSelected {
+            assert_eq!(r.rebuild_class, RebuildClass::LocalRebuild, "{}", r.rule_id);
+        }
+        if r.action_kind != ActionKind::Filesystem {
+            assert!(r.allowed_modes.is_empty(), "{}: hint and owner-tool rows carry no file modes", r.rule_id);
+        }
+    }
+    // Wave 2 (D4) has enabled rules in each of its Windows categories on the test device.
+    for cat in ["app_caches", "cloud_office", "virtualization"] {
+        assert_eq!(category_status(category(cat).unwrap(), Platform::Windows, &set.rules), CategoryStatus::Available, "{cat}");
+    }
+    let admin: Vec<&Rule> = set.enabled_for(Platform::Windows).filter(|r| r.requires_admin).collect();
+    assert!(!admin.is_empty() && admin.iter().all(|r| r.max_tier == Tier::ReviewOnly), "administrator logs are enabled and review-only");
+}

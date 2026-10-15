@@ -121,3 +121,12 @@ fn changing_a_threshold_needs_a_newly_tested_rule_version() {
     let err = rule.check_registry(&reg(&entry)).unwrap_err().to_string();
     assert!(err.contains("thresholds differ"), "{err}");
 }
+
+#[test]
+fn administrator_rules_must_declare_the_elevation_probe() {
+    let mut v = example_v2();
+    v["requires_admin"] = true.into();
+    assert!(parse(&v).unwrap_err().to_string().contains("elevated_token"), "requires_admin without the probe");
+    v["probes"] = serde_json::json!(["open_file_handle", "elevated_token"]);
+    assert!(parse(&v).is_ok());
+}

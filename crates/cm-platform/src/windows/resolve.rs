@@ -25,6 +25,8 @@ pub struct ResolverEnv {
     pub app_data: Option<PathBuf>,
     pub user_profile: Option<PathBuf>,
     pub downloads: Option<PathBuf>,
+    /// `%ProgramData%`: machine-wide locations (administrator-only rules, catalog wave 2).
+    pub program_data: Option<PathBuf>,
     /// Package-manager cache overrides the tools themselves honour (`GOCACHE`, `CARGO_HOME`...).
     pub tool_env: BTreeMap<String, PathBuf>,
     /// A removable volume root the user explicitly selected (CAT-08); never set implicitly.
@@ -41,6 +43,7 @@ impl ResolverEnv {
             app_data: var("APPDATA"),
             user_profile: var("USERPROFILE"),
             downloads: known_downloads().or_else(|| var("USERPROFILE").map(|p| p.join("Downloads"))),
+            program_data: var("ProgramData"),
             tool_env,
             removable_volume: None,
         }
@@ -51,6 +54,7 @@ impl ResolverEnv {
             Base::LocalAppData => self.local_app_data.as_ref(),
             Base::AppData => self.app_data.as_ref(),
             Base::UserProfile => self.user_profile.as_ref(),
+            Base::ProgramData => self.program_data.as_ref(),
         }
     }
 }
@@ -60,6 +64,7 @@ enum Base {
     LocalAppData,
     AppData,
     UserProfile,
+    ProgramData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,10 +83,30 @@ const BROWSERS: &[(&str, Base, &[&str], Profiles)] = &[
     ("mozilla.firefox", Base::LocalAppData, &["Mozilla", "Firefox", "Profiles"], Profiles::Any),
 ];
 
-/// Application data directories (`application_cache`, `app_support`).
+/// Application data directories (`application_cache`, `app_support`, `user_logs`,
+/// `app_container`): owner id -> its fixed data folder. Rules only add literal components below.
 const APP_DIRS: &[(RootResolver, &str, Base, &[&str])] = &[
     (RootResolver::ApplicationCache, "microsoft.vscode", Base::AppData, &["Code"]),
     (RootResolver::AppSupport, "microsoft.wsl", Base::LocalAppData, &["wsl"]),
+    // Catalog wave 2: communication, media/games, design, cloud and office, virtualization.
+    (RootResolver::ApplicationCache, "bytedance.feishu", Base::AppData, &["LarkShell"]),
+    (RootResolver::UserLogs, "bytedance.feishu", Base::AppData, &["LarkShell", "sdk_storage", "log"]),
+    (RootResolver::ApplicationCache, "tencent.wechat", Base::AppData, &["Tencent", "xwechat", "radium", "web", "profiles"]),
+    (RootResolver::UserLogs, "tencent.wechat", Base::AppData, &["Tencent", "xwechat", "log"]),
+    (RootResolver::ApplicationCache, "netease.uu-remote", Base::LocalAppData, &["GameViewer", "webviewcache", "EBWebView"]),
+    (RootResolver::ApplicationCache, "docker.desktop", Base::AppData, &["Docker Desktop"]),
+    (RootResolver::UserLogs, "docker.desktop", Base::LocalAppData, &["Docker", "log"]),
+    (RootResolver::AppSupport, "docker.desktop", Base::LocalAppData, &["Docker", "wsl"]),
+    (RootResolver::UserLogs, "microsoft.onedrive", Base::LocalAppData, &["Microsoft", "OneDrive"]),
+    (RootResolver::AppContainer, "microsoft.winget", Base::LocalAppData, &["Packages", "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe", "LocalState"]),
+    (RootResolver::AppContainer, "microsoft.teams", Base::LocalAppData, &["Packages", "MSTeams_8wekyb3d8bbwe", "LocalCache", "Microsoft", "MSTeams"]),
+    (RootResolver::ApplicationCache, "slack", Base::AppData, &["Slack"]),
+    (RootResolver::ApplicationCache, "discord", Base::AppData, &["discord"]),
+    (RootResolver::ApplicationCache, "valve.steam", Base::LocalAppData, &["Steam"]),
+    (RootResolver::ApplicationCache, "epicgames.launcher", Base::LocalAppData, &["EpicGamesLauncher", "Saved"]),
+    (RootResolver::ApplicationCache, "adobe.creative-cloud", Base::AppData, &["Adobe", "Common"]),
+    (RootResolver::ApplicationCache, "python.install-manager", Base::LocalAppData, &["Python"]),
+    (RootResolver::AppSupport, "google.android-emulator", Base::UserProfile, &[".android", "avd"]),
 ];
 
 /// Fixed per-user system locations.
@@ -89,6 +114,11 @@ const SYSTEM_DIRS: &[(RootResolver, &str, Base, &[&str])] = &[
     (RootResolver::CrashReports, "windows.wer", Base::LocalAppData, &["Microsoft", "Windows", "WER"]),
     (RootResolver::CrashReports, "windows.crash-dumps", Base::LocalAppData, &["CrashDumps"]),
     (RootResolver::UserCache, "windows.directx", Base::LocalAppData, &["D3DSCache"]),
+    // GPU driver shader caches (rebuilt by the driver when applications next run).
+    (RootResolver::UserCache, "amd.radeon-driver", Base::LocalAppData, &["AMD"]),
+    (RootResolver::UserCache, "nvidia.graphics-driver", Base::LocalAppData, &["NVIDIA"]),
+    // Machine-wide Windows Error Reporting store: administrator-only (`requires_admin` rules).
+    (RootResolver::SystemLogs, "windows.wer.machine", Base::ProgramData, &["Microsoft", "Windows", "WER"]),
 ];
 
 /// Package-manager caches: owner → (override variable the tool honours, default base, parts).
@@ -99,6 +129,9 @@ const TOOL_CACHES: &[(&str, Option<&str>, Base, &[&str])] = &[
     ("pip", Some("PIP_CACHE_DIR"), Base::LocalAppData, &["pip", "cache"]),
     ("uv", Some("UV_CACHE_DIR"), Base::LocalAppData, &["uv", "cache"]),
     ("nuget", Some("NUGET_HTTP_CACHE_PATH"), Base::LocalAppData, &["NuGet", "v3-cache"]),
+    // pnpm's default cache-dir on Windows. A custom cache-dir is not followed: the rule then
+    // simply does not apply, it never guesses.
+    ("pnpm", None, Base::LocalAppData, &["pnpm-cache"]),
 ];
 
 fn join(base: &Path, parts: &[&str]) -> PathBuf {
@@ -150,8 +183,8 @@ pub fn base_paths(rule: &Rule, env: &ResolverEnv) -> Vec<PathBuf> {
             .filter_map(|(_, base, parts, style)| env.base(*base).map(|b| profiles(&join(b, parts), *style)))
             .flatten()
             .collect(),
-        RootResolver::ApplicationCache | RootResolver::AppSupport => fixed(APP_DIRS),
-        RootResolver::CrashReports | RootResolver::UserCache => fixed(SYSTEM_DIRS),
+        RootResolver::ApplicationCache | RootResolver::AppSupport | RootResolver::UserLogs | RootResolver::AppContainer => fixed(APP_DIRS),
+        RootResolver::CrashReports | RootResolver::UserCache | RootResolver::SystemLogs => fixed(SYSTEM_DIRS),
         RootResolver::PackageManagerCache => TOOL_CACHES
             .iter()
             .filter(|(id, ..)| *id == owner)
@@ -311,6 +344,18 @@ const OWNER_APPS: &[(&str, NameMatch, &str)] = &[
     ("microsoft.vscode", NameMatch::Prefix("Microsoft Visual Studio Code"), "Microsoft"),
     ("mozilla.firefox", NameMatch::Prefix("Mozilla Firefox"), "Mozilla"),
     ("go", NameMatch::Prefix("Go Programming Language"), "Go"),
+    // Catalog wave 2.
+    ("bytedance.feishu", NameMatch::Exact("飞书"), "Feishu"),
+    ("tencent.wechat", NameMatch::Exact("微信"), "腾讯"),
+    ("netease.uu-remote", NameMatch::Exact("UU远程"), "Netease"),
+    ("docker.desktop", NameMatch::Exact("Docker Desktop"), "Docker"),
+    ("microsoft.onedrive", NameMatch::Exact("Microsoft OneDrive"), "Microsoft"),
+    ("microsoft.teams", NameMatch::Prefix("Microsoft Teams"), "Microsoft"),
+    ("slack", NameMatch::Prefix("Slack"), "Slack"),
+    ("discord", NameMatch::Exact("Discord"), "Discord"),
+    ("valve.steam", NameMatch::Exact("Steam"), "Valve"),
+    ("epicgames.launcher", NameMatch::Exact("Epic Games Launcher"), "Epic Games"),
+    ("microsoft.wsl", NameMatch::Exact("Windows Subsystem for Linux"), "Microsoft"),
 ];
 
 /// Uninstall records (display name, version, publisher) from HKLM (both views) and HKCU.
@@ -394,6 +439,7 @@ mod tests {
             app_data: Some(PathBuf::from("C:\\R")),
             user_profile: Some(PathBuf::from("C:\\U")),
             downloads: Some(PathBuf::from("C:\\U\\Downloads")),
+            program_data: Some(PathBuf::from("C:\\PD")),
             tool_env: [("GOCACHE".to_string(), PathBuf::from("D:\\gocache"))].into(),
             removable_volume: None,
         };
@@ -412,5 +458,45 @@ mod tests {
         assert!(r(RootResolver::RemovableVolumeRoot, "apple.metadata").is_empty(), "no volume unless the user selected one");
         assert!(r(RootResolver::CrashReports, "unknown.owner").is_empty());
         assert!(r(RootResolver::SystemLogs, "windows").is_empty());
+        // Catalog wave 2.
+        assert_eq!(r(RootResolver::SystemLogs, "windows.wer.machine"), vec![PathBuf::from("C:\\PD\\Microsoft\\Windows\\WER")]);
+        assert_eq!(r(RootResolver::ApplicationCache, "bytedance.feishu"), vec![PathBuf::from("C:\\R\\LarkShell")]);
+        assert_eq!(r(RootResolver::UserLogs, "microsoft.onedrive"), vec![PathBuf::from("C:\\L\\Microsoft\\OneDrive")]);
+        assert_eq!(
+            r(RootResolver::AppContainer, "microsoft.winget"),
+            vec![PathBuf::from("C:\\L\\Packages\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\LocalState")]
+        );
+        assert_eq!(r(RootResolver::UserCache, "amd.radeon-driver"), vec![PathBuf::from("C:\\L\\AMD")]);
+        assert_eq!(r(RootResolver::PackageManagerCache, "pnpm"), vec![PathBuf::from("C:\\L\\pnpm-cache")]);
+        assert!(r(RootResolver::UserLogs, "unknown.owner").is_empty(), "no mapping, no root");
+        assert!(r(RootResolver::ApplicationCache, "microsoft.onedrive").is_empty(), "a mapping is per resolver kind");
+    }
+
+    /// Every rule in the shipped Windows pack has a fixed location for its owner (otherwise it
+    /// could never apply); the removable-volume rules resolve only once a volume is selected.
+    #[test]
+    fn every_shipped_windows_rule_has_a_resolver_mapping() {
+        let base = |p: &str| Some(PathBuf::from(p));
+        let env = ResolverEnv {
+            local_app_data: base(r"C:\L"),
+            temp: base(r"C:\T"),
+            app_data: base(r"C:\R"),
+            user_profile: base(r"C:\U"),
+            downloads: base(r"C:\U\Downloads"),
+            program_data: base(r"C:\PD"),
+            tool_env: BTreeMap::new(),
+            removable_volume: base(r"E:\"),
+        };
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules/windows");
+        let mut checked = 0;
+        for e in std::fs::read_dir(dir).unwrap() {
+            let rule = Rule::parse(&std::fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
+            if rule.root_resolver == RootResolver::BrowserProfile {
+                continue; // profiles are listed from disk; covered by the browser runs
+            }
+            assert!(!base_paths(&rule, &env).is_empty(), "{} ({:?}, owner {}) has no location", rule.rule_id, rule.root_resolver, rule.owner.id);
+            checked += 1;
+        }
+        assert!(checked >= 40, "the pack was read ({checked} rules)");
     }
 }

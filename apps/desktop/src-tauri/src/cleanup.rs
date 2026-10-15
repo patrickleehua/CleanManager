@@ -705,6 +705,10 @@ pub struct PlanDetailDto {
     pub catalog: Option<&'static str>,
     /// The raw `plan_kind` of a plan/v2 plan.
     pub plan_kind_v2: Option<String>,
+    /// Only a terminal review can approve it: `permanent_delete` or `end_processes` (plan/v2), otherwise `None`.
+    pub terminal_only: Option<String>,
+    /// Kind-specific review facts of plan/v2 plans (uninstall stage and app, maintenance elevation...).
+    pub kind_detail: Option<serde_json::Value>,
 }
 
 /// Built-in catalog a rule-set digest belongs to (`purge`, `installer`).
@@ -812,6 +816,8 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
             requires_admin: false,
             catalog: None,
             plan_kind_v2: None,
+            terminal_only: None,
+            kind_detail: None,
         });
     }
     if contract == PLAN_V2_CONTRACT {
@@ -885,6 +891,8 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
         requires_admin: false,
         catalog: catalog_of(&plan.body.rule_set_digest),
         plan_kind_v2: None,
+        terminal_only: None,
+        kind_detail: None,
     })
 }
 
@@ -907,6 +915,9 @@ pub struct PlanItemDto {
     pub action_type: Option<String>,
     /// Startup and registry items: `user` or `machine`.
     pub scope: Option<String>,
+    /// Kind-specific facts of a plan/v2 action (update target, uninstaller, process identity, maintenance task).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -954,6 +965,7 @@ pub fn items(stores: &Stores, plan_id: &str, page_size: u32, cursor: Option<&str
                     quarantine_id: Some(i.quarantine_id.clone()),
                     action_type: None,
                     scope: None,
+                    detail: None,
                 }
             })
             .collect()
@@ -983,6 +995,7 @@ pub fn items(stores: &Stores, plan_id: &str, page_size: u32, cursor: Option<&str
                     quarantine_id: None,
                     action_type: Some(action_type.into()),
                     scope: None,
+                    detail: None,
                 }
             })
             .collect()

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-alerts-save"
+description = "Enables the alerts_save command without any pre-configured scope."
+commands.allow = ["alerts_save"]
+
+[[permission]]
+identifier = "deny-alerts-save"
+description = "Denies the alerts_save command without any pre-configured scope."
+commands.deny = ["alerts_save"]

@@ -83,6 +83,8 @@ pub struct AppState {
     pub rules_dir: Option<PathBuf>,
     /// Optional AI diagnosis (see `diag`); `None` without a store directory.
     pub diag: Option<Arc<cm_app::diag::Service>>,
+    /// Review notes of plans created here and the last old-downloads review (see `software`, `system`).
+    pub suite: Mutex<crate::software::SuiteCache>,
 }
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -138,6 +140,7 @@ impl AppState {
             apply: Mutex::new(None),
             diag,
             rules_dir,
+            suite: Mutex::new(crate::software::SuiteCache::default()),
         }
     }
 

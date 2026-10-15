@@ -70,7 +70,7 @@
       "items": {
         "enum": [
           "owner_process", "open_database_handle", "open_file_handle", "incomplete_download_handle",
-          "endpoint_security_path", "mounted_image", "vcs_tracked"
+          "endpoint_security_path", "mounted_image", "vcs_tracked", "elevated_token"
         ]
       }
     },

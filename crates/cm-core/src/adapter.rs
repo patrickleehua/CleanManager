@@ -88,6 +88,22 @@ pub const ADAPTERS: &[AdapterSpec] = &[
         timeout_ms: 30_000,
         max_output_bytes: 16 * 1024,
     },
+    // Catalog wave 2 (virtualization): container data lives inside Docker's own disk image, so
+    // only the Docker engine can reclaim it. A per-user install (user-writable folder) is not a
+    // trusted location: the adapter is then unavailable, and the disk is never deleted directly.
+    AdapterSpec {
+        adapter_id: "docker.system-prune",
+        version: "1.0.0",
+        tool_id: "docker",
+        tool_name: "Docker Desktop (docker CLI)",
+        locator: Locator::ProgramFiles { path: &["Docker", "Docker", "resources", "bin", "docker.exe"] },
+        preview_argv: &["system", "df"],
+        preview_kind: PreviewKind::Listing,
+        cleanup_argv: &["system", "prune", "--force"],
+        cleanup_effect: "Docker removes stopped containers, unused networks, dangling images and unused build cache; images in use and volumes are kept.",
+        timeout_ms: 60_000,
+        max_output_bytes: 16 * 1024,
+    },
 ];
 
 pub fn adapter(id: &str) -> Option<&'static AdapterSpec> {

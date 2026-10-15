@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-process-pin"
+description = "Enables the process_pin command without any pre-configured scope."
+commands.allow = ["process_pin"]
+
+[[permission]]
+identifier = "deny-process-pin"
+description = "Denies the process_pin command without any pre-configured scope."
+commands.deny = ["process_pin"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-leftovers-plan"
+description = "Enables the uninstall_leftovers_plan command without any pre-configured scope."
+commands.allow = ["uninstall_leftovers_plan"]
+
+[[permission]]
+identifier = "deny-uninstall-leftovers-plan"
+description = "Denies the uninstall_leftovers_plan command without any pre-configured scope."
+commands.deny = ["uninstall_leftovers_plan"]

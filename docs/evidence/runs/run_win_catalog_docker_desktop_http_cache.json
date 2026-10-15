@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-03",
+  "run_id": "run_win_catalog_docker_desktop_http_cache",
+  "recorded_at": "2026-10-15T10:25:02Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/docker.desktop.http-cache.json"
+  ],
+  "seed": null,
+  "expected": "Docker Desktop 4.95.0: the rule matches exactly the oracle set in the real location (read-only scan), every row review-only; in a lookalike fixture through the real resolver only ['cache\\\\cache_data'] match",
+  "actual": "real: candidates=1 expected_by_oracle=1 match=True risks=['medium']; fixture: candidates=['cache\\\\cache_data'] expected=['cache\\\\cache_data'] oracle_agrees=True",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "owner_version": "4.95.0",
+    "real_candidates": [
+      "cache\\cache_data"
+    ],
+    "real_expected": [
+      "cache\\cache_data"
+    ],
+    "real_matched_logical_bytes": "6551280",
+    "fixture_candidates": [
+      "cache\\cache_data"
+    ],
+    "fixture_expected": [
+      "cache\\cache_data"
+    ]
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Real location scanned read-only into a scratch store; nothing was removed, so regeneration was not exercised and the rule stays review_only.",
+    "Fixture reached through CM_RESOLVE_* overrides; the resolver_override issue marks those results as fixture-based.",
+    "Only the dashboard (Electron) caches are matched; container data lives in Docker's own disk image."
+  ],
+  "status": "passed"
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.onedrive.logs",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "cloud_office",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.onedrive"
+  },
+  "root_resolver": "user_logs",
+  "match": {
+    "object_type": "file",
+    "relative_components": [
+      "logs"
+    ],
+    "name_glob": null,
+    "extensions": [
+      "odl",
+      "odlgz",
+      "aodl",
+      "loggz",
+      "etlgz"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 3
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "OneDrive sync client diagnostic logs older than 7 days (*.odl, *.odlgz, *.aodl, *.loggz, *.etlgz under OneDrive\\logs). Log key stores and telemetry caches are not matched.",
+    "regeneration": "Not regenerated: logs of past sync sessions. Files and sync state are never inside.",
+    "offline_effect": "None for syncing; the logs are no longer available to OneDrive support."
+  },
+  "tested_registry_ref": "microsoft.onedrive.logs@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_microsoft_onedrive_logs"
+  ]
+}

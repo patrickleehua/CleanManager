@@ -1,0 +1,56 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "tencent.wechat.logs",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "app",
+    "id": "tencent.wechat"
+  },
+  "root_resolver": "user_logs",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [
+      "xlog"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 1
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "WeChat (Weixin 4.x) daily diagnostic logs (*.xlog) older than 7 days in xwechat\\log.",
+    "regeneration": "Not regenerated: logs of past WeChat sessions. Chat history lives elsewhere and is never matched.",
+    "offline_effect": "None for messaging; the logs are no longer available for troubleshooting."
+  },
+  "tested_registry_ref": "tencent.wechat.logs@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_tencent_wechat_logs"
+  ]
+}

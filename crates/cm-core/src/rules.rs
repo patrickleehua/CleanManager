@@ -337,6 +337,11 @@ impl Rule {
         if self.max_tier == Tier::Blocked && !self.allowed_modes.is_empty() {
             return Err(invalid(id, "blocked rules have no modes"));
         }
+        // Administrator-only locations are skipped without an elevated token (CAT-06 tri-state):
+        // the rule must declare the probe that answers it.
+        if self.requires_admin && !self.probes.iter().any(|p| p == "elevated_token") {
+            return Err(invalid(id, "requires_admin rules must declare the elevated_token probe"));
+        }
         if matches!(self.status, RuleStatus::Verified | RuleStatus::Enabled) && self.evidence_refs.is_empty() {
             return Err(invalid(id, "verified/enabled rules need evidence_refs"));
         }

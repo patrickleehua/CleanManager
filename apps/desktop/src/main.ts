@@ -5,7 +5,7 @@ import { appMark, h, icon, replace } from './lib/dom';
 import { isTerminal, taskTitle } from './lib/format';
 import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
 import type { DiagTarget } from './lib/diagTypes';
-import type { ScanStatus } from './lib/types';
+import type { ReadinessOp, ScanStatus } from './lib/types';
 import { OPERATION_STATE_LABEL } from './lib/words';
 import { EXTENSIONS, TOOLS, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
 import { platform, setPlatform, words } from './lib/platform';
@@ -22,6 +22,10 @@ import { SettingsPage } from './views/settings';
 import { ApplyChip, TaskChip } from './views/task';
 import { CatalogPage } from './views/catalog';
 import { InsightsPage, StartupPage, StatusPage, capabilityPages } from './views/tools';
+import { UninstallPage } from './views/uninstall';
+import { UpdatesPage } from './views/updates';
+import { DiagnosisPage, MaintenancePage } from './views/maintenance';
+import { ProcessesPage } from './views/processes';
 import { ensureReady } from './views/kit';
 
 export interface App {
@@ -35,8 +39,8 @@ export interface App {
   openPlan(planId: string, from?: Page): void;
   openOperation(operationId: string, from?: Page): void;
   openActivity(tab: ActivityTab): void;
-  /** Apply a stored, authorized plan; opens its result page. */
-  applyPlan(planId: string): Promise<void>;
+  /** Apply a stored, authorized plan; opens its result page. `readiness` names the permission check (default `apply`). */
+  applyPlan(planId: string, readiness?: ReadinessOp): Promise<void>;
   /** Optional AI diagnosis of one object (from the cleanup, disk or apps page). */
   openDiagnosis(target: DiagTarget, from?: Page): void;
   announce(text: string): void;
@@ -105,6 +109,8 @@ async function boot(): Promise<void> {
     diagTarget: null,
     diagId: null,
     revealEntry: null,
+    leftoversOp: null,
+    processFocus: null,
   });
 
   const announcer = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
@@ -182,8 +188,8 @@ async function boot(): Promise<void> {
     openActivity(tab) {
       store.set({ activityTab: tab, page: 'activity' });
     },
-    async applyPlan(planId) {
-      if (!(await ensureReady(app, 'apply', '执行'))) return;
+    async applyPlan(planId, readiness = 'apply') {
+      if (!(await ensureReady(app, readiness, '执行'))) return;
       const r = await backend.startApply(planId);
       if (!r.existing) {
         store.set({
@@ -260,12 +266,13 @@ async function boot(): Promise<void> {
     plan: new PlanPage(app),
     operation: new OperationPage(app),
     apps: new AppsPage(app),
-    uninstall: caps.uninstall,
-    updates: caps.updates,
+    uninstall: new UninstallPage(app),
+    updates: new UpdatesPage(app),
     startup: new StartupPage(app),
-    maintenance: caps.maintenance,
+    maintenance: new MaintenancePage(app),
+    diagnosis: new DiagnosisPage(app),
     status: new StatusPage(app),
-    processes: caps.processes,
+    processes: new ProcessesPage(app),
     activity: new ActivityPage(app),
     agent: caps.agent,
     settings: new SettingsPage(app),
@@ -491,6 +498,7 @@ function routeFromHash(app: App): void {
   if (page === 'plan' && arg) app.openPlan(arg, 'cleanup');
   else if (page === 'operation' && arg) app.openOperation(arg, 'activity');
   else if (page === 'activity') app.openActivity((arg as ActivityTab) || 'operations');
+  else if (page === 'leftovers' && arg) app.store.set({ leftoversOp: arg, page: 'uninstall' });
   else if (page === 'diag') {
     // `#diag` history, `#diag=unconfigured`, `#diag=completed|failed|cancelled|expired|running`,
     // `#diag=video` (a target ready to preview). Fixture states only.
@@ -505,7 +513,7 @@ function routeFromHash(app: App): void {
     } else app.navigate('diag');
   }
   else if (
-    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'status', 'processes', 'agent', 'settings'].includes(page)
+    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'diagnosis', 'status', 'processes', 'agent', 'settings'].includes(page)
   )
     app.navigate(page as Page);
 }

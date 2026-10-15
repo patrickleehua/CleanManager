@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "microsoft.winget.logs@1.0.0",
+  "rule_id": "microsoft.winget.logs",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "microsoft.winget",
+    "name": "Windows Package Manager (winget)"
+  },
+  "version_range": {
+    "min_inclusive": "1.29",
+    "max_exclusive": "1.30"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old winget/App Installer logs in DiagOutputDir are review-only candidates"
+    ],
+    "negative": [
+      "Logs from today, non-log files, nested logs and winget settings are not matched",
+      "Real logs on this device are newer than 7 days and were correctly not candidates"
+    ]
+  },
+  "known_effects": [
+    "Past winget logs are no longer available."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_microsoft_winget_logs"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

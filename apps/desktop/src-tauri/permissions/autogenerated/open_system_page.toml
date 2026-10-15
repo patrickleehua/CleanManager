@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-system-page"
+description = "Enables the open_system_page command without any pre-configured scope."
+commands.allow = ["open_system_page"]
+
+[[permission]]
+identifier = "deny-open-system-page"
+description = "Denies the open_system_page command without any pre-configured scope."
+commands.deny = ["open_system_page"]

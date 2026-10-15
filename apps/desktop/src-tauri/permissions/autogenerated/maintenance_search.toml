@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-maintenance-search"
+description = "Enables the maintenance_search command without any pre-configured scope."
+commands.allow = ["maintenance_search"]
+
+[[permission]]
+identifier = "deny-maintenance-search"
+description = "Denies the maintenance_search command without any pre-configured scope."
+commands.deny = ["maintenance_search"]

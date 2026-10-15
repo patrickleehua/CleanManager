@@ -1,0 +1,58 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "docker.desktop.http-cache",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "virtualization",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "app",
+    "id": "docker.desktop"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "Cache",
+      "Cache_Data"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Docker Desktop dashboard (Electron) HTTP cache. Containers, images and volumes are not here.",
+    "regeneration": "Dashboard resources are downloaded again when next needed.",
+    "offline_effect": "Remote dashboard content (e.g. Docker Hub pages) cannot be shown offline until downloaded again."
+  },
+  "tested_registry_ref": "docker.desktop.http-cache@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_docker_desktop_http_cache"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "amd.shader-cache",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "system_data",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "amd.radeon-driver"
+  },
+  "root_resolver": "user_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": "*Cache",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "AMD Radeon driver shader caches (DxCache, DxcCache, DX9Cache, OglCache, VkCache in Local AppData\\AMD). AMD Software settings (CN, RadeonSoftware) are not matched.",
+    "regeneration": "The driver rebuilds shaders when applications and games next run; the first run may stutter.",
+    "offline_effect": "None expected."
+  },
+  "tested_registry_ref": "amd.shader-cache@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_amd_shader_cache"
+  ]
+}

@@ -1,7 +1,8 @@
-// Shared selection → review → result components (GUI-09/10/13/14). Cleanup, build artifacts and
-// installers use them now; uninstall leftovers and maintenance tasks will use the same pieces:
-// three-tier badges, the bottom selection bar with "at least X" wording, the plan draft with
-// processing modes, long-operation progress, permission readiness and capability pages.
+// Shared selection → review → result components (GUI-09/10/13/14, task 16.3). Cleanup, build
+// artifacts, installers, uninstall leftovers, maintenance tasks, updates and old downloads all use
+// the same pieces: three-tier badges, the bottom selection bar with "at least X" wording, the plan
+// draft with processing modes, long-operation progress, permission readiness, flow steps, the six
+// maintenance outcomes and capability pages.
 
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
@@ -75,7 +76,8 @@ export function unknownNote(sum: SizeSum): string | null {
 
 export interface SelectionBarOpts {
   count: number;
-  sum: SizeSum;
+  /** Known size of the selection; `null` for selections that are not about space (updates, tasks). */
+  sum: SizeSum | null;
   /** Selected objects come from this many roots / sources (one plan each). */
   sources?: number;
   action: { text: string; disabled: boolean; onClick: () => void; id?: string; danger?: boolean };
@@ -89,7 +91,7 @@ export interface SelectionBarOpts {
  */
 export function selectionBar(o: SelectionBarOpts): HTMLElement {
   if (o.count === 0) return h('div', { class: 'selection-bar', hidden: true });
-  const unknown = unknownNote(o.sum);
+  const unknown = o.sum ? unknownNote(o.sum) : null;
   const go = h('button', { type: 'button', class: o.action.danger ? 'danger' : 'primary', id: o.action.id ?? 'selbar-go', disabled: o.action.disabled }, o.action.text);
   go.addEventListener('click', o.action.onClick);
   return h(
@@ -99,7 +101,7 @@ export function selectionBar(o: SelectionBarOpts): HTMLElement {
       'p',
       { class: 'selbar-sum', 'aria-live': 'polite' },
       h('b', { class: 'num' }, `已选 ${groupDigits(o.count)} 项`),
-      h('span', { class: 'num' }, atLeast(o.sum)),
+      o.sum ? h('span', { class: 'num' }, atLeast(o.sum)) : null,
       unknown ? h('span', { class: 'selbar-unknown' }, unknown) : null,
       o.sources && o.sources > 1 ? h('span', { class: 'muted' }, `来自 ${o.sources} 个位置，每个位置一份计划`) : null,
       o.note ? h('span', { class: 'muted' }, o.note) : null,
@@ -204,7 +206,7 @@ interface CheckWords {
   fix: string;
 }
 
-export function readinessWords(): Record<string, CheckWords> {
+export function readinessWords(forOp?: ReadinessOp): Record<string, CheckWords> {
   const w = words();
   return {
     store: {
@@ -224,8 +226,14 @@ export function readinessWords(): Record<string, CheckWords> {
           ? '没有管理员权限：系统保护的文件夹会显示为“未读取”，不会按 0 计算。'
           : op === 'startup'
             ? '没有管理员权限：所有用户共用的启动项只能查看，不能停用或启用。'
-            : '没有管理员权限：需要管理员的项目会在执行时被跳过并说明原因。',
-      fix: `CleanManager 不会自动提权。需要时请关闭后以${w.admin}重新启动。`,
+            : op === 'maintenance'
+              ? '没有管理员权限：需要管理员的任务会在开始前请 Windows 询问你一次；拒绝只跳过这些任务，其余任务照常运行。'
+              : op === 'uninstall'
+                ? '没有管理员权限：所有用户共用位置（HKLM、ProgramData）中的残留只能查看，不能放入计划。'
+                : op === 'process'
+                  ? '没有管理员权限：其他用户或系统的进程在执行时会被跳过并说明原因。'
+                  : '没有管理员权限：需要管理员的项目会在执行时被跳过并说明原因。',
+      fix: forOp === 'maintenance' ? 'Windows 的管理员提示只出现一次，并且只授权这份计划中列出的任务。' : `CleanManager 不会自动提权。需要时请关闭后以${w.admin}重新启动。`,
     },
     bypass_privileges: {
       title: '备份/还原特权',
@@ -271,7 +279,7 @@ export async function ensureReady(app: App, op: ReadinessOp, label: string): Pro
 
 function readinessDialog(op: ReadinessOp, label: string, gaps: ReadinessCheck[], blocking: boolean): Promise<boolean> {
   return new Promise((resolve) => {
-    const table = readinessWords();
+    const table = readinessWords(op);
     const dlg = h('dialog', { class: 'cm-dialog readiness', 'aria-labelledby': 'ready-title', 'aria-describedby': 'ready-lede' }) as HTMLDialogElement;
     const finish = (v: boolean) => {
       dlg.close();
@@ -365,6 +373,58 @@ export function capabilityPage(o: CapabilityOpts): HTMLElement {
         o.actions?.length ? h('div', { class: 'card-actions' }, ...o.actions) : null,
       ),
     ),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Steps of a flow that really is a sequence (an uninstall: the uninstaller, then its leftovers)
+
+export interface Step {
+  title: string;
+  note: string;
+}
+
+/** Numbered steps; `current` is highlighted, earlier ones read as done. */
+export function stageSteps(label: string, steps: Step[], current: number): HTMLElement {
+  return h(
+    'ol',
+    { class: 'stage-steps', 'aria-label': label },
+    ...steps.map((s, i) =>
+      h(
+        'li',
+        { 'data-state': i < current ? 'done' : i === current ? 'current' : 'next', 'aria-current': i === current ? 'step' : null },
+        h('span', { class: 'step-num', 'aria-hidden': 'true' }, String(i + 1)),
+        h('span', { class: 'step-text' }, h('b', {}, s.title), h('span', {}, s.note)),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Six maintenance outcomes (MNT-03): every outcome has its own shape and word
+
+export type Outcome = 'applied' | 'unchanged' | 'attention' | 'skipped' | 'unavailable' | 'failed';
+
+export const OUTCOME_LABEL: Record<Outcome, string> = {
+  applied: '已执行',
+  unchanged: '无需改变',
+  attention: '需要跟进',
+  skipped: '已跳过',
+  unavailable: '不可用',
+  failed: '失败',
+};
+
+export function outcomeMark(o: Outcome, withLabel = true): HTMLElement {
+  return h('span', { class: 'omark', 'data-outcome': o }, h('span', { class: 'omark-shape', 'aria-hidden': 'true' }), withLabel ? h('span', {}, OUTCOME_LABEL[o]) : h('span', { class: 'sr-only' }, OUTCOME_LABEL[o]));
+}
+
+/** All six counts in a fixed order; zero counts stay visible but quiet, so nothing reads as "all done" by omission. */
+export function outcomeTally(counts: Partial<Record<Outcome, number>>, label = '结果'): HTMLElement {
+  const order: Outcome[] = ['applied', 'unchanged', 'attention', 'skipped', 'unavailable', 'failed'];
+  return h(
+    'ul',
+    { class: 'outcome-tally', 'aria-label': label },
+    ...order.map((o) => h('li', { 'data-zero': (counts[o] ?? 0) === 0 ? 'yes' : 'no' }, outcomeMark(o), h('b', { class: 'num' }, groupDigits(counts[o] ?? 0)))),
   );
 }
 

@@ -1,0 +1,58 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.winget.logs",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.winget"
+  },
+  "root_resolver": "app_container",
+  "match": {
+    "object_type": "file",
+    "relative_components": [
+      "DiagOutputDir"
+    ],
+    "name_glob": null,
+    "extensions": [
+      "log"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Windows Package Manager (winget / App Installer) diagnostic logs older than 7 days.",
+    "regeneration": "Not regenerated: logs of past winget runs. Sources, settings and installed packages are not touched.",
+    "offline_effect": "None for installs; the logs are no longer available for troubleshooting."
+  },
+  "tested_registry_ref": "microsoft.winget.logs@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_microsoft_winget_logs"
+  ]
+}

@@ -20,6 +20,7 @@ export type Page =
   | 'updates'
   | 'startup'
   | 'maintenance'
+  | 'diagnosis'
   | 'status'
   | 'processes'
   | 'activity'
@@ -78,6 +79,10 @@ export interface AppState {
   diagId: string | null;
   /** Entry the disk page should locate when it is shown next (diagnosis "locate"). */
   revealEntry: string | null;
+  /** The finished uninstall operation whose leftovers the uninstall page reviews (null: the app list). */
+  leftoversOp: string | null;
+  /** Process the process page should select when it is shown next (an alert's link). */
+  processFocus: number | null;
 }
 
 type Listener = (s: AppState, prev: AppState) => void;

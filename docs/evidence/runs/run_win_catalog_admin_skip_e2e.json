@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-06",
+  "run_id": "run_win_catalog_admin_skip_e2e",
+  "recorded_at": "2026-10-15T10:25:09Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "--scan",
+    "ID",
+    "--dry-run",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "windows.wer.machine-report-archive (requires_admin): with administrator rights the 30-day-old fixture report is a review-only row (elevated_token not_in_use); under a restricted token (elevation refused) the same row is skipped (elevated_token unknown, skip probe_unknown) and an explicit plan request for it is refused (policy_denied)",
+  "actual": "elevated: probe=not_in_use skip=None tier=review_only selected=False; restricted: probe=unknown skip=probe_unknown selected=False; restricted_plan=error:policy_denied",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "restricted_tier_reason": "probe:elevated_token:unknown",
+    "elevated_tier_reason": "matched rule",
+    "restricted_plan_message": "candidate c_a04ee80a532cfba2a0f0ae7a cannot be planned: probe_unknown: probe:elevated_token:unknown"
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Controlled fixture through CM_RESOLVE_PROGRAMDATA; the real ProgramData WER store was not modified.",
+    "The restricted run used runas /trustlevel:0x20000 (Administrators deny-only), which reports TokenIsElevated=1 but has no administrator rights; the probe therefore checks Administrators membership as well as elevation."
+  ],
+  "status": "passed"
+}

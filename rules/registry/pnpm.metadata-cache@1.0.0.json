@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "pnpm.metadata-cache@1.0.0",
+  "rule_id": "pnpm.metadata-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "tool",
+    "id": "pnpm",
+    "name": "pnpm"
+  },
+  "version_range": {
+    "min_inclusive": "12.10",
+    "max_exclusive": "12.11"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real pnpm-cache\\metadata-v1.3 matched"
+    ],
+    "negative": [
+      "Other cache folders, the lockfile-verified journal and nested metadata folders are not matched; the package store is elsewhere"
+    ]
+  },
+  "known_effects": [
+    "Metadata is fetched again on the next install; offline installs need the network."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_pnpm_metadata_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

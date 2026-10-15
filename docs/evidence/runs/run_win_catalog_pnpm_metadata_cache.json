@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-03",
+  "run_id": "run_win_catalog_pnpm_metadata_cache",
+  "recorded_at": "2026-10-15T10:25:04Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "analyze",
+    "--preview-rule",
+    "rules/windows/pnpm.metadata-cache.json"
+  ],
+  "seed": null,
+  "expected": "pnpm 12.10.1: the rule matches exactly the oracle set in the real location (read-only scan), every row review-only; in a lookalike fixture through the real resolver only ['metadata-full-v1.3', 'metadata-v1.3'] match",
+  "actual": "real: candidates=1 expected_by_oracle=1 match=True risks=['medium']; fixture: candidates=['metadata-full-v1.3', 'metadata-v1.3'] expected=['metadata-full-v1.3', 'metadata-v1.3'] oracle_agrees=True",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "owner_version": "12.10.1",
+    "real_candidates": [
+      "metadata-v1.3"
+    ],
+    "real_expected": [
+      "metadata-v1.3"
+    ],
+    "real_matched_logical_bytes": "1902393",
+    "fixture_candidates": [
+      "metadata-full-v1.3",
+      "metadata-v1.3"
+    ],
+    "fixture_expected": [
+      "metadata-full-v1.3",
+      "metadata-v1.3"
+    ]
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Real location scanned read-only into a scratch store; nothing was removed, so regeneration was not exercised and the rule stays review_only.",
+    "Fixture reached through CM_RESOLVE_* overrides; the resolver_override issue marks those results as fixture-based.",
+    "pnpm is not installed by an installer here (user node_modules), so no owner-tool adapter and the live verdict is version_untested; a dependency cache is review_only regardless."
+  ],
+  "status": "passed"
+}

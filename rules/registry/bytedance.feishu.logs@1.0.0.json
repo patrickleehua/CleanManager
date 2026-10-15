@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "bytedance.feishu.logs@1.0.0",
+  "rule_id": "bytedance.feishu.logs",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "bytedance.feishu",
+    "name": "Feishu"
+  },
+  "version_range": {
+    "min_inclusive": "7.75",
+    "max_exclusive": "7.76"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old *.alaudalog files directly in sdk_storage\\log and one folder below are review-only candidates"
+    ],
+    "negative": [
+      "A log written today is not a candidate",
+      "*.log analytics/record files are not matched",
+      "Logs two folders deep are not matched",
+      "Real logs on this device are newer than 7 days and were correctly not candidates"
+    ]
+  },
+  "known_effects": [
+    "Past Feishu diagnostic logs are no longer available for support."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_bytedance_feishu_logs"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

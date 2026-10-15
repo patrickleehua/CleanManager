@@ -1,0 +1,49 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "docker.engine.unused-data",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "windows"
+  ],
+  "category": "virtualization",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "app",
+    "id": "docker.desktop"
+  },
+  "root_resolver": "app_support",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "tool_adapter",
+  "adapter_ref": "docker.system-prune",
+  "allowed_modes": [],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Unused Docker data (stopped containers, unused networks, dangling images, build cache), reclaimed by the Docker engine itself.",
+    "regeneration": "Images are pulled and layers rebuilt again when next needed.",
+    "offline_effect": "Offline builds or runs that need removed images or cache fail until the network is available."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": [
+    "run_win_catalog_docker_engine_unused_data"
+  ]
+}

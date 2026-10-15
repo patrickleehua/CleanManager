@@ -17,7 +17,9 @@ mod ops;
 mod roots;
 mod rules;
 mod settings;
+mod software;
 mod suite;
+mod system;
 mod v2;
 #[cfg(all(test, windows))]
 mod flow_tests;
@@ -29,6 +31,12 @@ use tauri::{Manager, WindowEvent};
 use crate::host::AppState;
 
 fn main() {
+    // The short-lived elevated maintenance worker (MNT-04): this executable started by Windows after one UAC prompt,
+    // with the hidden worker argument. It serves the granted tasks of one plan to its parent and exits; no window.
+    #[cfg(windows)]
+    if let Some(code) = system::worker_main() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         // Used from Rust only (choose_folder); the capability grants the WebView no dialog API.
         .plugin(tauri_plugin_dialog::init())
@@ -91,6 +99,27 @@ fn main() {
             suite::status_snapshot,
             suite::readiness,
             suite::reveal_entry,
+            software::uninstall_list,
+            software::uninstall_plan,
+            software::uninstall_leftovers,
+            software::uninstall_leftovers_plan,
+            software::uninstall_restore_plan,
+            software::updates_list,
+            software::updates_set_checks,
+            software::updates_plan,
+            software::open_system_page,
+            system::insights_overview,
+            system::downloads_trash_plan,
+            system::maintenance_catalog,
+            system::maintenance_search,
+            system::maintenance_plan,
+            system::maintenance_history,
+            system::maintenance_diagnose,
+            system::process_list,
+            system::process_pin,
+            system::process_end_plan,
+            system::alerts_settings,
+            system::alerts_save,
             settings::list_protection,
             settings::add_protection,
             settings::remove_protection,

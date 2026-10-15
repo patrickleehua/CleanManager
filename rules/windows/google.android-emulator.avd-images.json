@@ -1,0 +1,49 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "google.android-emulator.avd-images",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "windows"
+  ],
+  "category": "large_items",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "tool",
+    "id": "google.android-emulator"
+  },
+  "root_resolver": "app_support",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": "*.avd",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "review_only_row",
+  "adapter_ref": null,
+  "allowed_modes": [],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Android Emulator virtual device folders (*.avd: system image overlay, user data, snapshots). Shown as a large item only.",
+    "regeneration": "Not regenerated: each folder is a device with its own data. Delete unused devices with Android Studio's Device Manager or avdmanager.",
+    "offline_effect": "Removing it would delete the virtual device and its data; this row can never be selected."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": [
+    "run_win_catalog_google_android_emulator_avd_images"
+  ]
+}

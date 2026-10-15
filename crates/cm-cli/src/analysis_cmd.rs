@@ -71,6 +71,7 @@ fn resolver_env(volume: Option<PathBuf>) -> (cm_platform::windows::resolve::Reso
         ("CM_RESOLVE_APPDATA", &mut env.app_data),
         ("CM_RESOLVE_USERPROFILE", &mut env.user_profile),
         ("CM_RESOLVE_DOWNLOADS", &mut env.downloads),
+        ("CM_RESOLVE_PROGRAMDATA", &mut env.program_data),
     ] {
         if let Some(v) = std::env::var_os(var) {
             issues.push(json!({"code": "resolver_override", "scope_display": var,

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "amd.shader-cache@1.0.0",
+  "rule_id": "amd.shader-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "amd.radeon-driver",
+    "name": "AMD Radeon graphics driver"
+  },
+  "version_range": {
+    "min_inclusive": "32.0",
+    "max_exclusive": "32.1"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real AMD DxCache, DxcCache, DX9Cache, OglCache and VkCache matched"
+    ],
+    "negative": [
+      "AMD Software settings (CN), RadeonSoftware and a file named like a cache are not matched"
+    ]
+  },
+  "known_effects": [
+    "Shaders are rebuilt when applications next run; skipped while a cache file is held open."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_amd_shader_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

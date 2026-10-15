@@ -51,6 +51,21 @@ import type {
   TrashInspection,
 } from './types';
 import type { DiagBackend, DiagFinishedEvent } from './diagTypes';
+import type {
+  AlertSettings,
+  InsightOverview,
+  Leftovers,
+  MaintenanceCatalog,
+  MaintenanceDiagnosis,
+  MaintenanceHistory,
+  MaintenanceSearch,
+  ProcessList,
+  ProcessSort,
+  UninstallList,
+  UninstallPlanCreated,
+  UpdateList,
+  UpdatePlanCreated,
+} from './suiteTypes';
 
 export interface Backend extends DiagBackend {
   capabilities(): Promise<Capabilities>;
@@ -110,6 +125,30 @@ export interface Backend extends DiagBackend {
   readiness(operation: ReadinessOp): Promise<Readiness>;
   /** Shows a scanned entry in the platform file manager (path resolved by the host). */
   revealEntry(scanId: string, entryId: string): Promise<boolean>;
+  // 软件 › 卸载 / 更新, 优化, 状态 › 进程, 空间洞察 overview. Changes are stored plans only.
+  uninstallList(): Promise<UninstallList>;
+  uninstallPlan(appInstanceId: string): Promise<UninstallPlanCreated>;
+  uninstallLeftovers(operationId: string): Promise<Leftovers>;
+  uninstallLeftoversPlan(operationId: string, objectIds: string[]): Promise<{ plan_id: string }>;
+  uninstallRestorePlan(operationId: string): Promise<{ plan_id: string }>;
+  /** `check: true` runs the package managers' own query (only while checks are on). */
+  updatesList(check: boolean): Promise<UpdateList>;
+  updatesSetChecks(enabled: boolean): Promise<{ checks_enabled: boolean; last_checked_at: string | null }>;
+  updatesPlan(appInstanceIds: string[]): Promise<UpdatePlanCreated>;
+  /** Opens a fixed system page: Settings › Apps or the Store's downloads and updates. */
+  openSystemPage(target: 'apps_features' | 'store_updates'): Promise<boolean>;
+  maintenanceCatalog(): Promise<MaintenanceCatalog>;
+  maintenanceSearch(query: string): Promise<MaintenanceSearch>;
+  maintenancePlan(taskIds: string[]): Promise<{ plan_id: string }>;
+  maintenanceHistory(limit: number): Promise<MaintenanceHistory>;
+  maintenanceDiagnose(): Promise<MaintenanceDiagnosis>;
+  processList(sort: ProcessSort, search: string | null, limit: number): Promise<ProcessList>;
+  processPin(name: string, pinned: boolean): Promise<string[]>;
+  processEndPlan(pid: number): Promise<{ plan_id: string }>;
+  alertsSettings(): Promise<AlertSettings>;
+  alertsSave(settings: AlertSettings): Promise<AlertSettings>;
+  insightsOverview(olderThanDays: number): Promise<InsightOverview>;
+  downloadsTrashPlan(itemIds: string[]): Promise<{ plan_id: string }>;
   // Events
   onProgress(cb: (e: ProgressEvent) => void): Promise<() => void>;
   onFinished(cb: (e: FinishedEvent) => void): Promise<() => void>;
@@ -190,6 +229,27 @@ async function tauriBackend(): Promise<Backend> {
     statusSnapshot: () => call('status_snapshot'),
     readiness: (operation) => call('readiness', { operation }),
     revealEntry: (scan_id, entry_id) => call('reveal_entry', { scan_id, entry_id }),
+    uninstallList: () => call('uninstall_list'),
+    uninstallPlan: (app_instance_id) => call('uninstall_plan', { app_instance_id }),
+    uninstallLeftovers: (operation_id) => call('uninstall_leftovers', { operation_id }),
+    uninstallLeftoversPlan: (operation_id, object_ids) => call('uninstall_leftovers_plan', { operation_id, object_ids }),
+    uninstallRestorePlan: (operation_id) => call('uninstall_restore_plan', { operation_id }),
+    updatesList: (check) => call('updates_list', { check }),
+    updatesSetChecks: (enabled) => call('updates_set_checks', { enabled }),
+    updatesPlan: (app_instance_ids) => call('updates_plan', { app_instance_ids }),
+    openSystemPage: (target) => call('open_system_page', { target }),
+    maintenanceCatalog: () => call('maintenance_catalog'),
+    maintenanceSearch: (query) => call('maintenance_search', { query }),
+    maintenancePlan: (task_ids) => call('maintenance_plan', { task_ids }),
+    maintenanceHistory: (limit) => call('maintenance_history', { limit }),
+    maintenanceDiagnose: () => call('maintenance_diagnose'),
+    processList: (sort, search, limit) => call('process_list', { sort, search, limit }),
+    processPin: (name, pinned) => call('process_pin', { name, pinned }),
+    processEndPlan: (pid) => call('process_end_plan', { pid }),
+    alertsSettings: () => call('alerts_settings'),
+    alertsSave: (settings) => call('alerts_save', { settings }),
+    insightsOverview: (older_than_days) => call('insights_overview', { older_than_days }),
+    downloadsTrashPlan: (item_ids) => call('downloads_trash_plan', { item_ids }),
     onProgress: (cb) => listen<ProgressEvent>('scan-progress', (e) => cb(e.payload)),
     onFinished: (cb) => listen<FinishedEvent>('scan-finished', (e) => cb(e.payload)),
     onClosing: (cb) => listen<{ waiting_for: string[] }>('app-closing', (e) => cb(e.payload)),

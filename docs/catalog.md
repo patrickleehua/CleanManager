@@ -1,6 +1,6 @@
-# 清理目录（Windows 第 1 波）
+# 清理目录（Windows 第 1、2 波）
 
-状态：变更 `add-mole-parity-suite` 任务 3.1–3.7 的 Windows 部分已实现；macOS 一侧（含 Safari、Xcode DerivedData 等）尚无实测，任务 3.5 的“每条 enabled 规则在 Windows 与 Mac 各有实测记录”在本机无法满足。类目、档位与命令形状以代码与 [CLI 协议](cli-protocol.md) 为准，本页说明“清什么、为什么是这个档位、证据在哪”。
+状态：变更 `add-mole-parity-suite` 任务 3.1–3.7 的 Windows 部分已实现，任务 3.8（第 2 波）的 Windows 规则已在本机验证（见[第 2 波](#第-2-波-windows-规则)）；macOS 一侧（含 Safari、Xcode DerivedData 等）尚无实测，任务 3.5 的“每条 enabled 规则在 Windows 与 Mac 各有实测记录”在本机无法满足。类目、档位与命令形状以代码与 [CLI 协议](cli-protocol.md) 为准，本页说明“清什么、为什么是这个档位、证据在哪”。
 
 ## 档位如何算出
 
@@ -29,6 +29,7 @@ tier = min(规则上限, 实测登记, 保护, 证据)；任一占用探测为 i
 | `incomplete_download_handle` | `.crdownload`/`.part`/`.partial`/`.download`/`.opdownload` 被其他进程打开即 `in_use` | 列目录失败 |
 | `endpoint_security_path` | 路径位于终端安全/设备管理产品数据目录（Defender、CrowdStrike、SentinelOne 等）即 `in_use` | — |
 | `mounted_image`、`vcs_tracked` | 本组未实现（分别属安装包与构建产物任务） | 恒为 `unknown`，对象跳过 |
+| `elevated_token` | 进程令牌已提升**且** Administrators 组在令牌中启用（`probes::has_admin_rights`）；`requires_admin` 的规则必须声明它，否则规则集加载失败 | 未提升，或受限令牌（例如 `runas /trustlevel` 得到的令牌仍报告 `TokenIsElevated=1`，但 Administrators 仅用于拒绝）——即拒绝提权时对象跳过，执行前复核同样拒绝 |
 
 执行前复核在 `crates/cm-platform/src/windows/actions.rs` 的既有检查之后调用 `probes::execution_check`（终端安全路径、同目录被占用的下载标记），并把所属进程表扩展到 `probes::owner_processes`。
 
@@ -41,6 +42,7 @@ tier = min(规则上限, 实测登记, 保护, 证据)；任一占用探测为 i
 | `npm.cache-verify` | `node npm-cli.js config get cache` | `cache verify`（回收未被引用的条目） | available，exit 0，报告的缓存根与解析器一致 |
 | `go.build-cache-clean` | `go env GOCACHE` | `clean -cache` | unavailable：Go 不在 Program Files |
 | `dotnet.nuget-http-cache` | `dotnet nuget locals http-cache --list` | `nuget locals http-cache --clear` | unavailable：未安装 .NET SDK |
+| `docker.system-prune`（第 2 波） | `docker system df` | `system prune --force`（停止的容器、未用网络、悬空镜像、构建缓存；不含卷） | unavailable：本机 Docker Desktop 为按用户安装（`%LOCALAPPDATA%\Programs`，用户可写），不是受信任位置 |
 
 适配器行（`tool_adapter`）没有文件模式，`clean` 计划会以 policy_denied 拒绝它们；执行通道属于计划 `tool_adapter` 动作的后续工作。
 
@@ -80,12 +82,76 @@ tier = min(规则上限, 实测登记, 保护, 证据)；任一占用探测为 i
 | `go.build-cache` | Go 不在受信任安装位置，所属工具适配器不可用；不会改为直接删除缓存 |
 | `apple.metadata.ds-store`、`apple.metadata.appledouble`、`apple.metadata.spotlight` | 本机没有接入可移动卷 |
 
+## 第 2 波 Windows 规则
+
+范围（design D4 G2）：通讯/设计/媒体/游戏应用缓存、云与办公、虚拟化、模拟器运行时、包管理器缓存、需管理员的系统日志。验收同第 1 波：enabled 规则必须有实测登记（`rules/registry/<rule>@1.0.0.json`）与本机正反例运行记录；本机无法观察的保持 experimental 并在运行记录中写明原因（状态 incomplete）。
+
+**本机盘点（只读）**：卸载注册表项（HKLM 两个视图与 HKCU）、`%APPDATA%`/`%LOCALAPPDATA%`/`%ProgramData%` 目录、各工具版本命令与 `wsl -l -v`。已安装：飞书 7.75.18、微信 4.1.13.12、UU 远程 4.42.0.2770、Docker Desktop 4.95.0（按用户安装、从未创建引擎数据盘）、OneDrive 26.178.0913.0007、winget 1.29.380、pnpm 12.10.1（用户目录 node_modules）、Python 安装管理器 26.3（MSIX）、AMD Radeon 驱动 32.0.21028.2002、WSL（仅 Ubuntu）。未安装：Teams、Slack、Discord、Zoom、钉钉、Adobe 创意应用、Figma、Office 桌面版、Steam、Epic、NVIDIA 驱动、Android 模拟器、VirtualBox、Hyper-V 虚拟机；pip/uv/yarn/Gradle/Maven/NuGet 缓存目录均不存在。
+
+**取证方式**：`python -I tools/validate_catalog_windows_wave2.py --scratch DIR --cli PATH`。对每条规则：
+
+1. 真实位置只读扫描到临时 store，再 `analyze --preview-rule`；候选集合必须与脚本中独立实现的匹配预言（只用 `os` 列目录与时间戳）完全一致，且全部为 review_only。没有删除，因此再生成未实测，所有第 2 波规则上限均为 `review_only`。
+2. 同名干扰夹具经真实解析器（`CM_RESOLVE_APPDATA`/`LOCALAPPDATA`/`PROGRAMDATA`）预览：只命中预期对象（例如 `GrShaderCache` 命中，而同名文件、`ShaderCacheOld`、嵌套的 `Default\CodeCache` 不命中；OneDrive 的 `general.keystore` 与 `.otc` 遥测缓存不命中）。
+3. 年龄阈值（7 天、修改时间）：本机系统于 2026-10-10 安装，真实日志都不足 7 天，真实扫描正确地得到 0 个候选（反例）；正例来自 30 天前的夹具。登记条目记录所测阈值（CAT-07）。
+4. 实时探测：`run_win_catalog_wave2_real_dry_run` 对真实的飞书、微信网页视图、Docker Desktop、UU 远程、AMD、pnpm、Python 位置运行 `clean --dry-run`（只预览，不建计划）：18 行全部 review_only、无预选；UU 远程正在运行，其两行 `owner_process` 为 in_use 而跳过；AMD 有两个着色器缓存被占用，`open_file_handle` 为 in_use 而跳过。
+5. 需管理员项：`run_win_catalog_admin_skip_e2e` 用夹具分别在已提升终端与受限令牌（`runas /trustlevel:0x20000`，等同拒绝提权）下运行 `clean --dry-run`：前者 `elevated_token` 为 not_in_use、行为 review_only；后者为 unknown、`skip_reason=probe_unknown`，按 ID 请求计划返回 `policy_denied`。
+
+| 规则 | 类目 | 档位上限 | 动作 | 实测版本 | 真实位置观察 | 证据 | 来源 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `bytedance.feishu.code-cache` | app_caches | review_only（重建未实测） | 文件 | 飞书 7.75.18 | `LarkShell\CodeCache` 1 项 | run_win_catalog_bytedance_feishu_code_cache | #1 |
+| `bytedance.feishu.shader-cache` | app_caches | review_only | 文件 | 飞书 7.75.18 | `GrShaderCache`、`ShaderCache` 2 项 | run_win_catalog_bytedance_feishu_shader_cache | #1、W4 |
+| `bytedance.feishu.logs` | logs | review_only，7 天 | 文件 | 飞书 7.75.18 | 0 项（日志不足 7 天） | run_win_catalog_bytedance_feishu_logs | #7 |
+| `tencent.wechat.logs` | logs | review_only，7 天 | 文件 | 微信 4.1.13.12 | 0 项（日志不足 7 天） | run_win_catalog_tencent_wechat_logs | #7 |
+| `tencent.wechat.web-code-cache` | app_caches | review_only | 文件 | 微信 4.1.13.12 | 3 个网页配置档的 `Code Cache` | run_win_catalog_tencent_wechat_web_code_cache | #1 |
+| `netease.uu-remote.code-cache` | app_caches | review_only | 文件 | UU 远程 4.42.0.2770 | 1 项（运行中则跳过） | run_win_catalog_netease_uu_remote_code_cache | #1 |
+| `netease.uu-remote.http-cache` | app_caches | review_only（需联网重下） | 文件 | UU 远程 4.42.0.2770 | 1 项 | run_win_catalog_netease_uu_remote_http_cache | #1 |
+| `docker.desktop.code-cache` | virtualization | review_only | 文件 | Docker Desktop 4.95.0 | 1 项 | run_win_catalog_docker_desktop_code_cache | #1、W6 |
+| `docker.desktop.gpu-cache` | virtualization | review_only | 文件 | Docker Desktop 4.95.0 | 1 项 | run_win_catalog_docker_desktop_gpu_cache | #1、W6 |
+| `docker.desktop.http-cache` | virtualization | review_only（需联网重下） | 文件 | Docker Desktop 4.95.0 | 1 项 | run_win_catalog_docker_desktop_http_cache | #1、W6 |
+| `docker.desktop.logs` | logs | review_only，7 天 | 文件 | Docker Desktop 4.95.0 | 0 项（日志不足 7 天） | run_win_catalog_docker_desktop_logs | #7 |
+| `microsoft.onedrive.logs` | cloud_office | review_only，7 天 | 文件 | OneDrive 26.178.0913.0007 | 0 项（日志不足 7 天） | run_win_catalog_microsoft_onedrive_logs | #1、#7 |
+| `microsoft.onedrive.setup-logs` | cloud_office | review_only，7 天 | 文件 | OneDrive 26.178.0913.0007 | 0 项（日志不足 7 天） | run_win_catalog_microsoft_onedrive_setup_logs | #1、#7 |
+| `microsoft.winget.logs` | logs | review_only，7 天 | 文件 | winget 1.29.380 | 0 项（日志不足 7 天） | run_win_catalog_microsoft_winget_logs | #7 |
+| `pnpm.metadata-cache` | developer | review_only（依赖存储） | 文件 | pnpm 12.10.1 | `metadata-v1.3` 1 项 | run_win_catalog_pnpm_metadata_cache | #4、W5 |
+| `python.install-manager.downloads` | developer | review_only（依赖存储） | 文件 | Python 安装管理器 26.3 | 1 个运行时安装包（45 MB） | run_win_catalog_python_install_manager_downloads | #4 |
+| `amd.shader-cache` | system_data | review_only | 文件 | AMD 驱动 32.0.21028.2002 | 5 个着色器缓存目录 | run_win_catalog_amd_shader_cache | W4 |
+| `windows.wer.machine-report-archive` | logs | review_only，7 天，需管理员 | 文件 | Windows 10.0.26200 | 0 项（报告不足 7 天） | run_win_catalog_windows_wer_machine_report_archive、run_win_catalog_admin_skip_e2e | W2 |
+| `windows.wer.machine-report-queue` | logs | review_only，7 天，需管理员 | 文件 | Windows 10.0.26200 | 0 项（报告不足 7 天） | run_win_catalog_windows_wer_machine_report_queue、run_win_catalog_admin_skip_e2e | W2 |
+
+说明：
+
+- **版本判定**：飞书、微信、UU 远程、Docker Desktop、OneDrive 从卸载注册表项读取，当前版本在登记区间内（`covered`）。winget、pnpm、Python 安装管理器、AMD 驱动没有卸载注册表记录（MSIX、用户目录或驱动），运行时判定为 `version_untested`，候选恒为 review_only；登记中的版本来自取证时的工具/驱动查询。
+- **日志与运行中的应用**：OneDrive、飞书、微信等常驻运行，日志规则只声明 `open_file_handle`，只有应用已不再持有的旧日志可选；缓存规则同时声明 `owner_process`，应用运行时整行跳过。
+- **不匹配的数据**：微信聊天数据（`Documents\xwechat_files`）与插件（`xwechat\XPlugin`，578 MB）、飞书的数据库与登录态、OneDrive 的日志密钥（`general.keystore`）与同步设置、AMD Software 设置（`AMD\CN`）、pnpm 内容寻址存储都在任何规则的匹配之外。
+
+### 第 2 波保持 experimental 的规则
+
+| 规则 | 类目 | 原因（运行记录状态 incomplete） |
+| --- | --- | --- |
+| `docker.desktop.data-disk` | large_items（提示行） | Docker Desktop 已安装但从未创建引擎数据盘（无 `%LOCALAPPDATA%\Docker\wsl`） |
+| `docker.engine.unused-data` | virtualization（所属工具 `docker.system-prune`） | 适配器不可用：按用户安装不在受信任位置，且没有引擎数据；清理命令从未运行，数据盘也不会被直接删除 |
+| `microsoft.teams.code-cache` | app_caches | 本机未安装 Teams |
+| `slack.code-cache` | app_caches | 本机未安装 Slack |
+| `discord.code-cache` | app_caches | 本机未安装 Discord |
+| `valve.steam.web-code-cache` | app_caches | 本机未安装 Steam |
+| `epicgames.launcher.webcache` | app_caches | 本机未安装 Epic Games Launcher |
+| `adobe.media-cache` | app_caches | 本机未安装 Adobe 创意应用 |
+| `nvidia.shader-cache` | system_data | 本机没有 NVIDIA 驱动 |
+| `google.android-emulator.avd-images` | large_items（提示行，模拟器运行时） | 本机没有 Android 模拟器虚拟设备 |
+
+### 第 2 波未纳入的项
+
+- **`C:\Windows\Logs`（CBS、DISM 等）、`C:\Windows\LiveKernelReports`（本机 4.3 GB）、`C:\Windows\Temp`**：位于 Windows 目录硬拒绝子树内，任何规则都只能得到 blocked；应由系统自身的存储感知/磁盘清理处理，属于维护或洞察指引，而不是文件规则。
+- **`%ProgramData%\Package Cache`、`%ProgramData%\Microsoft\VisualStudio\Packages`**：安装程序修复与卸载所需，不作为清理目标。
+- **Zoom、钉钉、Figma、Office 桌面版、VirtualBox、Hyper-V、pip/uv/yarn/Gradle/Maven**：本机未安装或无对应目录，暂未编写规则；等有可观察的安装再按同样流程加入。
+- **winget/Scoop 下载缓存**：winget 下载在 `%TEMP%\WinGet`（由用户临时文件规则覆盖），本机无 Scoop。
+
 ## 未纳入本波的 Windows 项
 
 - **回收站**：`trash` 类目在 Windows 为 unsupported；清空回收站是永久删除计划，留待手选回收站任务组（6.x）一并实现。
 - **传递优化、Windows 更新下载、Prefetch**：需要系统接口或管理员（D4 为 `tool_adapter`，W2/W7），本轮不做；Prefetch 因影响启动性能不纳入。
 - **缩略图缓存**：属于维护任务（MNT），不是文件规则。
-- **Teams、Slack、NVIDIA/AMD 着色器缓存、云与办公、虚拟化**：第 2 波；本机未安装 Teams/Slack。
+- **通讯、媒体/游戏、云与办公、虚拟化、模拟器、GPU 着色器缓存、需管理员的系统日志**：见第 2 波。
 - **Claude/Codex/Cursor 应用缓存**：本机未安装对应桌面应用；`.claude`、`.codex` 目录始终受保护，不作为类目目标。
 - **有意保留**：`.nuget\packages`、`.m2\repository`、Cargo `registry\src` 与 `git`、模型缓存不在目录中（evidence #5、W6）。
 

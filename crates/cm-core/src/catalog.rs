@@ -84,9 +84,19 @@ pub fn is_dependency_store(rule: &Rule) -> bool {
 // ---------------------------------------------------------------------------------------------
 // In-use probes (CAT-06)
 
-/// Probe kinds a rule may declare (rule-v2 `probes`).
-pub const PROBE_KINDS: &[&str] =
-    &["owner_process", "open_database_handle", "open_file_handle", "incomplete_download_handle", "endpoint_security_path", "mounted_image", "vcs_tracked"];
+/// Probe kinds a rule may declare (rule-v2 `probes`). `elevated_token` answers whether this
+/// process holds an administrator token; a rule with `requires_admin` must declare it, so its
+/// objects are skipped (never attempted) when elevation was refused or not requested.
+pub const PROBE_KINDS: &[&str] = &[
+    "owner_process",
+    "open_database_handle",
+    "open_file_handle",
+    "incomplete_download_handle",
+    "endpoint_security_path",
+    "mounted_image",
+    "vcs_tracked",
+    "elevated_token",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

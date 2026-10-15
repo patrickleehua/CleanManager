@@ -1,7 +1,7 @@
 // Pages of the five-tool IA that are not catalogs: 软件 › 启动项 (STA-01..04), 分析 › 空间洞察
-// (DIN-01..03), 状态 › 系统状态 (STS-01..03), and the capability pages of features that keep
-// their place while another gate is open (uninstall, updates, maintenance, processes, Agent,
-// recycle bin). Writes only ever create plans for the shared review page.
+// (DIN-01..04: known objects, overview cards and the old-downloads review), 状态 › 系统状态
+// (STS-01..03, STS-05 alerts), and the capability pages of entries that stay command-line only
+// (Agent, browsing the recycle bin). Writes only ever create plans for the shared review page.
 
 import type { App } from '../main';
 import { formatBytes, groupDigits } from '../lib/bytes';
@@ -9,9 +9,10 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { words } from '../lib/platform';
-import type { Insight, InsightsList, IpcError, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
-import { atLeast, capabilityPage, ensureReady, noticeLine, sumSizes, toIpcError } from './kit';
-import { copyField, emptyState, errorLine, pageHead, pill, type Tone } from './parts';
+import type { CpuAlert, Insight, InsightsList, IpcError, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
+import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
+import { atLeast, capabilityPage, ensureReady, noticeLine, selectionBar, sumSizes, toIpcError } from './kit';
+import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, type Tone } from './parts';
 
 interface PageLike {
   el: HTMLElement;
@@ -239,12 +240,40 @@ export function insightCards(items: Insight[]): { title: string; size: string; o
   });
 }
 
+/** DIN-03 overview card titles by kind (the host's cards: known size or unknown, count, oldest observation). */
+export const CARD_TITLE: Record<string, string> = {
+  old_downloads: '旧下载',
+  virtual_machines: '虚拟机与容器',
+  snapshots: '还原点与快照',
+  system_files: '系统文件',
+  component_store: '组件存储',
+  previous_installation: '旧版系统',
+  update_cache: '更新缓存',
+  developer_tools: '开发工具缓存',
+  model_libraries: 'AI 模型库',
+  device_backups: '设备备份',
+};
+
+/** One overview card as shown: never a partial sum presented as the total. */
+export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; count: number | null; observed: string | null } {
+  const size = c.logical_bytes === null ? (c.count !== null ? `${c.count} 个` : '大小未知') : formatBytes(c.logical_bytes);
+  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at };
+}
+
+const OLD_DAYS = 90;
+
 export class InsightsPage implements PageLike {
   el: HTMLElement;
   private body: HTMLElement;
   private data: InsightsList | null = null;
+  private overview: InsightOverview | null = null;
   private error: IpcError | null = null;
+  private ovError: IpcError | null = null;
   private gate = new RequestGate();
+  private ovGate = new RequestGate();
+  private dlSelected = new Map<string, DownloadItem>();
+  private creating = false;
+  private createError: IpcError | null = null;
 
   constructor(private app: App) {
     this.body = h('div', {});
@@ -261,42 +290,168 @@ export class InsightsPage implements PageLike {
 
   private async load(): Promise<void> {
     this.error = null;
+    this.ovError = null;
+    const list = this.gate.latest(this.app.backend.insightsList());
+    const ov = this.ovGate.latest(this.app.backend.insightsOverview(OLD_DAYS));
     try {
-      const r = await this.gate.latest(this.app.backend.insightsList());
+      const r = await list;
       if (!r.stale) this.data = r.value;
     } catch (e) {
       this.error = toIpcError(e);
     }
     this.update();
+    try {
+      const r = await ov;
+      if (!r.stale) {
+        this.overview = r.value;
+        // A new review has new item ids: an old selection is never carried over.
+        this.dlSelected.clear();
+      }
+    } catch (e) {
+      this.ovError = toIpcError(e);
+    }
+    this.update();
+  }
+
+  private toggleDownload(d: DownloadItem): void {
+    if (this.dlSelected.has(d.item_id)) this.dlSelected.delete(d.item_id);
+    else this.dlSelected.set(d.item_id, d);
+    this.createError = null;
+    this.app.announce(this.dlSelected.has(d.item_id) ? `已选择 ${d.name}` : `已取消选择 ${d.name}`);
+    this.update();
+  }
+
+  private async trashDownloads(): Promise<void> {
+    if (this.creating || !this.dlSelected.size) return;
+    if (!(await ensureReady(this.app, 'trash', words().moveToBin))) return;
+    this.creating = true;
+    this.createError = null;
+    this.update();
+    try {
+      const r = await this.app.backend.downloadsTrashPlan([...this.dlSelected.keys()]);
+      this.dlSelected.clear();
+      this.app.announce('计划已生成，尚未执行。请审阅后批准');
+      this.app.openPlan(r.plan_id, 'insights');
+    } catch (e) {
+      this.createError = toIpcError(e);
+    } finally {
+      this.creating = false;
+      this.update();
+    }
   }
 
   private render(): void {
     const d = this.data;
     const refresh = h('button', { type: 'button', id: 'insights-refresh' }, icon('refresh'), '重新测量');
-    refresh.addEventListener('click', () => ((this.data = null), this.update(), void this.load()));
+    refresh.addEventListener('click', () => ((this.data = null), (this.overview = null), this.update(), void this.load()));
+    const ov = this.overview;
     replace(
       this.body,
-      pageHead({ id: 'insights-title', title: '空间洞察', meta: d ? [`观测于 ${formatTime(d.observed_at)}`, '只读说明，没有删除入口'] : ['只读说明，没有删除入口'], actions: [refresh] }),
+      pageHead({ id: 'insights-title', title: '空间洞察', meta: d ? [`观测于 ${formatTime(d.observed_at)}`, '系统对象只读说明，没有删除入口'] : ['系统对象只读说明，没有删除入口'], actions: [refresh] }),
       errorLine(this.error),
       d && !d.supported ? emptyState('此平台暂不提供', '空间洞察目前只在 Windows 上实现。', null) : null,
       d && d.supported
         ? h(
             'div',
             { class: 'insights' },
-            h(
-              'ul',
-              { class: 'insight-cards', 'aria-label': '按类别汇总' },
-              ...insightCards(d.items).map((c) =>
-                h('li', { class: 'icard' }, h('span', { class: 'icard-title' }, c.title), h('span', { class: 'icard-size num' }, c.size), h('span', { class: 'icard-meta muted' }, `${c.count} 个对象${c.observed ? ` · ${formatTime(c.observed)}` : ''}`)),
-              ),
-            ),
-            h('p', { class: 'muted small' }, '这些对象由系统或其所属工具管理。CleanManager 只解释它们是什么、由谁管理，并给出官方工具的用法；不会运行这些命令，也不提供删除。'),
+            ov && ov.cards.length
+              ? h(
+                  'ul',
+                  { class: 'insight-cards', 'aria-label': '按类别汇总' },
+                  ...ov.cards.map((c) => {
+                    const v = overviewCard(c);
+                    return h(
+                      'li',
+                      { class: 'icard', 'data-kind': c.kind },
+                      h('span', { class: 'icard-title' }, v.title),
+                      h('span', { class: 'icard-size num' }, v.size),
+                      h('span', { class: 'icard-meta muted' }, [v.count !== null && c.logical_bytes !== null ? `${v.count} 个对象` : null, v.observed ? formatTime(v.observed) : null].filter(Boolean).join(' · ')),
+                      v.note ? h('span', { class: 'icard-meta muted' }, v.note) : null,
+                    );
+                  }),
+                )
+              : h(
+                  'ul',
+                  { class: 'insight-cards', 'aria-label': '按类别汇总' },
+                  ...insightCards(d.items).map((c) =>
+                    h('li', { class: 'icard' }, h('span', { class: 'icard-title' }, c.title), h('span', { class: 'icard-size num' }, c.size), h('span', { class: 'icard-meta muted' }, `${c.count} 个对象${c.observed ? ` · ${formatTime(c.observed)}` : ''}`)),
+                  ),
+                ),
+            errorLine(this.ovError),
+            this.downloadsPanel(),
+            h('p', { class: 'muted small' }, '下面这些对象由系统或其所属工具管理。CleanManager 只解释它们是什么、由谁管理，并给出官方工具的用法；不会运行这些命令，也不提供删除。'),
             ...d.items.map((i) => this.item(i)),
           )
         : !this.error
           ? h('p', { class: 'muted', role: 'status' }, '正在测量已知的大型系统对象…')
           : null,
+      this.dlBar(),
     );
+  }
+
+  private downloadsPanel(): HTMLElement {
+    const ov = this.overview;
+    const dl = ov?.downloads ?? null;
+    if (!ov) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small', role: 'status' }, this.ovError ? '' : '正在列出下载文件夹中较久未修改的文件…'));
+    if (!dl) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small' }, '没有找到下载文件夹。'));
+    const total = dl.total_logical_bytes === null ? '大小未知' : formatBytes(dl.total_logical_bytes);
+    const rows = dl.items.map((x) => {
+      const id = `dl-${x.item_id}`;
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, 'aria-label': `选择 ${x.name}` }) as HTMLInputElement;
+      check.checked = this.dlSelected.has(x.item_id);
+      check.addEventListener('change', () => this.toggleDownload(x));
+      return h(
+        'tr',
+        { class: `crow${check.checked ? ' selected' : ''}` },
+        h('td', { class: 'col-check' }, check),
+        h(
+          'td',
+          { class: 'col-object' },
+          h('label', { for: `${id}-check`, class: 'obj-name' }, x.name),
+          h('span', { class: 'obj-path path' }, x.path_display),
+          x.installer_like ? h('span', { class: 'obj-reason' }, h('span', { class: 'row-tag' }, '像安装包'), '也可以在“清理 › 安装包”中按内容审阅') : null,
+        ),
+        h('td', { class: 'col-size num', title: exactTitle(x.logical_bytes) }, formatBytes(x.logical_bytes)),
+        h('td', { class: 'col-when' }, `${groupDigits(x.age_days)} 天前`, h('span', { class: 'why-not' }, formatTime(x.modified_at))),
+      );
+    });
+    return h(
+      'section',
+      { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' },
+      h('div', { class: 'panel-head' }, h('h2', { id: 'dl-title' }, `旧下载：超过 ${dl.older_than_days} 天没有修改`), h('span', { class: 'muted small num' }, `${groupDigits(dl.item_count)} 个文件，共 ${total}`)),
+      h('p', { class: 'muted small' }, `只供审阅：没有预先勾选任何文件，按大小从大到小排列。勾选的文件会先生成“${words().moveToBin}”计划，由你审阅批准后才移动。`),
+      dl.root_display ? h('p', { class: 'path small muted' }, dl.root_display) : null,
+      dl.note ? noticeLine(dl.note, 'warn') : null,
+      dl.items.length
+        ? h(
+            'div',
+            { class: 'table-wrap' },
+            h(
+              'table',
+              { class: 'data-table ctable dl-table' },
+              h('caption', { class: 'sr-only' }, '下载文件夹中较久未修改的文件，按大小排序'),
+              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '文件'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col', class: 'col-when' }, '上次修改'))),
+              h('tbody', {}, ...rows),
+            ),
+          )
+        : h('p', { class: 'small' }, `没有超过 ${dl.older_than_days} 天没有修改的文件。`),
+      dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, `显示最大的 ${groupDigits(dl.items.length)} 个，共 ${groupDigits(dl.item_count)} 个；合计包括全部文件。`) : null,
+      errorLine(this.createError),
+    );
+  }
+
+  private dlBar(): HTMLElement {
+    const items = [...this.dlSelected.values()];
+    return selectionBar({
+      count: items.length,
+      sum: sumSizes(items.map((i) => ({ bytes: i.logical_bytes }))),
+      onClear: () => {
+        this.dlSelected.clear();
+        this.app.announce('已清空选择');
+        this.update();
+      },
+      action: { id: 'dl-bar-go', text: this.creating ? '正在冻结计划…' : `${words().moveToBin}…`, disabled: this.creating, onClick: () => void this.trashDownloads() },
+    });
   }
 
   private item(i: Insight): HTMLElement {
@@ -322,6 +477,11 @@ export class InsightsPage implements PageLike {
       ),
     );
   }
+}
+
+/** One sustained-CPU alert in words (STS-05). */
+export function alertText(a: CpuAlert): string {
+  return `持续高占用：${a.name}（PID ${a.pid}）在 ${a.window_seconds} 秒内一直不低于整机处理器的 ${a.threshold_percent}%（最低 ${a.min_cpu_percent.toFixed(0)}%）`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -366,6 +526,8 @@ export class StatusPage implements PageLike {
   el: HTMLElement;
   private body: HTMLElement;
   private snap: StatusSnapshot | null = null;
+  /** STS-05 alerts raised while this page sampled (newest first, this session only). */
+  private alerts: CpuAlert[] = [];
   private error: IpcError | null = null;
   private gate = new RequestGate();
   private timer: number | null = null;
@@ -403,6 +565,10 @@ export class StatusPage implements PageLike {
       const r = await this.gate.latest(this.app.backend.statusSnapshot());
       if (r.stale) return;
       this.snap = r.value;
+      if (r.value.alerts?.length) {
+        this.alerts = [...r.value.alerts, ...this.alerts].slice(0, 5);
+        this.app.announce(r.value.alerts.map((x) => alertText(x)).join('；'));
+      }
       this.error = null;
     } catch (e) {
       this.error = toIpcError(e);
@@ -431,6 +597,14 @@ export class StatusPage implements PageLike {
         actions: [pause],
       }),
       errorLine(this.error),
+      ...this.alerts.map((x, i) =>
+        h(
+          'div',
+          { class: 'notice warn alert-line', role: 'status' },
+          h('span', {}, alertText(x)),
+          h('span', { class: 'alert-actions' }, h('button', { type: 'button', class: 'quiet', onclick: () => (this.app.store.set({ processFocus: x.pid }), this.app.navigate('processes')) }, '查看进程'), h('button', { type: 'button', class: 'quiet', onclick: () => ((this.alerts = this.alerts.filter((_, j) => j !== i)), this.update()) }, '知道了')),
+        ),
+      ),
       s ? this.view(s) : !this.error ? h('p', { class: 'muted', role: 'status' }, '正在采样…') : null,
     );
   }
@@ -522,7 +696,7 @@ export class CapabilityPageView implements PageLike {
   }
 }
 
-export function capabilityPages(app: App): Record<'recyclebin' | 'uninstall' | 'updates' | 'maintenance' | 'processes' | 'agent', CapabilityPageView> {
+export function capabilityPages(app: App): Record<'recyclebin' | 'agent', CapabilityPageView> {
   const w = () => words();
   return {
     recyclebin: new CapabilityPageView('recyclebin', () =>
@@ -540,63 +714,6 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'uninstall' | '
           { label: '生成永久删除计划', command: 'cleanmanager trash purge --item ID' },
         ],
         actions: [h('button', { type: 'button', class: 'primary', onclick: () => app.navigate('disk') }, `去磁盘中选择要${w().moveToBin}的对象`)],
-      }),
-    ),
-    uninstall: new CapabilityPageView('uninstall', () =>
-      capabilityPage({
-        id: 'uninstall',
-        title: '卸载',
-        gate: 'in_progress',
-        spec: 'APP-05..09（app-uninstall）',
-        gateName: 'G3',
-        does: ['运行应用自己的卸载程序，保留它的界面与退出码。', '卸载后重新扫描，只把确实留下的文件、注册表项和启动项列为“残留”。', '残留用同一套三档徽标和选择栏审阅；注册表项先备份再删除。'],
-        why: '卸载的两段计划（卸载程序 → 残留审阅）和注册表备份正在开发和实测，尚未通过发布门禁。在此之前，这里不会启动任何卸载程序。',
-        safety: ['共享运行库与系统组件只读。', '残留只在卸载后的重新扫描中确认，不凭名称猜测。', '每一步都单独审阅、单独批准。'],
-        cli: [{ label: '列出可卸载的应用（实验）', command: 'cleanmanager apps uninstall list' }],
-        actions: [h('button', { type: 'button', onclick: () => app.navigate('apps') }, '查看已安装的应用')],
-      }),
-    ),
-    updates: new CapabilityPageView('updates', () =>
-      capabilityPage({
-        id: 'updates',
-        title: '更新',
-        gate: 'in_progress',
-        spec: 'UPD-01..04（app-updates）',
-        gateName: 'G3',
-        does: ['按应用的官方渠道（winget、商店、自带更新器）检查可用版本。', '列出版本差异与来源，更新同样先生成计划再执行。'],
-        why: '更新渠道的探测与验证正在开发，尚未通过发布门禁；这里不会联网检查或下载任何东西。',
-        safety: ['只使用应用的官方更新渠道。', '不自动更新，不在后台常驻。'],
-        cli: [{ label: '检查更新（实验）', command: 'cleanmanager apps updates' }],
-        actions: [h('button', { type: 'button', onclick: () => app.navigate('apps') }, '查看已安装的应用')],
-      }),
-    ),
-    maintenance: new CapabilityPageView('maintenance', () =>
-      capabilityPage({
-        id: 'maintenance',
-        title: '维护任务',
-        gate: 'in_progress',
-        spec: 'MNT-01..06（system-maintenance）',
-        gateName: 'G3',
-        does: ['列出系统维护任务（如清理组件存储、重建图标缓存、刷新 DNS），说明每项做什么、是否需要管理员、是否可撤销。', '按适用性探测：不适用的任务显示为“跳过”并说明原因，其他任务继续。', '需要管理员的任务集中在一次提权中执行，拒绝提权时只跳过这些任务。'],
-        why: '维护任务目录与集中提权的工作进程正在开发，尚未通过发布门禁。这里不会运行任何系统命令。',
-        safety: ['结果逐项显示：成功、跳过、失败或未知，并附原因。', '用户保护的任务一律跳过。', '不宣称“加速”，只说明实际做了什么。'],
-        cli: [
-          { label: '查看维护任务（实验）', command: 'cleanmanager optimize list' },
-          { label: '只读诊断', command: 'cleanmanager optimize diagnose' },
-        ],
-      }),
-    ),
-    processes: new CapabilityPageView('processes', () =>
-      capabilityPage({
-        id: 'processes',
-        title: '进程',
-        gate: 'in_progress',
-        spec: 'STS-04/05（system-status）',
-        gateName: 'G3',
-        does: ['按处理器、内存和磁盘占用列出进程，并标出所属应用。', '结束进程同样先生成计划；系统进程和安全软件只读。'],
-        why: '进程清单与结束进程的计划正在开发，尚未通过发布门禁。系统指标已经可以在“系统状态”中查看。',
-        cli: [{ label: '列出进程（实验）', command: 'cleanmanager process list --by cpu' }],
-        actions: [h('button', { type: 'button', class: 'primary', onclick: () => app.navigate('status') }, '查看系统状态')],
       }),
     ),
     agent: new CapabilityPageView('agent', () =>

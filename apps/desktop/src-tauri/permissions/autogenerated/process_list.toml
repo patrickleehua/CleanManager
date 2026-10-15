@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-process-list"
+description = "Enables the process_list command without any pre-configured scope."
+commands.allow = ["process_list"]
+
+[[permission]]
+identifier = "deny-process-list"
+description = "Denies the process_list command without any pre-configured scope."
+commands.deny = ["process_list"]

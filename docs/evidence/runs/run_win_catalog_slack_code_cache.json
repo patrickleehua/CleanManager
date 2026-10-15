@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "test_id": "CAT-03",
+  "run_id": "run_win_catalog_slack_code_cache",
+  "recorded_at": "2026-10-15T10:25:06Z",
+  "code_commit": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+  "binary_sha256": "960e95aa5f8159b4ac60b9c318b6ce3c5d5fc8a840df6c1e9e1f56f641ea023e",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": true,
+    "signing_identity": null,
+    "grants": [
+      "SeBackupPrivilege/SeRestorePrivilege disabled by cleanmanager"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "none",
+  "config": {},
+  "command": [
+    "cleanmanager",
+    "clean",
+    "list"
+  ],
+  "seed": null,
+  "expected": "slack.code-cache: validate against a real installation on this device",
+  "actual": "not validated: Slack is not installed on this device",
+  "terminal_state": "not_run",
+  "exit_code": null,
+  "measurements": {
+    "observed": {
+      "location_present": false
+    }
+  },
+  "observer": "tools/validate_catalog_windows_wave2.py",
+  "limitations": [
+    "Working tree may contain uncommitted changes; code_commit is the base commit.",
+    "Slack is not installed on this device"
+  ],
+  "status": "incomplete"
+}

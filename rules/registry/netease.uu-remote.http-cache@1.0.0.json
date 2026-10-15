@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "netease.uu-remote.http-cache@1.0.0",
+  "rule_id": "netease.uu-remote.http-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "netease.uu-remote",
+    "name": "UU Remote (NetEase GameViewer)"
+  },
+  "version_range": {
+    "min_inclusive": "4.42",
+    "max_exclusive": "4.43"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real EBWebView\\Default\\Cache\\Cache_Data matched as the only candidate"
+    ],
+    "negative": [
+      "No_Vary_Search, Code Cache, Local Storage and other profiles are not matched"
+    ]
+  },
+  "known_effects": [
+    "Interface resources are downloaded again; skipped while GameViewer runs."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_netease_uu_remote_http_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

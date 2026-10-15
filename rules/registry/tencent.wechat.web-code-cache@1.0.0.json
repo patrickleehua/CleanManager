@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "tencent.wechat.web-code-cache@1.0.0",
+  "rule_id": "tencent.wechat.web-code-cache",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "tencent.wechat",
+    "name": "WeChat (Weixin)"
+  },
+  "version_range": {
+    "min_inclusive": "4.1",
+    "max_exclusive": "4.2"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "Real radium\\web\\profiles\\<profile>\\Code Cache folders matched"
+    ],
+    "negative": [
+      "HTTP Cache, Local Storage and a Code Cache two folders deep are not matched"
+    ]
+  },
+  "known_effects": [
+    "Mini-program and web view scripts are recompiled; skipped while WeChat runs."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_tencent_wechat_web_code_cache"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}

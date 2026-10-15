@@ -37,6 +37,12 @@ export const PLAN_KIND_LABEL: Record<PlanKind, string> = {
   manual_purge: '永久删除回收站项目计划',
   startup: '启动项计划',
   startup_restore: '启动项还原计划',
+  uninstall: '卸载计划',
+  uninstall_leftovers: '卸载残留计划',
+  uninstall_restore: '注册表还原计划',
+  update: '应用更新计划',
+  process: '结束进程计划',
+  maintenance: '维护计划',
 };
 
 export const RECOVERY_EXPLAIN: Record<'restore' | 'purge', { effect: string; space: string; recovery: string }> = {
@@ -174,6 +180,38 @@ export const CODE_EXPLAIN: Record<string, string> = {
   not_recoverable: '该隔离项已被其他计划恢复或清空，跳过。',
   target_conflict: '原位置已有同名对象，按规则跳过，不覆盖。',
   missing: '隔离区中找不到该对象。',
+  // Uninstall (UNI-02/03/06/09)
+  not_running: '应用没有在运行。',
+  closed: '收到退出请求后，应用已自行关闭。',
+  still_running: '发出退出请求后应用仍在运行：卸载程序没有运行，也没有删除任何东西。请先关闭它再执行；强制结束只能在终端中单独审阅。',
+  app_still_running: '应用没有退出，卸载程序没有运行，也没有删除任何东西。',
+  running_state_unknown: '无法判断应用是否仍在运行，为安全起见没有卸载。',
+  leftovers_remain: '卸载程序已运行，但重新扫描发现安装目录或卸载登记仍在，结果记为“部分完成”。下一步：审阅残留。',
+  restart_required: '卸载程序要求重启后才能完成；重启后再审阅残留。',
+  cancelled_by_user: '你在卸载程序中取消了卸载。',
+  uninstaller_failed: '卸载程序报告失败（见退出码），应用可能仍然安装着。',
+  record_changed: '卸载登记在计划之后发生了变化，没有运行卸载程序。',
+  program_changed: '卸载程序文件在计划之后被替换或修改，没有运行。',
+  start_failed: '卸载程序无法启动，没有运行任何东西。',
+  backup_failed: '注册表项的备份未能保存，因此没有删除该项。',
+  precondition_changed: '对象在计划之后发生了变化，没有改动它。',
+  permission_required: '需要管理员权限，已跳过。',
+  destination_exists: '目标已被重新创建，按规则跳过，不覆盖。',
+  // Updates (UPD-02/03)
+  updated: '已更新，并回读确认了新版本。',
+  app_running: '应用正在运行，已跳过。请先关闭它，再执行一份新的更新计划；CleanManager 不会为了更新而关闭应用。',
+  running_unknown: '无法判断应用是否在运行，已跳过。请先关闭它再执行。',
+  signature_mismatch: '下载包的签名者与已安装应用不一致：拒绝更新，原应用没有改变。',
+  unverifiable: '下载包无法验证签名：没有安装，原应用没有改变。请前往官方页面更新。',
+  download_failed: '安装包未能下载以供验证，没有更新。',
+  tool_changed: '包管理器程序在计划之后发生了变化，没有运行。请重新生成计划。',
+  target_changed: '更新目标与审阅的计划不一致，没有运行。',
+  adapter_mismatch: '更新命令不是审阅时的固定形式，没有运行。',
+  tool_failed: '包管理器报告失败。',
+  // Processes (STS-04)
+  ended: '进程已结束；其中未保存的工作已丢失。',
+  precondition_gone: '进程在执行前已经退出，没有结束任何东西。',
+  end_failed: '结束进程失败。',
 };
 
 export function explainCode(code: string | null, message: string | null): string {
@@ -195,6 +233,13 @@ export const ACTION_LABEL: Record<string, string> = {
   delete: '永久删除',
   restore: '从隔离区恢复',
   purge: '永久清空隔离项',
+  startup: '修改启动项',
+  maintenance: '运行维护任务',
+  uninstall: '卸载应用',
+  uninstall_leftovers: '处理卸载残留',
+  uninstall_restore: '还原注册表项',
+  update: '更新应用',
+  process: '结束进程',
 };
 
 export const QUARANTINE_STATE_LABEL: Record<string, string> = {

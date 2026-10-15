@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-maintenance-catalog"
+description = "Enables the maintenance_catalog command without any pre-configured scope."
+commands.allow = ["maintenance_catalog"]
+
+[[permission]]
+identifier = "deny-maintenance-catalog"
+description = "Denies the maintenance_catalog command without any pre-configured scope."
+commands.deny = ["maintenance_catalog"]

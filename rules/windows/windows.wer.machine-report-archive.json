@@ -1,0 +1,57 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "windows.wer.machine-report-archive",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "windows.wer.machine"
+  },
+  "root_resolver": "system_logs",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "ReportArchive"
+    ],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle",
+    "elevated_token"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": true,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Machine-wide Windows Error Reporting archived reports older than 7 days (ProgramData\\Microsoft\\Windows\\WER\\ReportArchive). Administrator only.",
+    "regeneration": "Not regenerated: records of past application, update and system errors.",
+    "offline_effect": "Crash and error history for troubleshooting is lost. Skipped unless this tool runs elevated."
+  },
+  "tested_registry_ref": "windows.wer.machine-report-archive@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_windows_wer_machine_report_archive"
+  ]
+}

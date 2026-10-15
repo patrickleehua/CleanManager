@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-insights-overview"
+description = "Enables the insights_overview command without any pre-configured scope."
+commands.allow = ["insights_overview"]
+
+[[permission]]
+identifier = "deny-insights-overview"
+description = "Denies the insights_overview command without any pre-configured scope."
+commands.deny = ["insights_overview"]

@@ -1,0 +1,55 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "tencent.wechat.web-code-cache",
+  "version": "1.0.0",
+  "status": "enabled",
+  "platforms": [
+    "windows"
+  ],
+  "category": "app_caches",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "tencent.wechat"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": "Code Cache",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 1
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "WeChat built-in web view (XWeb/radium) V8 code cache of each web profile.",
+    "regeneration": "Rebuilt when WeChat's mini-programs and web pages run again; they may start slower once.",
+    "offline_effect": "None expected: chats, login state and web storage are not inside."
+  },
+  "tested_registry_ref": "tencent.wechat.web-code-cache@1.0.0",
+  "evidence_refs": [
+    "run_win_catalog_tencent_wechat_web_code_cache"
+  ]
+}

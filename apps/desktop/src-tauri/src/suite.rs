@@ -64,7 +64,7 @@ pub fn root_id(root: &RawPath) -> String {
 
 #[cfg(windows)]
 /// Own connections for long work, so the shared ones stay free for the UI.
-fn own_stores(s: &AppState) -> IpcResult<Stores> {
+pub(crate) fn own_stores(s: &AppState) -> IpcResult<Stores> {
     Ok(Stores::open(s.store_dir()?)?)
 }
 
@@ -75,7 +75,7 @@ fn own_stores(s: &AppState) -> IpcResult<Stores> {
 static CATALOG_BUSY: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
-struct Busy;
+pub(crate) struct Busy;
 
 #[cfg(windows)]
 impl Drop for Busy {
@@ -85,7 +85,7 @@ impl Drop for Busy {
 }
 
 #[cfg(windows)]
-fn claim(s: &AppState) -> IpcResult<Busy> {
+pub(crate) fn claim(s: &AppState) -> IpcResult<Busy> {
     if let Some((id, _)) = s.active_running() {
         return Err(ipc(ErrorCode::Conflict, "scan_running", format!("Scan {id} is still running; wait for it or cancel it first")));
     }
@@ -858,24 +858,48 @@ pub(crate) mod win {
     }
 
     /// The sampler holds PDH handles (not `Send`): it lives on one thread and answers requests over a channel, so
-    /// CPU and throughput rates cover the interval since the previous snapshot.
-    pub fn status() -> IpcResult<serde_json::Value> {
+    /// CPU and throughput rates cover the interval since the previous snapshot. With sustained-CPU alerts turned on
+    /// (STS-05, opt-in) the same thread also samples per-process CPU and runs the alert engine while the status pages
+    /// ask for snapshots; alerts raised are returned with the snapshot. With alerts off no process is sampled.
+    pub fn status(alerts: cm_core::alerts::AlertSettings) -> IpcResult<serde_json::Value> {
         use std::sync::mpsc::{Sender, channel};
         use std::sync::{Mutex, OnceLock};
-        static SAMPLER: OnceLock<Mutex<Sender<Sender<serde_json::Value>>>> = OnceLock::new();
+        type Request = (Sender<serde_json::Value>, cm_core::alerts::AlertSettings);
+        static SAMPLER: OnceLock<Mutex<Sender<Request>>> = OnceLock::new();
         let tx = SAMPLER.get_or_init(|| {
-            let (tx, rx) = channel::<Sender<serde_json::Value>>();
+            let (tx, rx) = channel::<Request>();
             let _ = std::thread::Builder::new().name("cm-status".into()).spawn(move || {
                 let mut sampler = cm_platform::windows::status::Sampler::new();
-                while let Ok(reply) = rx.recv() {
-                    let _ = reply.send(sampler.sample().to_wire());
+                let mut engine: Option<(cm_core::alerts::AlertSettings, cm_core::alerts::AlertEngine)> = None;
+                while let Ok((reply, settings)) = rx.recv() {
+                    let mut v = sampler.sample().to_wire();
+                    if engine.as_ref().map(|(s, _)| s) != Some(&settings) {
+                        engine = Some((settings.clone(), cm_core::alerts::AlertEngine::new(settings)));
+                    }
+                    let mut raised = Vec::new();
+                    if let Some((_, e)) = engine.as_mut()
+                        && e.needs_sampling()
+                        && let Ok(procs) = cm_platform::windows::processes::list_with(std::time::Duration::from_millis(500), false)
+                    {
+                        let now = cm_core::plan::parse_utc(&now_utc()).unwrap_or(0);
+                        let sample: Vec<cm_core::alerts::ProcessCpu> = procs
+                            .into_iter()
+                            .filter(|f| f.pid != 0)
+                            .map(|f| cm_core::alerts::ProcessCpu { pid: f.pid, image_path: f.image_path.as_ref().map(|i| i.display()), name: f.name, cpu_percent: f.cpu_percent })
+                            .collect();
+                        raised = e.observe(now, &sample).into_iter().filter_map(|a| serde_json::to_value(a).ok()).collect();
+                    }
+                    if let Some(o) = v.as_object_mut() {
+                        o.insert("alerts".into(), serde_json::Value::Array(raised));
+                    }
+                    let _ = reply.send(v);
                 }
             });
             Mutex::new(tx)
         });
         let (reply, answer) = channel();
         let unavailable = || ipc(ErrorCode::InternalError, "internal", "the status sampler is not running");
-        crate::host::lock(tx).send(reply).map_err(|_| unavailable())?;
+        crate::host::lock(tx).send((reply, alerts)).map_err(|_| unavailable())?;
         let mut v = answer.recv().map_err(|_| unavailable())?;
         if let Some(o) = v.as_object_mut() {
             o.insert("supported".into(), serde_json::Value::Bool(true));
@@ -997,6 +1021,14 @@ pub enum ReadyOp {
     Trash,
     Startup,
     Apply,
+    /// Uninstall stage 1 or its leftovers (plan creation).
+    Uninstall,
+    /// An update plan (plan creation).
+    Update,
+    /// A maintenance run (application: one UAC prompt for administrator tasks).
+    Maintenance,
+    /// Ending one process (plan creation).
+    Process,
 }
 
 impl ReadyOp {
@@ -1009,6 +1041,10 @@ impl ReadyOp {
             "trash" => ReadyOp::Trash,
             "startup" => ReadyOp::Startup,
             "apply" => ReadyOp::Apply,
+            "uninstall" => ReadyOp::Uninstall,
+            "update" => ReadyOp::Update,
+            "maintenance" => ReadyOp::Maintenance,
+            "process" => ReadyOp::Process,
             other => return Err(ipc(ErrorCode::InvalidArgument, "invalid_argument", format!("unknown operation {other:?}"))),
         })
     }
@@ -1018,7 +1054,7 @@ impl ReadyOp {
     }
 
     fn uses_recycle_bin(self) -> bool {
-        matches!(self, ReadyOp::Trash | ReadyOp::Cleanup | ReadyOp::Purge | ReadyOp::Installer)
+        matches!(self, ReadyOp::Trash | ReadyOp::Cleanup | ReadyOp::Purge | ReadyOp::Installer | ReadyOp::Uninstall)
     }
 }
 
@@ -1072,6 +1108,9 @@ pub fn assemble(op: ReadyOp, f: &ReadinessFacts) -> Vec<ReadinessCheckDto> {
         ReadyOp::Scan => Some("Some system folders may be unreadable without administrator rights; they are reported as not read"),
         ReadyOp::Startup => Some("System-wide startup items can be listed but not changed without administrator rights"),
         ReadyOp::Apply => Some("Plans that change system-wide items need CleanManager started as administrator (it never elevates itself)"),
+        ReadyOp::Uninstall => Some("Leftovers in system-wide locations (HKLM, ProgramData) need CleanManager started as administrator; the rest can be planned"),
+        ReadyOp::Process => Some("Processes of other users or the system may only be ended by an administrator; such plans are skipped when applied"),
+        ReadyOp::Maintenance => Some("Administrator tasks ask Windows once (UAC) before any task runs; declining skips only those tasks"),
         _ => None,
     };
     out.push(match (admin_note, f.is_admin) {
@@ -1316,10 +1355,14 @@ pub async fn insights_list() -> IpcResult<InsightsDto> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn status_snapshot() -> IpcResult<serde_json::Value> {
+pub async fn status_snapshot(state: St<'_>) -> IpcResult<serde_json::Value> {
+    let s = state.inner().clone();
     blocking(move || {
+        let alerts = s.store_dir.as_deref().map(cm_app::processes::load_alerts).unwrap_or_default();
         #[cfg(windows)]
-        return win::status();
+        return win::status(alerts);
+        #[cfg(not(windows))]
+        let _ = alerts;
         #[cfg(not(windows))]
         Ok(serde_json::json!({ "supported": false }))
     })

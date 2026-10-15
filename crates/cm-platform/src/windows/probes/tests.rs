@@ -92,3 +92,25 @@ fn every_declared_probe_is_answered_and_unknown_kinds_are_unknown() {
     let by: Vec<(&str, ProbeState)> = r.iter().map(|p| (p.probe.as_str(), p.state)).collect();
     assert_eq!(by, vec![("open_file_handle", ProbeState::NotInUse), ("owner_process", ProbeState::NotInUse), ("vcs_tracked", ProbeState::Unknown)]);
 }
+
+#[test]
+fn administrator_locations_are_skipped_without_an_elevated_token() {
+    assert_eq!(probe_elevation(true).state, ProbeState::NotInUse);
+    let refused = probe_elevation(false);
+    assert_eq!(refused.state, ProbeState::Unknown, "no elevation is never read as allowed");
+    assert!(refused.detail.contains("administrator"));
+    let d = Dir::new("admin");
+    d.file("x");
+    let raw = RawPath::windows(d.0.as_os_str().encode_wide().collect()).unwrap();
+    let r = probe_candidate(&raw, &["elevated_token".to_string()], None, &ProcessSnapshot::fixed(Ok(&["idle.exe"])));
+    let expected = if has_admin_rights() { ProbeState::NotInUse } else { ProbeState::Unknown };
+    assert_eq!(r[0].state, expected, "the live probe follows this process token");
+}
+
+#[test]
+fn wave_two_owners_map_to_their_processes() {
+    for owner in ["bytedance.feishu", "tencent.wechat", "netease.uu-remote", "docker.desktop", "microsoft.onedrive", "microsoft.winget"] {
+        assert!(owner_processes(owner).is_some_and(|p| !p.is_empty()), "{owner}");
+    }
+    assert!(!owner_processes("pnpm").unwrap().iter().any(|p| p.eq_ignore_ascii_case("node.exe")), "node.exe runs for many tools, never an owner");
+}

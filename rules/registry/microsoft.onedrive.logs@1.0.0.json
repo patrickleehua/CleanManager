@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "microsoft.onedrive.logs@1.0.0",
+  "rule_id": "microsoft.onedrive.logs",
+  "rule_version": "1.0.0",
+  "synthetic": false,
+  "subject": {
+    "kind": "app",
+    "id": "microsoft.onedrive",
+    "name": "Microsoft OneDrive"
+  },
+  "version_range": {
+    "min_inclusive": "26.178",
+    "max_exclusive": "26.179"
+  },
+  "platforms": [
+    {
+      "platform": "windows",
+      "os_versions": [
+        "10.0.26200"
+      ],
+      "architectures": [
+        "x64"
+      ]
+    }
+  ],
+  "tested_at": "2026-10-15",
+  "result": "passed",
+  "fixtures": {
+    "positive": [
+      "30-day-old .odl/.odlgz/.etlgz logs under OneDrive\\logs are review-only candidates"
+    ],
+    "negative": [
+      "Log key stores (general.keystore), telemetry caches (.otc), feedback payloads, logs from today and logs nested too deep are not matched",
+      "Real logs on this device are newer than 7 days and were correctly not candidates"
+    ]
+  },
+  "known_effects": [
+    "Past sync logs are no longer available to OneDrive support."
+  ],
+  "evidence_refs": [
+    "run_win_catalog_microsoft_onedrive_logs"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  }
+}
