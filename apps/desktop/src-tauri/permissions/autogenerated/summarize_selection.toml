@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-summarize-selection"
+description = "Enables the summarize_selection command without any pre-configured scope."
+commands.allow = ["summarize_selection"]
+
+[[permission]]
+identifier = "deny-summarize-selection"
+description = "Denies the summarize_selection command without any pre-configured scope."
+commands.deny = ["summarize_selection"]

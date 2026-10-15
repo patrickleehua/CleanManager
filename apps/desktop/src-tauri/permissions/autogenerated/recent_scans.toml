@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recent-scans"
+description = "Enables the recent_scans command without any pre-configured scope."
+commands.allow = ["recent_scans"]
+
+[[permission]]
+identifier = "deny-recent-scans"
+description = "Denies the recent_scans command without any pre-configured scope."
+commands.deny = ["recent_scans"]

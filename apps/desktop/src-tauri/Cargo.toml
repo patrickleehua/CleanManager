@@ -1,0 +1,36 @@
+[package]
+name = "cleanmanager-desktop"
+description = "CleanManager desktop host: restricted Tauri IPC over the shared scan and index services (read-only)."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+# Own workspace and Cargo.lock: the root workspace excludes apps/desktop so CLI builds never
+# pull in the WebView/Tauri dependency tree (CLI-01).
+[workspace]
+
+[[bin]]
+name = "cleanmanager-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", default-features = false, features = [] }
+
+[dependencies]
+tauri = { version = "2.12.4", features = [] }
+tauri-plugin-dialog = "2.8.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+cm-core = { path = "../../../crates/cm-core" }
+cm-app = { path = "../../../crates/cm-app" }
+cm-store = { path = "../../../crates/cm-store" }
+cm-platform = { path = "../../../crates/cm-platform" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

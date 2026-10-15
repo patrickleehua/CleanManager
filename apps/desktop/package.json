@@ -1,0 +1,22 @@
+{
+  "name": "cleanmanager-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CleanManager desktop host (Tauri 2). Read-only scan, overview and disk browsing; no write commands.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.2",
+    "typescript": "6.0.3",
+    "vite": "7.3.7",
+    "vitest": "5.0.3"
+  }
+}
