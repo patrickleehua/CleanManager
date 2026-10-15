@@ -7,6 +7,7 @@
       "startup_item_id": "st_demo",
       "name": "Example Updater",
       "source": "run_key",
+      "definition": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run : Example Updater",
       "target": {
         "platform": "windows",
         "display": "C:\\Program Files\\Example App\\updater.exe",
@@ -14,21 +15,38 @@
         "raw_base64": "QwA6AFwAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwBcAEUAeABhAG0AcABsAGUAIABBAHAAcABcAHUAcABkAGEAdABlAHIALgBlAHgAZQA="
       },
       "publisher": "Example Vendor",
+      "publisher_evidence": "authenticode",
       "scope": "user",
       "state": "enabled",
       "toggle_capability": "available",
-      "protected": false
+      "protected": false,
+      "reason": null
     },
     {
       "startup_item_id": "st_broken",
       "name": "Removed Tool",
       "source": "startup_folder",
-      "target": null,
+      "definition": "C:\\Users\\Example\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\Removed Tool.lnk",
+      "target": {
+        "platform": "windows",
+        "display": "C:\\Program Files\\Removed Tool\\tool.exe",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwBcAFIAZQBtAG8AdgBlAGQAIABUAG8AbwBsAFwAdABvAG8AbAAuAGUAeABlAA=="
+      },
       "publisher": null,
+      "publisher_evidence": "none",
       "scope": "user",
       "state": "broken",
       "toggle_capability": "available",
-      "protected": false
+      "protected": false,
+      "reason": "Target is missing on a mounted volume"
+    }
+  ],
+  "issues": [
+    {
+      "code": "permission_denied",
+      "scope_display": "Task Scheduler \\Example",
+      "message": "2 task folders could not be read"
     }
   ]
 }

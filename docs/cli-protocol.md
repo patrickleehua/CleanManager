@@ -1,6 +1,6 @@
 # CLI 与 Agent 协议
 
-状态：首版完整契约草案（见“冻结边界”）。示例全部是合成数据；`cleanmanager` 目前只实现了 `capabilities` 冒烟命令，其余命令尚未实现，返回的能力状态均为 unverified。已定义的记录形状见 [JSON Schema](../schemas/v1/protocol.schema.json)。人类可读输出不构成机器接口。
+状态：首版完整契约草案（见“冻结边界”）。示例全部是合成数据；`cleanmanager` 已实现下文“命令面”中 MVP 的扫描、分析、计划、授权、执行、恢复与历史命令，以及 `protect`、`apps list`、`startup list`、`status`、`insights` 只读/保护命令；工具命令组其余部分仍为草案。各能力的验证状态以 `capabilities` 输出为准，未经实测的组合为 unverified。已定义的记录形状见 [JSON Schema](../schemas/v1/protocol.schema.json)。人类可读输出不构成机器接口。
 
 ## 命令面与副作用
 
@@ -14,14 +14,16 @@
 | `analyze --scan ID --profile NAME` | 规则分析、生成 candidate_set | `analysis_result` | 只写本工具结果 |
 | `candidates list --set ID` | 分页查询理由与影响 | `candidates_page` | 无目标写入 |
 | `plan create --candidate-set ID --mode MODE` | 生成固定计划 | `plan` | 只写本工具计划 |
-| `plan show ID` | 展示计划与授权状态 | `plan` 与 `authorization_status` | 无目标写入 |
-| `plan review ID` | 受控终端中的人工审阅与批准 | `authorization_status` | 只写授权记录 |
-| `plan apply ID` | 核验授权并执行 | `operation_report`；缺授权为 `error` | 仅覆盖计划内动作 |
+| `plan show ID` | 展示计划与授权状态（清理计划与 recovery/v1 计划按存储的权威类型分派） | `plan` 与 `authorization_status` | 无目标写入 |
+| `plan review ID` | 受控终端中的人工审阅与批准；恢复/清空计划写独立的恢复授权 | `authorization_status` | 只写授权记录 |
+| `plan apply ID` | 核验授权并执行；按存储的计划类型调度清理执行器或恢复服务 | `operation_report`；缺授权为 `error` | 仅覆盖计划内动作 |
 | `operations show ID` | 查询逐项结果 | 运行中 `operation_status`，结束后 `operation_report` | 无目标写入 |
 | `operations cancel ID` | 停止调度后续动作 | `operation_cancel_receipt` | 不隐式撤销已完成动作 |
-| `recovery list` | 分页查看隔离项与恢复状态 | `quarantine_list` | 无目标写入 |
+| `operations list [--limit N] [--cursor C]` | 历史分页（最近登记在前），含计划类型、授权来源、规则版本、计数与真实恢复入口 | `operation_list` | 无目标写入 |
+| `operations reconcile ID` | 核对缺终态的动作（清理或恢复操作均按计划类型分派），从不重做动作 | `operation_report` | 无目标写入 |
+| `recovery list [--limit N] [--cursor C]` | 分页查看仍在隔离中的对象、实时状态、提醒是否到期与恢复能力（别名 `quarantine list`） | `quarantine_list` | 无目标写入 |
 | `recovery show ID` | 查看单个隔离项 | `quarantine_list` | 无目标写入 |
-| `recovery plan create --restore ID... / --purge ID...` | 新建恢复或清空计划（recovery/v1） | `plan` | 只写本工具计划 |
+| `recovery plan create --restore ID,ID / --purge ID,ID` | 新建恢复或清空计划（recovery/v1，独立摘要与 15 分钟有效期） | `plan` | 只写本工具计划 |
 
 `policy`、`rules update` 与 `mcp serve` 为后续命令，不属于首版已冻结结构；应用、启动项、维护、状态等工具命令组见下一节。授权入口先由桌面/受控人机交互提供；Agent 可使用预授权策略，不提供任意自批准端点。
 
@@ -42,7 +44,7 @@
 | `installer.plan` | `installer` | plan（cleanup） | 只写计划 |
 | `trash.plan` | `trash --scan ID --entry ID...` | plan（manual_selection） | 只写计划 |
 | `trash.purge_plan` | `trash purge --item ID...` | plan（manual_selection，仅回收站内对象） | 只写计划 |
-| `insights.list` | `insights [--scan ID]` | insight_list | 无 |
+| `insights.list` | `insights [--scan ID]`（已实现 Windows 已知大对象；`--scan` 的概览卡片属 7.3，暂拒绝） | insight_list | 无 |
 | `apps.list` | `apps list` | app_list | 无 |
 | `apps.uninstall.plan` | `apps uninstall APP_ID [--include GROUP...]` | plan（uninstall） | 只写计划 |
 | `apps.updates.check` | `apps updates [APP_ID...]` | app_list（update_status） | 仅访问更新通道 |
@@ -52,10 +54,11 @@
 | `optimize.list` | `optimize list` | maintenance_catalog | 无 |
 | `optimize.plan` | `optimize TASK_ID...` | plan（maintenance）；执行结果为 maintenance_report | 只写计划 |
 | `status.snapshot` | `status --json` | status_snapshot | 无 |
-| `status.watch` | `status --watch --interval N` | JSONL 的 status_snapshot | 无 |
-| `protect.list` | `protect list` | protection_list | 无 |
-| `protect.add` | `protect add PATH\|--glob G\|--rule ID\|--task ID` | protection_list | 只写保护名单 |
-| `protect.remove` | `protect remove PROTECTION_ID` | protection_list | 只写保护名单（硬拒绝与默认类目不可移除） |
+| `status.watch` | `status --watch [--interval N] [--count M]`（`--format jsonl` 等价；默认间隔 5 s，不限次数） | JSONL 的 status_snapshot | 无 |
+| `protect.list` | `protect list` | protection_list；名单不可用时为 error（protection_unavailable） | 无 |
+| `protect.add` | `protect add --path P [--match descendants\|exact\|ancestors]\|--glob G\|--rule ID\|--task ID [--note TEXT]` | protection_list | 只写保护名单（指向硬拒绝位置的条目被拒绝） |
+| `protect.remove` | `protect remove PROTECTION_ID` | protection_list；仅交互终端并输入条目 ID 确认 | 只写保护名单（硬拒绝与默认类目不可移除） |
+| `protect.check` | `protect check --path P [--rule ID]` | protection_check | 无 |
 | `doctor.report` | `doctor [--no-redact]` | doctor_report | 无（导出文件需另行确认） |
 | `completion.generate` | `completion SHELL [--write-profile]` | completion_script | 仅在确认写入时修改 shell 配置 |
 | `self.update.check` | `self update --check` | release_info | 仅访问发布清单 |
@@ -129,6 +132,24 @@ cleanmanager plan apply p_demo --json        # 策略覆盖时直接执行，不
 ```
 
 端到端测试 `crates/cm-cli/tests/plan_flow.rs` 覆盖缺授权退出 3、机器调用者不能审阅或启用策略、暂停策略不授权，以及已审阅计划在真实 NTFS 上隔离且重复 apply 只回放原报告；预授权路径（配额预留、超额拒绝、unknown 占用配额）由 `cm-app` 执行测试覆盖。
+
+### 隔离、恢复与历史（已实现，Windows）
+
+恢复与清空是独立的 `recovery/v1` 计划，有自己的摘要、有效期和授权：清理计划的批准、旧的恢复批准或恢复批准都不覆盖新的恢复/清空计划，有限策略也从不匹配恢复计划，只有终端内的人工审阅能批准。`plan review`/`plan show`/`plan revoke`/`plan apply` 按存储的计划类型调度。下面接在上文“路径一”之后，可照抄运行：
+
+```text
+cleanmanager recovery list --json                                  # quarantine_list：state、reminder_due、restore_capability
+cleanmanager recovery plan create --restore q_demo --json          # plan（body.engine_contract = recovery/v1）
+cleanmanager plan apply rp_demo --json                             # 无恢复授权：退出 3，needs_approval
+cleanmanager plan review rp_demo                                   # 终端内审阅恢复计划，输入摘要前 8 位
+cleanmanager plan apply rp_demo --json                             # operation_report；原名已被占用的条目 skipped/destination_exists，退出 5
+cleanmanager recovery plan create --purge q_demo --json            # 永久清空另建计划、另行审阅
+cleanmanager operations list --limit 20 --json                     # operation_list：recovery.availability 与 guidance
+```
+
+恢复逐项核验：隔离位置与原父目录所在卷必须是记录的卷（否则 `volume_offline`/`volume_changed`，清单保留，不恢复到同盘符的新卷）；隔离对象的卷/文件 ID、链接与类型必须未变（`missing`、`identity_changed`、`link_or_reparse`）；原父目录必须仍是记录的身份（`parent_missing`、`parent_changed`）；原名已有任何对象时跳过为 `destination_exists`，两者都保留，不改名、不覆盖，另选位置需重新计划。清空只删除通过同样核验且逻辑大小未变的隔离对象（否则 `metadata_changed`），不会因保留期到期自动执行。结果与清理执行共用意图/结果日志、单计划单操作、身份锁和 `operations reconcile`。
+
+`operation_report` 分开报告 `processed_logical_bytes`（处理量）、`quarantined_logical_bytes`（移入同卷隔离的量）、`estimated_freed_bytes`（仅永久删除/清空计入的逻辑估计；隔离、回收站与恢复为 0）以及卷空闲前后观测和有符号差值；差值按实测原样报告（可能为负），不归因于本工具。历史中的恢复入口如实给出：隔离为 `in_app_restore`，回收站为 `system_recycle_bin`（使用系统回收站恢复），永久删除与清空为 `unavailable`（无撤销），结果未确认为 `unknown`（先核对）。端到端测试 `crates/cm-cli/tests/recovery_flow.rs` 在真实 NTFS 上覆盖以上正常与拒绝路径；macOS 恢复动作尚未验证，当前只返回 unsupported。
 
 草案（`add-mole-parity-suite`，尚未实现）：
 

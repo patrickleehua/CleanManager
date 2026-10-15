@@ -25,11 +25,18 @@
       "logical_bytes": "1048576",
       "quarantined_at": "2026-10-14T12:00:02Z",
       "retention_reminder_at": "2026-11-13T12:00:02Z",
+      "reminder_due": true,
       "state": "recoverable",
       "restore_capability": "available",
+      "available_actions": [
+        "restore",
+        "purge"
+      ],
       "metadata_restored": [
         "timestamps",
-        "attributes"
+        "attributes",
+        "acl",
+        "alternate_streams"
       ]
     },
     {
@@ -51,9 +58,19 @@
       "logical_bytes": "1048576",
       "quarantined_at": "2026-10-14T12:00:02Z",
       "retention_reminder_at": "2026-11-13T12:00:02Z",
+      "reminder_due": false,
       "state": "target_conflict",
       "restore_capability": "available",
-      "metadata_restored": []
+      "available_actions": [
+        "restore",
+        "purge"
+      ],
+      "metadata_restored": [
+        "timestamps",
+        "attributes",
+        "acl",
+        "alternate_streams"
+      ]
     }
   ]
 }

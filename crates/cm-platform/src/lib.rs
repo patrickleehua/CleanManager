@@ -26,9 +26,9 @@ impl CapabilityProvider for HostPlatform {
 
     fn capabilities(&self) -> Vec<Capability> {
         let names: &[&str] = if cfg!(windows) {
-            &["scan.win.directory", "scan.win.ntfs_enum", "execute.trash", "execute.quarantine", "execute.delete"]
+            &["scan.win.directory", "scan.win.ntfs_enum", "execute.trash", "execute.quarantine", "execute.delete", "recovery.restore", "recovery.purge"]
         } else {
-            &["scan.mac.posix", "scan.mac.bulk", "execute.trash", "execute.quarantine", "execute.delete"]
+            &["scan.mac.posix", "scan.mac.bulk", "execute.trash", "execute.quarantine", "execute.delete", "recovery.restore", "recovery.purge"]
         };
         names.iter().map(|n| Capability::new(n, CapabilityState::Unverified, Some(NOT_YET_VERIFIED))).collect()
     }

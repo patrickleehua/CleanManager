@@ -281,3 +281,210 @@ fn hard_link_names_collapse_to_one_review_only_candidate() {
     assert!(c.reasons.contains(&"hard_link_outside_scope".to_string()));
     assert_eq!(set.candidates.len(), 2);
 }
+
+// ---- protection layers (PRT-01/02/03, ANA-03, CAT-04) -------------------------------------
+
+use crate::protect::{HardDenyClass, HardDenyRoot, HardDenySet, MatchKind, UserEntry, UserProtection};
+
+const T: &str = "2026-10-15T08:00:00Z";
+
+fn run_with(b: &Builder, rules: Vec<Rule>, root: u64, prot: &AnalysisProtection<'_>) -> CandidateSet {
+    let roots: Vec<ResolvedRoot> = rules
+        .iter()
+        .map(|r| ResolvedRoot { rule_id: r.rule_id.clone(), path: b.view.path(root), volume_id: "v".into(), file_id: format!("id{root}") })
+        .collect();
+    let set = RuleSet { rules, digest: "d".into() };
+    analyze_with(&b.view, &set, &AnalysisInput { scan_id: "s", revision: 1, now_unix: NOW, roots: &roots, protected: &[] }, prot)
+}
+
+fn has_reason(c: &Candidate, prefix: &str) -> bool {
+    c.reasons.iter().any(|r| r.starts_with(prefix))
+}
+
+#[test]
+fn user_path_entry_blocks_with_a_reason_and_is_never_dropped() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let keep = b.dir(app, "Code Cache");
+    b.file(keep, "a", 10, Some(OLD));
+    let other = b.dir(app, "GPUCache");
+    b.file(other, "b", 10, Some(OLD));
+    let mut user = UserProtection::empty(Platform::Windows);
+    user.add(UserEntry::path("u_1", MatchKind::Descendants, "C:\\r\\App\\Code Cache", T)).unwrap();
+    let prot = AnalysisProtection { user: UserList::Loaded(&user), ..Default::default() };
+    let set = run_with(&b, vec![rule("app.cache", &["*"], None, 0, None)], app, &prot);
+    let c = by_name(&set, "Code Cache");
+    assert_eq!((c.state, c.tier), (CandidateState::Blocked, Tier::Blocked));
+    assert!(c.reasons.contains(&"user_protected:u_1".to_string()), "{:?}", c.reasons);
+    assert!(c.allowed_modes.is_empty());
+    assert_eq!(by_name(&set, "GPUCache").state, CandidateState::Allowed, "other candidates are unaffected");
+}
+
+#[test]
+fn protected_descendant_by_user_entry_blocks_the_container() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "keep.bin", 10, Some(OLD));
+    let mut user = UserProtection::empty(Platform::Windows);
+    user.add(UserEntry::path("u_1", MatchKind::Exact, "C:\\r\\App\\Cache\\keep.bin", T)).unwrap();
+    let prot = AnalysisProtection { user: UserList::Loaded(&user), ..Default::default() };
+    let set = run_with(&b, vec![rule("app.cache", &["Cache"], None, 0, None)], app, &prot);
+    assert_eq!(by_name(&set, "Cache").state, CandidateState::Blocked, "removing the whole tree would remove the protected file");
+}
+
+#[test]
+fn protected_rule_blocks_all_its_candidates() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    b.dir(app, "Cache");
+    let mut user = UserProtection::empty(Platform::Windows);
+    user.add(UserEntry::rule("u_7", "app.cache", T)).unwrap();
+    let prot = AnalysisProtection { user: UserList::Loaded(&user), ..Default::default() };
+    let set = run_with(&b, vec![rule("app.cache", &["Cache"], None, 0, None)], app, &prot);
+    let c = by_name(&set, "Cache");
+    assert_eq!(c.state, CandidateState::Blocked);
+    assert!(c.reasons.contains(&"user_protected_rule:u_7".to_string()));
+}
+
+#[test]
+fn unavailable_user_list_keeps_analysis_read_only_and_unplannable() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    b.dir(app, "Cache");
+    let prot = AnalysisProtection { user: UserList::Unavailable("garbage"), ..Default::default() };
+    let set = run_with(&b, vec![rule("app.cache", &["Cache"], None, 0, None)], app, &prot);
+    let c = by_name(&set, "Cache");
+    assert_eq!((c.state, c.tier), (CandidateState::PendingEvidence, Tier::ReviewOnly));
+    assert!(c.reasons.contains(&"user_protection_unavailable".to_string()));
+}
+
+#[test]
+fn hard_deny_identity_blocks_entry_inside_and_container_of_a_root() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let sys = b.dir(app, "Cache");
+    b.file(sys, "x", 1, Some(OLD));
+    let outer = b.dir(app, "Outer");
+    let store = b.dir(outer, "store");
+    b.file(store, "journal", 1, Some(OLD));
+    let hard = HardDenySet::new([
+        HardDenyRoot { class: HardDenyClass::SystemRoot, volume_id: "v".into(), file_id: format!("id{sys}"), display: "C:\\Windows".into() },
+        HardDenyRoot { class: HardDenyClass::ToolStore, volume_id: "v".into(), file_id: format!("id{store}"), display: "store".into() },
+    ]);
+    let prot = AnalysisProtection { hard_deny: Some(&hard), ..Default::default() };
+    let set = run_with(&b, vec![rule("r", &["*"], None, 0, None)], app, &prot);
+    let c = by_name(&set, "Cache");
+    assert_eq!(c.state, CandidateState::Blocked);
+    assert!(has_reason(c, "hard_deny:C:\\Windows"), "{:?}", c.reasons);
+    let o = by_name(&set, "Outer");
+    assert_eq!(o.state, CandidateState::Blocked);
+    assert!(has_reason(o, "hard_deny:contains store"), "{:?}", o.reasons);
+}
+
+#[test]
+fn textual_hard_deny_applies_without_any_roots() {
+    let mut b = Builder { view: MemView { platform: Some(Platform::Windows), ..Default::default() }, next: 0 };
+    b.view.root = b.add(None, "C:\\Windows", ObjectKind::Directory, None, Some(OLD));
+    let temp = b.dir(b.view.root, "Temp");
+    b.file(temp, "x.tmp", 1, Some(OLD));
+    let set = run(&b, vec![rule("t", &["Temp"], None, 0, None)], b.view.root);
+    let c = by_name(&set, "Temp");
+    assert_eq!(c.state, CandidateState::Blocked);
+    assert!(has_reason(c, "hard_deny:protected location"), "{:?}", c.reasons);
+}
+
+/// `home/.claude/projects/<session>` plus `home/worktrees/<worktree>` Git worktrees.
+fn ai_fixture() -> (Builder, u64, u64, u64) {
+    let mut b = Builder::new();
+    let home = b.dir(b.view.root, "home");
+    let claude = b.dir(home, ".claude");
+    let projects = b.dir(claude, "projects");
+    let s1 = b.dir(projects, "session-1");
+    b.file(s1, "log.jsonl", 100, Some(OLD));
+    let wt = b.dir(home, "worktrees");
+    for name in ["clean-wt", "dirty-wt", "unknown-wt"] {
+        let w = b.dir(wt, name);
+        b.file(w, ".git", 40, Some(OLD));
+        b.file(w, "main.rs", 10, Some(OLD));
+    }
+    (b, projects, wt, claude)
+}
+
+#[test]
+fn ai_sessions_are_protected_reviewable_never_automatic() {
+    let (b, projects, _, _) = ai_fixture();
+    let set = run(&b, vec![rule("ai.sessions", &["*"], None, 0, None)], projects);
+    let c = by_name(&set, "session-1");
+    assert_eq!((c.state, c.tier), (CandidateState::ProtectedReviewable, Tier::ReviewOnly));
+    assert_eq!(c.protection, Some(ProtectionClass::AiSessionsConfig));
+    assert!(c.reasons.contains(&"protected_reviewable:ai_sessions_config".to_string()));
+    // Not default-selected (non-interactive selection and policies need default_selected), and
+    // the ordinary plan path refuses it: only a per-object review flow may plan it.
+    let input = crate::plan::PlanInput { plan_id: "p", scope_id: "sc", created_unix: NOW, observed_at: "2026-10-15T00:00:00Z", policy_digest: "x" };
+    let err = crate::plan::build_plan(&b.view, &set, std::slice::from_ref(&c.candidate_id), Mode::Trash, &input).unwrap_err();
+    assert!(matches!(err, crate::plan::PlanError::NotPlannable(..)), "{err:?}");
+}
+
+#[test]
+fn the_ai_directory_itself_and_its_containers_are_blocked() {
+    let (b, _, _, claude) = ai_fixture();
+    let home = b.view.parent(claude).unwrap();
+    let set = run(&b, vec![rule("ai.dir", &[".claude"], None, 0, None)], home);
+    assert_eq!(by_name(&set, ".claude").state, CandidateState::Blocked, "configuration lives there too");
+    let root = b.view.root;
+    let set = run(&b, vec![rule("home", &["home"], None, 0, None)], root);
+    let c = by_name(&set, "home");
+    assert_eq!(c.state, CandidateState::Blocked, "no recursive bypass of a protected session");
+    assert!(has_reason(c, "protected:"), "{:?}", c.reasons);
+}
+
+#[test]
+fn worktree_state_decides_between_reviewable_and_blocked() {
+    let (b, _, wt, _) = ai_fixture();
+    let status = |name: &str, state| {
+        let e = *b.view.kids[&wt].iter().find(|k| b.view.names[*k].lossy() == name).unwrap();
+        WorktreeStatus { volume_id: b.view.facts[&e].volume_id.clone(), file_id: b.view.facts[&e].file_id.clone(), state }
+    };
+    let worktrees = [status("clean-wt", WorktreeState::Clean), status("dirty-wt", WorktreeState::Dirty)];
+    let prot = AnalysisProtection { worktrees: &worktrees, ..Default::default() };
+    let set = run_with(&b, vec![rule("ai.worktrees", &["*"], None, 0, None)], wt, &prot);
+    let clean = by_name(&set, "clean-wt");
+    assert_eq!((clean.state, clean.tier), (CandidateState::ProtectedReviewable, Tier::ReviewOnly));
+    assert_eq!(clean.protection, Some(ProtectionClass::SourceWorktree));
+    let dirty = by_name(&set, "dirty-wt");
+    assert_eq!(dirty.state, CandidateState::Blocked);
+    assert!(dirty.reasons.contains(&"worktree_dirty".to_string()));
+    let unknown = by_name(&set, "unknown-wt");
+    assert_eq!(unknown.state, CandidateState::Blocked, "no evidence is no permission");
+    assert!(unknown.reasons.contains(&"worktree_status_unknown".to_string()));
+    // Anything inside a worktree stays blocked, clean or not.
+    let set = run_with(&b, vec![rule("in.wt", &["*", "main.rs"], None, 0, None)], wt, &prot);
+    assert_eq!(set.candidates.len(), 3);
+    assert!(set.candidates.iter().all(|c| c.state == CandidateState::Blocked && has_reason(c, "protected:source_worktree")));
+}
+
+#[test]
+fn hard_deny_outranks_a_reviewable_class() {
+    let (b, projects, _, _) = ai_fixture();
+    let s1 = b.view.kids[&projects][0];
+    let hard = HardDenySet::new([HardDenyRoot { class: HardDenyClass::Credentials, volume_id: "v".into(), file_id: format!("id{s1}"), display: "vault".into() }]);
+    let prot = AnalysisProtection { hard_deny: Some(&hard), ..Default::default() };
+    let set = run_with(&b, vec![rule("ai.sessions", &["*"], None, 0, None)], projects, &prot);
+    assert_eq!(by_name(&set, "session-1").state, CandidateState::Blocked);
+}
+
+#[test]
+fn protection_inputs_are_part_of_the_set_identity() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    b.dir(app, "Cache");
+    let empty = UserProtection::empty(Platform::Windows);
+    let mut one = UserProtection::empty(Platform::Windows);
+    one.add(UserEntry::rule("u_1", "other", T)).unwrap();
+    let r = || vec![rule("r", &["Cache"], None, 0, None)];
+    let a = run_with(&b, r(), app, &AnalysisProtection { user: UserList::Loaded(&empty), ..Default::default() });
+    let c = run_with(&b, r(), app, &AnalysisProtection { user: UserList::Loaded(&one), ..Default::default() });
+    assert_ne!(a.candidate_set_id, c.candidate_set_id, "a changed list never replaces a stored set in place");
+    assert_eq!(a.candidates[0].candidate_id, c.candidates[0].candidate_id);
+}

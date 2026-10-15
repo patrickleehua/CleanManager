@@ -53,7 +53,7 @@ Schema 与验证器共同保证：
 1. **写规则**：使用 rule 2.0（1.0 文件仍可加载并在内部转换）。根只能是枚举中的解析器，路径分量是字面名字，通配只作用于单个路径段；不允许正则、脚本、命令或 `follow_links`。新规则从 `experimental` 开始。
 2. **本地校验**：`python tools/validate_docs.py` 校验 Schema 与正反例；`cargo test -p cm-core rules` 覆盖 Rust 加载器（未知字段、脚本解析器、`..`、`**`、跟随链接都会被拒绝）。
 3. **晋级**：`verified` 需要 `evidence_refs`；`enabled` 还需要 `tested_registry_ref` 指向同一规则版本、`result: passed`、非合成且覆盖规则全部平台的实测登记。加载器在构建规则集时检查，失败则整个规则集不可用，而不是静默跳过。
-4. **分析结果**：只有 enabled 且平台匹配的规则产生候选。规则根按文件身份（卷 + 文件 ID）匹配扫描条目，不按路径文本；内置保护类目（凭据、数据库及其 WAL/SHM、浏览器站点存储、AI 会话/配置、Git 工作树、模型权重、身份解析出的用户文档与系统修复目录）优先于任何规则，受保护或含受保护后代的对象为 `blocked`，含未读后代或时间未知为 `pending_evidence`。同一对象只产生一个候选；硬链接多名字降为仅审阅。
+4. **分析结果**：只有 enabled 且平台匹配的规则产生候选。规则根按文件身份（卷 + 文件 ID）匹配扫描条目，不按路径文本；内置保护类目（凭据、数据库及其 WAL/SHM、浏览器站点存储、AI 会话/配置、Git 工作树、模型权重、身份解析出的用户文档与系统修复目录）优先于任何规则，受保护或含受保护后代的对象为 `blocked`（AI 会话与干净 worktree 根为 `protected_reviewable`，见“保护策略”），含未读后代或时间未知为 `pending_evidence`。同一对象只产生一个候选；硬链接多名字降为仅审阅。
 5. **版本**：修改匹配、阈值、档位或影响都要升版本；规则集摘要随之改变，旧授权不会自动覆盖新版本。
 
 ### 首批启用规则（Windows，2026-10-15）
@@ -67,6 +67,39 @@ Schema 与验证器共同保证：
 以上验证使用一次性浏览器配置档与受控 TEMP 夹具，没有扫描或修改真实用户配置档。版本区间外的安装不会使用这些登记（应按 CAT-03 降为仅审阅，待对应实现）；浏览器运行中由执行期 `owner_process` 探测跳过。macOS 尚无启用规则。
 
 发现候选后跨类别去重：一个父目录和它的子文件不能分别加总收益，也不能让低风险父目录覆盖高风险子项。保护清单优先于允许规则；遇到受保护后代时细分具体对象或放弃父目录操作。
+
+## 保护策略（三层）
+
+变更 `add-mole-parity-suite` 的 `protection-policy`（PRT-01～06）。三层按强弱顺序判定，取第一个拒绝；下层永远不能解除上层，用户名单只有“保护”条目、没有“放行”条目：
+
+| 优先级 | 层 | 内容 | 能否移除 |
+| --- | --- | --- | --- |
+| 1 | 硬拒绝（`hard_deny`，版本 `hard-deny/3`） | 文本预过滤（相对路径、`..`、控制/格式字符、设备与管理共享路径、ADS、保留名、系统目录表）＋按“卷 + 文件身份”比较的平台根：Windows 系统目录、Program Files、ProgramData 根、用户根与各用户主目录根、凭据与 Vault、卷根与卷元数据、回收站根、Recovery、Config.Msi、终端安全软件数据、本工具存储与各卷隔离区（`.cleanmanager-quarantine`）；macOS `/System`、`/bin`、`/sbin`、`/usr`（`/usr/local` 之下除外）、`/private/etc`、`/private/var/db`、`/Library/Apple`、钥匙串、TCC、`/Library/SystemExtensions`、`/Library/Updates`、`/Users` 与各主目录根（仅本身）、卷根与卷元数据、废纸篓根、本工具存储。对象或任一祖先是链接/junction/挂载点时，再用解析后的真实位置检查；解析失败即拒绝 | 不能 |
+| 2 | 默认保护类目（`default_category`，版本 `protection/2`） | 凭据、数据库及 WAL/SHM、浏览器站点存储、AI 会话/配置、Git worktree、模型权重、身份解析出的用户文档与系统修复目录（MVP ANA-03） | 不能 |
+| 3 | 用户保护名单（`user`） | `exact`（对象本身）、`descendants`（路径及其下全部，`--path` 默认）、`ancestors`（路径及其所有上级目录）、`glob`（单段 `*`/`?` 与整段 `**`，根必须是字面量）、`rule`（某规则的全部动作）、`maintenance_task`（某维护任务/启动项） | 仅交互终端 |
+
+判定落到候选上时：
+
+- 硬拒绝、用户条目、受保护规则命中的候选为 `blocked`，理由分别为 `hard_deny:…`、`user_protected:<条目>`、`user_protected_rule:<条目>`；候选不会被静默丢弃。删除整棵目录时，包含受保护对象的上级目录同样被拒绝。
+- 默认类目一般为 `blocked`（`protected:<类目>`）。AI 会话（`.claude`/`.codex` 之内的对象）与干净的 worktree 根为 `protected_reviewable`：档位仅审阅、不进入 `--all-default-selected`、不被策略匹配，普通 `plan create` 也拒绝，只能由独立的逐对象人工确认流程生成计划（CAT-04）。AI 目录本身、worktree 内部对象、包含会话或 worktree 的上级目录为 `blocked`；worktree 有未提交/未跟踪修改为 `worktree_dirty`，Git 状态未知为 `worktree_status_unknown`，两者都是 `blocked`（当前尚无只读 Git 探测，worktree 根一律按未知处理）。
+- 用户名单存于存储目录的 `protection.json`（`schema_version: 1`，原子替换写入，CLI 与桌面端共用并通过锁文件串行写入）。文件缺失视为空名单；无法读取、解析失败、版本不符或含无效条目（相对路径、穿越、指向硬拒绝位置）时整份名单不可用：`protect add/remove`、`plan apply` 与 `protect list`（无法列出用户条目）返回 `protection_unavailable`（退出码 8），并给出文件位置供修复或移走；`scan`、`analyze`、`protect check` 等只读命令继续；`analyze` 的候选全部为 `pending_evidence` 并带 `user_protection_unavailable`。
+- 执行前（`plan apply`）对每个动作重新按三层检查；计划生成后新加的保护使尚未执行的对象成为 skipped（受保护），已完成的不回滚。
+
+示例（`--store` 可省略，默认使用本机存储目录）：
+
+```text
+cleanmanager protect list --json
+cleanmanager protect add --path "C:\Users\me\Projects\keep-cache" --note "offline build cache" --json
+cleanmanager protect add --glob "C:\Users\me\AppData\Local\Temp\keep-*" --json
+cleanmanager protect add --rule google.chrome.code-cache --json
+cleanmanager protect check --path "C:\Users\me\Projects\keep-cache\index" --json
+cleanmanager protect check --path "C:\Windows\Temp" --json
+cleanmanager protect remove u_1
+```
+
+`protect check` 输出 `protection_check` 记录，按顺序列出三层各自的结果（`clear`/`denied`/`unavailable`）与理由，`decision` 取第一个非 `clear` 的层；只检查对象本身与上级，不遍历其后代。`protect add --path` 在保存前先做文本校验，再按身份检查：指向硬拒绝位置（包括大小写变体与链接别名）的条目被拒绝（`invalid_argument`）。新增保护只会收紧范围，机器调用者可以执行；`protect remove` 会放宽范围，必须在交互终端中输入条目 ID 确认，非交互调用返回 `invalid_argument`。硬拒绝（`hd_*`）与默认类目（`dc_*`）条目只列出，不能移除。
+
+规则作者：规则不能声明例外来越过任一层；需要处理默认保护类目中的对象时，应走对应能力的逐对象审阅流程，而不是放宽规则。新增或修改硬拒绝表、类目时须升级 `hard-deny/*` 或 `protection/*` 版本，候选集标识随之改变。
 
 ## 计划完整性与授权
 
@@ -108,6 +141,15 @@ CLI 的 `--non-interactive` 只禁止提示；`--yes` 即使将来提供，也�
 隔离容量上限和保留时间是可配置策略；到期永久清除是另一个有授权的计划，不能静默新增。磁盘已满时，备份操作可能不可行，必须预检并给出明确结果。仅把文件移到同卷新目录通常不会腾出空间。
 
 永久删除没有通用撤销。硬链接、快照、压缩、延迟回收与同时写入都会影响释放空间，报告分别保存操作对象统计与卷空闲差值。恢复日志不应承诺完整保留所有 ACL、ADS、扩展属性或稀疏结构，具体能力以平台验证为准。
+
+### 已实现的 Windows 行为（MVP 10.1–10.3）
+
+- **隔离位置：** 存储目录与目标同卷时为 `<store>\quarantine\<operation_id>\<action_id>`，否则为 `<卷根>\.cleanmanager-quarantine\<operation_id>\<action_id>`；跨卷时拒绝（`cross_volume`），从不复制后删除。两处都属于硬拒绝（本工具存储按身份，`.cleanmanager-quarantine` 另有文本与身份两层），因此清理计划、候选与动作都不会指向隔离内容；隔离内容只能经恢复计划处理。
+- **持久清单：** 每个隔离成功的对象在审计库（不随索引重建删除）记录原路径、对象身份、原父目录身份、隔离位置、逻辑大小、隔离时间与提醒时间（默认 30 天）。缺原父目录身份、身份不是强身份时显示为 `manifest_incomplete`、`restore_capability: unsupported`，不能建立恢复/清空计划；记录本身不可解析时列表报审计错误，而不是显示为可恢复。`recovery list` 在每次查询时实时探测：`recoverable`、`target_conflict`、`volume_offline`、`volume_changed`、`identity_changed`、`missing`、`parent_changed`、`unknown`。
+- **元数据（经测试验证）：** 同卷 rename 移动的是同一 NTFS 文件记录，往返后文件 ID、创建/修改时间、属性（如隐藏）、显式 ACL 与备用数据流保持不变（`metadata_restored: timestamps, attributes, acl, alternate_streams`）。限制：每次移动更新 NTFS 变更时间；不应用隔离目录可继承的权限；扩展属性随文件记录移动但未经测试，因此不声称 `xattrs`。
+- **恢复：** 独立 `recovery/v1` 计划，只接受对该计划摘要的人工审阅授权（清理批准、旧批准或其他类型批准都不生效，策略不匹配）。执行时以不含 `FILE_SHARE_DELETE` 的句柄核验隔离对象，固定原父目录并核对其身份，然后以 `NtSetInformationFile` 在**原父目录句柄下**按原名不替换地 rename；原名已有任何对象即 `destination_exists`，两者保留，不改名、不覆盖。卷离线或换卷时清单保留，不恢复到同盘符的新卷。成功以两个句柄的最终路径确认，无法确认即 `unknown` 并进入核对。
+- **清空：** 另一份 `recovery/v1`（`purge`）计划与单独授权；只删除核验通过且逻辑大小未变的对象，空的隔离目录保留。保留期到期只把 `reminder_due` 置为 true，不删除任何内容。
+- **历史与空间口径：** `operations list` 给出每次操作的计划类型、授权来源、规则版本、计数与恢复入口：隔离为产品内恢复、回收站只给系统回收站指引、永久删除与清空明确“无撤销”、结果未确认先核对。报告区分处理量、隔离量（同卷移动，不计释放）、仅删除/清空计入的估计释放量与实测卷空闲差值（可为负，原样报告）。
 
 ## 更新与审计
 

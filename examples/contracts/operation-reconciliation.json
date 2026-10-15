@@ -30,6 +30,8 @@
     }
   ],
   "processed_logical_bytes": "104857600",
+  "quarantined_logical_bytes": "0",
+  "estimated_freed_bytes": "0",
   "volume_free_before_bytes": "1000000000",
   "volume_free_after_bytes": null,
   "observed_free_delta_bytes": null

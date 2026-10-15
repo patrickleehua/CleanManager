@@ -118,6 +118,8 @@ fn candidates() -> Vec<(HardDenyClass, PathBuf)> {
         out.push((VolumeMetadata, root.join("System Volume Information")));
         out.push((Recovery, root.join("Recovery")));
         out.push((InstallerState, root.join("Config.Msi")));
+        // Volume-root quarantine used when the store is on another volume (actions.rs).
+        out.push((ToolStore, root.join(".cleanmanager-quarantine")));
         let bin = root.join("$Recycle.Bin");
         if let Ok(it) = std::fs::read_dir(&bin) {
             for e in it.flatten() {

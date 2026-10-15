@@ -116,7 +116,7 @@ fn failed(o: &ActionOutcome) -> &str {
     }
 }
 
-const A: WindowsActions = WindowsActions;
+const A: WindowsActions = WindowsActions::DEFAULT;
 
 #[test]
 fn identity_matches_the_scanner_format() {

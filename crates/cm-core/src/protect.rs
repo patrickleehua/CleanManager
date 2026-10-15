@@ -24,7 +24,7 @@ use crate::path::RawPath;
 use crate::rules::glob_match;
 
 /// Version of the hard-deny policy; bump when the textual tables or root classes change.
-pub const HARD_DENY_VERSION: &str = "hard-deny/1";
+pub const HARD_DENY_VERSION: &str = "hard-deny/3";
 /// Only protection-file schema version this build reads and writes.
 pub const PROTECTION_FILE_SCHEMA_VERSION: u32 = 1;
 
@@ -86,6 +86,9 @@ pub enum HardDenyClass {
     ProgramDataRoot,
     /// Parent of all user profiles (exact).
     UsersRoot,
+    /// System directory protected itself (exact) whose children are listed separately or are
+    /// rule territory (`/usr` minus `/usr/local`, `/Library`, `~/Library`, `/private/var`).
+    SystemContainer,
     /// Default/template profile (`C:\Users\Default`).
     DefaultProfile,
     /// Shared profile (`C:\Users\Public`, `/Users/Shared`).
@@ -117,6 +120,7 @@ impl HardDenyClass {
             self,
             HardDenyClass::ProgramDataRoot
                 | HardDenyClass::UsersRoot
+                | HardDenyClass::SystemContainer
                 | HardDenyClass::UserProfileRoot
                 | HardDenyClass::VolumeRoot
                 | HardDenyClass::RecycleBinRoot
@@ -129,6 +133,7 @@ impl HardDenyClass {
             HardDenyClass::ProgramFiles => "program_files",
             HardDenyClass::ProgramDataRoot => "program_data_root",
             HardDenyClass::UsersRoot => "users_root",
+            HardDenyClass::SystemContainer => "system_container",
             HardDenyClass::DefaultProfile => "default_profile",
             HardDenyClass::PublicProfile => "public_profile",
             HardDenyClass::UserProfileRoot => "user_profile_root",
@@ -461,6 +466,7 @@ const WINDOWS_LOCATIONS: Table = &[
     (&["$recycle.bin", "*"], Exact, "recycle bin root"),
     (&["recovery"], Subtree, "recovery environment"),
     (&["config.msi"], Subtree, "installer rollback data"),
+    (&[".cleanmanager-quarantine"], Subtree, "CleanManager quarantine"),
     (&["boot"], Subtree, "boot files"),
     (&["efi"], Subtree, "boot files"),
     (&["pagefile.sys"], Exact, "system paging file"),
@@ -1173,17 +1179,17 @@ pub struct Subject<'a> {
     pub recursive: bool,
 }
 
-/// Hard deny > default classes > user list. Nothing in a lower layer can lift a higher one.
-pub fn evaluate(subject: &Subject<'_>, hard: &HardDenySet, user: &UserProtection) -> ProtectionDecision {
-    let d = check_path(subject.path, subject.chain, hard);
-    if d.is_denied() {
-        return d;
+/// Default-class layer alone.
+pub fn check_default_class(subject: &Subject<'_>) -> ProtectionDecision {
+    match subject.default_class {
+        Some(c) => ProtectionDecision::deny(DenyLayer::DefaultClass, format!("default protection class {}", c.as_str())),
+        None => ProtectionDecision::Allowed,
     }
-    if let Some(c) = subject.default_class {
-        let name = serde_json::to_value(c).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
-        return ProtectionDecision::deny(DenyLayer::DefaultClass, format!("default protection class {name}"));
-    }
-    let user_deny = |e: &UserEntry, what: String| ProtectionDecision::deny(DenyLayer::User, format!("{what} by user entry {}", e.id));
+}
+
+/// User-list layer alone, with the entry that matched (path, link target, then rule).
+pub fn check_user<'u>(subject: &Subject<'_>, user: &'u UserProtection) -> (ProtectionDecision, Option<&'u UserEntry>) {
+    let user_deny = |e: &'u UserEntry, what: String| (ProtectionDecision::deny(DenyLayer::User, format!("{what} by user entry {}", e.id)), Some(e));
     if let Some(e) = user.match_path(subject.path, subject.recursive) {
         return user_deny(e, "protected".into());
     }
@@ -1195,7 +1201,32 @@ pub fn evaluate(subject: &Subject<'_>, hard: &HardDenySet, user: &UserProtection
     if let Some(e) = subject.rule_id.and_then(|r| user.protects_rule(r)) {
         return user_deny(e, "rule is protected".into());
     }
-    ProtectionDecision::Allowed
+    (ProtectionDecision::Allowed, None)
+}
+
+/// Hard deny > default classes > user list. Nothing in a lower layer can lift a higher one.
+pub fn evaluate(subject: &Subject<'_>, hard: &HardDenySet, user: &UserProtection) -> ProtectionDecision {
+    explain(subject, hard, user).into_iter().map(|l| l.decision).find(ProtectionDecision::is_denied).unwrap_or(ProtectionDecision::Allowed)
+}
+
+/// One layer's own verdict, for explanations (`protect check`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerVerdict {
+    pub layer: DenyLayer,
+    pub decision: ProtectionDecision,
+    /// User entry that matched (user layer only).
+    pub entry_id: Option<String>,
+}
+
+/// Every layer's verdict, strongest first. The overall decision is the first denial; every
+/// layer is still evaluated so the explanation shows all reasons that apply.
+pub fn explain(subject: &Subject<'_>, hard: &HardDenySet, user: &UserProtection) -> Vec<LayerVerdict> {
+    let (decision, entry) = check_user(subject, user);
+    vec![
+        LayerVerdict { layer: DenyLayer::HardDeny, decision: check_path(subject.path, subject.chain, hard), entry_id: None },
+        LayerVerdict { layer: DenyLayer::DefaultClass, decision: check_default_class(subject), entry_id: None },
+        LayerVerdict { layer: DenyLayer::User, decision, entry_id: entry.map(|e| e.id.clone()) },
+    ]
 }
 
 /// Maintenance tasks and startup items (PRT-06): a protected task is reported as skipped.

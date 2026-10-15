@@ -12,14 +12,18 @@ pub mod capability;
 pub mod error;
 pub mod execute;
 pub mod host;
+pub mod insights;
 pub mod model;
 pub mod obs;
 pub mod path;
 pub mod plan;
 pub mod protect;
 pub mod protocol;
+pub mod recovery;
 pub mod rules;
 pub mod scan;
+pub mod startup;
+pub mod status;
 pub mod time;
 
 /// Version of the engine reported in machine records.

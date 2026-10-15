@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "kind": "protection_check",
+  "request_id": "req_synthetic",
+  "path": {
+    "platform": "windows",
+    "display": "C:\\Users\\Example\\Projects\\keep-cache\\index",
+    "raw_encoding": "windows_utf16le_base64",
+    "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFAAcgBvAGoAZQBjAHQAcwBcAGsAZQBlAHAALQBjAGEAYwBoAGUAXABpAG4AZABlAHgA"
+  },
+  "decision": "denied",
+  "layer": "user",
+  "reason": "protected by user entry u_1",
+  "layers": [
+    {
+      "layer": "hard_deny",
+      "result": "clear",
+      "detail": "not a hard-deny location",
+      "protection_id": null
+    },
+    {
+      "layer": "default_category",
+      "result": "clear",
+      "detail": "no default protection class",
+      "protection_id": null
+    },
+    {
+      "layer": "user",
+      "result": "denied",
+      "detail": "protected by user entry u_1",
+      "protection_id": "u_1"
+    }
+  ]
+}

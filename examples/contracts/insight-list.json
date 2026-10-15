@@ -7,21 +7,41 @@
       "insight_id": "i_hiberfil",
       "kind": "windows.hibernation_file",
       "title": "Hibernation file",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\hiberfil.sys",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAaABpAGIAZQByAGYAaQBsAC4AcwB5AHMA"
+      },
       "logical_bytes": "6442450944",
       "count": null,
+      "size_basis": "file_metadata",
+      "size_note": null,
       "observed_at": "2026-10-14T12:00:02Z",
       "explanation": "Stores memory contents for hibernate and fast startup",
-      "handling": "open_system_settings"
+      "handling": "read_only_guidance",
+      "guidance": [
+        {
+          "tool": "powercfg",
+          "steps": "powercfg /hibernate off",
+          "requires_admin": true,
+          "impact": "Disables hibernate and Fast Startup; Windows removes the file itself"
+        }
+      ]
     },
     {
       "insight_id": "i_old_downloads",
       "kind": "old_downloads",
       "title": "Old downloads",
+      "path": null,
       "logical_bytes": null,
       "count": 12,
+      "size_basis": "not_measured",
+      "size_note": "Sizes come from the latest disk scan",
       "observed_at": "2026-10-14T12:00:02Z",
       "explanation": "Files older than 90 days in Downloads",
-      "handling": "manual_trash_review"
+      "handling": "manual_trash_review",
+      "guidance": []
     }
   ]
 }

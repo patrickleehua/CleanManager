@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_list",
+  "request_id": "req_synthetic",
+  "page_size": 3,
+  "next_cursor": "WyJvcGVyYXRpb25zIiwyLDNd",
+  "items": [
+    {
+      "operation_id": "op_restore",
+      "plan_id": "rp_demo",
+      "plan_contract": "recovery/v1",
+      "action": "restore",
+      "state": "partial",
+      "started_at": "2026-10-15T12:01:00Z",
+      "finished_at": "2026-10-15T12:01:01Z",
+      "authorization_source": "interactive_review",
+      "rule_refs": [],
+      "counts": {
+        "succeeded": 1,
+        "skipped": 1,
+        "failed": 0,
+        "not_started": 0,
+        "unknown": 0
+      },
+      "processed_logical_bytes": "1048576",
+      "recovery": {
+        "availability": "not_applicable",
+        "guidance": "Objects were moved back to their original locations."
+      }
+    },
+    {
+      "operation_id": "op_demo",
+      "plan_id": "p_demo",
+      "plan_contract": "plan/v1",
+      "action": "trash",
+      "state": "completed",
+      "started_at": "2026-10-14T12:02:00Z",
+      "finished_at": "2026-10-14T12:02:01Z",
+      "authorization_source": "interactive_review",
+      "rule_refs": [
+        "example.cache@0.1.0"
+      ],
+      "counts": {
+        "succeeded": 1,
+        "skipped": 0,
+        "failed": 0,
+        "not_started": 0,
+        "unknown": 0
+      },
+      "processed_logical_bytes": "104857600",
+      "recovery": {
+        "availability": "system_recycle_bin",
+        "guidance": "Restore from the system Recycle Bin (Explorer, Recycle Bin, Restore); CleanManager cannot restore it."
+      }
+    },
+    {
+      "operation_id": "op_unknown",
+      "plan_id": "p_demo2",
+      "plan_contract": "plan/v1",
+      "action": "delete",
+      "state": "reconciliation_required",
+      "started_at": "2026-10-14T12:00:00Z",
+      "finished_at": null,
+      "authorization_source": null,
+      "rule_refs": [
+        "example.cache@0.1.0"
+      ],
+      "counts": null,
+      "processed_logical_bytes": null,
+      "recovery": {
+        "availability": "unknown",
+        "guidance": "Outcome unconfirmed; run `cleanmanager operations reconcile op_unknown` before deciding anything."
+      }
+    }
+  ]
+}

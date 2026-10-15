@@ -45,7 +45,8 @@
 | [operation-status-running.json](operation-status-running.json) | 运行中的操作 |
 | [operation-cancel-receipt.json](operation-cancel-receipt.json) | 操作取消回执，不撤销已完成动作 |
 | [operation-reconciliation.json](operation-reconciliation.json) | 存在未知结果，需核对（退出 8） |
-| [quarantine-list.json](quarantine-list.json) | 隔离清单，含目标冲突项 |
+| [quarantine-list.json](quarantine-list.json) | 隔离清单，含提醒到期（不删除）与目标冲突项 |
+| [operation-list.json](operation-list.json) | 操作历史：恢复、回收站（系统指引）与待核对项的真实恢复入口 |
 | [purge-roots.json](purge-roots.json) | 默认与用户添加的项目扫描根 |
 | [plan-v2-update.json](plan-v2-update.json) | 应用更新：询问退出后经包管理器升级 |
 | [release-info.json](release-info.json) | 包管理器安装的副本提示使用对应升级方式 |

@@ -349,6 +349,25 @@ fn protect_layers_apply_in_order_and_user_cannot_lift() {
 }
 
 #[test]
+fn protect_explain_reports_every_layer_strongest_first() {
+    let h = hard();
+    let mut user = UserProtection::empty(Platform::Windows);
+    user.add(UserEntry::path("keep", MatchKind::Descendants, "D:\\cache", T)).unwrap();
+    let sys = chain("system32", &["windows"]);
+    let path = win("D:\\cache\\x");
+    let s = Subject { path: &path, chain: &sys, default_class: Some(ProtectionClass::AiSessionsConfig), rule_id: None, recursive: false };
+    let v = explain(&s, &h, &user);
+    assert_eq!(v.iter().map(|l| l.layer).collect::<Vec<_>>(), [DenyLayer::HardDeny, DenyLayer::DefaultClass, DenyLayer::User]);
+    assert!(v.iter().all(|l| l.decision.is_denied()), "every applicable reason is shown, not only the first");
+    assert_eq!(v[2].entry_id.as_deref(), Some("keep"));
+    assert_eq!(evaluate(&s, &h, &user), v[0].decision);
+    let plain = chain("obj", &["c-root"]);
+    let other = win("D:\\other\\x");
+    let s = Subject { path: &other, chain: &plain, default_class: None, rule_id: None, recursive: false };
+    assert!(explain(&s, &h, &user).iter().all(|l| l.decision.is_allowed() && l.entry_id.is_none()));
+}
+
+#[test]
 fn protect_textual_checks_apply_to_real_locations() {
     let h = hard();
     let target = ResolvedTarget { path: unix("/private/var"), object: id("private-var"), ancestors: vec![id("c-root")] };

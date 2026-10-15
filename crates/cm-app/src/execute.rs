@@ -53,10 +53,21 @@ pub struct OperationReport {
     pub unknown: u64,
     pub items: Vec<ActionResult>,
     pub processed_logical_bytes: String,
+    /// Logical bytes now held in a same-volume quarantine: moved, not freed (REC-05).
+    #[serde(default = "zero_bytes")]
+    pub quarantined_logical_bytes: String,
+    /// What the succeeded actions free by themselves (logical estimate): permanent deletes and
+    /// purges only; quarantine, Recycle Bin and restore moves free nothing on the volume.
+    #[serde(default = "zero_bytes")]
+    pub estimated_freed_bytes: String,
     pub volume_free_before_bytes: Option<String>,
     pub volume_free_after_bytes: Option<String>,
     pub observed_free_delta_bytes: Option<String>,
     pub authorization_source: String,
+}
+
+pub(crate) fn zero_bytes() -> String {
+    "0".into()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -113,12 +124,12 @@ fn identity_key(i: &cm_core::plan::WireIdentity) -> String {
     format!("{}|{}", i.volume_id, i.file_id)
 }
 
-fn summarize(results: &[ActionResult]) -> (u64, u64, u64, u64, u64) {
+pub(crate) fn summarize(results: &[ActionResult]) -> (u64, u64, u64, u64, u64) {
     let c = |s| results.iter().filter(|r| r.status == s).count() as u64;
     (c(ActionStatus::Succeeded), c(ActionStatus::Skipped), c(ActionStatus::Failed), c(ActionStatus::NotStarted), c(ActionStatus::Unknown))
 }
 
-fn final_status(results: &[ActionResult], cancelled: bool) -> &'static str {
+pub(crate) fn final_status(results: &[ActionResult], cancelled: bool) -> &'static str {
     let (ok, skipped, failed, _, unknown) = summarize(results);
     if unknown > 0 {
         "reconciliation_required"
@@ -132,6 +143,15 @@ fn final_status(results: &[ActionResult], cancelled: bool) -> &'static str {
         "partial"
     } else {
         "failed"
+    }
+}
+
+/// Protocol messages are never empty (`action_result.message`).
+fn done_message(r: &Recovery) -> &'static str {
+    match r {
+        Recovery::Trash => "moved to the Recycle Bin",
+        Recovery::Quarantine { .. } => "moved to the same-volume quarantine",
+        Recovery::Unavailable => "permanently deleted",
     }
 }
 
@@ -282,7 +302,7 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
                     stores.audit.save_quarantine(&format!("q_{}_{}", &operation_id[3..], item.action_id), &operation_id, &item.action_id,
                         plan_id, &record.to_string(), &utc_from_unix(now), &utc_from_unix(now + 30 * 86_400))?;
                 }
-                ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "done".into(), message: String::new(), recovery: recovery_name(recovery).into() }
+                ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "done".into(), message: done_message(recovery).into(), recovery: recovery_name(recovery).into() }
             }
             ActionOutcome::Skipped { code, message } => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Skipped, code: precondition_code(code), message: message.clone(), recovery: "not_applicable".into() },
             ActionOutcome::Failed { code, message } => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Failed, code: code.clone(), message: message.clone(), recovery: "not_applicable".into() },
@@ -315,6 +335,8 @@ fn finish(
     let size_of = |id: &str| plan.body.items.iter().find(|i| i.action_id == id).map(|i| i.logical_bytes.0).unwrap_or(0);
     let processed: u64 = results.iter().filter(|r| r.status == ActionStatus::Succeeded).map(|r| size_of(&r.action_id)).sum();
     let unknown_bytes: u64 = results.iter().filter(|r| r.status == ActionStatus::Unknown).map(|r| size_of(&r.action_id)).sum();
+    let quarantined: u64 = results.iter().filter(|r| r.status == ActionStatus::Succeeded && r.recovery == "quarantine").map(|r| size_of(&r.action_id)).sum();
+    let estimated_freed = if plan.body.mode == Mode::Delete { processed } else { 0 };
     let status = final_status(&results, cancelled);
     let report = OperationReport {
         operation_id: operation_id.into(),
@@ -330,6 +352,8 @@ fn finish(
         unknown,
         items: results,
         processed_logical_bytes: processed.to_string(),
+        quarantined_logical_bytes: quarantined.to_string(),
+        estimated_freed_bytes: estimated_freed.to_string(),
         volume_free_before_bytes: free_before.map(|b| b.to_string()),
         volume_free_after_bytes: free_before.and(free_after).map(|b| b.to_string()),
         observed_free_delta_bytes: free_before.zip(free_after).map(|(b, a)| (i128::from(a) - i128::from(b)).to_string()),
@@ -356,7 +380,7 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
         let existing: Option<ActionResult> = row.and_then(|r| r.result_json.as_deref()).and_then(|j| serde_json::from_str(j).ok());
         let result = match (row, existing) {
             (_, Some(r)) if r.status != ActionStatus::Unknown => r,
-            (None, _) => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "never_started".into(), message: String::new(), recovery: "not_applicable".into() },
+            (None, _) => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "never_started".into(), message: "no action was started".into(), recovery: "not_applicable".into() },
             (Some(_), _) => {
                 let meta = plan.item_meta.get(idx);
                 let probes = meta.map(|m| m.probes.clone()).unwrap_or_default();
@@ -374,7 +398,7 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
                 });
                 let r = match actions.reconcile(&target, plan.body.mode, qloc.as_ref()) {
                     Reconciled::NotPerformed => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "reconciled_not_performed".into(), message: "object still at its planned place".into(), recovery: "not_applicable".into() },
-                    Reconciled::Performed => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "reconciled_performed".into(), message: String::new(),
+                    Reconciled::Performed => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Succeeded, code: "reconciled_performed".into(), message: "the action was found to have taken effect".into(),
                         recovery: match plan.body.mode { Mode::Delete => "unavailable", Mode::Trash => "trash", Mode::Quarantine => "quarantine" }.into() },
                     Reconciled::StillUnknown => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::Unknown, code: "outcome_unconfirmed".into(), message: "evidence insufficient; needs a person to check".into(), recovery: "unknown".into() },
                 };

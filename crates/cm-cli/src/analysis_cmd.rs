@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cm_core::analysis::{AnalysisInput, Candidate, CandidateSet, CandidateState, analyze, analyze_preview};
+use cm_core::analysis::{AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, UserList, analyze_preview_with, analyze_with};
 use cm_core::error::ErrorCode;
 use cm_core::protocol::record;
 use cm_core::rules::{RegistryEntry, Rule, RuleSet, Tier};
@@ -92,6 +92,20 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
         Err(e) => return store_error(req, &e, p.format),
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    // Protection layers 1 and 3 (PRT-01/02/03). An unusable user list does not stop this
+    // read-only analysis; it makes every candidate unplannable and is reported as an issue.
+    let hard = cm_platform::protection::hard_deny_set();
+    let user = cm_platform::protection::load(&stores.dir);
+    let user_problem = user.as_ref().err().map(ToString::to_string);
+    let prot = AnalysisProtection {
+        hard_deny: Some(&hard),
+        user: match (&user, &user_problem) {
+            (Ok(list), _) => UserList::Loaded(list),
+            (Err(_), problem) => UserList::Unavailable(problem.as_deref().unwrap_or_default()),
+        },
+        // No read-only Git probe yet: every worktree root is `worktree_status_unknown` (blocked).
+        worktrees: &[],
+    };
     let (set, mut issues): (CandidateSet, Vec<Value>) = if let Some(preview) = p.raw_option("preview-rule") {
         let rule = match std::fs::read_to_string(preview).map_err(|e| e.to_string()).and_then(|t| Rule::parse(&t).map_err(|e| e.to_string())) {
             Ok(r) => r,
@@ -101,7 +115,7 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
         issues.push(json!({"code": "experimental_preview", "scope_display": rule.rule_id,
             "message": "preview of a rule that is not enabled; results cannot be planned"}));
         let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now, roots: &roots, protected: &[] };
-        (analyze_preview(&view, &rule, &input), issues)
+        (analyze_preview_with(&view, &rule, &input, &prot), issues)
     } else {
         let dir = p.raw_option("rules").map(PathBuf::from).unwrap_or_else(default_rules_dir);
         let rules = match load_rules(&dir) {
@@ -110,13 +124,21 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
         };
         let (roots, issues) = roots_for(&rules.rules);
         let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now, roots: &roots, protected: &[] };
-        (analyze(&view, &rules, &input), issues)
+        (analyze_with(&view, &rules, &input, &prot), issues)
     };
     if let Err(e) = stores.index.save_candidates(&set) {
         return store_error(req, &e, p.format);
     }
     for (rule, why) in &set.inapplicable {
         issues.push(json!({"code": "rule_inapplicable", "scope_display": rule, "message": why}));
+    }
+    if let Some(problem) = &user_problem {
+        issues.push(json!({"code": "protection_unavailable", "scope_display": cm_platform::protection::PROTECTION_FILE,
+            "message": format!("{problem}; candidates stay pending and every write is stopped until the list is repaired")}));
+    }
+    if set.candidates.iter().any(|c| c.state == CandidateState::ProtectedReviewable) {
+        issues.push(json!({"code": "protected_reviewable", "scope_display": "AI sessions and worktrees",
+            "message": "default-protected objects listed for per-object review only; they are never selected automatically or matched by a policy"}));
     }
     let known = set.candidates.iter().fold(0u64, |a, c| a.saturating_add(c.logical.known.0));
     let unknown: u64 = set.candidates.iter().map(|c| c.logical.unknown_count).sum();
@@ -167,7 +189,8 @@ pub fn candidate_item(c: &Candidate, scan_id: &str, revision: u32) -> Value {
         "allocated_bytes": null,
         "reclaimable_estimate_bytes": null,
         "estimate_basis": if c.logical.unknown_count > 0 { "not_computed" } else { "shared_blocks_unknown" },
-        "allowed_modes": if c.tier == Tier::Blocked { vec![] } else { c.allowed_modes.clone() },
+        // Protected-reviewable objects are planned only by a per-object review flow, never here.
+        "allowed_modes": if c.tier == Tier::Blocked || c.state == CandidateState::ProtectedReviewable { vec![] } else { c.allowed_modes.clone() },
     })
 }
 

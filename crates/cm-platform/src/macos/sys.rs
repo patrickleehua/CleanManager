@@ -47,6 +47,15 @@ impl Fd {
         if fd < 0 { Err(errno()) } else { Ok(Fd(fd)) }
     }
 
+    /// Open a directory, following links in every component including the last. Only for the
+    /// protection layer, which identifies an object's parent the way the kernel resolves it;
+    /// the object itself is still examined with `stat_child` (no follow).
+    pub(crate) fn open_dir_following(path: &CStr) -> Result<Fd, i32> {
+        // SAFETY: NUL-terminated path; no mode argument is needed without O_CREAT.
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+        if fd < 0 { Err(errno()) } else { Ok(Fd(fd)) }
+    }
+
     /// Open one child directory relative to this directory without following a symlink.
     pub(crate) fn open_child_dir(&self, name: &CStr) -> Result<Fd, i32> {
         // SAFETY: valid directory fd and NUL-terminated single-component name.

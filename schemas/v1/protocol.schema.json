@@ -53,6 +53,9 @@
       "$ref": "#/$defs/quarantine_list"
     },
     {
+      "$ref": "#/$defs/operation_list"
+    },
+    {
       "$ref": "#/$defs/cli_request"
     },
     {
@@ -75,6 +78,9 @@
     },
     {
       "$ref": "#/$defs/protection_list"
+    },
+    {
+      "$ref": "#/$defs/protection_check"
     },
     {
       "$ref": "#/$defs/insight_list"
@@ -1101,13 +1107,20 @@
           "format": "date-time",
           "pattern": "Z$"
         },
+        "reminder_due": {
+          "type": "boolean"
+        },
         "state": {
           "enum": [
             "recoverable",
             "target_conflict",
             "volume_offline",
+            "volume_changed",
             "identity_changed",
-            "manifest_incomplete"
+            "missing",
+            "parent_changed",
+            "manifest_incomplete",
+            "unknown"
           ]
         },
         "restore_capability": {
@@ -1116,6 +1129,17 @@
             "unsupported",
             "unknown"
           ]
+        },
+        "available_actions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "restore",
+              "purge"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": true
         },
         "metadata_restored": {
           "type": "array",
@@ -1140,9 +1164,245 @@
         "logical_bytes",
         "quarantined_at",
         "retention_reminder_at",
+        "reminder_due",
         "state",
         "restore_capability",
+        "available_actions",
         "metadata_restored"
+      ],
+      "additionalProperties": false
+    },
+    "operation_summary": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_contract": {
+          "anyOf": [
+            {
+              "enum": [
+                "plan/v1",
+                "plan/v2",
+                "recovery/v1"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "action": {
+          "anyOf": [
+            {
+              "enum": [
+                "trash",
+                "quarantine",
+                "delete",
+                "restore",
+                "purge"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "created",
+            "validating",
+            "running",
+            "stopping",
+            "completed",
+            "partial",
+            "cancelled",
+            "failed",
+            "reconciliation_required"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authorization_source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "counts": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "succeeded": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "skipped": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "not_started": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "unknown": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "succeeded",
+                "skipped",
+                "failed",
+                "not_started",
+                "unknown"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "processed_logical_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "availability": {
+              "enum": [
+                "in_app_restore",
+                "system_recycle_bin",
+                "unavailable",
+                "not_applicable",
+                "unknown"
+              ]
+            },
+            "guidance": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "availability",
+            "guidance"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation_id",
+        "plan_id",
+        "plan_contract",
+        "action",
+        "state",
+        "started_at",
+        "finished_at",
+        "authorization_source",
+        "rule_refs",
+        "counts",
+        "processed_logical_bytes",
+        "recovery"
+      ],
+      "additionalProperties": false
+    },
+    "operation_list": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "operation_list"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation_summary"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "items",
+        "page_size",
+        "next_cursor"
       ],
       "additionalProperties": false
     },
@@ -3241,6 +3501,14 @@
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)$"
         },
+        "quarantined_logical_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "estimated_freed_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
         "volume_free_before_bytes": {
           "anyOf": [
             {
@@ -3292,6 +3560,8 @@
         "unknown",
         "items",
         "processed_logical_bytes",
+        "quarantined_logical_bytes",
+        "estimated_freed_bytes",
         "volume_free_before_bytes",
         "volume_free_after_bytes",
         "observed_free_delta_bytes"
@@ -4338,6 +4608,30 @@
       ],
       "additionalProperties": false
     },
+    "params_protect_check": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "rule_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "rule_id"
+      ],
+      "additionalProperties": false
+    },
     "params_doctor_report": {
       "type": "object",
       "properties": {
@@ -4442,6 +4736,7 @@
             "protect.list",
             "protect.add",
             "protect.remove",
+            "protect.check",
             "doctor.report",
             "completion.generate",
             "self.update.check",
@@ -4874,6 +5169,22 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/params_protect_remove"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "protect.check"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_protect_check"
               }
             }
           }
@@ -5453,6 +5764,10 @@
             "launchd_system"
           ]
         },
+        "definition": {
+          "type": "string",
+          "minLength": 1
+        },
         "target": {
           "anyOf": [
             {
@@ -5472,6 +5787,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "publisher_evidence": {
+          "enum": [
+            "authenticode",
+            "package_identity",
+            "none"
           ]
         },
         "scope": {
@@ -5498,18 +5820,32 @@
         },
         "protected": {
           "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "startup_item_id",
         "name",
         "source",
+        "definition",
         "target",
         "publisher",
+        "publisher_evidence",
         "scope",
         "state",
         "toggle_capability",
-        "protected"
+        "protected",
+        "reason"
       ],
       "additionalProperties": false
     },
@@ -5532,13 +5868,21 @@
             "$ref": "#/$defs/startup_item"
           },
           "minItems": 0
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issue"
+          },
+          "minItems": 0
         }
       },
       "required": [
         "schema_version",
         "kind",
         "request_id",
-        "items"
+        "items",
+        "issues"
       ],
       "additionalProperties": false
     },
@@ -5893,12 +6237,72 @@
                 "minLength": 1
               },
               "minItems": 0
+            },
+            "dimensions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "dimension": {
+                    "enum": [
+                      "cpu",
+                      "memory",
+                      "disk",
+                      "thermal",
+                      "io"
+                    ]
+                  },
+                  "metric": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "full_score_at": {
+                    "type": "number"
+                  },
+                  "zero_score_at": {
+                    "type": "number"
+                  },
+                  "score": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "dimension",
+                  "metric",
+                  "value",
+                  "full_score_at",
+                  "zero_score_at",
+                  "score"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
             }
           },
           "required": [
             "score",
             "weights",
-            "lowered_by"
+            "lowered_by",
+            "dimensions"
           ],
           "additionalProperties": false
         },
@@ -5975,6 +6379,29 @@
         },
         "removable": {
           "type": "boolean"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "added_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -5982,7 +6409,9 @@
         "layer",
         "match",
         "display",
-        "removable"
+        "removable",
+        "note",
+        "added_at"
       ],
       "additionalProperties": false
     },
@@ -6015,6 +6444,111 @@
       ],
       "additionalProperties": false
     },
+    "protection_check": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "protection_check"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "decision": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "hard_deny",
+                "default_category",
+                "user"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "layer": {
+                "enum": [
+                  "hard_deny",
+                  "default_category",
+                  "user"
+                ]
+              },
+              "result": {
+                "enum": [
+                  "clear",
+                  "denied",
+                  "unavailable"
+                ]
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "protection_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "layer",
+              "result",
+              "detail",
+              "protection_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 3
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "path",
+        "decision",
+        "layer",
+        "reason",
+        "layers"
+      ],
+      "additionalProperties": false
+    },
     "insight": {
       "type": "object",
       "properties": {
@@ -6029,6 +6563,16 @@
         "title": {
           "type": "string",
           "minLength": 1
+        },
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/path"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "logical_bytes": {
           "anyOf": [
@@ -6047,6 +6591,25 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_basis": {
+          "enum": [
+            "file_metadata",
+            "directory_walk",
+            "system_query",
+            "not_measured"
+          ]
+        },
+        "size_note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
             },
             {
               "type": "null"
@@ -6077,17 +6640,52 @@
             "manual_trash_review",
             "installer_review"
           ]
+        },
+        "guidance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string",
+                "minLength": 1
+              },
+              "steps": {
+                "type": "string",
+                "minLength": 1
+              },
+              "requires_admin": {
+                "type": "boolean"
+              },
+              "impact": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "tool",
+              "steps",
+              "requires_admin",
+              "impact"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
         }
       },
       "required": [
         "insight_id",
         "kind",
         "title",
+        "path",
         "logical_bytes",
         "count",
+        "size_basis",
+        "size_note",
         "observed_at",
         "explanation",
-        "handling"
+        "handling",
+        "guidance"
       ],
       "additionalProperties": false
     },

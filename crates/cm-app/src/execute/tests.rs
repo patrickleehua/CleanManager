@@ -176,6 +176,7 @@ fn approved_plan_completes_and_repeats_return_the_same_operation() {
     let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
     assert_eq!((r.status.as_str(), r.succeeded, r.processed_logical_bytes.as_str()), ("completed", 3, "300"));
     assert_eq!(r.observed_free_delta_bytes.as_deref(), Some("300"));
+    assert_eq!((r.quarantined_logical_bytes.as_str(), r.estimated_freed_bytes.as_str()), ("0", "300"));
     let again = run(&e, &f, "p1", T0 + 20, None, None).unwrap();
     assert_eq!(again, r, "same operation report, no second side effect");
     assert_eq!(f.calls.get(), 3);
@@ -282,6 +283,8 @@ fn quarantine_records_a_restorable_manifest() {
     let r = run(&e, &f, "p1", T0 + 10, None, None).unwrap();
     assert_eq!(r.status, "completed");
     assert!(r.items.iter().all(|i| i.recovery == "quarantine"));
+    // REC-05: moved into quarantine, not freed; the observed delta is reported as measured.
+    assert_eq!((r.processed_logical_bytes.as_str(), r.quarantined_logical_bytes.as_str(), r.estimated_freed_bytes.as_str()), ("300", "300", "0"));
     assert_eq!(e.stores.audit.quarantine_items().unwrap().len(), 3);
     assert_eq!(f.quarantine.borrow().len(), 3);
 }

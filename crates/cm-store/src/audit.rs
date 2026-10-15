@@ -299,6 +299,187 @@ impl AuditStore {
     }
 }
 
+/// One quarantine manifest row. `state` is the durable bookkeeping state (`recoverable`,
+/// `restored`, `purged`); the live state of the object is probed separately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuarantineEntry {
+    pub quarantine_id: String,
+    pub operation_id: String,
+    pub action_id: String,
+    pub plan_id: String,
+    pub record_json: String,
+    pub state: String,
+    pub quarantined_at: String,
+    pub reminder_at: String,
+}
+
+/// One registered operation, newest first in listings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationRow {
+    pub operation_id: String,
+    pub plan_id: String,
+    pub plan_digest: String,
+    pub state: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+/// Opaque keyset cursor: the insertion key (rowid) of the last row and the page size it was
+/// issued for. Rows are never renumbered, so a page boundary is stable while history grows.
+fn encode_cursor(kind: &str, rowid: i64, page_size: u32) -> String {
+    use base64::Engine;
+    let text = serde_json::json!([kind, rowid, page_size]).to_string();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text)
+}
+
+fn decode_cursor(kind: &str, cursor: &str, page_size: u32) -> Result<i64> {
+    use base64::Engine;
+    let bad = || StoreError::CursorStale("malformed cursor".into());
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor).map_err(|_| bad())?;
+    let (k, rowid, n): (String, i64, u32) = serde_json::from_slice(&bytes).map_err(|_| bad())?;
+    if k != kind || n != page_size {
+        return Err(StoreError::CursorStale("cursor belongs to another listing or page size".into()));
+    }
+    Ok(rowid)
+}
+
+fn check_page(page_size: u32) -> Result<()> {
+    if page_size == 0 || page_size > crate::index::MAX_PAGE {
+        return Err(StoreError::InvalidArgument(format!("page_size must be 1..={}", crate::index::MAX_PAGE)));
+    }
+    Ok(())
+}
+
+impl AuditStore {
+    fn quarantine_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<QuarantineEntry> {
+        Ok(QuarantineEntry {
+            quarantine_id: r.get(0)?,
+            operation_id: r.get(1)?,
+            action_id: r.get(2)?,
+            plan_id: r.get(3)?,
+            record_json: r.get(4)?,
+            state: r.get(5)?,
+            quarantined_at: r.get(6)?,
+            reminder_at: r.get(7)?,
+        })
+    }
+
+    pub fn quarantine_entry(&self, quarantine_id: &str) -> Result<QuarantineEntry> {
+        self.conn
+            .query_row(
+                "SELECT quarantine_id, operation_id, action_id, plan_id, record_json, state, quarantined_at, reminder_at FROM quarantine_items WHERE quarantine_id=?1",
+                [quarantine_id],
+                Self::quarantine_row,
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(quarantine_id.into()))
+    }
+
+    /// Items still held in quarantine (`recoverable`) in quarantine order, keyset-paginated. Reaching
+    /// `reminder_at` changes nothing here: expired items stay listed until a person decides.
+    pub fn quarantine_page(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<QuarantineEntry>, Option<String>)> {
+        check_page(page_size)?;
+        let after = cursor.map(|c| decode_cursor("quarantine", c, page_size)).transpose()?.unwrap_or(0);
+        let mut stmt = self.conn.prepare(
+            "SELECT quarantine_id, operation_id, action_id, plan_id, record_json, state, quarantined_at, reminder_at, rowid FROM quarantine_items
+             WHERE state='recoverable' AND rowid > ?1 ORDER BY rowid LIMIT ?2",
+        )?;
+        let mut rows: Vec<(QuarantineEntry, i64)> = stmt
+            .query_map(params![after, i64::from(page_size) + 1], |r| Ok((Self::quarantine_row(r)?, r.get(8)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let next = (rows.len() > page_size as usize).then(|| {
+            rows.truncate(page_size as usize);
+            encode_cursor("quarantine", rows.last().expect("page is not empty").1, page_size)
+        });
+        let rows = rows.into_iter().map(|(e, _)| e).collect();
+        Ok((rows, next))
+    }
+
+    /// Quarantine rows written by one operation (any state).
+    pub fn quarantine_for_operation(&self, operation_id: &str) -> Result<Vec<QuarantineEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT quarantine_id, operation_id, action_id, plan_id, record_json, state, quarantined_at, reminder_at FROM quarantine_items
+             WHERE operation_id=?1 ORDER BY quarantine_id",
+        )?;
+        let rows = stmt.query_map([operation_id], Self::quarantine_row)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Operation history, most recently registered first, keyset-paginated (REC-04). Never deleted by an index rebuild.
+    pub fn operations_page(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<OperationRow>, Option<String>)> {
+        check_page(page_size)?;
+        let before = cursor.map(|c| decode_cursor("operations", c, page_size)).transpose()?.unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare(
+            "SELECT operation_id, plan_id, plan_digest, state, started_at, finished_at, rowid FROM operations
+             WHERE rowid < ?1 ORDER BY rowid DESC LIMIT ?2",
+        )?;
+        let mut rows: Vec<(OperationRow, i64)> = stmt
+            .query_map(params![before, i64::from(page_size) + 1], |r| {
+                Ok((OperationRow { operation_id: r.get(0)?, plan_id: r.get(1)?, plan_digest: r.get(2)?, state: r.get(3)?, started_at: r.get(4)?, finished_at: r.get(5)? }, r.get(6)?))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        let next = (rows.len() > page_size as usize).then(|| {
+            rows.truncate(page_size as usize);
+            encode_cursor("operations", rows.last().expect("page is not empty").1, page_size)
+        });
+        let rows = rows.into_iter().map(|(o, _)| o).collect();
+        Ok((rows, next))
+    }
+
+    pub fn save_recovery_plan(&self, plan: &cm_core::recovery::RecoveryPlan) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO plans(plan_id,plan_digest,contract,created_at,expires_at,plan_json) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![plan.body.plan_id, plan.digest, plan.body.engine_contract, plan.body.created_at, plan.body.expires_at,
+                serde_json::to_string(plan).expect("recovery plan serializes")],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_recovery_plan(&self, plan_id: &str) -> Result<cm_core::recovery::RecoveryPlan> {
+        let (contract, text): (String, String) = self
+            .conn
+            .query_row("SELECT contract, plan_json FROM plans WHERE plan_id=?1", [plan_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(plan_id.into()))?;
+        if contract != cm_core::recovery::RECOVERY_CONTRACT {
+            return Err(StoreError::InvalidState(format!("plan {plan_id} is a {contract} plan, not a recovery plan")));
+        }
+        let plan: cm_core::recovery::RecoveryPlan = serde_json::from_str(&text).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
+        if plan.body.digest().ok().as_deref() != Some(plan.digest.as_str()) {
+            return Err(StoreError::AuditUnavailable(format!("plan {plan_id} digest does not match its body")));
+        }
+        Ok(plan)
+    }
+
+    /// Recovery receipts share the receipts table (and `revoke_receipts`) with cleanup receipts.
+    pub fn save_recovery_receipt(&self, r: &cm_core::recovery::RecoveryReceipt) -> Result<()> {
+        if self.plan_contract(&r.plan_id)? != cm_core::recovery::RECOVERY_CONTRACT {
+            return Err(StoreError::InvalidState(format!("plan {} is not a recovery plan", r.plan_id)));
+        }
+        self.conn.execute(
+            "INSERT INTO receipts(receipt_id,plan_id,plan_digest,receipt_json,revoked_at) VALUES(?1,?2,?3,?4,NULL)",
+            params![r.receipt_id, r.plan_id, r.plan_digest, serde_json::to_string(r).expect("receipt serializes")],
+        )?;
+        Ok(())
+    }
+
+    /// Recovery receipts of a plan. Rows that are not recovery receipts are ignored, never
+    /// reinterpreted (a cleanup approval cannot authorize a restore or purge).
+    pub fn recovery_receipts_for(&self, plan_id: &str) -> Result<Vec<cm_core::recovery::RecoveryReceipt>> {
+        let mut stmt = self.conn.prepare("SELECT receipt_json, revoked_at FROM receipts WHERE plan_id=?1 ORDER BY receipt_id")?;
+        let rows = stmt.query_map([plan_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (json, revoked) = row?;
+            if let Ok(mut rec) = serde_json::from_str::<cm_core::recovery::RecoveryReceipt>(&json) {
+                rec.revoked_at = revoked;
+                out.push(rec);
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Rolling usage of a policy window: reserved (not yet settled) plus consumed plus amounts
 /// held because their outcome is unknown. Released amounts no longer count (PLN-06).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -323,12 +504,23 @@ impl AuditStore {
         Ok(())
     }
 
+    /// The stored, authoritative plan type (`plan/v1`, `recovery/v1`); callers dispatch on it.
+    pub fn plan_contract(&self, plan_id: &str) -> Result<String> {
+        self.conn
+            .query_row("SELECT contract FROM plans WHERE plan_id=?1", [plan_id], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(plan_id.into()))
+    }
+
     pub fn load_plan(&self, plan_id: &str) -> Result<cm_core::plan::Plan> {
-        let text: String = self
+        let (contract, text): (String, String) = self
             .conn
-            .query_row("SELECT plan_json FROM plans WHERE plan_id=?1", [plan_id], |r| r.get(0))
+            .query_row("SELECT contract, plan_json FROM plans WHERE plan_id=?1", [plan_id], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()?
             .ok_or_else(|| StoreError::NotFound(plan_id.into()))?;
+        if contract != "plan/v1" {
+            return Err(StoreError::InvalidState(format!("plan {plan_id} is a {contract} plan, not a cleanup plan")));
+        }
         let plan: cm_core::plan::Plan = serde_json::from_str(&text).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
         // The stored body must still hash to the stored digest; tampering is never trusted.
         if plan.body.digest().ok().as_deref() != Some(plan.digest.as_str()) {
@@ -460,6 +652,64 @@ mod tests {
         assert_eq!(moved, vec!["dead".to_string()]);
         assert_eq!(a.operation_state("dead").unwrap(), "reconciliation_required");
         assert_eq!(a.operation_state("unsure").unwrap(), "running");
+    }
+
+    #[test]
+    fn operations_and_quarantine_are_keyset_paginated() {
+        let dir = scratch("audit-pages");
+        let a = AuditStore::open(&dir.join("audit.db")).unwrap();
+        for i in 0..5 {
+            a.begin_operation(&format!("op{i}"), "p", "d", &format!("k{i}"), &host(1), &format!("2026-10-15T00:00:0{i}Z")).unwrap();
+            a.save_quarantine(&format!("q{i}"), &format!("op{i}"), "a", "p", "{}", &format!("2026-10-15T00:00:0{i}Z"), "2026-11-14T00:00:00Z").unwrap();
+        }
+        a.set_quarantine_state("q2", "restored").unwrap();
+        let (first, next) = a.operations_page(2, None).unwrap();
+        assert_eq!(first.iter().map(|o| o.operation_id.as_str()).collect::<Vec<_>>(), ["op4", "op3"], "most recent first");
+        let (second, next) = a.operations_page(2, next.as_deref()).unwrap();
+        assert_eq!(second.iter().map(|o| o.operation_id.as_str()).collect::<Vec<_>>(), ["op2", "op1"]);
+        let (last, next) = a.operations_page(2, next.as_deref()).unwrap();
+        assert_eq!((last.len(), next), (1, None));
+        let (q, next) = a.quarantine_page(3, None).unwrap();
+        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q0", "q1", "q3"], "restored items leave the list");
+        let (q, _) = a.quarantine_page(3, next.as_deref()).unwrap();
+        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q4"]);
+        assert!(matches!(a.quarantine_page(2, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its page size");
+        assert!(matches!(a.operations_page(3, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its listing");
+        assert!(matches!(a.operations_page(501, None), Err(StoreError::InvalidArgument(_))));
+    }
+
+    #[test]
+    fn plan_type_is_authoritative_and_receipts_do_not_cross_types() {
+        use cm_core::recovery::{QuarantineManifest, RecoveryKind, RecoveryReceipt, build_recovery_plan};
+        let dir = scratch("audit-recovery");
+        let a = AuditStore::open(&dir.join("audit.db")).unwrap();
+        let id = |f: &str| cm_core::plan::WireIdentity { volume_id: "v".into(), file_id: format!("inode64:{f:0>16}"), generation: None, quality: "strong".into(), observed_at: "2026-10-15T00:00:00Z".into() };
+        let m = QuarantineManifest {
+            original_path: cm_core::path::RawPath::unix(b"/r/a".to_vec()).unwrap(), original_identity: id("1"), original_parent: Some(id("2")),
+            location: cm_core::path::RawPath::unix(b"/q/a".to_vec()).unwrap(), logical_bytes: cm_core::bytes::Bytes(1),
+        };
+        let plan = build_recovery_plan(RecoveryKind::Restore, &[("q1".into(), m)], "rp1", 1_800_000_000).unwrap();
+        a.save_recovery_plan(&plan).unwrap();
+        assert_eq!(a.plan_contract("rp1").unwrap(), "recovery/v1");
+        assert!(matches!(a.load_plan("rp1"), Err(StoreError::InvalidState(_))), "never read as a cleanup plan");
+        assert_eq!(a.load_recovery_plan("rp1").unwrap(), plan);
+        // A cleanup-shaped receipt stored against the recovery plan is ignored, never reinterpreted.
+        a.save_receipt(&cm_core::authz::Receipt {
+            receipt_id: "c1".into(), plan_id: "rp1".into(), plan_digest: plan.digest.clone(), mode: cm_core::rules::Mode::Quarantine,
+            principal: "user:a".into(), source: cm_core::authz::ReceiptSource::InteractiveReview, policy_id: None, policy_version: None,
+            created_at: "t".into(), expires_at: plan.body.expires_at.clone(), revoked_at: None,
+        }).unwrap();
+        assert!(a.recovery_receipts_for("rp1").unwrap().is_empty());
+        let r = RecoveryReceipt {
+            receipt_id: "r1".into(), plan_id: "rp1".into(), plan_digest: plan.digest.clone(), recovery_kind: RecoveryKind::Restore,
+            principal: "user:a".into(), source: cm_core::authz::ReceiptSource::InteractiveReview, created_at: "t".into(),
+            expires_at: plan.body.expires_at.clone(), revoked_at: None,
+        };
+        a.save_recovery_receipt(&r).unwrap();
+        assert_eq!(a.recovery_receipts_for("rp1").unwrap(), vec![r.clone()]);
+        a.revoke_receipts("rp1", "2026-10-15T00:00:01Z").unwrap();
+        assert!(a.recovery_receipts_for("rp1").unwrap()[0].revoked_at.is_some());
+        assert!(a.save_recovery_receipt(&RecoveryReceipt { receipt_id: "r2".into(), plan_id: "missing".into(), ..r }).is_err());
     }
 
     #[test]

@@ -2,4 +2,5 @@
 //! `cm-core`; this layer only wires backends, stores and the hosting process together.
 
 pub mod execute;
+pub mod recovery;
 pub mod scan;

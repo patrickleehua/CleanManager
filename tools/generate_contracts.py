@@ -100,9 +100,25 @@ def main():
         "host": obj({"kind": enum("cli", "desktop"), "process_id": COUNT, "last_heartbeat_at": TIME})})
     defs["quarantine_item"] = obj({"quarantine_id": STR, "plan_id": STR, "operation_id": STR, "original_path": ref("path"),
         "quarantined_path": ref("path"), "logical_bytes": UINT, "quarantined_at": TIME, "retention_reminder_at": TIME,
-        "state": enum("recoverable", "target_conflict", "volume_offline", "identity_changed", "manifest_incomplete"),
+        # REC-03: a due reminder is a review prompt only; the item is never deleted because of it.
+        "reminder_due": {"type": "boolean"},
+        "state": enum("recoverable", "target_conflict", "volume_offline", "volume_changed", "identity_changed", "missing",
+            "parent_changed", "manifest_incomplete", "unknown"),
         "restore_capability": enum("available", "unsupported", "unknown"),
+        "available_actions": {**arr(enum("restore", "purge")), "uniqueItems": True},
         "metadata_restored": arr(enum("timestamps", "attributes", "acl", "xattrs", "alternate_streams"))})
+    # REC-04 history: one row per operation with truthful recovery availability.
+    defs["operation_summary"] = obj({"operation_id": STR, "plan_id": STR,
+        "plan_contract": nullable(enum("plan/v1", "plan/v2", "recovery/v1")),
+        "action": nullable(enum("trash", "quarantine", "delete", "restore", "purge")),
+        "state": enum("created", "validating", "running", "stopping", "completed", "partial", "cancelled", "failed", "reconciliation_required"),
+        "started_at": TIME, "finished_at": nullable(TIME), "authorization_source": nullable(STR), "rule_refs": arr(STR),
+        "counts": nullable(obj({"succeeded": COUNT, "skipped": COUNT, "failed": COUNT, "not_started": COUNT, "unknown": COUNT})),
+        "processed_logical_bytes": nullable(UINT),
+        "recovery": obj({"availability": enum("in_app_restore", "system_recycle_bin", "unavailable", "not_applicable", "unknown"),
+            "guidance": STR})})
+    defs["operation_list"] = record("operation_list", {"items": {**arr(ref("operation_summary")), "maxItems": 500},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500}, "next_cursor": nullable(STR)})
     defs["quarantine_list"] = record("quarantine_list", {"items": {**arr(ref("quarantine_item")), "maxItems": 500},
         "page_size": {"type": "integer", "minimum": 1, "maximum": 500}, "next_cursor": nullable(STR), "total_logical_bytes": UINT})
     defs["operation_cancel_receipt"] = record("operation_cancel_receipt", {"operation_id": STR, "accepted": {"type": "boolean"},
@@ -220,7 +236,10 @@ def main():
         "plan_digest": HASH, "status": enum("completed", "partial", "cancelled", "failed", "reconciliation_required"),
         "started_at": TIME, "finished_at": TIME, "succeeded": COUNT, "skipped": COUNT, "failed": COUNT,
         "not_started": COUNT, "unknown": COUNT, "items": arr(ref("action_result")),
-        "processed_logical_bytes": UINT, "volume_free_before_bytes": nullable(UINT),
+        # REC-05: processed vs moved-into-quarantine vs what the actions free by themselves, apart
+        # from the observed (signed, unattributed) volume free-space change.
+        "processed_logical_bytes": UINT, "quarantined_logical_bytes": UINT, "estimated_freed_bytes": UINT,
+        "volume_free_before_bytes": nullable(UINT),
         "volume_free_after_bytes": nullable(UINT), "observed_free_delta_bytes": nullable(SINT)})
     defs["error"] = record("error", {"code": enum("invalid_argument", "schema_mismatch", "needs_approval", "policy_denied",
         "permission_required", "plan_stale", "cursor_stale", "conflict", "unsupported", "io_error", "internal_error", "cancelled",
@@ -256,6 +275,7 @@ def main():
         "status.snapshot": obj({}), "status.watch": obj({"interval_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
             "max_samples": nullable({"type": "integer", "minimum": 1, "maximum": 100000})}),
         "protect.list": obj({}), "protect.add": obj({"entry": ref("protection_entry_input")}), "protect.remove": obj({"protection_id": STR}),
+        "protect.check": obj({"path": ref("path"), "rule_id": nullable(STR)}),
         "doctor.report": obj({"redact": {"type": "boolean"}}),
         "completion.generate": obj({"shell": enum("bash", "zsh", "fish", "powershell"), "write_profile": {"type": "boolean"}}),
         "self.update.check": obj({}), "self.update.apply": obj({"release_id": STR}), "self.remove.preview": obj({"keep_user_data": {"type": "boolean"}}),
@@ -290,10 +310,11 @@ def main():
         "update_status": enum("up_to_date", "update_available", "cannot_check", "not_checked"), "protected_class": {"type": "boolean"}})
     defs["app_list"] = record("app_list", {"items": arr(ref("app_instance")), **page})
     defs["startup_item"] = obj({"startup_item_id": STR, "name": STR, "source": action_props["startup_toggle"]["source"],
-        "target": nullable(ref("path")), "publisher": nullable(STR), "scope": enum("user", "system"),
+        "definition": STR, "target": nullable(ref("path")), "publisher": nullable(STR),
+        "publisher_evidence": enum("authenticode", "package_identity", "none"), "scope": enum("user", "system"),
         "state": enum("enabled", "disabled", "broken", "target_unreachable"), "toggle_capability": capability_state,
-        "protected": {"type": "boolean"}})
-    defs["startup_list"] = record("startup_list", {"items": arr(ref("startup_item"))})
+        "protected": {"type": "boolean"}, "reason": nullable(STR)})
+    defs["startup_list"] = record("startup_list", {"items": arr(ref("startup_item")), "issues": arr(ref("issue"))})
     defs["maintenance_task_info"] = obj({"task_id": STR, "task_version": STR, "platform": enum("windows", "macos"),
         "problem": STR, "impact": STR, "requires_admin": {"type": "boolean"},
         "applicability": enum("applicable", "not_applicable", "unknown"), "applicability_reason": nullable(STR),
@@ -308,13 +329,24 @@ def main():
     defs["status_snapshot"] = record("status_snapshot", {"sampled_at": TIME, "stale": {"type": "boolean"},
         "metrics": arr(ref("metric"), 1), "health": obj({"score": nullable({"type": "integer", "minimum": 0, "maximum": 100}),
             "weights": obj({"cpu": COUNT, "memory": COUNT, "disk": COUNT, "thermal": COUNT, "io": COUNT}),
-            "lowered_by": arr(STR)}), "diagnosis": obj({"code": STR, "message": STR, "link": nullable(STR)})})
+            "lowered_by": arr(STR), "dimensions": arr(obj({"dimension": enum("cpu", "memory", "disk", "thermal", "io"), "metric": STR,
+                "value": nullable({"type": "number"}), "full_score_at": {"type": "number"}, "zero_score_at": {"type": "number"},
+                "score": nullable({"type": "integer", "minimum": 0, "maximum": 100})}))}),
+        "diagnosis": obj({"code": STR, "message": STR, "link": nullable(STR)})})
     defs["protection_entry"] = obj({"protection_id": STR, "layer": enum("hard_deny", "default_category", "user"),
-        "match": defs["protection_entry_input"]["properties"]["match"], "display": STR, "removable": {"type": "boolean"}})
+        "match": defs["protection_entry_input"]["properties"]["match"], "display": STR, "removable": {"type": "boolean"},
+        "note": nullable(STR), "added_at": nullable(TIME)})
     defs["protection_list"] = record("protection_list", {"items": arr(ref("protection_entry"))})
-    defs["insight"] = obj({"insight_id": STR, "kind": STR, "title": STR, "logical_bytes": nullable(UINT), "count": nullable(COUNT),
-        "observed_at": nullable(TIME), "explanation": STR, "handling": enum("read_only_guidance", "open_system_settings",
-            "open_owner_tool", "manual_trash_review", "installer_review")})
+    protection_layer = enum("hard_deny", "default_category", "user")
+    defs["protection_check"] = record("protection_check", {"path": ref("path"), "decision": enum("allowed", "denied"),
+        "layer": nullable(protection_layer), "reason": nullable(STR),
+        "layers": arr(obj({"layer": protection_layer, "result": enum("clear", "denied", "unavailable"), "detail": STR,
+            "protection_id": nullable(STR)}), 3)})
+    defs["insight"] = obj({"insight_id": STR, "kind": STR, "title": STR, "path": nullable(ref("path")), "logical_bytes": nullable(UINT),
+        "count": nullable(COUNT), "size_basis": enum("file_metadata", "directory_walk", "system_query", "not_measured"),
+        "size_note": nullable(STR), "observed_at": nullable(TIME), "explanation": STR, "handling": enum("read_only_guidance",
+            "open_system_settings", "open_owner_tool", "manual_trash_review", "installer_review"),
+        "guidance": arr(obj({"tool": STR, "steps": STR, "requires_admin": {"type": "boolean"}, "impact": STR}))})
     defs["insight_list"] = record("insight_list", {"items": arr(ref("insight"))})
     defs["doctor_report"] = record("doctor_report", {"generated_at": TIME, "redacted": {"type": "boolean"},
         "engine_version": STR, "platform": enum("windows", "macos"), "capabilities": arr(ref("capability")),
@@ -336,9 +368,9 @@ def main():
         "profile_path": nullable(ref("path")), "written": {"type": "boolean"}})
     kinds = ["capabilities", "scan_result", "candidate", "plan", "operation_report", "error", "progress",
              "scan_status", "scan_cancel_receipt", "entries_page", "candidates_page", "analysis_result",
-             "authorization_status", "operation_status", "operation_cancel_receipt", "quarantine_list",
+             "authorization_status", "operation_status", "operation_cancel_receipt", "quarantine_list", "operation_list",
              "cli_request", "selection_preview", "app_list", "startup_list", "maintenance_catalog", "maintenance_report",
-             "status_snapshot", "protection_list", "insight_list", "doctor_report", "purge_roots", "release_info",
+             "status_snapshot", "protection_list", "protection_check", "insight_list", "doctor_report", "purge_roots", "release_info",
              "self_update_result", "self_remove_preview", "completion_script"]
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
               "$id": "urn:cleanmanager:protocol:1.0", "title": "CleanManager proposed v1 record",
@@ -389,7 +421,8 @@ def main():
             status="completed", started_at="2026-10-14T12:02:00Z", finished_at="2026-10-14T12:02:01Z",
             succeeded=1, skipped=0, failed=0, not_started=0, unknown=0,
             items=[{"action_id": "a_demo", "status": "succeeded", "code": "moved_to_trash", "message": "Synthetic same-volume move", "recovery": "trash"}],
-            processed_logical_bytes="104857600", volume_free_before_bytes="1000000000", volume_free_after_bytes="1000000000", observed_free_delta_bytes="0"),
+            processed_logical_bytes="104857600", quarantined_logical_bytes="0", estimated_freed_bytes="0",
+            volume_free_before_bytes="1000000000", volume_free_after_bytes="1000000000", observed_free_delta_bytes="0"),
         "progress": rec("progress", task_id="s_demo", sequence=0, phase="discovering", completed_units=12, total_units=None, emitted_at=t1)
     }
     for name, example in examples.items():
@@ -500,10 +533,16 @@ def main():
              "update_status": "cannot_check", "protected_class": True}]),
         "startup-list": rec("startup_list", items=[
             {"startup_item_id": "st_demo", "name": "Example Updater", "source": "run_key",
-             "target": wpath("C:\\Program Files\\Example App\\updater.exe"), "publisher": "Example Vendor", "scope": "user",
-             "state": "enabled", "toggle_capability": "available", "protected": False},
-            {"startup_item_id": "st_broken", "name": "Removed Tool", "source": "startup_folder", "target": None,
-             "publisher": None, "scope": "user", "state": "broken", "toggle_capability": "available", "protected": False}]),
+             "definition": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run : Example Updater",
+             "target": wpath("C:\\Program Files\\Example App\\updater.exe"), "publisher": "Example Vendor",
+             "publisher_evidence": "authenticode", "scope": "user", "state": "enabled", "toggle_capability": "available",
+             "protected": False, "reason": None},
+            {"startup_item_id": "st_broken", "name": "Removed Tool", "source": "startup_folder",
+             "definition": "C:\\Users\\Example\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\Removed Tool.lnk",
+             "target": wpath("C:\\Program Files\\Removed Tool\\tool.exe"), "publisher": None, "publisher_evidence": "none",
+             "scope": "user", "state": "broken", "toggle_capability": "available", "protected": False,
+             "reason": "Target is missing on a mounted volume"}],
+            issues=[{"code": "permission_denied", "scope_display": "Task Scheduler \\Example", "message": "2 task folders could not be read"}]),
         "maintenance-catalog": rec("maintenance_catalog", items=[
             {"task_id": "windows.dns-flush", "task_version": "0.1.0", "platform": "windows", "problem": "Stale name resolution",
              "impact": "First lookups are slower briefly", "requires_admin": False, "applicability": "applicable",
@@ -519,18 +558,34 @@ def main():
             {"name": "cpu.total_percent", "availability": "available", "value": 37.5, "unit": "percent", "reason": None},
             {"name": "thermal.cpu_celsius", "availability": "unavailable", "value": None, "unit": "celsius",
              "reason": "No public sensor interface on this synthetic host"}],
-            health={"score": 82, "weights": {"cpu": 30, "memory": 25, "disk": 20, "thermal": 15, "io": 10}, "lowered_by": ["disk"]},
+            health={"score": 82, "weights": {"cpu": 30, "memory": 25, "disk": 20, "thermal": 15, "io": 10}, "lowered_by": ["disk"],
+                    "dimensions": [{"dimension": "cpu", "metric": "cpu.total_percent", "value": 37.5, "full_score_at": 60, "zero_score_at": 95,
+                                    "score": 100},
+                                   {"dimension": "thermal", "metric": "thermal.max_zone_celsius", "value": None, "full_score_at": 70,
+                                    "zero_score_at": 95, "score": None}]},
             diagnosis={"code": "low_free_space", "message": "System volume free space is low", "link": "analyze"}),
         "protection-list": rec("protection_list", items=[
-            {"protection_id": "hd_windows", "layer": "hard_deny", "match": "descendants", "display": "C:\\Windows", "removable": False},
-            {"protection_id": "dc_ai_sessions", "layer": "default_category", "match": "rule", "display": "AI sessions", "removable": False},
-            {"protection_id": "u_1", "layer": "user", "match": "exact", "display": "C:\\Users\\Example\\Projects\\keep-cache", "removable": True}]),
+            {"protection_id": "hd_windows", "layer": "hard_deny", "match": "descendants", "display": "C:\\Windows (system_root)",
+             "removable": False, "note": None, "added_at": None},
+            {"protection_id": "dc_ai_sessions_config", "layer": "default_category", "match": "descendants",
+             "display": "AI tool sessions and configuration (.claude, .codex); sessions are reviewable one by one", "removable": False,
+             "note": None, "added_at": None},
+            {"protection_id": "u_1", "layer": "user", "match": "descendants", "display": "C:\\Users\\Example\\Projects\\keep-cache",
+             "removable": True, "note": "Build cache I reuse offline", "added_at": t1}]),
+        "protection-check": rec("protection_check", path=wpath("C:\\Users\\Example\\Projects\\keep-cache\\index"), decision="denied",
+            layer="user", reason="protected by user entry u_1", layers=[
+                {"layer": "hard_deny", "result": "clear", "detail": "not a hard-deny location", "protection_id": None},
+                {"layer": "default_category", "result": "clear", "detail": "no default protection class", "protection_id": None},
+                {"layer": "user", "result": "denied", "detail": "protected by user entry u_1", "protection_id": "u_1"}]),
         "insight-list": rec("insight_list", items=[
-            {"insight_id": "i_hiberfil", "kind": "windows.hibernation_file", "title": "Hibernation file", "logical_bytes": "6442450944",
-             "count": None, "observed_at": t1, "explanation": "Stores memory contents for hibernate and fast startup",
-             "handling": "open_system_settings"},
-            {"insight_id": "i_old_downloads", "kind": "old_downloads", "title": "Old downloads", "logical_bytes": None, "count": 12,
-             "observed_at": t1, "explanation": "Files older than 90 days in Downloads", "handling": "manual_trash_review"}]),
+            {"insight_id": "i_hiberfil", "kind": "windows.hibernation_file", "title": "Hibernation file", "path": wpath("C:\\hiberfil.sys"),
+             "logical_bytes": "6442450944", "count": None, "size_basis": "file_metadata", "size_note": None, "observed_at": t1,
+             "explanation": "Stores memory contents for hibernate and fast startup", "handling": "read_only_guidance",
+             "guidance": [{"tool": "powercfg", "steps": "powercfg /hibernate off", "requires_admin": True,
+                           "impact": "Disables hibernate and Fast Startup; Windows removes the file itself"}]},
+            {"insight_id": "i_old_downloads", "kind": "old_downloads", "title": "Old downloads", "path": None, "logical_bytes": None, "count": 12,
+             "size_basis": "not_measured", "size_note": "Sizes come from the latest disk scan", "observed_at": t1,
+             "explanation": "Files older than 90 days in Downloads", "handling": "manual_trash_review", "guidance": []}]),
         "doctor-report": rec("doctor_report", generated_at=t1, redacted=True, engine_version="0.0.0-design-example", platform="windows",
             capabilities=[{"name": "uninstall.registry", "state": "unverified", "reason": "Synthetic report"}],
             checks=[{"check": "protection_list", "status": "ok", "detail": "3 entries"},
@@ -617,12 +672,29 @@ def main():
         "quarantine-list": rec("quarantine_list", page_size=50, next_cursor=None, total_logical_bytes="2097152", items=[
             {"quarantine_id": "q_demo", "plan_id": "p_demo", "operation_id": "op_demo",
              "original_path": wpath("C:\\Users\\Example\\report.cache"), "quarantined_path": wpath("C:\\.cm-quarantine\\q_demo"),
-             "logical_bytes": "1048576", "quarantined_at": t1, "retention_reminder_at": "2026-11-13T12:00:02Z",
-             "state": "recoverable", "restore_capability": "available", "metadata_restored": ["timestamps", "attributes"]},
+             "logical_bytes": "1048576", "quarantined_at": t1, "retention_reminder_at": "2026-11-13T12:00:02Z", "reminder_due": True,
+             "state": "recoverable", "restore_capability": "available", "available_actions": ["restore", "purge"],
+             "metadata_restored": ["timestamps", "attributes", "acl", "alternate_streams"]},
             {"quarantine_id": "q_conflict", "plan_id": "p_demo", "operation_id": "op_demo",
              "original_path": wpath("C:\\Users\\Example\\notes.cache"), "quarantined_path": wpath("C:\\.cm-quarantine\\q_conflict"),
-             "logical_bytes": "1048576", "quarantined_at": t1, "retention_reminder_at": "2026-11-13T12:00:02Z",
-             "state": "target_conflict", "restore_capability": "available", "metadata_restored": []}]),
+             "logical_bytes": "1048576", "quarantined_at": t1, "retention_reminder_at": "2026-11-13T12:00:02Z", "reminder_due": False,
+             "state": "target_conflict", "restore_capability": "available", "available_actions": ["restore", "purge"],
+             "metadata_restored": ["timestamps", "attributes", "acl", "alternate_streams"]}]),
+        "operation-list": rec("operation_list", page_size=3, next_cursor="WyJvcGVyYXRpb25zIiwyLDNd", items=[
+            {"operation_id": "op_restore", "plan_id": "rp_demo", "plan_contract": "recovery/v1", "action": "restore", "state": "partial",
+             "started_at": "2026-10-15T12:01:00Z", "finished_at": "2026-10-15T12:01:01Z", "authorization_source": "interactive_review",
+             "rule_refs": [], "counts": {"succeeded": 1, "skipped": 1, "failed": 0, "not_started": 0, "unknown": 0},
+             "processed_logical_bytes": "1048576", "recovery": {"availability": "not_applicable",
+                 "guidance": "Objects were moved back to their original locations."}},
+            {"operation_id": "op_demo", "plan_id": "p_demo", "plan_contract": "plan/v1", "action": "trash", "state": "completed",
+             "started_at": "2026-10-14T12:02:00Z", "finished_at": "2026-10-14T12:02:01Z", "authorization_source": "interactive_review",
+             "rule_refs": ["example.cache@0.1.0"], "counts": {"succeeded": 1, "skipped": 0, "failed": 0, "not_started": 0, "unknown": 0},
+             "processed_logical_bytes": "104857600", "recovery": {"availability": "system_recycle_bin",
+                 "guidance": "Restore from the system Recycle Bin (Explorer, Recycle Bin, Restore); CleanManager cannot restore it."}},
+            {"operation_id": "op_unknown", "plan_id": "p_demo2", "plan_contract": "plan/v1", "action": "delete",
+             "state": "reconciliation_required", "started_at": "2026-10-14T12:00:00Z", "finished_at": None, "authorization_source": None,
+             "rule_refs": ["example.cache@0.1.0"], "counts": None, "processed_logical_bytes": None, "recovery": {"availability": "unknown",
+                 "guidance": "Outcome unconfirmed; run `cleanmanager operations reconcile op_unknown` before deciding anything."}}]),
     })
     for name, example in cli.items():
         save("examples/contracts/" + name + ".json", example)

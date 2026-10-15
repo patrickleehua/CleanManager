@@ -214,3 +214,48 @@ IPC 使用仅本机命名管道，显式 DACL 绑定当前用户/登录会话与
 
 `cleanmanager apps list` 读取 HKLM（64/32 位视图）与 HKCU 的卸载注册项及 HKCU 的 MSIX 包仓库，全部以 `KEY_READ` 打开；不读取或执行卸载命令字符串，不写注册表。实例 ID 由来源记录与安装位置计算，同名但位置或来源不同的安装保持为独立实例。安装位置按文件身份解析；同一身份、同一路径或互相包含的位置标为共享，不计入任何单个应用的独占空间，未知大小保持未知。没有安装记录或仅名称相似的目录只会被判定为“归属未知”，不会成为清理候选。首版每个实例的卸载能力均为 `unsupported`（只读），卸载、更新与启动项见 `add-mole-parity-suite`。开发机实测：254 个实例（99 MSI、130 MSIX、25 其他），169 个标记为受保护类别，13 个共享位置。MSIX 的间接资源名称尚未解析，显示包名。
 
+
+### 只读启动项清单（parity 11.1，`startup list`）
+
+来源：HKCU/HKLM 的 `Run`、`RunOnce` 与策略 `Policies\Explorer\Run`（HKLM 读 64/32 位两个视图），启用状态取自 Explorer 的 `StartupApproved\Run|Run32|StartupFolder` 记录（首字节偶数为启用、奇数为停用，与任务管理器一致；无记录视为启用）；当前用户与公共“启动”已知文件夹，`.lnk` 以 `IShellLinkW` + `IPersistFile::Load(STGM_READ)` 读取目标，不调用 `Resolve`；任务计划程序中带登录或开机触发器的任务（COM API，含隐藏任务）；当前用户已注册打包应用的 `windows.startupTask`（`SystemAppData\<包族>\<TaskId>\State`，目标取自包清单）。注册表一律 `KEY_READ`，命令行只拆出程序路径做存在性检查，不执行、不交给 shell；发布者为内嵌 Authenticode 签名经 `WinVerifyTrust` 验证后的签名者（不查吊销、不取网络；目录签名的 Windows 文件显示为未知）。
+
+状态：目标在已挂载卷上不存在为 `broken`；所在盘符未挂载为 `target_unreachable`（不当作失效）；网络路径、无目录的程序名（仅在 Windows/System32 目录中查找，不搜索 PATH）与无法访问的目标不探测，保留记录的启用状态。`\Microsoft\` 下的任务、目标位于 Windows 目录（含 rundll32 等宿主承载的第三方项，保守只读）、发布者为 Windows、安全/设备管理代理及本工具自身标为 `protected`、开关 `unsupported`（STA-04）；`RunOnce` 与策略项开关也为 `unsupported`；其余项 `unverified`——本版不提供启停（11.2）。任一来源读取失败写入 `issues` 并以退出码 5 返回部分结果。条目 ID 由来源、范围与定义位置计算，不依赖名称或目标。
+
+开发机实测（提升 shell）：74 项——8 个 Run 键（2 个系统项受保护、1 个在 StartupApproved 中停用，与任务管理器一致）、56 个登录/开机任务（51 个 `\Microsoft\` 任务受保护）、10 个打包应用启动任务；本机启动文件夹为空，该来源由临时目录中的合成 `.lnk`（存在、目标已删、已停用）测试覆盖。耗时约 4.4 s，主要是对大体积目标做 Authenticode 哈希。普通权限账户未实测（部分任务文件夹预计因权限不可读并作为 issue 报告）。服务自动启动、Winlogon/IFEO 等扩展位置不在本版范围。
+
+### 系统状态快照（parity 12.1/12.2，`status`）
+
+采样接口：PDH 计数器以英文名添加（本机为中文系统，`PdhAddEnglishCounterW` 可用）——CPU 总体/每逻辑核、处理器队列长度（Windows 没有 Unix 负载均值）、GPU 引擎（按适配器与引擎类型汇总取最忙者，与任务管理器口径一致）与专用显存、物理磁盘读写速率与空闲时间、各网络接口收发速率、页面文件使用率、ACPI 热区温度与逐进程 CPU；`GlobalMemoryStatusEx`；每个固定/可移动卷的 `GetDiskFreeSpaceExW`（网络与光驱卷不访问）；`GetSystemPowerStatus` 与电池类驱动（只读句柄 `IOCTL_BATTERY_QUERY_INFORMATION`）；系统盘以无数据访问权限打开后发 `IOCTL_STORAGE_PREDICT_FAILURE`。首个样本等待 1 s 计算速率；`--watch`/`--interval N`/`--count M`（或 `--format jsonl` 与这些参数）按间隔输出 JSONL，每行一条带原采样时间的 `status_snapshot`，速率覆盖上一样本以来的区间。
+
+本机（Lenovo 83G6 笔记本，AMD Radeon 780M，Windows 11 26200）实际可得性：
+
+| 指标 | 结果 | 说明 |
+| --- | --- | --- |
+| CPU 总体/每核（16 逻辑核）、队列长度 | available | |
+| GPU 利用率、专用显存 | available | 另有虚拟显示适配器，不影响计数 |
+| GPU 温度 | unavailable | 无需厂商软件即可读取的已文档化接口 |
+| 内存已用/可用/提交、页面文件使用率 | available | 内存压缩量 unavailable（无已文档化接口） |
+| 卷容量/剩余（C:/D:/E:）、磁盘读写速率与忙碌度 | available | |
+| 磁盘故障预测 | unavailable | NVMe 驱动对 `IOCTL_STORAGE_PREDICT_FAILURE` 返回 error 1；不推断为健康 |
+| 网络各接口收发速率 | available | 虚拟交换机下物理与虚拟网卡可能重复计数（已在 reason 中声明） |
+| 电池电量、交流电状态、健康度（满充/设计容量 95.9%）、循环次数（30） | available | 循环数为 0 时视为驱动不支持 |
+| 温度 | available（ACPI 热区） | 3 个热区：`TZS0` 约 61–65 °C、`TZS1` 约 51 °C、`TZ01` 恒约 20 °C；这是固件发布的热区，不一定是 CPU 核心传感器，健康分取最高热区 |
+| 风扇转速 | unavailable | Windows 无已文档化的用户态风扇接口（WMI `Win32_Fan` 本机为 0 个实例） |
+
+健康分（STS-02，公开设计值，与清理候选、扫描或计划无关——计分函数的唯一输入是指标列表）：每个维度在“满分点”与“零分点”之间线性计分，加权平均后取整；不可得的维度不计分（`score`/`value` 为 null），其余权重按比例放大，因此缺传感器既不拉低也不抬高分数。`lowered_by` 按加权失分从大到小列出未满分的维度，`dimensions` 在每条记录中携带同一张表。
+
+| 维度 | 权重 | 指标 | 满分点 | 零分点 |
+| --- | --- | --- | --- | --- |
+| cpu | 30 | `cpu.total_percent` | ≤ 60 % | ≥ 95 % |
+| memory | 25 | `memory.used_percent` | ≤ 75 % | ≥ 95 % |
+| disk | 20 | `disk.system.free_percent`（系统卷剩余） | ≥ 20 % | ≤ 5 % |
+| thermal | 15 | `thermal.max_zone_celsius` | ≤ 70 °C | ≥ 95 °C |
+| io | 10 | `disk.busy_percent` | ≤ 50 % | ≥ 95 % |
+
+诊断行（STS-03）按以下优先级取第一条触发项，均不触发时为 `normal`（`link` 为 null）：`disk_health_warning`（系统盘预测故障 → `status.disk`）＞`high_cpu`（CPU ≥ 85 %，附最忙进程名及其占整机比例 → `status.processes`）＞`memory_pressure`（内存 ≥ 90 % → `status.memory`）＞`low_free_space`（系统卷剩余 < 10 % 或 < 10 GiB → `analyze`）＞`battery_low`（未接电源且 ≤ 15 %）/`battery_worn`（健康度 < 60 %）（→ `status.battery`）＞`high_temperature`（≥ 90 °C → `status.thermal`）＞`heavy_io`（磁盘忙碌 ≥ 90 % → `status.disk`）。未知的电源状态不会被当作“未充电”。持续高占用提醒（12.4）与进程列表（12.3）不在本版。
+
+### 空间洞察（parity 7.1，`insights`）
+
+按固定位置与平台元数据识别：卷根的 `hiberfil.sys`、各固定卷的 `pagefile.sys`、`swapfile.sys`（目录项大小，`FindFirstFileExW`，不打开文件）；`%SystemRoot%\WinSxS`；WMI `Win32_ShadowStorage`/`Win32_ShadowCopy`（按卷的已用空间与快照数）；HKCU `Lxss` 记录的 WSL 发行版磁盘（WSL 1 发行版为普通文件，大小记为未测）；Docker Desktop 的已知数据盘位置；Hyper-V 默认虚拟磁盘目录（`.vhdx/.vhd/.avhdx` 汇总数量与大小）；`Windows.old`；Delivery Optimization 缓存（不跟随链接的只读遍历，上限 50,000 项）。每条洞察给出用途说明、`handling`（只读指引/系统设置/所属工具）与 `guidance`——系统工具及步骤（如 `powercfg /hibernate off`、`DISM /Online /Cleanup-Image /StartComponentCleanup`、磁盘清理、系统保护、`wsl --manage <发行版> --set-sparse true`、Docker `system prune`）、是否需要管理员与影响，**仅为文本**：产品不执行这些工具、不改设置，也没有移入回收站或删除入口。
+
+大小无法可靠得到时为 null 并写明原因，不估 0、不做逻辑求和：WinSxS 大多为与 System32 共享的硬链接，只给出“用 DISM /AnalyzeComponentStore 查看实际大小”的说明；`Windows.old` 体积大且部分仅系统可读，提示在磁盘分析中扫描；非管理员查询卷影存储时说明需要管理员。开发机实测（提升 shell，约 0.1 s）：Delivery Optimization 缓存 12.9 GB（24 个文件）、`pagefile.sys` 9.9 GB、WSL Ubuntu `ext4.vhdx` 1.5 GB、`swapfile.sys` 16 MiB、C: 卷影存储已用 0 B（0 个快照）、WinSxS 未测；本机休眠已关闭（无 `hiberfil.sys`），无 `Windows.old`、Docker 数据盘或 Hyper-V 磁盘。概览卡片与旧下载（7.3）不在本版。

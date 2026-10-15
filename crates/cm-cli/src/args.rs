@@ -8,7 +8,7 @@ use std::io::IsTerminal;
 use crate::Format;
 
 /// Options that take no value.
-const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected"];
+const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch"];
 
 #[derive(Debug, Clone)]
 pub struct Parsed {
@@ -81,7 +81,9 @@ pub fn parse(raw: &[OsString]) -> Result<Parsed, String> {
     }
     let format = match (flags.iter().any(|f| f == "json"), options.get("format").map(String::as_str)) {
         (true, Some("text")) => return Err("conflicting output formats".into()),
-        (true, _) | (false, Some("json")) => Format::Json,
+        // JSONL is one compact JSON record per line: identical to JSON for single-record commands; streams
+        // (`status --watch`) emit one line per record.
+        (true, _) | (false, Some("json" | "jsonl")) => Format::Json,
         (false, Some("text")) => Format::Text,
         (false, Some(other)) => return Err(format!("unsupported format: {other}")),
         // Non-TTY stdout defaults to machine output; never start an interactive UI implicitly.

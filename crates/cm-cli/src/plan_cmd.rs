@@ -126,11 +126,19 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Recovery plans are shown, reviewed and revoked by `recovery_cmd`: the stored plan type decides.
+fn is_recovery(stores: &Stores, id: &str) -> bool {
+    stores.audit.plan_contract(id).ok().as_deref() == Some(cm_core::recovery::RECOVERY_CONTRACT)
+}
+
 pub fn plan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
     let stores = match open_stores(req, p) {
         Ok(s) => s,
         Err(c) => return c,
     };
+    if is_recovery(&stores, id) {
+        return crate::recovery_cmd::plan_show(req, p, &stores, id);
+    }
     match stores.audit.load_plan(id) {
         Ok(plan) => {
             emit(&plan_record(req, &stores, &plan), p.format);
@@ -140,11 +148,11 @@ pub fn plan_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
     }
 }
 
-fn interactive() -> bool {
+pub fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-fn prompt(line: &str) -> Option<String> {
+pub fn prompt(line: &str) -> Option<String> {
     let mut out = std::io::stdout().lock();
     let _ = write!(out, "{line}");
     let _ = out.flush();
@@ -161,6 +169,9 @@ pub fn plan_review(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
+    if is_recovery(&stores, id) {
+        return crate::recovery_cmd::plan_review(req, p, &stores, id);
+    }
     let plan = match stores.audit.load_plan(id) {
         Ok(p) => p,
         Err(e) => return store_error(req, &e, p.format),
@@ -213,6 +224,9 @@ pub fn plan_revoke(req: &str, p: &Parsed, id: &str) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
+    if is_recovery(&stores, id) {
+        return crate::recovery_cmd::plan_revoke(req, p, &stores, id);
+    }
     let plan = match stores.audit.load_plan(id) {
         Ok(p) => p,
         Err(e) => return store_error(req, &e, p.format),

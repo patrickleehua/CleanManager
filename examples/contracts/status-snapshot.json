@@ -31,6 +31,24 @@
     },
     "lowered_by": [
       "disk"
+    ],
+    "dimensions": [
+      {
+        "dimension": "cpu",
+        "metric": "cpu.total_percent",
+        "value": 37.5,
+        "full_score_at": 60,
+        "zero_score_at": 95,
+        "score": 100
+      },
+      {
+        "dimension": "thermal",
+        "metric": "thermal.max_zone_celsius",
+        "value": null,
+        "full_score_at": 70,
+        "zero_score_at": 95,
+        "score": null
+      }
     ]
   },
   "diagnosis": {

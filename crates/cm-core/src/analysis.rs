@@ -11,10 +11,12 @@ use crate::c14n::digest;
 use crate::capability::Platform;
 use crate::model::{CloudState, IdentityQuality, ObjectKind};
 use crate::path::RawPath;
+use crate::protect::{HARD_DENY_VERSION, HardDenySet, ObjectIdentity, UserProtection, hard_deny_within, prefilter};
 use crate::rules::{Mode, ObjectType, Rule, RuleSet, Tier, glob_match};
 
 /// Version of the built-in protection classes; bound into candidate sets and plans.
-pub const PROTECTION_VERSION: &str = "protection/1";
+/// `protection/2`: AI sessions and clean worktree roots are `protected_reviewable` (CAT-04).
+pub const PROTECTION_VERSION: &str = "protection/2";
 
 /// What the analyzer needs from an index revision.
 pub trait IndexView {
@@ -78,6 +80,52 @@ pub enum ProtectionClass {
     SystemRepair,
 }
 
+impl ProtectionClass {
+    pub const ALL: [ProtectionClass; 8] = [
+        ProtectionClass::Credentials,
+        ProtectionClass::Database,
+        ProtectionClass::BrowserSiteStorage,
+        ProtectionClass::AiSessionsConfig,
+        ProtectionClass::SourceWorktree,
+        ProtectionClass::Models,
+        ProtectionClass::UserDocuments,
+        ProtectionClass::SystemRepair,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtectionClass::Credentials => "credentials",
+            ProtectionClass::Database => "database",
+            ProtectionClass::BrowserSiteStorage => "browser_site_storage",
+            ProtectionClass::AiSessionsConfig => "ai_sessions_config",
+            ProtectionClass::SourceWorktree => "source_worktree",
+            ProtectionClass::Models => "models",
+            ProtectionClass::UserDocuments => "user_documents",
+            ProtectionClass::SystemRepair => "system_repair",
+        }
+    }
+
+    /// Classes whose objects may be reviewed one by one (CAT-04, design D5): never automatic
+    /// candidates or policy matches, only a per-object human confirmation flow may plan them.
+    pub fn is_reviewable(self) -> bool {
+        matches!(self, ProtectionClass::AiSessionsConfig | ProtectionClass::SourceWorktree)
+    }
+
+    /// What the class covers, for people.
+    pub fn describe(self) -> &'static str {
+        match self {
+            ProtectionClass::Credentials => "Credentials and keys (.ssh, .gnupg, .aws, .azure, .kube, Credentials, Protect, Vault, Keychains, SystemCertificates)",
+            ProtectionClass::Database => "Database files and their journals (.db, .sqlite, -wal, -shm, .mdb, .accdb)",
+            ProtectionClass::BrowserSiteStorage => "Browser site storage (IndexedDB, Local Storage, Cookies, Login Data, History...)",
+            ProtectionClass::AiSessionsConfig => "AI tool sessions and configuration (.claude, .codex); sessions are reviewable one by one",
+            ProtectionClass::SourceWorktree => "Git worktrees (directories with .git); a clean worktree is reviewable one by one, a dirty one is blocked",
+            ProtectionClass::Models => "Model weights (.gguf, .safetensors, .ckpt, .pt, .onnx)",
+            ProtectionClass::UserDocuments => "User documents (resolved by identity)",
+            ProtectionClass::SystemRepair => "System repair and installation stores (resolved by identity)",
+        }
+    }
+}
+
 const CREDENTIAL_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws", ".azure", ".kube", "credentials", "protect", "vault", "keychains", "systemcertificates"];
 const SITE_STORAGE: &[&str] = &["indexeddb", "local storage", "session storage", "service worker", "cookies", "login data", "web data", "history", "databases"];
 const AI_DIRS: &[&str] = &[".claude", ".codex"];
@@ -90,17 +138,23 @@ fn lower_name(view: &dyn IndexView, entry: u64) -> String {
 
 /// Built-in protection by name or extension of the entry itself.
 pub fn protection_by_name(view: &dyn IndexView, entry: u64) -> Option<ProtectionClass> {
-    let name = lower_name(view, entry);
-    let facts = view.info(entry);
+    let is_dir = view.info(entry).kind == ObjectKind::Directory;
+    let has_git = is_dir && view.children(entry).iter().any(|c| lower_name(view, *c) == ".git");
+    class_of_name(&lower_name(view, entry), is_dir, has_git)
+}
+
+/// Built-in protection by one lower-case name. `has_git_child`: a directory containing `.git`
+/// (a worktree root). Shared by analysis and `protect check` so both classify alike.
+pub fn class_of_name(name: &str, is_dir: bool, has_git_child: bool) -> Option<ProtectionClass> {
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_owned()).unwrap_or_default();
-    if facts.kind == ObjectKind::Directory {
-        if CREDENTIAL_DIRS.contains(&name.as_str()) {
+    if is_dir {
+        if CREDENTIAL_DIRS.contains(&name) {
             return Some(ProtectionClass::Credentials);
         }
-        if AI_DIRS.contains(&name.as_str()) {
+        if AI_DIRS.contains(&name) {
             return Some(ProtectionClass::AiSessionsConfig);
         }
-        if name == ".git" || view.children(entry).iter().any(|c| lower_name(view, *c) == ".git") {
+        if name == ".git" || has_git_child {
             return Some(ProtectionClass::SourceWorktree);
         }
     } else {
@@ -114,17 +168,21 @@ pub fn protection_by_name(view: &dyn IndexView, entry: u64) -> Option<Protection
             return Some(ProtectionClass::SourceWorktree);
         }
     }
-    if SITE_STORAGE.contains(&name.as_str()) {
+    if SITE_STORAGE.contains(&name) {
         return Some(ProtectionClass::BrowserSiteStorage);
     }
     None
 }
 
+/// Order is strictness: merging two rules on one entry keeps the larger state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateState {
     /// Evidence is complete; can be put into a plan subject to its tier.
     Allowed,
+    /// Default-protected AI session or clean worktree (CAT-04): shown for review only, never an
+    /// automatic candidate or policy match; only a per-object human confirmation flow may plan it.
+    ProtectedReviewable,
     /// Needed evidence is missing (unread descendants, unknown time); kept for review only.
     PendingEvidence,
     /// Protected or out of policy; cannot be planned.
@@ -178,21 +236,69 @@ pub struct AnalysisInput<'a> {
     pub protected: &'a [ProtectedRoot],
 }
 
+/// Git state of a worktree root, supplied by a read-only probe. Absent = unknown = blocked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeState {
+    /// No uncommitted or untracked changes.
+    Clean,
+    /// Uncommitted or untracked changes.
+    Dirty,
+    /// The probe could not decide.
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeStatus {
+    pub volume_id: String,
+    pub file_id: String,
+    pub state: WorktreeState,
+}
+
+/// The user protection list as the caller could load it.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum UserList<'a> {
+    /// Not consulted (tests, previews); the executor still re-checks before acting.
+    #[default]
+    NotSupplied,
+    Loaded(&'a UserProtection),
+    /// Unreadable or invalid (PRT-02): analysis continues read-only, nothing becomes plannable.
+    Unavailable(&'a str),
+}
+
+/// Protection layers 1 and 3 plus worktree evidence for analysis (layer 2, the default classes,
+/// is built in). Hard-deny and user hits make candidates `blocked` with a reason; they are never
+/// silently dropped.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AnalysisProtection<'a> {
+    pub hard_deny: Option<&'a HardDenySet>,
+    pub user: UserList<'a>,
+    pub worktrees: &'a [WorktreeStatus],
+}
+
 struct Subtree {
     logical: KnownTotal,
-    protection: Option<ProtectionClass>,
+    /// Class of the entry itself.
+    own: Option<ProtectionClass>,
+    /// Classes found strictly below the entry.
+    inner: BTreeSet<ProtectionClass>,
     unread: u64,
     boundaries: u64,
     placeholders: u64,
 }
 
 fn subtree(view: &dyn IndexView, entry: u64, protected_ids: &BTreeMap<u64, ProtectionClass>) -> Subtree {
-    let mut s = Subtree { logical: KnownTotal::default(), protection: None, unread: 0, boundaries: 0, placeholders: 0 };
+    let mut s = Subtree { logical: KnownTotal::default(), own: None, inner: BTreeSet::new(), unread: 0, boundaries: 0, placeholders: 0 };
     let mut seen = BTreeSet::new();
     let mut stack = vec![entry];
     while let Some(id) = stack.pop() {
         let f = view.info(id);
-        s.protection = s.protection.or_else(|| protected_ids.get(&id).copied()).or_else(|| protection_by_name(view, id));
+        let class = protected_ids.get(&id).copied().or_else(|| protection_by_name(view, id));
+        if id == entry {
+            s.own = class;
+        } else if let Some(c) = class {
+            s.inner.insert(c);
+        }
         s.unread += f.skipped_here;
         if f.boundary {
             s.boundaries += 1;
@@ -258,8 +364,81 @@ fn targets(view: &dyn IndexView, rule: &Rule, root: u64, ci: bool) -> Vec<u64> {
     out
 }
 
-/// Evaluate all enabled rules for the view's platform.
+/// Default-class outcome for one candidate entry (ANA-03, CAT-04).
+enum ClassOutcome {
+    Clear,
+    Blocked(ProtectionClass, String),
+    Reviewable(ProtectionClass),
+}
+
+/// `ancestors`: classes of the entry's ancestors, nearest first. Any non-reviewable class blocks;
+/// a container of a session or worktree is blocked (no recursive bypass); a session inside an AI
+/// directory and a clean worktree root are reviewable; anything else under them is blocked.
+fn class_outcome(view: &dyn IndexView, entry: u64, sub: &Subtree, ancestors: &[ProtectionClass], worktrees: &[WorktreeStatus]) -> ClassOutcome {
+    let block = |c: ProtectionClass| ClassOutcome::Blocked(c, format!("protected:{}", c.as_str()));
+    let self_class = sub.own.or_else(|| ancestors.first().copied());
+    if let Some(c) = sub.own.iter().chain(ancestors).chain(&sub.inner).copied().find(|c| !c.is_reviewable()) {
+        return block(c);
+    }
+    let Some(class) = self_class else {
+        return sub.inner.first().copied().map_or(ClassOutcome::Clear, block);
+    };
+    match class {
+        // The AI directory itself holds configuration as well as sessions: blocked as a whole.
+        ProtectionClass::AiSessionsConfig if sub.own.is_some() => block(class),
+        // A session: everything around and inside it must be AI data (not inside a worktree).
+        ProtectionClass::AiSessionsConfig => match ancestors.iter().chain(&sub.inner).copied().find(|c| *c != class) {
+            Some(other) => block(other),
+            None => ClassOutcome::Reviewable(class),
+        },
+        // Only a worktree root that is not nested in another worktree; Git state decides.
+        ProtectionClass::SourceWorktree => {
+            let f = view.info(entry);
+            let is_root = sub.own.is_some() && f.kind == ObjectKind::Directory && lower_name(view, entry) != ".git";
+            if !is_root || ancestors.contains(&ProtectionClass::SourceWorktree) {
+                return block(class);
+            }
+            match worktrees.iter().find(|w| w.volume_id == f.volume_id && w.file_id == f.file_id).map(|w| w.state) {
+                Some(WorktreeState::Clean) => ClassOutcome::Reviewable(class),
+                Some(WorktreeState::Dirty) => ClassOutcome::Blocked(class, "worktree_dirty".into()),
+                _ => ClassOutcome::Blocked(class, "worktree_status_unknown".into()),
+            }
+        }
+        _ => block(class),
+    }
+}
+
+/// Hard-deny layer for an indexed entry: textual pre-filter, then identity of the entry, its
+/// indexed ancestors and (for whole-tree actions) any deny root inside it.
+fn hard_deny_reason(view: &dyn IndexView, entry: u64, path: &RawPath, recursive: bool, hard: Option<&HardDenySet>) -> Option<String> {
+    if let Err(r) = prefilter(path) {
+        return Some(r.to_string());
+    }
+    let hard = hard?;
+    let id = |e: u64| {
+        let f = view.info(e);
+        ObjectIdentity::new(f.volume_id.clone(), f.file_id.clone())
+    };
+    if let Some(r) = hard.root_at(&id(entry)) {
+        return Some(format!("{} ({})", r.display, r.class.as_str()));
+    }
+    if let Some(r) = std::iter::successors(view.parent(entry), |p| view.parent(*p)).find_map(|a| hard.covering(&id(a))) {
+        return Some(format!("inside {} ({})", r.display, r.class.as_str()));
+    }
+    if recursive && let Some(r) = hard_deny_within(view, entry, hard) {
+        return Some(format!("contains {} ({})", r.display, r.class.as_str()));
+    }
+    None
+}
+
+/// Evaluate all enabled rules for the view's platform with only the built-in protection classes
+/// and the textual hard-deny pre-filter (no hard-deny roots, no user list).
 pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>) -> CandidateSet {
+    analyze_with(view, rules, input, &AnalysisProtection::default())
+}
+
+/// Evaluate all enabled rules with every protection layer the caller could supply.
+pub fn analyze_with(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>, prot: &AnalysisProtection<'_>) -> CandidateSet {
     let platform = view.platform();
     let ci = platform == Platform::Windows;
     let mut protected_ids = BTreeMap::new();
@@ -284,17 +463,50 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
         for root in roots {
             for entry in targets(view, rule, root, ci) {
                 let f = view.info(entry);
+                let path = view.path(entry);
                 let sub = subtree(view, entry, &protected_ids);
-                // Protection of an ancestor also covers this entry.
-                let ancestor_protection = std::iter::successors(view.parent(entry), |p| view.parent(*p))
-                    .find_map(|a| protected_ids.get(&a).copied().or_else(|| protection_by_name(view, a)));
+                // Protection of an ancestor also covers this entry (nearest first).
+                let ancestor_classes: Vec<ProtectionClass> = std::iter::successors(view.parent(entry), |p| view.parent(*p))
+                    .filter_map(|a| protected_ids.get(&a).copied().or_else(|| protection_by_name(view, a)))
+                    .collect();
                 let mut reasons = Vec::new();
                 let mut state = CandidateState::Allowed;
                 let mut tier = rule.max_tier;
-                let protection = sub.protection.or(ancestor_protection);
-                if let Some(class) = protection {
-                    reasons.push(format!("protected:{}", serde_json::to_value(class).unwrap().as_str().unwrap()));
+                let mut protection = None;
+                match class_outcome(view, entry, &sub, &ancestor_classes, prot.worktrees) {
+                    ClassOutcome::Clear => {}
+                    ClassOutcome::Blocked(class, why) => {
+                        protection = Some(class);
+                        reasons.push(why);
+                        state = CandidateState::Blocked;
+                    }
+                    ClassOutcome::Reviewable(class) => {
+                        protection = Some(class);
+                        reasons.push(format!("protected_reviewable:{}", class.as_str()));
+                        state = CandidateState::ProtectedReviewable;
+                    }
+                }
+                // Layer 1 outranks everything; it is reported even when another reason blocks.
+                if let Some(why) = hard_deny_reason(view, entry, &path, f.kind == ObjectKind::Directory, prot.hard_deny) {
+                    reasons.push(format!("hard_deny:{why}"));
                     state = CandidateState::Blocked;
+                }
+                match prot.user {
+                    UserList::NotSupplied => {}
+                    UserList::Loaded(user) => {
+                        if let Some(e) = user.match_path(&path, f.kind == ObjectKind::Directory) {
+                            reasons.push(format!("user_protected:{}", e.id));
+                            state = CandidateState::Blocked;
+                        }
+                        if let Some(e) = user.protects_rule(&rule.rule_id) {
+                            reasons.push(format!("user_protected_rule:{}", e.id));
+                            state = CandidateState::Blocked;
+                        }
+                    }
+                    UserList::Unavailable(_) => {
+                        reasons.push("user_protection_unavailable".into());
+                        state = state.max(CandidateState::PendingEvidence);
+                    }
                 }
                 if sub.placeholders > 0 {
                     reasons.push("cloud_placeholder".into());
@@ -310,7 +522,7 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
                 }
                 if let Some(days) = rule.thresholds.min_age_days {
                     match f.modified_unix {
-                        None if state == CandidateState::Allowed => {
+                        None if state < CandidateState::PendingEvidence => {
                             reasons.push("modified_time_unknown".into());
                             state = CandidateState::PendingEvidence;
                         }
@@ -324,7 +536,7 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
                 }
                 if state == CandidateState::Blocked {
                     tier = Tier::Blocked;
-                } else if state == CandidateState::PendingEvidence {
+                } else if state != CandidateState::Allowed {
                     tier = tier.min(Tier::ReviewOnly);
                 }
                 let modes = if state == CandidateState::Blocked { vec![] } else { rule.allowed_modes.clone() };
@@ -335,6 +547,7 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
                         existing.rules.push(rref);
                         existing.reasons.extend(reasons);
                         existing.state = existing.state.max(state);
+                        existing.protection = existing.protection.or(protection);
                         existing.tier = existing.tier.min(tier);
                         existing.allowed_modes.retain(|m| modes.contains(m));
                         existing.probes.extend(rule.probes.iter().cloned());
@@ -343,7 +556,7 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
                         by_entry.insert(entry, Candidate {
                             candidate_id: String::new(),
                             entry_id: entry,
-                            path: view.path(entry),
+                            path,
                             kind: f.kind,
                             rules: vec![rref],
                             category: rule.category.clone(),
@@ -408,8 +621,17 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
         let id = serde_json::json!({"scan": input.scan_id, "revision": input.revision, "entry": c.entry_id, "rules": c.rules});
         c.candidate_id = format!("c_{}", &digest(&id).expect("plain JSON")[..24]);
     }
+    // The protection inputs are part of the set identity: a changed user list or worktree state
+    // yields a new set rather than silently replacing the stored one.
+    let user_key = match prot.user {
+        UserList::NotSupplied => serde_json::Value::Null,
+        UserList::Loaded(u) => serde_json::to_value(u.entries()).expect("entries serialize"),
+        UserList::Unavailable(_) => "unavailable".into(),
+    };
+    let worktree_key: Vec<_> = prot.worktrees.iter().map(|w| (&w.volume_id, &w.file_id, w.state)).collect();
     let set_key = serde_json::json!({
         "scan": input.scan_id, "revision": input.revision, "rules": rules.digest, "protection": PROTECTION_VERSION,
+        "hard_deny": prot.hard_deny.map(|_| HARD_DENY_VERSION), "user": user_key, "worktrees": worktree_key,
         "candidates": candidates.iter().map(|c| c.candidate_id.clone()).collect::<Vec<_>>(),
     });
     CandidateSet {
@@ -427,10 +649,15 @@ pub fn analyze(view: &dyn IndexView, rules: &RuleSet, input: &AnalysisInput<'_>)
 /// computed state and tier for review, carry `experimental_preview`, and have no allowed modes,
 /// so no plan can be built from them.
 pub fn analyze_preview(view: &dyn IndexView, rule: &Rule, input: &AnalysisInput<'_>) -> CandidateSet {
+    analyze_preview_with(view, rule, input, &AnalysisProtection::default())
+}
+
+/// [`analyze_preview`] with the caller's protection layers.
+pub fn analyze_preview_with(view: &dyn IndexView, rule: &Rule, input: &AnalysisInput<'_>, prot: &AnalysisProtection<'_>) -> CandidateSet {
     let mut forced = rule.clone();
     forced.status = crate::rules::RuleStatus::Enabled;
     let set = RuleSet { rules: vec![forced], digest: format!("preview:{}@{}", rule.rule_id, rule.version) };
-    let mut out = analyze(view, &set, input);
+    let mut out = analyze_with(view, &set, input, prot);
     for c in &mut out.candidates {
         c.reasons.push("experimental_preview".into());
         c.allowed_modes.clear();

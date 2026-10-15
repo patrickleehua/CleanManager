@@ -5,7 +5,12 @@ mod apply_cmd;
 mod apps_cmd;
 mod args;
 mod commands;
+mod insights_cmd;
 mod plan_cmd;
+mod protect_cmd;
+mod recovery_cmd;
+mod startup_cmd;
+mod status_cmd;
 
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;

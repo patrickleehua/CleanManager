@@ -11,9 +11,14 @@ publish.workspace = true
 cm-core.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
-# Shell IFileOperation (recycle-bin moves) for the executor's trash action.
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp",
+    # Read-only startup publisher (Authenticode signer), status sampling (PDH, memory, power, battery) and insights.
+    "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_Security_Cryptography_Catalog", "Win32_Security_Cryptography_Sip",
+    "Win32_System_Performance", "Win32_System_Power", "Win32_System_SystemInformation", "Win32_Devices_DeviceAndDriverInstallation"] }
+# Shell IFileOperation (recycle-bin moves) for the executor's trash action; read-only IShellLink, Task Scheduler and
+# WMI queries for the startup inventory and disk insights.
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_Storage_FileSystem",
+    "Win32_System_TaskScheduler", "Win32_System_Variant", "Win32_System_Ole", "Win32_System_Wmi", "Win32_System_Com_StructuredStorage"] }
 windows-core = "=0.62.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

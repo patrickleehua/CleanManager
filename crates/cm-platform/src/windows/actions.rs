@@ -70,9 +70,21 @@ const ERROR_INVALID_PARAMETER: i32 = 87;
 const ERROR_INVALID_LEVEL: i32 = 124;
 const ERROR_ALREADY_EXISTS: i32 = 183;
 
-/// Windows implementation of the executor's file actions. Stateless; every call re-verifies.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct WindowsActions;
+/// Windows implementation of the executor's file actions. Every call re-verifies; the only
+/// state is which store directory hosts same-volume quarantine (default: the user store).
+#[derive(Debug, Clone, Default)]
+pub struct WindowsActions {
+    store_dir: Option<std::path::PathBuf>,
+}
+
+impl WindowsActions {
+    pub const DEFAULT: WindowsActions = WindowsActions { store_dir: None };
+
+    /// Quarantine under `dir` (the `--store` in use) when it is on the target's volume.
+    pub fn with_store(dir: std::path::PathBuf) -> Self {
+        WindowsActions { store_dir: Some(dir) }
+    }
+}
 
 // ---------------------------------------------------------------------------------------------
 // Handles and live metadata
@@ -898,7 +910,7 @@ impl FileActions for WindowsActions {
             return None;
         }
         let target_volume = &t.identity.volume_id;
-        if let Some(store) = crate::paths::default_store_dir() {
+        if let Some(store) = self.store_dir.clone().or_else(crate::paths::default_store_dir) {
             // The store may not exist yet: its nearest existing ancestor decides the volume.
             let probe = store.ancestors().find(|p| p.exists());
             let on_volume = probe.and_then(|p| super::directory::identity_of(&wide(p)).ok()).is_some_and(|(vol, _)| same_volume(&vol, target_volume));
@@ -956,6 +968,11 @@ impl FileActions for WindowsActions {
         (ok != 0).then_some(free)
     }
 }
+
+/// Restore and purge of quarantined objects (`windows/recovery.rs`); a child module so it reuses
+/// the private verified-handle helpers above.
+#[path = "recovery.rs"]
+pub mod recovery;
 
 #[cfg(test)]
 mod tests;

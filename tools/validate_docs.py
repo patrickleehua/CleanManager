@@ -53,7 +53,7 @@ def semantics(value):
                 else:
                     assert x["raw_encoding"] == "unix_bytes_base64", "platform encoding mismatch"
                     assert b"\x00" not in raw, "NUL path component"
-            if "started_at" in x and "finished_at" in x:
+            if "started_at" in x and x.get("finished_at") is not None:
                 assert datetime.fromisoformat(x["started_at"]) <= datetime.fromisoformat(x["finished_at"]), "reversed timestamps"
         elif isinstance(x, list):
             for v in x:
@@ -101,6 +101,22 @@ def semantics(value):
             assert delta is None, "delta requires both observations"
         else:
             assert delta is not None and int(delta) == int(after) - int(before), "incorrect observed delta"
+        processed = int(value["processed_logical_bytes"])
+        assert int(value["quarantined_logical_bytes"]) <= processed and int(value["estimated_freed_bytes"]) <= processed, "moved or freed more than processed"
+        if any(i["recovery"] in ("quarantine", "trash") for i in value["items"] if i["status"] == "succeeded"):
+            assert int(value["estimated_freed_bytes"]) < processed or processed == 0, "same-volume moves are not freed space"
+    elif kind == "operation_list":
+        assert len(value["items"]) <= value["page_size"], "page holds more items than page_size"
+        for o in value["items"]:
+            availability = o["recovery"]["availability"]
+            if o["action"] in ("delete", "purge"):
+                assert availability in ("unavailable", "not_applicable", "unknown"), "permanent deletes offer no undo"
+            if o["action"] == "trash":
+                assert availability in ("system_recycle_bin", "not_applicable", "unknown"), "trash is restored with the system UI only"
+            if availability == "in_app_restore":
+                assert o["action"] == "quarantine", "only quarantined objects are restorable in the product"
+            if o["counts"] is None or o["counts"]["unknown"]:
+                assert availability == "unknown", "unconfirmed outcomes cannot claim a recovery path"
     elif kind == "cli_request":
         params = value["params"]
         if value["non_interactive"]:
@@ -161,9 +177,21 @@ def semantics(value):
         for m in value["metrics"]:
             assert (m["value"] is not None) == (m["availability"] == "available"), "unavailable metrics must be null, never 0"
         assert sum(value["health"]["weights"].values()) == 100, "health weights must sum to 100"
+        for d in value["health"]["dimensions"]:
+            assert (d["value"] is None) == (d["score"] is None), "an unknown dimension has no score, never 0"
+    elif kind == "insight_list":
+        for i in value["items"]:
+            assert (i["logical_bytes"] is None) == (i["size_basis"] == "not_measured"), "unknown size must be null with basis not_measured"
+            assert i["logical_bytes"] is not None or i["size_note"], "an unknown size needs an explanation"
     elif kind == "protection_list":
         for e in value["items"]:
             assert e["removable"] == (e["layer"] == "user"), "only user protection entries are removable"
+    elif kind == "protection_check":
+        layers = [l["layer"] for l in value["layers"]]
+        assert layers == ["hard_deny", "default_category", "user"], "layers are reported strongest first, once each"
+        first = next((l for l in value["layers"] if l["result"] != "clear"), None)
+        assert (value["decision"] == "denied") == (first is not None), "any denied or unavailable layer denies"
+        assert value["layer"] == (first and first["layer"]) and (value["reason"] is None) == (first is None), "decision names the strongest denying layer"
     elif kind == "app_list":
         for a in value["items"]:
             if a["protected_class"]:
@@ -374,6 +402,14 @@ def main():
     reject("operation-cancel-claims-rollback", examples["operation-cancel-receipt"], lambda x: x.update(note="Rolled back."))
     reject("reconciliation-reported-complete", examples["operation-reconciliation"], lambda x: x.update(status="completed"))
     reject("reconciliation-reported-partial", examples["operation-reconciliation"], lambda x: x.update(status="partial"))
+    reject("same-volume-move-reported-freed", examples["operation-trash"], lambda x: x.update(estimated_freed_bytes="104857600"))
+    reject("quarantine-reminder-without-flag", examples["quarantine-list"], lambda x: x["items"][0].pop("reminder_due"))
+    reject("quarantine-overwrite-action", examples["quarantine-list"], lambda x: x["items"][0].update(available_actions=["overwrite"]))
+    history = examples["operation-list"]
+    reject("history-delete-offers-undo", history, lambda x: x["items"][2].update(action="delete", counts={"succeeded": 1, "skipped": 0,
+        "failed": 0, "not_started": 0, "unknown": 0}, recovery={"availability": "in_app_restore", "guidance": "Undo"}))
+    reject("history-trash-in-app-restore", history, lambda x: x["items"][1]["recovery"].update(availability="in_app_restore"))
+    reject("history-unknown-claims-recovery", history, lambda x: x["items"][2]["recovery"].update(availability="unavailable"))
     reject("v2-tampered-plan", uninstall, lambda x: x["body"]["items"][2]["target"].update(logical_bytes="1"))
     req, prev = examples["request-clean-preview"], examples["preview-clean"]
     reject("cli-noninteractive-review-only", req, lambda x: x["params"].update(include_tiers=["default_selected", "review_only"]))
@@ -397,6 +433,8 @@ def main():
     reject("maintenance-all-clear-with-failure", examples["maintenance-report"], lambda x: (x["items"][1].update(outcome="failed"),
         x["counts"].update(skipped=0, failed=1), x.update(all_clear=True)))
     reject("status-unavailable-as-zero", examples["status-snapshot"], lambda x: x["metrics"][1].update(value=0))
+    reject("status-unknown-dimension-scored", examples["status-snapshot"], lambda x: x["health"]["dimensions"][1].update(score=0))
+    reject("insight-unknown-size-as-zero", examples["insight-list"], lambda x: x["items"][1].update(logical_bytes="0"))
     reject("protection-hard-deny-removable", examples["protection-list"], lambda x: x["items"][0].update(removable=True))
     reject("app-protected-uninstallable", examples["app-list"], lambda x: x["items"][1]["uninstall_capability"].update(state="available"))
     cache_v2 = rules_v2["example-browser-code-cache"]
