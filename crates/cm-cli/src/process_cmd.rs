@@ -142,3 +142,9 @@ pub fn process_show(req: &str, p: &Parsed, _: &str) -> ExitCode {
 pub fn process_end(req: &str, p: &Parsed, _: &str) -> ExitCode {
     fail(req, ErrorCode::Unsupported, "ending processes is not implemented on this platform yet", p.format)
 }
+
+/// Seam for `plan apply` (plan/v2 backends): `process_end` re-identification on macOS. `None` = unsupported here.
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_processes() -> Option<Box<dyn cm_core::process::ProcessActions>> {
+    None
+}

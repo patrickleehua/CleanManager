@@ -310,6 +310,7 @@ impl ScanBackend for NtfsEnumBackend {
                     link_count: links,
                     cloud,
                     modified_unix: modified,
+                    shared_blocks: None,
                 });
                 next_object
             })

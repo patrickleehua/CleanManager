@@ -25,6 +25,7 @@ fn obj(id: u64, kind: ObjectKind, logical: Option<u64>) -> ObjectRow {
         link_count: Some(1),
         modified_unix: Some(1_700_000_000),
         cloud: CloudState::NotCloud,
+        shared_blocks: None,
     }
 }
 

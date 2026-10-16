@@ -23,44 +23,11 @@ fn actions(store_dir: &std::path::Path) -> impl cm_core::execute::FileActions {
     cm_platform::windows::actions::WindowsActions::with_store(store_dir.to_path_buf())
 }
 
-/// Platforms without verified write actions (MVP 9.5 pending): every live check reports
-/// unsupported, so plans are skipped item by item and nothing is touched.
-#[cfg(not(windows))]
-fn actions(_: &std::path::Path) -> impl cm_core::execute::FileActions {
-    Unsupported
-}
-
-#[cfg(not(windows))]
-struct Unsupported;
-
-#[cfg(not(windows))]
-impl cm_core::execute::FileActions for Unsupported {
-    fn check(&self, _: &cm_core::execute::ActionTarget<'_>) -> cm_core::execute::LiveCheck {
-        cm_core::execute::LiveCheck::Unsupported("file actions are not verified on this platform".into())
-    }
-    fn quarantine(&self, _: &cm_core::execute::ActionTarget<'_>, _: &cm_core::path::RawPath, _: &str) -> cm_core::execute::ActionOutcome {
-        unsupported()
-    }
-    fn trash(&self, _: &cm_core::execute::ActionTarget<'_>) -> cm_core::execute::ActionOutcome {
-        unsupported()
-    }
-    fn delete(&self, _: &cm_core::execute::ActionTarget<'_>) -> cm_core::execute::ActionOutcome {
-        unsupported()
-    }
-    fn quarantine_dir_for(&self, _: &cm_core::execute::ActionTarget<'_>, _: &str) -> Option<cm_core::path::RawPath> {
-        None
-    }
-    fn reconcile(&self, _: &cm_core::execute::ActionTarget<'_>, _: cm_core::rules::Mode, _: Option<&cm_core::path::RawPath>) -> cm_core::execute::Reconciled {
-        cm_core::execute::Reconciled::StillUnknown
-    }
-    fn free_space(&self, _: &cm_core::path::RawPath) -> Option<u64> {
-        None
-    }
-}
-
-#[cfg(not(windows))]
-fn unsupported() -> cm_core::execute::ActionOutcome {
-    cm_core::execute::ActionOutcome::Skipped { code: "unsupported".into(), message: "file actions are not verified on this platform".into() }
+/// macOS file actions (`cm_platform::macos::actions`): every live check reports unsupported until they are verified,
+/// so plans are skipped item by item and nothing is touched.
+#[cfg(target_os = "macos")]
+fn actions(store_dir: &std::path::Path) -> impl cm_core::execute::FileActions {
+    cm_platform::macos::actions::file_actions(store_dir)
 }
 
 fn current_rule_set_digest(p: &Parsed) -> Result<String, String> {
@@ -156,11 +123,10 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
     // PUR-03: purge plans re-read version-control state per artifact before acting.
     #[cfg(windows)]
     let gate = stored.as_ref().map(cm_platform::windows::purge::vcs_gate);
-    #[cfg(windows)]
+    // macOS: `None` until purge plans are created there (no version-control gate is needed for other plans).
+    #[cfg(target_os = "macos")]
+    let gate = stored.as_ref().and_then(crate::purge_cmd::mac_vcs_gate);
     let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t).and_then(|()| gate.as_ref().map_or(Ok(()), |g| g(t)));
-    // Purge plans are created on Windows only in this build, so there is no version-control gate elsewhere.
-    #[cfg(not(windows))]
-    let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t);
     let ctx = ApplyContext {
         principal: &principal,
         host: &host,
@@ -278,11 +244,35 @@ fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans:
     Ok(f(&b, is_admin))
 }
 
-#[cfg(not(windows))]
+/// macOS: each backend comes from its command module's seam (`None` = that plan kind's actions are unsupported here).
+#[cfg(target_os = "macos")]
 fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans::V2Backends<'_>, bool) -> T) -> Result<T, String> {
     let files = actions(&stores.dir);
-    let b = cm_app::plans::V2Backends { files: &files, startup: None, holders: &|_| None, protect_item: &|_| Ok(()), processes: None, updates: None, uninstall: None };
-    Ok(f(&b, false))
+    let startup = crate::startup_cmd::mac_startup_backend();
+    let is_admin = startup.as_ref().is_some_and(|s| s.is_admin());
+    let user = cm_platform::protection::load(&stores.dir);
+    let protect_item = |item_id: &str| -> Result<(), String> {
+        let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
+        match cm_core::protect::evaluate_task(item_id, user) {
+            cm_core::protect::ProtectionDecision::Allowed => Ok(()),
+            denied => Err(format!("{denied:?}")),
+        }
+    };
+    let holders = crate::trash_cmd::mac_holders();
+    let no_holders = |_: &[cm_core::path::RawPath]| -> Option<Vec<String>> { None };
+    let processes = crate::process_cmd::mac_processes();
+    let updates = crate::updates_cmd::mac_update_backend();
+    let uninstall = crate::uninstall_cmd::mac_uninstall_backend();
+    let b = cm_app::plans::V2Backends {
+        files: &files,
+        startup: startup.as_deref(),
+        holders: holders.as_deref().unwrap_or(&no_holders),
+        protect_item: &protect_item,
+        processes: processes.as_deref(),
+        updates: updates.as_deref(),
+        uninstall: uninstall.as_deref(),
+    };
+    Ok(f(&b, is_admin))
 }
 
 fn v2_apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, kind: cm_core::plan::v2::PlanKind) -> ExitCode {

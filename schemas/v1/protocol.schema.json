@@ -7419,6 +7419,7 @@
           "enum": [
             "authenticode",
             "package_identity",
+            "code_signature",
             "none"
           ]
         },
@@ -11114,7 +11115,11 @@
                 "winget",
                 "microsoft_store",
                 "scoop",
-                "self_updater"
+                "self_updater",
+                "sparkle",
+                "mac_app_store",
+                "homebrew",
+                "electron"
               ]
             },
             {
@@ -11217,7 +11222,11 @@
                 "enum": [
                   "winget",
                   "microsoft_store",
-                  "scoop"
+                  "scoop",
+                  "sparkle",
+                  "mac_app_store",
+                  "homebrew",
+                  "electron"
                 ]
               },
               "checked_at": {
@@ -11534,6 +11543,9 @@
             "msix_store",
             "scoop",
             "npm_global",
+            "app_bundle",
+            "homebrew",
+            "app_store",
             "unknown"
           ]
         },
@@ -11585,7 +11597,10 @@
                         "windows.msix-remove-package",
                         "winget.uninstall",
                         "scoop.uninstall",
-                        "npm.uninstall-global"
+                        "npm.uninstall-global",
+                        "macos.trash-app-bundle",
+                        "homebrew.uninstall-cask",
+                        "homebrew.uninstall-formula"
                       ]
                     },
                     "display": {
@@ -11920,6 +11935,9 @@
                     "msix",
                     "scoop",
                     "npm_global",
+                    "app_bundle",
+                    "homebrew",
+                    "app_store",
                     "unknown"
                   ]
                 }
@@ -12015,6 +12033,9 @@
                       "msix",
                       "scoop",
                       "npm_global",
+                      "app_bundle",
+                      "homebrew",
+                      "app_store",
                       "unknown"
                     ]
                   }

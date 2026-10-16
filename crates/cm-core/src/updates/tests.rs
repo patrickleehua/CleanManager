@@ -298,3 +298,9 @@ fn bound_target_argv_and_tool_are_checked() {
     fail.fail_upgrade = true;
     assert!(matches!(execute(&fail, &action(&t), Some(&note(&t))), UpdateOutcome::Failed { code, message } if code == "tool_exit_-1978335189" && message.contains("1603")));
 }
+
+#[test]
+fn macos_channels_have_their_wire_names() {
+    let names = [Channel::Sparkle, Channel::MacAppStore, Channel::Homebrew, Channel::Electron].map(|c| serde_json::to_value(c).unwrap());
+    assert_eq!(names, ["sparkle", "mac_app_store", "homebrew", "electron"].map(serde_json::Value::from));
+}

@@ -55,7 +55,35 @@ pub enum AppSource {
     Msi { hive: RegistryHive, view: RegistryView, product_code: String },
     /// A packaged (MSIX/AppX) application registered for the current user.
     Msix { package_family: String, full_name: String },
+    /// A macOS application bundle (`*.app`), identified by its `CFBundleIdentifier` and bundle path.
+    AppBundle { bundle_id: String, path: String },
+    /// A macOS application bundle with a Mac App Store receipt (`Contents/_MASReceipt/receipt`).
+    AppStore { bundle_id: String, path: String },
+    /// A Homebrew cask (`Caskroom/<token>`) or formula (`Cellar/<token>`). `kind` is stored as `package_kind` (the
+    /// enum's own tag is `kind`).
+    Homebrew {
+        token: String,
+        #[serde(rename = "package_kind")]
+        kind: HomebrewKind,
+    },
     Unknown,
+}
+
+/// Which Homebrew package type an instance was installed as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomebrewKind {
+    Cask,
+    Formula,
+}
+
+impl HomebrewKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HomebrewKind::Cask => "cask",
+            HomebrewKind::Formula => "formula",
+        }
+    }
 }
 
 impl AppSource {
@@ -65,6 +93,9 @@ impl AppSource {
             AppSource::RegistryUninstall { .. } => "registry_uninstall",
             AppSource::Msi { .. } => "msi",
             AppSource::Msix { .. } => "msix_store",
+            AppSource::AppBundle { .. } => "app_bundle",
+            AppSource::AppStore { .. } => "app_store",
+            AppSource::Homebrew { .. } => "homebrew",
             AppSource::Unknown => "unknown",
         }
     }
@@ -85,6 +116,9 @@ impl AppSource {
                 format!("msi\0{}\0{}\0{}", hive(h), view(v), product_code.to_ascii_uppercase())
             }
             AppSource::Msix { package_family, full_name } => format!("msix\0{package_family}\0{full_name}"),
+            AppSource::AppBundle { bundle_id, path } => format!("app_bundle\0{bundle_id}\0{path}"),
+            AppSource::AppStore { bundle_id, path } => format!("app_store\0{bundle_id}\0{path}"),
+            AppSource::Homebrew { token, kind } => format!("homebrew\0{}\0{token}", kind.as_str()),
             AppSource::Unknown => "unknown".to_owned(),
         }
     }
@@ -114,6 +148,16 @@ pub enum EvidenceKind {
     PackageRoot,
     Framework,
     ProtectedClass,
+    /// `CFBundleIdentifier` of a macOS bundle.
+    BundleId,
+    /// Team identifier of the bundle's code signature.
+    TeamId,
+    /// A Mac App Store receipt inside the bundle.
+    MasReceipt,
+    /// The Homebrew Caskroom/Cellar token that installed it.
+    CaskroomToken,
+    /// The bundle's `Info.plist` is missing or could not be parsed.
+    InfoPlistUnreadable,
 }
 
 impl EvidenceKind {
@@ -131,6 +175,11 @@ impl EvidenceKind {
             EvidenceKind::PackageRoot => "package_root",
             EvidenceKind::Framework => "framework",
             EvidenceKind::ProtectedClass => "protected_class",
+            EvidenceKind::BundleId => "bundle_id",
+            EvidenceKind::TeamId => "team_id",
+            EvidenceKind::MasReceipt => "mas_receipt",
+            EvidenceKind::CaskroomToken => "caskroom_token",
+            EvidenceKind::InfoPlistUnreadable => "info_plist_unreadable",
         }
     }
 }

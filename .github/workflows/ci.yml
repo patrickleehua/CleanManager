@@ -56,7 +56,7 @@ jobs:
       - name: Configure line endings
         run: git config --global core.autocrlf input
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Record actual runner and architecture
         run: |
@@ -89,14 +89,15 @@ jobs:
       - name: C compiler for bundled SQLite (rusqlite)
         run: cc --version || gcc --version || echo "MSVC toolchain (cl.exe) is used on Windows"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-${{ matrix.name }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+            apps/desktop/src-tauri/target
+          key: cargo-${{ matrix.name }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/desktop/src-tauri/Cargo.lock') }}
           restore-keys: cargo-${{ matrix.name }}-
 
       # PRT-03/04/05: tests/corpus/dangerous-paths.json against the modelled machine (cm-core),
@@ -112,7 +113,7 @@ jobs:
       - name: Lints
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -139,7 +140,7 @@ jobs:
         if: runner.os == 'Windows'
         run: python tools/package_release.py --smoke
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -151,6 +152,12 @@ jobs:
           npm ci
           npm run build
           npm test
+
+      # The desktop host has its own workspace and lock; on macOS it must at least compile (no bundle, no signing).
+      # After the webview build, whose output the Tauri context embeds.
+      - name: Desktop host compiles (macOS)
+        if: runner.os == 'macOS'
+        run: cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       - name: CI changed no tracked file (and no acceptance record)
         if: always()

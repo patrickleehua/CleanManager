@@ -245,3 +245,11 @@ mod win {
         plan_from_sets(req, p, LAST_RUN_PURGE, &is_purge, None)
     }
 }
+
+/// Seam for `plan apply` (PUR-03): the version-control gate of purge plans on macOS, re-reading each artifact's
+/// repository state before it is acted on. `None` = no purge plans are created on macOS in this build.
+#[cfg(target_os = "macos")]
+#[allow(clippy::type_complexity)]
+pub(crate) fn mac_vcs_gate(_plan: &cm_core::plan::Plan) -> Option<Box<dyn Fn(&cm_core::execute::ActionTarget<'_>) -> Result<(), String>>> {
+    None
+}

@@ -208,3 +208,19 @@ fn associated_directories_are_explained_but_still_not_candidates() {
     let json = serde_json::to_value(&by_identity).unwrap();
     assert_eq!(json["cleanup_candidate"], false);
 }
+
+#[test]
+fn macos_sources_have_their_wire_names_and_distinct_identities() {
+    let bundle = AppSource::AppBundle { bundle_id: "com.example.Editor".into(), path: "/Applications/Editor.app".into() };
+    let store = AppSource::AppStore { bundle_id: "com.example.Editor".into(), path: "/Applications/Editor.app".into() };
+    let cask = AppSource::Homebrew { token: "editor".into(), kind: HomebrewKind::Cask };
+    let formula = AppSource::Homebrew { token: "editor".into(), kind: HomebrewKind::Formula };
+    assert_eq!([bundle.wire_name(), store.wire_name(), cask.wire_name()], ["app_bundle", "app_store", "homebrew"]);
+    let ids: std::collections::BTreeSet<String> = [&bundle, &store, &cask, &formula].iter().map(|s| instance_id_of(s, None)).collect();
+    assert_eq!(ids.len(), 4, "same bundle id or token under another source is another instance");
+    let back: AppSource = serde_json::from_value(serde_json::to_value(&cask).unwrap()).unwrap();
+    assert_eq!(back, cask);
+    assert_eq!(serde_json::to_value(&cask).unwrap()["package_kind"], "cask");
+    let kinds = [EvidenceKind::BundleId, EvidenceKind::TeamId, EvidenceKind::MasReceipt, EvidenceKind::CaskroomToken, EvidenceKind::InfoPlistUnreadable];
+    assert_eq!(kinds.map(EvidenceKind::wire), ["bundle_id", "team_id", "mas_receipt", "caskroom_token", "info_plist_unreadable"]);
+}

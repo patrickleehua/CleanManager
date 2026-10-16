@@ -151,7 +151,32 @@ fn an_unmigratable_index_is_reported_as_rebuildable_and_never_touches_the_audit_
     let rebuilt = crate::Stores::rebuild_index(&dir);
     assert!(rebuilt.is_ok());
     assert_eq!(snapshot(&audit), ("reconciliation_required".into(), "recoverable".into(), None, "1".into()));
-    assert_eq!(store_versions(&dir), (Some("1".into()), Some("1".into())));
+    assert_eq!(store_versions(&dir), (Some(crate::index::INDEX_SCHEMA_VERSION.into()), Some("1".into())));
+}
+
+#[test]
+fn index_v1_gains_the_shared_blocks_column_and_keeps_its_rows() {
+    let dir = scratch("mig-index-v1-v2");
+    let index = dir.join(crate::INDEX_FILE);
+    drop(IndexStore::open(&index).unwrap());
+    {
+        // Recreate the released v1 shape: no shared_blocks column, one object row, version 1.
+        let c = Connection::open(&index).unwrap();
+        c.execute_batch(
+            "ALTER TABLE objects DROP COLUMN shared_blocks;
+             INSERT INTO objects(scan_id,revision,object_id,volume_id,file_id,generation,quality,kind,logical_be,allocated_be,link_count,cloud,modified_unix)
+             VALUES('s1',1,1,'v','inode64:01',NULL,'strong','file',NULL,NULL,1,'not_cloud',NULL);
+             UPDATE meta SET value='1' WHERE key='schema_version';",
+        )
+        .unwrap();
+    }
+    drop(IndexStore::open(&index).unwrap());
+    assert_eq!(store_versions(&dir).0.as_deref(), Some("2"));
+    assert_eq!(log_events(&dir), ["started", "completed"]);
+    let c = Connection::open(&index).unwrap();
+    let kept: (String, Option<i64>) = c.query_row("SELECT file_id, shared_blocks FROM objects WHERE object_id=1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(kept, ("inode64:01".into(), None), "v1 rows keep NULL = not determined");
+    c.execute("UPDATE objects SET shared_blocks=1 WHERE object_id=1", []).unwrap();
 }
 
 #[test]

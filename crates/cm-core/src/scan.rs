@@ -23,6 +23,10 @@ pub struct ObjectRow {
     /// Last modification time in Unix seconds (from metadata only); `None` when unavailable.
     /// It is not a last-use time and never satisfies an age rule when missing (CAT-07).
     pub modified_unix: Option<i64>,
+    /// Some of the object's blocks are shared with another object (APFS clone): `Some(true)` when the platform saw
+    /// sharing, `Some(false)` when it established there is none, `None` when it did not or could not tell (Windows).
+    /// A shared or unknown object's reclaimable space is not its allocated size (`shared_blocks_unknown`).
+    pub shared_blocks: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

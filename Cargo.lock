@@ -114,7 +114,9 @@ version = "0.1.0"
 dependencies = [
  "cm-core",
  "cm-fixtures",
+ "core-foundation",
  "libc",
+ "security-framework",
  "windows",
  "windows-core",
  "windows-sys",

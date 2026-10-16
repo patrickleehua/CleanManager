@@ -14,6 +14,9 @@ export const SOURCE_WORD: Record<string, string> = {
   msix_store: '商店 / MSIX 包',
   scoop: 'Scoop',
   npm_global: 'npm 全局包',
+  app_bundle: '应用包（.app）',
+  homebrew: 'Homebrew',
+  app_store: 'Mac App Store',
   unknown: '来源未知',
 };
 
@@ -69,6 +72,10 @@ export const CHANNEL_WORD: Record<UpdateChannel, string> = {
   microsoft_store: 'Microsoft Store',
   scoop: 'Scoop（本地 bucket）',
   self_updater: '应用自带更新器',
+  sparkle: 'Sparkle 更新源',
+  mac_app_store: 'Mac App Store',
+  homebrew: 'Homebrew',
+  electron: 'Electron 更新源（仅检测）',
 };
 
 export const ROUTE_WORD: Record<UpdateRoute, string> = {

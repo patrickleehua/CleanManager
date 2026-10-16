@@ -17,7 +17,9 @@ PURPOSE = {
     "windows-sys": "Windows API bindings for process liveness, scan backends and verified file actions",
     "windows": "COM bindings for the Shell IFileOperation recycle-bin action and its progress sink",
     "windows-core": "Required by the windows crate COM implement macro (referenced by name)",
-    "libc": "macOS system calls (process liveness via kill/proc_pidinfo, later POSIX scan backend)",
+    "libc": "macOS system calls (process liveness via kill/proc_pidinfo, POSIX and getattrlistbulk scan backends)",
+    "core-foundation": "macOS CoreFoundation types (CFString/CFDictionary/CFURL, property lists) for app bundles, Service Management and power assertions; macOS-only",
+    "security-framework": "macOS code-signature checks (SecStaticCode signer / Team ID of bundles, startup targets and update packages); macOS-only, already in the lock through native-tls",
     "ureq": "Blocking HTTP client for the optional AI diagnosis API adapters and the person-initiated CLI self-update download (native-tls: OS TLS stack and trust store; diagnosis: no redirects, no retries; self-update: https only, at most 5 redirects, size-bounded)",
     "ed25519-dalek": "Ed25519 signature verification of the CLI self-update manifest with release keys embedded at build time (LIF-01); vetted dalek-cryptography implementation, verification only (no default features, no key generation)",
 }

@@ -274,3 +274,11 @@ pub fn trash_list(req: &str, p: &Parsed) -> ExitCode {
 pub fn trash_purge(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
+
+/// Seam for `plan apply` (plan/v2 backends): names of the processes holding these files open on macOS. `None` = no
+/// holder query in this build (D6: the result is shown as unknown, nothing is ended).
+#[cfg(target_os = "macos")]
+#[allow(clippy::type_complexity)]
+pub(crate) fn mac_holders() -> Option<Box<dyn Fn(&[cm_core::path::RawPath]) -> Option<Vec<String>>>> {
+    None
+}

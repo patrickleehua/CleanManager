@@ -33,37 +33,15 @@ pub fn actions() -> impl RecoveryActions {
 }
 
 /// Whether this build has a verified restore/purge implementation for the platform.
-const RESTORE_VERIFIED: bool = cfg!(windows);
+#[cfg(windows)]
+const RESTORE_VERIFIED: bool = true;
+#[cfg(target_os = "macos")]
+const RESTORE_VERIFIED: bool = cm_platform::macos::actions::recovery::RESTORE_VERIFIED;
 
-/// Platforms without verified recovery actions (macOS pending, MVP 10.4): nothing is touched.
-#[cfg(not(windows))]
+/// macOS recovery actions (`cm_platform::macos::actions::recovery`; pending, MVP 10.4): nothing is touched until verified.
+#[cfg(target_os = "macos")]
 pub fn actions() -> impl RecoveryActions {
-    Unsupported
-}
-
-#[cfg(not(windows))]
-struct Unsupported;
-
-#[cfg(not(windows))]
-impl RecoveryActions for Unsupported {
-    fn probe(&self, _: &cm_core::recovery::QuarantinedObject<'_>) -> QuarantineState {
-        QuarantineState::Unknown
-    }
-    fn restore(&self, _: &cm_core::recovery::QuarantinedObject<'_>) -> cm_core::recovery::RecoveryOutcome {
-        cm_core::recovery::RecoveryOutcome::Skipped { code: "unsupported".into(), message: "recovery actions are not verified on this platform".into() }
-    }
-    fn purge(&self, o: &cm_core::recovery::QuarantinedObject<'_>) -> cm_core::recovery::RecoveryOutcome {
-        self.restore(o)
-    }
-    fn reconcile(&self, _: &cm_core::recovery::QuarantinedObject<'_>, _: RecoveryKind) -> cm_core::execute::Reconciled {
-        cm_core::execute::Reconciled::StillUnknown
-    }
-    fn free_space(&self, _: &cm_core::path::RawPath) -> Option<u64> {
-        None
-    }
-    fn metadata_coverage(&self) -> cm_core::recovery::MetadataCoverage {
-        cm_core::recovery::MetadataCoverage { preserved: vec![], limits: vec!["recovery actions are not verified on this platform"] }
-    }
+    cm_platform::macos::actions::recovery::recovery_actions()
 }
 
 fn page_args(req: &str, p: &Parsed) -> Result<u32, ExitCode> {

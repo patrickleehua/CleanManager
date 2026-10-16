@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 use cm_core::path::RawPath;
 use cm_core::protect::{self, HardDenyClass, HardDenyRoot, HardDenySet, IdentityChain, LinkResolution, ObjectIdentity, ProtectionDecision, ResolvedTarget};
 
-use super::sys::{Fd, describe, volume_of};
+use super::ids;
+use super::sys::{Fd, describe};
 
 fn cstr(p: &Path) -> Result<CString, String> {
     CString::new(p.as_os_str().as_bytes()).map_err(|_| "path contains NUL".to_owned())
@@ -61,12 +62,12 @@ impl Identifier {
         let volume = match self.volumes.get(&st.st_dev) {
             Some(v) => v.clone(),
             None => {
-                let v = volume_of(&fd, st.st_dev).map_err(describe)?.id;
+                let v = ids::volume_id(&fd, st.st_dev).map_err(describe)?;
                 self.volumes.insert(st.st_dev, v.clone());
                 v
             }
         };
-        Ok(ObjectIdentity::new(volume, format!("inode64:{:016x}", st.st_ino)))
+        Ok(ObjectIdentity::new(volume, ids::file_id(st.st_ino)))
     }
 
     /// Final location of a symlink and the identities of it and its ancestors.

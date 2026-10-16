@@ -240,7 +240,7 @@ impl Run<'_> {
         if let Err(why) = (b.protect_item)(&a.startup_item_id) {
             return res(id, ActionStatus::Skipped, "protected", why, "not_applicable");
         }
-        if loc.hive() == cm_core::plan::v2::Hive::Hklm && !sa.is_admin() {
+        if loc.system_wide() && !sa.is_admin() {
             return res(id, ActionStatus::Skipped, "permission_required", cm_core::startup::ADMIN_REQUIRED, "not_applicable");
         }
         let expected = a.observed_sha256.as_deref().unwrap_or_default();

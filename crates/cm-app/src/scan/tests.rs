@@ -31,6 +31,7 @@ fn row(id: u64, parent: Option<u64>, kind: ObjectKind) -> (ObjectRow, EntryRow) 
         link_count: None,
         modified_unix: None,
         cloud: CloudState::NotCloud,
+        shared_blocks: None,
     };
     let name = if parent.is_none() { "/r".to_string() } else { format!("n{id}") };
     let e = EntryRow { entry_id: id, parent_entry_id: parent, name: RawPath::unix(name.into_bytes()).unwrap(), object_id: id, kind, boundary: None };

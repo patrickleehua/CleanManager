@@ -127,7 +127,15 @@ export interface Leftovers {
 
 export type UpdateState = 'update_available' | 'up_to_date' | 'cannot_check' | 'not_checked';
 export type UpdateRoute = 'package_manager' | 'open_store' | 'open_app' | 'open_official_page' | 'none';
-export type UpdateChannel = 'winget' | 'microsoft_store' | 'scoop' | 'self_updater';
+export type UpdateChannel =
+  | 'winget'
+  | 'microsoft_store'
+  | 'scoop'
+  | 'self_updater'
+  | 'sparkle'
+  | 'mac_app_store'
+  | 'homebrew'
+  | 'electron';
 
 export interface UpdateCheck {
   app_instance_id: string;

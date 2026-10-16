@@ -20,6 +20,8 @@
 //! value `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CleanManager.Resident` (RES-01/07,
 //! `docs/resident-utilities.md`); when it exists it is listed as a `system_setting` item
 //! (`remove_run_value`) and removed by that exact name. Nothing else is searched for or removed.
+//! On macOS this build creates no startup entry at all (no resident component there yet), and the
+//! note says so instead of naming the Windows Run value.
 //!
 //! Package-manager installs are not removed here: the plan names the package manager's command.
 
@@ -167,17 +169,26 @@ fn files_below(dir: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) {
     }
 }
 
+/// What this program installed that starts on its own: only the desktop tray's opt-in startup value, on Windows.
+fn startup_note(resident_present: bool) -> String {
+    if cfg!(windows) {
+        format!(
+            "No service, scheduled task, helper or background process is installed. The only startup entry CleanManager creates is the desktop tray's opt-in value HKCU\\{}\\{} ({}); no other system setting is changed.",
+            cm_core::resident::RUN_SUBKEY,
+            cm_core::resident::RUN_VALUE_NAME,
+            if resident_present { "present, listed for removal" } else { "not present" }
+        )
+    } else {
+        "No launch agent, launch daemon, login item, privileged helper or background process is installed: the resident menu bar component is not available on macOS in this build, so CleanManager creates no startup entry and changes no other system setting.".into()
+    }
+}
+
 /// Build the plan. Reads only; nothing is changed.
 pub fn plan(inp: &Inputs<'_>) -> Plan {
     let mut items: Vec<Item> = Vec::new();
     let mut keep = Vec::new();
     let mut warnings = Vec::new();
-    let mut notes = vec![format!(
-        "No service, scheduled task, helper or background process is installed. The only startup entry CleanManager creates is the desktop tray's opt-in value HKCU\\{}\\{} ({}); no other system setting is changed.",
-        cm_core::resident::RUN_SUBKEY,
-        cm_core::resident::RUN_VALUE_NAME,
-        if inp.resident_startup.is_some() { "present, listed for removal" } else { "not present" }
-    )];
+    let mut notes = vec![startup_note(inp.resident_startup.is_some())];
     let mut push = |component: &'static str, action: &'static str, path: PathBuf, display: String, sha256: Option<String>| {
         let item_id = format!("i{:03}", items.len() + 1);
         items.push(Item { item_id, component, action, path, display, sha256 });

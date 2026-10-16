@@ -92,7 +92,7 @@ pub mod ids {
     pub const IMAGE_HEALTH: &str = "windows.image-health-check";
 }
 
-/// Windows first batch (14.2). macOS tasks (14.3) are planned and not in this build.
+/// Windows first batch (14.2).
 pub const WINDOWS_TASKS: &[TaskSpec] = &[
     TaskSpec {
         id: ids::SHELL_RESTART,
@@ -161,16 +161,21 @@ pub const WINDOWS_TASKS: &[TaskSpec] = &[
     },
 ];
 
-/// The catalog of a platform (macOS: planned, empty in this build).
+/// macOS first batch (14.3/14.5): filled as each task's runner lands in `cm_platform::macos::maintenance`; empty in
+/// this build. Admin tasks are skipped `elevation_unavailable` (no privilege path on macOS in this build).
+pub const MACOS_TASKS: &[TaskSpec] = &[];
+
+/// The catalog of a platform.
 pub fn catalog(platform: TaskPlatform) -> &'static [TaskSpec] {
     match platform {
         TaskPlatform::Windows => WINDOWS_TASKS,
-        TaskPlatform::Macos => &[],
+        TaskPlatform::Macos => MACOS_TASKS,
     }
 }
 
+/// A task of either platform's catalog by ID (task IDs carry their platform prefix, so they never collide).
 pub fn find(task_id: &str) -> Option<&'static TaskSpec> {
-    WINDOWS_TASKS.iter().find(|t| t.id == task_id)
+    WINDOWS_TASKS.iter().chain(MACOS_TASKS).find(|t| t.id == task_id)
 }
 
 /// `rule_set_digest` of maintenance plans: the platform catalog (ID, version, admin flag).

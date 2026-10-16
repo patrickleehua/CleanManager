@@ -282,3 +282,23 @@ fn record_digest_changes_with_the_command() {
     assert!(tool_instance_id(RecordSource::Scoop, "x").starts_with("app_"));
     assert_ne!(tool_instance_id(RecordSource::Scoop, "x"), tool_instance_id(RecordSource::NpmGlobal, "x"));
 }
+
+#[test]
+fn macos_adapter_ids_round_trip_and_macos_records_never_reach_windows_adapters() {
+    for (k, id) in [
+        (AdapterKind::MacTrashAppBundle, "macos.trash-app-bundle"),
+        (AdapterKind::HomebrewCask, "homebrew.uninstall-cask"),
+        (AdapterKind::HomebrewFormula, "homebrew.uninstall-formula"),
+    ] {
+        assert_eq!((k.adapter_id(), AdapterKind::from_adapter_id(id)), (id, Some(k)));
+    }
+    assert!(AdapterKind::HomebrewCask.package_manager() && !AdapterKind::MacTrashAppBundle.package_manager());
+    for source in [RecordSource::AppBundle, RecordSource::Homebrew, RecordSource::AppStore] {
+        let rec: UninstallRecord = serde_json::from_value(serde_json::json!({
+            "instance_id": "app_x", "name": "Editor", "source": source, "system_component": false,
+            "uninstall_string": r"C:\Tools\unins000.exe"})).expect("record shape");
+        let err = select_adapter(&rec, &AdapterEnv::default(), &|_| true).unwrap_err();
+        assert_eq!(err.code, "unsupported");
+        assert!(["app_bundle", "homebrew", "app_store"].contains(&rec.wire_source()));
+    }
+}

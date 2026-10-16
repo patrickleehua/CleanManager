@@ -129,3 +129,9 @@ pub fn updates_show(req: &str, p: &Parsed) -> ExitCode {
 pub fn update_plan(req: &str, p: &Parsed) -> ExitCode {
     fail(req, ErrorCode::Unsupported, "app updates are not implemented on this platform yet", p.format)
 }
+
+/// Seam for `plan apply` (plan/v2 backends): the `update` plans' channel steps on macOS. `None` = unsupported here.
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_update_backend() -> Option<Box<dyn cm_core::updates::UpdateBackend>> {
+    None
+}

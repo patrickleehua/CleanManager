@@ -20,6 +20,7 @@ use cm_core::model::{BoundaryKind, CloudState, IdentityQuality, ObjectKind, Scan
 use cm_core::path::RawPath;
 use cm_core::scan::{EntryRow, ObjectRow, RootProbe, ScanIssue, ScanOptions, ScanReport, ScanSink, SkippedRow};
 
+use super::ids;
 use super::sys::{Fd, Kind, Meta, NoMaterialize, Record, SF_DATALESS, describe, volume_of};
 
 /// Directory descriptors kept open along the current path. Deeper trees release the
@@ -209,7 +210,7 @@ impl Ctx<'_> {
         self.objects.push(ObjectRow {
             object_id: id,
             volume_id: self.volume_id.clone(),
-            file_id: format!("inode64:{:016x}", meta.ino),
+            file_id: ids::file_id(meta.ino),
             generation: None,
             quality: if strong { IdentityQuality::Strong } else { IdentityQuality::Weak },
             kind,
@@ -218,6 +219,7 @@ impl Ctx<'_> {
             link_count,
             cloud,
             modified_unix: meta.mtime,
+            shared_blocks: None,
         });
         id
     }

@@ -221,7 +221,7 @@ pub(crate) struct Volume {
     /// `f_fstypename`, e.g. `apfs`, `hfs`, `msdos`, `smbfs`.
     pub filesystem: String,
     /// `uuid:<UUID>` when the volume UUID could be read and matched to the root's device,
-    /// otherwise `fsid:<hex>` (not stable across reboots or remounts).
+    /// otherwise `fsid:<hex>` (not stable across reboots or remounts); spelled by `ids`.
     pub id: String,
     pub has_uuid: bool,
 }
@@ -235,16 +235,11 @@ pub(crate) fn volume_of(root: &Fd, dev: i32) -> Result<Volume, i32> {
     let filesystem = String::from_utf8_lossy(&c_chars_to_bytes(&sfs.f_fstypename)).into_owned();
     let mount_on = c_chars_to_bytes(&sfs.f_mntonname);
     if let Some(uuid) = CString::new(mount_on).ok().and_then(|m| volume_uuid(&m, dev)) {
-        return Ok(Volume { filesystem, id: format!("uuid:{}", format_uuid(&uuid)), has_uuid: true });
+        return Ok(Volume { filesystem, id: super::ids::uuid_volume_id(&uuid), has_uuid: true });
     }
     // SAFETY: fsid_t is two i32 values with private field names; read them as plain data.
     let fsid: [i32; 2] = unsafe { std::ptr::read((&sfs.f_fsid as *const libc::fsid_t).cast::<[i32; 2]>()) };
-    Ok(Volume { filesystem, id: format!("fsid:{:08x}{:08x}", fsid[0] as u32, fsid[1] as u32), has_uuid: false })
-}
-
-fn format_uuid(u: &[u8; 16]) -> String {
-    let h: Vec<String> = u.iter().map(|b| format!("{b:02X}")).collect();
-    format!("{}-{}-{}-{}-{}", h[0..4].concat(), h[4..6].concat(), h[6..8].concat(), h[8..10].concat(), h[10..16].concat())
+    Ok(Volume { filesystem, id: super::ids::fsid_volume_id(fsid), has_uuid: false })
 }
 
 /// UUID of the volume mounted at `mount_on`, accepted only when that mount's device is the
@@ -357,11 +352,5 @@ mod tests {
         assert_eq!(parse_volume_uuid(&reply(44, libc::ATTR_CMN_DEVID, 0, 7, uuid), 7), None, "UUID not returned");
         assert_eq!(parse_volume_uuid(&reply(44, libc::ATTR_CMN_DEVID, libc::ATTR_VOL_UUID, 7, [0; 16]), 7), None);
         assert_eq!(parse_volume_uuid(&[], 7), None);
-    }
-
-    #[test]
-    fn uuid_text_is_canonical() {
-        let u = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
-        assert_eq!(format_uuid(&u), "01234567-89AB-CDEF-0123-456789ABCDEF");
     }
 }

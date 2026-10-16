@@ -117,7 +117,8 @@ impl FileActions for Fake {
 
 fn obj(id: u64, kind: ObjectKind, size: Option<u64>) -> ObjectRow {
     ObjectRow { object_id: id, volume_id: "v".into(), file_id: format!("inode64:{id:016x}"), generation: None, quality: IdentityQuality::Strong,
-        kind, logical: size, allocated: size, link_count: Some(1), cloud: CloudState::NotCloud, modified_unix: Some(T0 - 1000) }
+        kind, logical: size, allocated: size, link_count: Some(1), cloud: CloudState::NotCloud, modified_unix: Some(T0 - 1000),
+        shared_blocks: None }
 }
 
 fn ent(id: u64, parent: Option<u64>, name: &str, kind: ObjectKind) -> EntryRow {

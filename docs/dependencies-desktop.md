@@ -50,7 +50,7 @@
 | `chrono` | 0.4.45 | MIT OR Apache-2.0 | crates.io | Transitive: required by serde_with |
 | `combine` | 4.6.8 | MIT | crates.io | Transitive: required by jni |
 | `cookie` | 0.18.2 | MIT OR Apache-2.0 | crates.io | Transitive: required by tauri, tauri-runtime, wry |
-| `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by core-graphics, core-graphics-types, security-framework, tao |
+| `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by cm-platform, core-graphics, core-graphics-types, security-framework, tao |
 | `core-foundation-sys` | 0.8.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by core-foundation, iana-time-zone, security-framework, security-framework-sys |
 | `core-graphics` | 0.25.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by tao |
 | `core-graphics-types` | 0.2.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by core-graphics |
@@ -277,7 +277,7 @@
 | `schemars` | 1.2.3 | MIT | crates.io | Transitive: required by serde_with |
 | `schemars_derive` | 0.8.22 | MIT | crates.io | Transitive: required by schemars |
 | `scopeguard` | 1.2.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by lock_api |
-| `security-framework` | 3.7.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls |
+| `security-framework` | 3.7.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by cm-platform, native-tls |
 | `security-framework-sys` | 2.17.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls, security-framework |
 | `selectors` | 0.38.0 | MPL-2.0 | crates.io | Transitive: required by dom_query |
 | `semver` | 1.0.28 | MIT OR Apache-2.0 | crates.io | Transitive: required by cargo_metadata, cargo_toml, rustc_version, tauri-build, tauri-codegen, tauri-utils |

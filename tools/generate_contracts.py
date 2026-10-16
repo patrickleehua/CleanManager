@@ -394,7 +394,7 @@ def main():
     defs["app_list"] = record("app_list", {"items": arr(ref("app_instance")), **page})
     defs["startup_item"] = obj({"startup_item_id": STR, "name": STR, "source": action_props["startup_toggle"]["source"],
         "definition": STR, "target": nullable(ref("path")), "publisher": nullable(STR),
-        "publisher_evidence": enum("authenticode", "package_identity", "none"), "scope": enum("user", "system"),
+        "publisher_evidence": enum("authenticode", "package_identity", "code_signature", "none"), "scope": enum("user", "system"),
         "state": enum("enabled", "disabled", "broken", "target_unreachable"), "toggle_capability": capability_state,
         "protected": {"type": "boolean"}, "reason": nullable(STR)})
     defs["startup_list"] = record("startup_list", {"items": arr(ref("startup_item")), "issues": arr(ref("issue"))})
@@ -562,12 +562,14 @@ def main():
     # Parity 10.x (UPD-01..04): "up to date" only with a channel that answered and a check time.
     update_route = enum("package_manager", "open_store", "open_app", "open_official_page", "none")
     defs["app_update"] = obj({"app_instance_id": STR, "name": STR, "current_version": nullable(STR), "available_version": nullable(STR),
-        "channel": nullable(enum("winget", "microsoft_store", "scoop", "self_updater")), "channel_id": nullable(STR),
+        "channel": nullable(enum("winget", "microsoft_store", "scoop", "self_updater", "sparkle", "mac_app_store", "homebrew", "electron")),
+        "channel_id": nullable(STR),
         "state": enum("update_available", "up_to_date", "cannot_check", "not_checked"), "reason": nullable(STR), "checked_at": nullable(TIME),
         "route": update_route, "official_url": nullable(STR)})
     defs["app_update"]["allOf"] = [
         {"if": {"properties": {"state": {"enum": ["up_to_date", "update_available"]}}},
-         "then": {"properties": {"channel": {"enum": ["winget", "microsoft_store", "scoop"]}, "checked_at": TIME}}},
+         "then": {"properties": {"channel": {"enum": ["winget", "microsoft_store", "scoop", "sparkle", "mac_app_store", "homebrew", "electron"]},
+                                  "checked_at": TIME}}},
         {"if": {"properties": {"state": {"const": "cannot_check"}}}, "then": {"properties": {"reason": STR}}}]
     defs["app_update_list"] = record("app_update_list", {"checks_enabled": BOOL, "checked": BOOL, "checked_at": nullable(TIME),
         "counts": obj({"update_available": COUNT, "up_to_date": COUNT, "cannot_check": COUNT, "not_checked": COUNT}), "items": arr(ref("app_update"))})
@@ -580,10 +582,12 @@ def main():
               "app_update_list", "app_update_settings", "app_update_plan"]
     # Parity 9.x (UNI-01..10): uninstall routes and the grouped leftover review.
     defs["app_uninstall_route"] = obj({"app_instance_id": STR, "name": STR, "version": nullable(STR), "publisher": nullable(STR),
-        "source": enum("registry_uninstall", "msi", "msix_store", "scoop", "npm_global", "unknown"), "location": nullable(STR),
+        "source": enum("registry_uninstall", "msi", "msix_store", "scoop", "npm_global", "app_bundle", "homebrew", "app_store", "unknown"),
+        "location": nullable(STR),
         "last_used_at": nullable(TIME), "protected_class": {"type": "boolean"}, "uninstall": obj({"state": enum("available", "unsupported", "unverified"),
             "adapter": nullable(obj({"adapter_id": enum("windows.registered-uninstaller", "windows.msiexec-uninstall", "windows.msix-remove-package",
-                "winget.uninstall", "scoop.uninstall", "npm.uninstall-global"), "display": STR, "package_manager": {"type": "boolean"}})),
+                "winget.uninstall", "scoop.uninstall", "npm.uninstall-global", "macos.trash-app-bundle", "homebrew.uninstall-cask",
+                "homebrew.uninstall-formula"), "display": STR, "package_manager": {"type": "boolean"}})),
             "reason": nullable(STR), "settings_uri": nullable(STR)})})
     defs["app_uninstall_list"] = record("app_uninstall_list", {"items": arr(ref("app_uninstall_route")), "issues": arr(ref("issue"))})
     defs["uninstall_leftover"] = obj({"object_id": STR, "kind": enum("directory", "file", "registry_key", "startup_entry", "shortcut", "service"),
@@ -596,7 +600,7 @@ def main():
         {"if": {"properties": {"selected": {"const": True}}}, "then": {"properties": {"group": {"const": "caches_logs"}, "tier": {"const": "default_selected"}}}},
         {"if": {"required": ["marker"], "properties": {"marker": {"type": "string"}}}, "then": {"properties": {"tier": {"const": "kept"}}}}]
     leftover_app = obj({"app_instance_id": STR, "name": STR, "publisher": nullable(STR),
-        "source": enum("registry_uninstall", "msi", "msix", "scoop", "npm_global", "unknown")})
+        "source": enum("registry_uninstall", "msi", "msix", "scoop", "npm_global", "app_bundle", "homebrew", "app_store", "unknown")})
     leftover_groups = arr(obj({"group": enum(*uninstall_groups), "items": arr(ref("uninstall_leftover"), 1)}))
     defs["uninstall_leftovers"] = record("uninstall_leftovers", {"operation_id": nullable(STR),
         "app": nullable(leftover_app), "groups": leftover_groups, "default_selected": COUNT, "external_references": arr(STR)})

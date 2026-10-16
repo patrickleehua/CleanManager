@@ -121,3 +121,9 @@ pub fn startup_plan(req: &str, p: &Parsed, _: &str, _: &str) -> ExitCode {
     let _ = refusal_code;
     crate::fail(req, cm_core::error::ErrorCode::Unsupported, "startup changes are not implemented on this platform yet", p.format)
 }
+
+/// Seam for `plan apply` (plan/v2 backends): login/background item and launchd changes on macOS. `None` = unsupported here.
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_startup_backend() -> Option<Box<dyn cm_core::startup::StartupActions>> {
+    None
+}

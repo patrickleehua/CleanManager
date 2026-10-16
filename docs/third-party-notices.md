@@ -6,8 +6,8 @@
 
 锁文件摘要（SHA-256）：
 
-- `Cargo.lock`：`39c815673271fae47aeb80a9447d6e73ddd165d323e3c684e96b588049eec824`
-- `apps/desktop/src-tauri/Cargo.lock`：`b2c3c6139eb68d36224f6b0ee4a1a94ebce9ecae5b45c36160ef212aa82a483a`
+- `Cargo.lock`：`0e577a8aa0476a481002b879ce1cd2f2812981026cb31d81658e439d1f9246b2`
+- `apps/desktop/src-tauri/Cargo.lock`：`d5f226f5f1558f06686373b340ddcef723739ad748f974432b2210a7af256f62`
 - `apps/desktop/package-lock.json`：`6255597f6fc0cea30b63690a3fd185394b8cc95747cf02450e460a3a093c8c7c`
 
 ## 许可汇总

@@ -17,7 +17,7 @@
 | `bytes` | 1.12.1 | MIT | crates.io | Transitive: required by http |
 | `cc` | 1.8.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by libsqlite3-sys, openssl-sys |
 | `cfg-if` | 1.0.5 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek, getrandom, openssl, sha2 |
-| `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by security-framework |
+| `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | crates.io | macOS CoreFoundation types (CFString/CFDictionary/CFURL, property lists) for app bundles, Service Management and power assertions; macOS-only |
 | `core-foundation-sys` | 0.8.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by core-foundation, security-framework, security-framework-sys |
 | `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | crates.io | Transitive: required by curve25519-dalek, sha2 |
 | `crypto-common` | 0.1.7 | MIT OR Apache-2.0 | crates.io | Transitive: required by digest |
@@ -43,7 +43,7 @@
 | `http` | 1.5.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq-proto |
 | `httparse` | 1.10.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq-proto |
 | `itoa` | 1.0.18 | MIT OR Apache-2.0 | crates.io | Transitive: required by http, serde_json |
-| `libc` | 0.2.190 | MIT OR Apache-2.0 | crates.io | macOS system calls (process liveness via kill/proc_pidinfo, later POSIX scan backend) |
+| `libc` | 0.2.190 | MIT OR Apache-2.0 | crates.io | macOS system calls (process liveness via kill/proc_pidinfo, POSIX and getattrlistbulk scan backends) |
 | `libsqlite3-sys` | 0.35.0 | MIT | crates.io | Transitive: required by rusqlite |
 | `linux-raw-sys` | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io | Transitive: required by rustix |
 | `log` | 0.4.34 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls, ureq, ureq-proto |
@@ -65,7 +65,7 @@
 | `rustix` | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io | Transitive: required by tempfile |
 | `rustls-pki-types` | 1.15.1 | MIT OR Apache-2.0 | crates.io | Transitive: required by ureq |
 | `schannel` | 0.1.29 | MIT | crates.io | Transitive: required by native-tls |
-| `security-framework` | 3.7.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls |
+| `security-framework` | 3.7.0 | MIT OR Apache-2.0 | crates.io | macOS code-signature checks (SecStaticCode signer / Team ID of bundles, startup targets and update packages); macOS-only, already in the lock through native-tls |
 | `security-framework-sys` | 2.17.0 | MIT OR Apache-2.0 | crates.io | Transitive: required by native-tls, security-framework |
 | `semver` | 1.0.28 | MIT OR Apache-2.0 | crates.io | Transitive: required by rustc_version |
 | `serde` | 1.0.229 | MIT OR Apache-2.0 | crates.io | Typed (de)serialization of protocol records, manifests and rules |

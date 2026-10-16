@@ -64,6 +64,8 @@ pub enum PublisherEvidence {
     Authenticode,
     /// Publisher of the owning package (MSIX/AppX identity).
     PackageIdentity,
+    /// macOS: signer (Team ID / authority) of a valid code signature on the target or its owning bundle.
+    CodeSignature,
     None,
 }
 
@@ -121,32 +123,68 @@ pub enum StartupLocation {
     RunValue { root: String, hive: Hive, view: RegView, key: String, value_name: String, approval_key: String },
     /// A file in a Startup folder; its enable record is the value named like the file under `approval_key`.
     FolderFile { root: String, hive: Hive, folder: RawPath, file_name: String, approval_key: String },
+    /// macOS: a launchd job plist of the user's domain (`~/Library/LaunchAgents`), changed through `launchctl` with the
+    /// plist backed up first (D9). `root` is the test redirection it was read through (empty = the real home).
+    LaunchdUser { root: String, plist: RawPath, label: String },
+    /// macOS: a launchd job plist of the system domain (`/Library/LaunchAgents`, `/Library/LaunchDaemons`); system-wide.
+    LaunchdSystem { root: String, plist: RawPath, label: String },
+    /// macOS: a Service Management login item or background item, identified by its bundle/service identifier.
+    SmItem { root: String, identifier: String, background: bool },
 }
 
 impl StartupLocation {
+    /// Registry hive of a Windows location. macOS locations report the hive of the equivalent scope (system-wide =
+    /// `Hklm`), so callers that only distinguish user and machine scope can use [`StartupLocation::system_wide`].
     pub fn hive(&self) -> Hive {
         match self {
             StartupLocation::RunValue { hive, .. } | StartupLocation::FolderFile { hive, .. } => *hive,
+            StartupLocation::LaunchdSystem { .. } => Hive::Hklm,
+            StartupLocation::LaunchdUser { .. } | StartupLocation::SmItem { .. } => Hive::Hkcu,
         }
+    }
+
+    /// Changing it affects every user of the machine (needs an administrator).
+    pub fn system_wide(&self) -> bool {
+        self.hive() == Hive::Hklm
     }
 
     pub fn root(&self) -> &str {
         match self {
-            StartupLocation::RunValue { root, .. } | StartupLocation::FolderFile { root, .. } => root,
+            StartupLocation::RunValue { root, .. }
+            | StartupLocation::FolderFile { root, .. }
+            | StartupLocation::LaunchdUser { root, .. }
+            | StartupLocation::LaunchdSystem { root, .. }
+            | StartupLocation::SmItem { root, .. } => root,
         }
     }
 
-    /// Name of the enable-record value.
+    /// Name of the enable-record value (macOS: the launchd label or Service Management identifier).
     pub fn approval_value(&self) -> &str {
         match self {
             StartupLocation::RunValue { value_name, .. } => value_name,
             StartupLocation::FolderFile { file_name, .. } => file_name,
+            StartupLocation::LaunchdUser { label, .. } | StartupLocation::LaunchdSystem { label, .. } => label,
+            StartupLocation::SmItem { identifier, .. } => identifier,
         }
     }
 
+    /// Key of the enable record (Windows `StartupApproved`); empty for macOS locations, which have none.
     pub fn approval_key(&self) -> &str {
         match self {
             StartupLocation::RunValue { approval_key, .. } | StartupLocation::FolderFile { approval_key, .. } => approval_key,
+            StartupLocation::LaunchdUser { .. } | StartupLocation::LaunchdSystem { .. } | StartupLocation::SmItem { .. } => "",
+        }
+    }
+
+    /// The inventory source this location belongs to.
+    pub fn source(&self) -> StartupSource {
+        match self {
+            StartupLocation::RunValue { .. } => StartupSource::RunKey,
+            StartupLocation::FolderFile { .. } => StartupSource::StartupFolder,
+            StartupLocation::LaunchdUser { .. } => StartupSource::LaunchdUser,
+            StartupLocation::LaunchdSystem { .. } => StartupSource::LaunchdSystem,
+            StartupLocation::SmItem { background: false, .. } => StartupSource::SmLoginItem,
+            StartupLocation::SmItem { background: true, .. } => StartupSource::SmBackgroundItem,
         }
     }
 }
@@ -320,11 +358,8 @@ pub fn build_startup_recovery_plan(backups: &[(String, StartupBackup)], plan_id:
     let mut meta = Vec::new();
     for (i, (item_name, b)) in backups.iter().enumerate() {
         let action_id = format!("r{i:07}");
-        let scope = if b.location.hive() == Hive::Hklm { StartupScope::System } else { StartupScope::User };
-        let source = match b.location {
-            StartupLocation::RunValue { .. } => StartupSource::RunKey,
-            StartupLocation::FolderFile { .. } => StartupSource::StartupFolder,
-        };
+        let scope = if b.location.system_wide() { StartupScope::System } else { StartupScope::User };
+        let source = b.location.source();
         match (&b.operation, &b.location) {
             (StartupOperation::RemoveWithBackup, StartupLocation::RunValue { hive, key, value_name, .. }) => {
                 items.push(PlanAction::RegistryRestore(RegistryRestoreAction {
@@ -675,5 +710,23 @@ mod tests {
         assert_eq!(build_startup_plan(&item, StartupOperation::Disable, &gone, false, "sp", 0, "x").unwrap_err().code, "conflict");
         assert_eq!(unhex(&hex(&[0, 255, 16])), Some(vec![0, 255, 16]));
         assert_eq!(unhex("abc"), None);
+    }
+
+    #[test]
+    fn macos_locations_map_to_their_sources_and_scope() {
+        let plist = RawPath::unix(b"/Users/a/Library/LaunchAgents/com.example.agent.plist".to_vec()).unwrap();
+        let user = StartupLocation::LaunchdUser { root: String::new(), plist: plist.clone(), label: "com.example.agent".into() };
+        let system = StartupLocation::LaunchdSystem { root: String::new(), plist, label: "com.example.daemon".into() };
+        let login = StartupLocation::SmItem { root: String::new(), identifier: "com.example.helper".into(), background: false };
+        let background = StartupLocation::SmItem { root: String::new(), identifier: "com.example.bg".into(), background: true };
+        let got: Vec<(StartupSource, bool, &str, &str)> =
+            [&user, &system, &login, &background].iter().map(|l| (l.source(), l.system_wide(), l.approval_value(), l.approval_key())).collect();
+        assert_eq!(got, [
+            (StartupSource::LaunchdUser, false, "com.example.agent", ""),
+            (StartupSource::LaunchdSystem, true, "com.example.daemon", ""),
+            (StartupSource::SmLoginItem, false, "com.example.helper", ""),
+            (StartupSource::SmBackgroundItem, false, "com.example.bg", ""),
+        ]);
+        assert_eq!(serde_json::to_value(PublisherEvidence::CodeSignature).unwrap(), "code_signature");
     }
 }

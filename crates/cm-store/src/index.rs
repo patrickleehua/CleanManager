@@ -24,7 +24,7 @@ use cm_core::scan::ScanSink;
 use crate::audit::{HostRef, Liveness};
 use crate::{Result, StoreError};
 
-pub const INDEX_SCHEMA_VERSION: &str = "1";
+pub const INDEX_SCHEMA_VERSION: &str = "2";
 pub const MAX_PAGE: u32 = 500;
 pub const DEFAULT_PAGE: u32 = 50;
 
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS objects (
     scan_id TEXT NOT NULL, revision INTEGER NOT NULL, object_id INTEGER NOT NULL,
     volume_id TEXT NOT NULL, file_id TEXT NOT NULL, generation TEXT, quality TEXT NOT NULL,
     kind TEXT NOT NULL, logical_be BLOB, allocated_be BLOB, link_count INTEGER, cloud TEXT NOT NULL, modified_unix INTEGER,
+    shared_blocks INTEGER,
     PRIMARY KEY (scan_id, revision, object_id)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS entries (
@@ -327,13 +328,13 @@ impl IndexStore {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut o = tx.prepare_cached(
-                "INSERT INTO objects(scan_id,revision,object_id,volume_id,file_id,generation,quality,kind,logical_be,allocated_be,link_count,cloud,modified_unix)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                "INSERT INTO objects(scan_id,revision,object_id,volume_id,file_id,generation,quality,kind,logical_be,allocated_be,link_count,cloud,modified_unix,shared_blocks)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             )?;
             for x in objects {
                 o.execute(params![
                     scan_id, revision, x.object_id as i64, x.volume_id, x.file_id, x.generation, enum_text(&x.quality),
-                    enum_text(&x.kind), be(x.logical), be(x.allocated), x.link_count, enum_text(&x.cloud), x.modified_unix
+                    enum_text(&x.kind), be(x.logical), be(x.allocated), x.link_count, enum_text(&x.cloud), x.modified_unix, x.shared_blocks
                 ])?;
             }
             let mut e = tx.prepare_cached(

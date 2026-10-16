@@ -160,10 +160,20 @@ def make_zip(out: Path) -> Path:
     return z
 
 
+def store_schema(file: str, const: str) -> int:
+    """The store schema version this build writes, read from the cm-store source (`pub const NAME: &str = "N";`)."""
+    for line in (ROOT / "crates" / "cm-store" / "src" / file).read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"pub const {const}: &str = "):
+            return int(line.split('"')[1])
+    raise SystemExit(f"{const} not found in crates/cm-store/src/{file}")
+
+
 def update_payload(out: Path, ver: str) -> Path:
     release = json.loads((out / "cleanmanager-release.json").read_text(encoding="utf-8"))
+    compat = {"protocol_schema": "1.0", "index_schema": store_schema("index.rs", "INDEX_SCHEMA_VERSION"),
+              "audit_schema": store_schema("audit.rs", "AUDIT_SCHEMA_VERSION")}
     payload = {"contract": "cleanmanager-update/1", "product": "cleanmanager-cli", "version": ver, "published_at": None,
-               "compat": {"protocol_schema": "1.0", "index_schema": 1, "audit_schema": 1},
+               "compat": compat,
                "targets": {target_id(): {"files": [{**f, "url": f"files/{f['path']}"} for f in release["files"]]}}}
     p = DIST / f"{out.name}.update-payload.json"
     p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")

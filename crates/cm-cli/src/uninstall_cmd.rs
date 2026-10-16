@@ -273,6 +273,13 @@ pub fn orphans(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
 
+/// Seam for `plan apply` (plan/v2 backends): `uninstall` plans on macOS (quit, bundle to Trash, Homebrew adapters).
+/// `None` = unsupported here.
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_uninstall_backend() -> Option<Box<dyn cm_core::uninstall::UninstallActions>> {
+    None
+}
+
 /// `apps uninstall restore --operation OP`: a `recovery` plan putting back deleted keys and removed startup values.
 pub fn restore(req: &str, p: &Parsed) -> ExitCode {
     let Some(op) = p.option("operation") else { return fail(req, ErrorCode::InvalidArgument, "needs --operation OP_ID (the leftovers operation)", p.format) };

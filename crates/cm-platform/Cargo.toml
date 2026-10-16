@@ -41,6 +41,10 @@ windows-core = "=0.62.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2.177"
+# CFString/CFDictionary/CFURL and plist values for app bundles, Service Management and power assertions.
+core-foundation = "0.10.1"
+# Code-signature checks (SecStaticCode: Team ID / signer of bundles, startup targets and update packages).
+security-framework = "3.7.0"
 
 [lints]
 workspace = true

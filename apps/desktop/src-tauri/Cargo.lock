@@ -369,7 +369,9 @@ name = "cm-platform"
 version = "0.1.0"
 dependencies = [
  "cm-core",
+ "core-foundation",
  "libc",
+ "security-framework",
  "windows",
  "windows-core",
  "windows-sys 0.61.2",

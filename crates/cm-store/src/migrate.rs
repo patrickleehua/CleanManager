@@ -78,8 +78,18 @@ pub struct Migration {
     pub apply: fn(&Transaction<'_>) -> rusqlite::Result<()>,
 }
 
-/// Index steps. Version 1 is the first released schema; there is nothing to migrate yet.
-pub const INDEX_MIGRATIONS: &[Migration] = &[];
+/// Index steps. Version 1 is the first released schema.
+pub const INDEX_MIGRATIONS: &[Migration] = &[Migration {
+    from: 1,
+    to: 2,
+    description: "objects.shared_blocks (APFS clone block sharing; NULL = not determined)",
+    apply: index_v1_to_v2,
+}];
+
+/// v1 → v2: a nullable column; existing rows keep NULL ("not determined"), which is what v1 scans observed.
+fn index_v1_to_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE objects ADD COLUMN shared_blocks INTEGER")
+}
 /// Audit/recovery steps. Version 1 is the first released schema; there is nothing to migrate yet.
 pub const AUDIT_MIGRATIONS: &[Migration] = &[];
 

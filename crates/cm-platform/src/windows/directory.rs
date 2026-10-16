@@ -212,6 +212,7 @@ impl Ctx<'_> {
             link_count: None,
             cloud,
             modified_unix: (rec.last_write > 0).then(|| cm_core::time::filetime_to_unix(rec.last_write as u64)),
+            shared_blocks: None,
         });
         id
     }

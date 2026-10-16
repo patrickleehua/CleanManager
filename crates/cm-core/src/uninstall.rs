@@ -68,6 +68,12 @@ pub enum RecordSource {
     Msix,
     Scoop,
     NpmGlobal,
+    /// A macOS application bundle (no package manager record).
+    AppBundle,
+    /// A Homebrew cask or formula.
+    Homebrew,
+    /// A Mac App Store app.
+    AppStore,
     Unknown,
 }
 
@@ -114,6 +120,9 @@ impl UninstallRecord {
             RecordSource::Msix => "msix_store",
             RecordSource::Scoop => "scoop",
             RecordSource::NpmGlobal => "npm_global",
+            RecordSource::AppBundle => "app_bundle",
+            RecordSource::Homebrew => "homebrew",
+            RecordSource::AppStore => "app_store",
             RecordSource::Unknown => "unknown",
         }
     }
@@ -140,6 +149,9 @@ pub fn record_source(s: &AppSource) -> RecordSource {
         AppSource::RegistryUninstall { .. } => RecordSource::RegistryUninstall,
         AppSource::Msi { .. } => RecordSource::Msi,
         AppSource::Msix { .. } => RecordSource::Msix,
+        AppSource::AppBundle { .. } => RecordSource::AppBundle,
+        AppSource::AppStore { .. } => RecordSource::AppStore,
+        AppSource::Homebrew { .. } => RecordSource::Homebrew,
         AppSource::Unknown => RecordSource::Unknown,
     }
 }
@@ -156,6 +168,12 @@ pub enum AdapterKind {
     Winget,
     Scoop,
     NpmGlobal,
+    /// macOS: move the app bundle to the user's Trash (`macos.trash-app-bundle`).
+    MacTrashAppBundle,
+    /// `brew uninstall --cask <token>`.
+    HomebrewCask,
+    /// `brew uninstall --formula <token>`.
+    HomebrewFormula,
 }
 
 impl AdapterKind {
@@ -167,18 +185,31 @@ impl AdapterKind {
             AdapterKind::Winget => "winget.uninstall",
             AdapterKind::Scoop => "scoop.uninstall",
             AdapterKind::NpmGlobal => "npm.uninstall-global",
+            AdapterKind::MacTrashAppBundle => "macos.trash-app-bundle",
+            AdapterKind::HomebrewCask => "homebrew.uninstall-cask",
+            AdapterKind::HomebrewFormula => "homebrew.uninstall-formula",
         }
     }
 
     pub fn from_adapter_id(id: &str) -> Option<AdapterKind> {
-        [AdapterKind::RegisteredCommand, AdapterKind::Msi, AdapterKind::Msix, AdapterKind::Winget, AdapterKind::Scoop, AdapterKind::NpmGlobal]
-            .into_iter()
+        [
+            AdapterKind::RegisteredCommand,
+            AdapterKind::Msi,
+            AdapterKind::Msix,
+            AdapterKind::Winget,
+            AdapterKind::Scoop,
+            AdapterKind::NpmGlobal,
+            AdapterKind::MacTrashAppBundle,
+            AdapterKind::HomebrewCask,
+            AdapterKind::HomebrewFormula,
+        ]
+        .into_iter()
             .find(|k| k.adapter_id() == id)
     }
 
     /// A package manager (not the vendor) removes the files (UNI-01 "由包管理器卸载").
     pub fn package_manager(self) -> bool {
-        matches!(self, AdapterKind::Msix | AdapterKind::Winget | AdapterKind::Scoop | AdapterKind::NpmGlobal)
+        matches!(self, AdapterKind::Msix | AdapterKind::Winget | AdapterKind::Scoop | AdapterKind::NpmGlobal | AdapterKind::HomebrewCask | AdapterKind::HomebrewFormula)
     }
 }
 
@@ -308,6 +339,10 @@ pub fn select_adapter(rec: &UninstallRecord, env: &AdapterEnv, exists: &dyn Fn(&
             let full = rec.package_full_name.as_deref().ok_or_else(|| refuse("unsupported", "package full name unknown", true))?;
             let manifest = env.msix_manifest.clone().ok_or_else(|| refuse("unsupported", "the package manifest could not be found; remove it in Settings", true))?;
             return Ok(choice(AdapterKind::Msix, manifest, vec!["remove".into(), full.to_owned()], format!("remove package {full} (Windows package manager, current user)")));
+        }
+        // macOS records are routed by the macOS uninstall module, never by the Windows registry adapters below.
+        RecordSource::AppBundle | RecordSource::Homebrew | RecordSource::AppStore => {
+            return Err(refuse("unsupported", "macOS application uninstall is not implemented in this build", false));
         }
         _ => {}
     }

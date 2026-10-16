@@ -29,7 +29,14 @@ fn mnt01_windows_catalog_covers_the_first_batch_without_speed_promises() {
     }
     assert!(find(ids::TRIM).unwrap().requires_admin && find(ids::IMAGE_HEALTH).unwrap().requires_admin);
     assert!(!find(ids::DNS_FLUSH).unwrap().requires_admin && !find(ids::ICON_CACHE).unwrap().requires_admin);
-    assert!(catalog(TaskPlatform::Macos).is_empty(), "macOS tasks are 14.3, not in this build");
+    assert_eq!(catalog(TaskPlatform::Macos), MACOS_TASKS);
+    assert!(WINDOWS_TASKS.iter().all(|t| t.platform == TaskPlatform::Windows && t.id.starts_with("windows.")));
+    assert!(MACOS_TASKS.iter().all(|t| t.platform == TaskPlatform::Macos && t.id.starts_with("macos.")));
+    let mut all: Vec<&str> = WINDOWS_TASKS.iter().chain(MACOS_TASKS).map(|t| t.id).collect();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len(), WINDOWS_TASKS.len() + MACOS_TASKS.len(), "task IDs are unique across platforms");
+    assert!(MACOS_TASKS.iter().all(|t| find(t.id).is_some_and(|f| f.platform == TaskPlatform::Macos)));
     assert_eq!(catalog_digest(TaskPlatform::Windows), catalog_digest(TaskPlatform::Windows));
 }
 

@@ -15,6 +15,9 @@ const SOURCE_LABEL: Record<AppItem['source'], string> = {
   registry_uninstall: '安装程序登记',
   msi: 'Windows Installer',
   msix_store: 'MSIX / 应用商店',
+  app_bundle: '应用包（.app）',
+  app_store: 'Mac App Store',
+  homebrew: 'Homebrew',
   unknown: '来源未知',
 };
 

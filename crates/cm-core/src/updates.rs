@@ -23,6 +23,14 @@ pub enum Channel {
     Scoop,
     /// Detected self-updater (Squirrel/Electron); never checked or executed by CleanManager.
     SelfUpdater,
+    /// macOS: the app's Sparkle appcast (`SUFeedURL`), EdDSA-signed; the signer must match the installed app (D8).
+    Sparkle,
+    /// macOS: a Mac App Store app (updated by the App Store itself).
+    MacAppStore,
+    /// macOS: a Homebrew cask or formula (`brew outdated`, fixed-argv `tool_adapter`).
+    Homebrew,
+    /// macOS: an Electron update feed (`app-update.yml`); detection only, the app updates itself (D8).
+    Electron,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -473,7 +481,7 @@ pub fn upgrade_argv(t: &UpdateTarget) -> Option<(&'static str, Vec<String>)> {
     match t.channel {
         Channel::Winget => Some((WINGET_ADAPTER, argv::winget_upgrade(&t.package_id, &t.to_version))),
         Channel::Scoop => Some((SCOOP_ADAPTER, argv::scoop_update(&t.package_id))),
-        Channel::MicrosoftStore | Channel::SelfUpdater => None,
+        Channel::MicrosoftStore | Channel::SelfUpdater | Channel::Sparkle | Channel::MacAppStore | Channel::Homebrew | Channel::Electron => None,
     }
 }
 

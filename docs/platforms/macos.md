@@ -216,3 +216,24 @@ XPC 协议采用固定消息类型、最大条目数与数据量、nonce、deadl
 | 最低系统、Intel 支持、签名/升级流程 | 实际支持版本和物理设备安装验收 | `TC-MAC-017`、`TC-MAC-018` |
 
 在上述证据到位前，产品能力必须继续标注未验证/不可用；不得从官方机制说明推导出 CleanManager 已达到秒扫、零下载、完整访问或任意操作可回滚。
+
+## 11. 测试重定向与真机门槛
+
+macOS 后端的自动化测试与 Windows 使用同名的环境变量重定向，只让测试读写自己创建的临时目录，不触碰真实用户数据。以下变量只供测试与验收脚本使用，不是产品配置；产品代码遇到它们以外的值时按真实位置解析。
+
+| 变量 | 作用（macOS） | 对应 Windows |
+| --- | --- | --- |
+| `CM_STORE_DIR` | 索引、审计、隔离区与设置所在目录 | 同名 |
+| `CM_RULES_DIR` | 规则包目录（测试用夹具规则） | 同名 |
+| `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` | 规则根解析使用的家目录（`~/Library/Caches`、`~/Library/Logs`、`~/.Trash` 等都相对它）、临时目录与下载目录 | `CM_RESOLVE_USERPROFILE` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` |
+| `CM_UNINSTALL_TEST_ROOT` + `CM_UNINSTALL_TEST_HOME` | 卸载清单与残留扫描的假根：`ROOT` 下放 `Applications/`、`opt/homebrew/Caskroom/`（及 `Cellar/`）、`Library/`，`HOME` 下放用户 `Library/`；路径一律以该前缀解析，不读真实 `/Applications` 或 Homebrew | 同名（注册表根与家目录） |
+| `CM_STARTUP_TEST_ROOT` / `CM_STARTUP_TEST_FOLDER` | 启动项清单与启停的假根：launchd plist 目录（`Library/LaunchAgents`、`Library/LaunchDaemons`）在其下解析；计划中的位置记录该根，换根的计划不能作用于真实域 | 同名（测试注册表键与启动文件夹） |
+| `CM_MAINTENANCE_TEST_SCRIPT` / `CM_MAINTENANCE_TEST_ELEVATION` | 维护任务以脚本结果代替真实执行；`ELEVATION` 只模拟“拒绝/直接”两种提权结果 | 同名 |
+| `CM_ALLOW_DMG_TESTS=1` | 允许挂载一次性磁盘映像的测试（已有） | `CM_ALLOW_VHD_TESTS=1` |
+| `CM_ALLOW_MAC_DEVICE_TESTS=1` | 允许触碰本机真实状态的测试：用户真实废纸篓、LaunchServices 注册、电源断言（保持亮屏）等。未设置且不在 `GITHUB_ACTIONS=true` 的托管 runner 上时，这些测试打印 `skipped` 并通过 | 无（Windows 对应测试只在 CI 或显式变量下运行） |
+
+`CM_ALLOW_MAC_DEVICE_TESTS` 的测试仍只操作自己创建的文件或断言（例如移入废纸篓的是测试刚建的临时文件，断言在测试结束时释放），不会清空废纸篓、注销他人应用或改变系统设置。
+
+**托管 CI 能证明什么：**`macos-14` arm64 runner 上的编译、clippy、单元与契约测试、基于临时目录与重定向的夹具流程（扫描、规则解析、计划生成、卸载/启动项假根），以及在 runner 自身临时用户下的废纸篓移动与电源断言调用能成功返回。**不能证明：**真实用户机器上的 TCC/完全磁盘访问授权、SIP/沙盒边界、Gatekeeper 与签名/公证、`SMAppService` 用户批准流程、真实应用与 Homebrew 版本、iCloud/File Provider 行为、Intel 机型或其他系统版本。托管 runner 不是参考设备，结果不写入 `docs/evidence/device-matrix.json` 或任何验收记录；门禁（D15）仍要求真机证据。
+
+**本构建在 macOS 上没有提权路径：**不调用 `osascript` 的 `with administrator privileges`，不使用已废弃的 `AuthorizationExecuteWithPrivileges`，也未安装特权 helper（D12 的 `SMAppService` 守护进程尚未实现）。需要管理员的维护任务在计划中照常列出，执行时逐项记为 `skipped`、原因 `elevation_unavailable`；系统域的 launchd 作业与其他系统级变更同样不执行，只说明原因。

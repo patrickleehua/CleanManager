@@ -235,6 +235,9 @@ impl StartupActions for WindowsStartup {
                     Err(e) => return Err(format!("cannot identify the Startup-folder file: {e}")),
                 }
             }
+            StartupLocation::LaunchdUser { .. } | StartupLocation::LaunchdSystem { .. } | StartupLocation::SmItem { .. } => {
+                return Err("not a Windows startup location".into());
+            }
         };
         Ok(StartupObservation { definition, approval: self.read_approval(loc)? })
     }

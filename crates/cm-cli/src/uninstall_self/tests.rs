@@ -110,7 +110,11 @@ fn the_default_plan_removes_only_the_program_caches_and_its_own_system_changes()
     let kinds: Vec<_> = p.keep.iter().map(|k| k.data).collect();
     assert!(kinds.contains(&"configuration") && kinds.contains(&"protection_list") && kinds.contains(&"history"), "{kinds:?}");
     assert!(p.notes.iter().any(|n| n.contains("notes-by-user.txt")));
-    assert!(p.notes[0].contains("No service, scheduled task, helper or background process") && p.notes[0].contains("CleanManager.Resident (not present)"));
+    if cfg!(windows) {
+        assert!(p.notes[0].contains("No service, scheduled task, helper or background process") && p.notes[0].contains("CleanManager.Resident (not present)"));
+    } else {
+        assert!(p.notes[0].contains("creates no startup entry") && !p.notes[0].contains("HKCU"), "{}", p.notes[0]);
+    }
     assert!(!a.iter().any(|x| x.2 == "remove_run_value"));
     assert_eq!(p.quarantine_items, 0);
     assert!(p.warnings.is_empty(), "{:?}", p.warnings);
@@ -234,6 +238,8 @@ fn removing_all_user_data_also_removes_the_store_while_its_lock_is_held() {
     assert!(!f.store.exists(), "the store directory is gone");
 }
 
+/// The resident Run value exists only on Windows; on macOS the resident component is not available (see startup_note).
+#[cfg(windows)]
 #[test]
 fn the_resident_startup_value_is_listed_and_removed_by_its_own_name() {
     let f = fixture("resident");
@@ -271,4 +277,13 @@ fn without_a_user_path_store_no_path_entry_is_planned_or_changed() {
     let only = Plan { items: vec![item], ..p };
     let done = execute(&only, &f.install, &Effects { user_path: None, ..effects(&f) });
     assert_eq!((done[0].outcome, done[0].reason.as_deref()), ("failed", Some("no user PATH on this platform")));
+}
+
+#[test]
+fn startup_note_names_only_this_platform_s_entry() {
+    let note = startup_note(false);
+    assert_eq!(note.contains("HKCU"), cfg!(windows), "{note}");
+    if !cfg!(windows) {
+        assert!(note.contains("macOS") && note.contains("no startup entry"), "{note}");
+    }
 }

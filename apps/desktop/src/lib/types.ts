@@ -598,7 +598,7 @@ export interface AppItem {
   name: string;
   version: string | null;
   publisher: string | null;
-  source: 'registry_uninstall' | 'msi' | 'msix_store' | 'unknown';
+  source: 'registry_uninstall' | 'msi' | 'msix_store' | 'app_bundle' | 'app_store' | 'homebrew' | 'unknown';
   location_display: string | null;
   evidence: string[];
   protected_reason: string | null;
