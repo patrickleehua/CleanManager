@@ -11,7 +11,7 @@ default-members = ["crates/cm-core", "crates/cm-platform", "crates/cm-store", "c
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "UNLICENSED"
+license = "MIT"
 publish = false
 
 [workspace.dependencies]

@@ -4,7 +4,7 @@ description = "CleanManager desktop host: restricted Tauri IPC over the shared s
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "UNLICENSED"
+license = "MIT"
 publish = false
 
 # Own workspace and Cargo.lock: the root workspace excludes apps/desktop so CLI builds never

@@ -1,7 +1,7 @@
 ---
 name: cleanmanager
 description: Free disk space and inspect what uses it through the CleanManager CLI (`cleanmanager`), safely. Use this skill whenever the user asks to free up space, clean caches or temp files, find large folders or files, remove build artifacts (node_modules, target, .venv) or old installers, restore something CleanManager quarantined, or review startup items, processes, system status, space insights, the Recycle Bin or installed apps on a machine where `cleanmanager` is available - even if they never name the tool. It covers scoped scans, summaries and paging, dry-run previews, fixed plans, the human approval boundary, applying, and reporting partial, stale and unknown outcomes; app uninstall, updates, maintenance, startup and process changes only when the user explicitly asks for them. Never use shell commands to delete files instead.
-license: UNLICENSED
+license: MIT
 compatibility: Needs the cleanmanager CLI (schema 1.0) on PATH or by absolute path. Write actions are verified on Windows 11 x64 only; elsewhere the CLI answers unsupported.
 metadata:
   cli_protocol: docs/cli-protocol.md

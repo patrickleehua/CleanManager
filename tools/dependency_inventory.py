@@ -52,7 +52,7 @@ def main():
 - Rust 工具链：`{toolchain}`（见 [rust-toolchain.toml](../rust-toolchain.toml)），workspace 声明的最低版本见根 `Cargo.toml` 的 `rust-version`。
 - 文档验证依赖：[requirements-docs.txt](../requirements-docs.txt)（`jsonschema`，MIT），只安装到被忽略的 `.research/python-deps`。
 - 不捆绑第三方二进制：构建只引用 workspace 内 crate 与下表 crates.io 包；`.research/` 中的 WizTree 与 Mole 研究副本被 Git 忽略，任何 `Cargo.toml` 都不得引用它们（验证器检查）。
-- 本项目自身许可证尚未决定，crate 暂标 `UNLICENSED`；发布前需在 [分发与许可](distribution-and-licensing.md) 中确定并生成 notices。
+- 本项目以 MIT 许可发布（见仓库根目录 `LICENSE`）；第三方许可见 [分发与许可](distribution-and-licensing.md) 与 [第三方 notices](third-party-notices.md)。
 
 | Crate | 版本 | 许可 | 来源 | 用途 |
 | --- | --- | --- | --- | --- |
