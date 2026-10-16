@@ -5,9 +5,24 @@
 //! `fstatat(AT_SYMLINK_NOFOLLOW)`; a directory whose file system answers `ENOTSUP`, or whose
 //! reply contains a malformed record, is re-listed with the POSIX path. Rows are identical in
 //! shape and meaning to `mac.posix` so both can be reconciled on the same fixture.
+//!
+//! Block sharing (SCN-06, MVP 5.3): the request also asks for the extended common attributes
+//! `ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_CLONEID | ATTR_CMNEXT_EXT_FLAGS`
+//! (`FSOPT_ATTR_CMN_EXTENDED`, carried in the `forkattr` slots). A file's `shared_blocks` is
+//! - `Some(true)` when `EF_MAY_SHARE_BLOCKS` is set (an APFS clone, either side), or when the
+//!   returned private size is below the allocated size (some blocks are also held by a clone
+//!   or a snapshot and would not be freed with this file);
+//! - `Some(false)` when the extended flags were returned with `EF_MAY_SHARE_BLOCKS` clear and
+//!   the private size gives no contrary evidence;
+//! - `None` when the flags were not returned (HFS+, other file systems, the POSIX fallback,
+//!   `fstatat` supplementation) and there is no private-size evidence. Nothing is faked as 0.
+//!
+//! The private size is never turned into a reclaimable number: exclusive APFS block ownership
+//! is not verified on real hardware, so every estimate stays null with basis
+//! `shared_blocks_unknown` ([`reclaimable_estimate`], docs/platforms/macos.md §0/§3).
 
 use cm_core::path::RawPath;
-use cm_core::scan::{RootProbe, ScanBackend, ScanOptions, ScanReport, ScanSink};
+use cm_core::scan::{ObjectRow, RootProbe, ScanBackend, ScanOptions, ScanReport, ScanSink};
 
 use super::sys::{Fd, Kind, Meta, Record, errno, list_posix};
 use super::walk::{self, Lister, Listing};
@@ -16,6 +31,7 @@ const METHOD: &str = "getattrlistbulk directory enumeration";
 const NOTE_UNSUPPORTED: &str = "getattrlistbulk unsupported for some directories; those were listed with readdir + fstatat";
 const NOTE_MALFORMED: &str = "malformed getattrlistbulk replies; affected directories were re-listed with readdir + fstatat";
 const NOTE_SUPPLEMENTED: &str = "some entries lacked bulk attributes and were completed with fstatat";
+const NOTE_NO_EXTENDED: &str = "extended common attributes (clone flags, private size) were refused; block sharing is unknown";
 /// Initial attribute buffer (docs/platforms/macos.md §1).
 const BUFFER_BYTES: usize = 64 * 1024;
 /// Malformed-record messages kept per directory; the rest are counted.
@@ -38,6 +54,13 @@ pub(crate) const REQ_COMMON: u32 = libc::ATTR_CMN_RETURNED_ATTRS
     | libc::ATTR_CMN_FILEID;
 pub(crate) const REQ_DIR: u32 = libc::ATTR_DIR_MOUNTSTATUS;
 pub(crate) const REQ_FILE: u32 = libc::ATTR_FILE_LINKCOUNT | libc::ATTR_FILE_ALLOCSIZE | libc::ATTR_FILE_DATALENGTH;
+/// Extended common attributes, requested in `attrlist.forkattr` with `FSOPT_ATTR_CMN_EXTENDED`
+/// and reported in the returned set's `forkattr` (getattrlist(2)). Packed after the file
+/// attributes, in bit order: `off_t` private size, `u_int64_t` clone id, `u_int64_t` flags.
+pub(crate) const REQ_CMNEXT: u32 = libc::ATTR_CMNEXT_PRIVATESIZE | libc::ATTR_CMNEXT_CLONEID | libc::ATTR_CMNEXT_EXT_FLAGS;
+/// `EF_MAY_SHARE_BLOCKS` (`<sys/attr.h>`, an `ATTR_CMNEXT_EXT_FLAGS` bit): the file may share
+/// blocks with another file (it is, or was, a clone). Not exported by the `libc` crate.
+pub(crate) const EF_MAY_SHARE_BLOCKS: u64 = 0x0000_0001;
 
 /// One parsed `getattrlistbulk` record. Every field is optional: only what the returned
 /// bitmap says was packed is read.
@@ -56,6 +79,24 @@ pub(crate) struct BulkRecord {
     pub alloc_size: Option<u64>,
     /// `ATTR_FILE_DATALENGTH` (data fork, same scope as `st_size`); `None` when not returned or negative.
     pub data_length: Option<u64>,
+    /// `ATTR_CMNEXT_PRIVATESIZE`: bytes not shared with a clone or snapshot; `None` when not returned or negative.
+    pub private_size: Option<u64>,
+    /// `ATTR_CMNEXT_CLONEID`: identifies the data stream (pure clones report the same id). Raw
+    /// observation for TC-MAC-005; not part of the v1 rows.
+    pub clone_id: Option<u64>,
+    /// `ATTR_CMNEXT_EXT_FLAGS` (`EF_*` bits).
+    pub ext_flags: Option<u64>,
+}
+
+impl BulkRecord {
+    /// Whether the object's blocks are known to be shared (see the module documentation).
+    pub(crate) fn shared_blocks(&self) -> Option<bool> {
+        let held_elsewhere = matches!((self.private_size, self.alloc_size), (Some(p), Some(a)) if p < a);
+        match self.ext_flags {
+            Some(f) => Some(f & EF_MAY_SHARE_BLOCKS != 0 || held_elsewhere),
+            None => held_elsewhere.then_some(true),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -115,9 +156,11 @@ impl<'a> Cursor<'a> {
 fn parse_one(rec: &[u8]) -> Result<BulkRecord, String> {
     let mut c = Cursor { rec, pos: 4 };
     let (common, vol, dir, file, fork) = (c.u32()?, c.u32()?, c.u32()?, c.u32()?, c.u32()?);
-    if common & !REQ_COMMON != 0 || vol != 0 || dir & !REQ_DIR != 0 || file & !REQ_FILE != 0 || fork != 0 {
+    // With FSOPT_ATTR_CMN_EXTENDED the `forkattr` slot carries the extended common attributes.
+    let cmnext = fork;
+    if common & !REQ_COMMON != 0 || vol != 0 || dir & !REQ_DIR != 0 || file & !REQ_FILE != 0 || cmnext & !REQ_CMNEXT != 0 {
         return Err(format!(
-            "unexpected returned attributes common={common:#x} vol={vol:#x} dir={dir:#x} file={file:#x} fork={fork:#x}"
+            "unexpected returned attributes common={common:#x} vol={vol:#x} dir={dir:#x} file={file:#x} cmnext={cmnext:#x}"
         ));
     }
     let mut r = BulkRecord::default();
@@ -174,6 +217,16 @@ fn parse_one(rec: &[u8]) -> Result<BulkRecord, String> {
     if file & libc::ATTR_FILE_DATALENGTH != 0 {
         r.data_length = u64::try_from(c.i64()?).ok();
     }
+    // Extended common attributes follow the file attributes (vfs_attr_pack_internal).
+    if cmnext & libc::ATTR_CMNEXT_PRIVATESIZE != 0 {
+        r.private_size = u64::try_from(c.i64()?).ok();
+    }
+    if cmnext & libc::ATTR_CMNEXT_CLONEID != 0 {
+        r.clone_id = Some(c.u64()?);
+    }
+    if cmnext & libc::ATTR_CMNEXT_EXT_FLAGS != 0 {
+        r.ext_flags = Some(c.u64()?);
+    }
     r.name = name.ok_or("record has no name")?;
     Ok(r)
 }
@@ -227,6 +280,19 @@ fn to_record(dir: &Fd, b: BulkRecord, supplemented: &mut bool) -> Option<Record>
         return Some(Record { name: b.name, meta: Err(e) });
     }
     let mount = b.mount_status.is_some_and(|m| m & libc::DIR_MNTSTATUS_MNTPOINT != 0);
+    let shared_blocks = b.shared_blocks();
+    if shared_blocks == Some(true) {
+        // Raw evidence for TC-MAC-005 under `--debug`; bounded by the number of shared files.
+        cm_core::debug_trace!(
+            "scan.bulk",
+            "shared blocks name=\"{}\" alloc={:?} private={:?} clone_id={:?} ext_flags={:?}",
+            String::from_utf8_lossy(&b.name),
+            b.alloc_size,
+            b.private_size,
+            b.clone_id,
+            b.ext_flags
+        );
+    }
     let complete = match (b.objtype.map(kind_of), b.dev, b.file_id, b.flags) {
         (Some(kind), Some(dev), Some(ino), Some(flags)) => {
             let enough = match kind {
@@ -245,6 +311,8 @@ fn to_record(dir: &Fd, b: BulkRecord, supplemented: &mut bool) -> Option<Record>
                 mtime: b.modtime,
                 flags,
                 mount,
+                // Only files carry sizes; sharing is not reported for directories or links.
+                shared_blocks: if kind == Kind::File { shared_blocks } else { None },
             })
         }
         _ => None,
@@ -267,14 +335,27 @@ enum Outcome {
 
 pub(crate) struct BulkLister {
     buf: Vec<u8>,
+    /// Ask for the extended common attributes; cleared for the rest of the scan once the
+    /// kernel refuses them (`EINVAL` on an older system or file system).
+    extended: bool,
 }
 
 impl BulkLister {
     pub(crate) fn new() -> Self {
-        BulkLister { buf: vec![0u8; BUFFER_BYTES] }
+        BulkLister { buf: vec![0u8; BUFFER_BYTES], extended: true }
     }
 
     fn read(&mut self, dir: &Fd) -> Result<Outcome, i32> {
+        match self.read_once(dir) {
+            Err(libc::EINVAL) if self.extended => {
+                self.extended = false;
+                self.read_once(dir)
+            }
+            other => other,
+        }
+    }
+
+    fn read_once(&mut self, dir: &Fd) -> Result<Outcome, i32> {
         // A fresh descriptor: the bulk cursor starts at the first entry.
         let fd = dir.reopen_self()?;
         let mut list = libc::attrlist {
@@ -284,14 +365,15 @@ impl BulkLister {
             volattr: 0,
             dirattr: REQ_DIR,
             fileattr: REQ_FILE,
-            forkattr: 0,
+            forkattr: if self.extended { REQ_CMNEXT } else { 0 },
         };
+        let options = if self.extended { u64::from(libc::FSOPT_ATTR_CMN_EXTENDED) } else { 0 };
         let mut out = Vec::new();
         loop {
             // SAFETY: valid directory fd, attrlist and writable buffer of the given size.
             // No FSOPT_PACK_INVAL_ATTRS: only returned attributes are packed.
             let n = unsafe {
-                libc::getattrlistbulk(fd.raw(), (&mut list as *mut libc::attrlist).cast(), self.buf.as_mut_ptr().cast(), self.buf.len(), 0)
+                libc::getattrlistbulk(fd.raw(), (&mut list as *mut libc::attrlist).cast(), self.buf.as_mut_ptr().cast(), self.buf.len(), options)
             };
             if n < 0 {
                 return match errno() {
@@ -313,6 +395,16 @@ impl BulkLister {
 
 impl Lister for BulkLister {
     fn list(&mut self, dir: &Fd) -> Listing {
+        let mut listing = self.list_inner(dir);
+        if !self.extended {
+            listing.notes.push(NOTE_NO_EXTENDED);
+        }
+        listing
+    }
+}
+
+impl BulkLister {
+    fn list_inner(&mut self, dir: &Fd) -> Listing {
         match self.read(dir) {
             Err(e) => Listing::plain(Err(e)),
             Ok(Outcome::Unsupported) => Listing { records: list_posix(dir), issues: Vec::new(), notes: vec![NOTE_UNSUPPORTED] },
@@ -332,6 +424,18 @@ impl Lister for BulkLister {
             }
         }
     }
+}
+
+/// The reclaimable-space estimate of one scanned macOS object and its protocol
+/// `estimate_basis` (docs/platforms/macos.md §0/§3, SCN-06).
+///
+/// Always `None` in this release: an unknown logical size gives `not_computed`, anything else
+/// `shared_blocks_unknown`, whatever `shared_blocks` says. A clone (`Some(true)`) cannot be
+/// estimated from public metadata, and even `Some(false)` with a matching private size is not
+/// exclusive-ownership evidence until TC-MAC-005 has run on a real Mac (hard links, snapshots
+/// and the exact private-size definition are unverified there).
+pub fn reclaimable_estimate(object: &ObjectRow) -> (Option<u64>, &'static str) {
+    if object.logical.is_none() { (None, "not_computed") } else { (None, "shared_blocks_unknown") }
 }
 
 pub struct BulkBackend;

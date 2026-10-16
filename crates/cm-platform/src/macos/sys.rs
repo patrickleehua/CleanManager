@@ -130,6 +130,9 @@ pub(crate) struct Meta {
     pub flags: u32,
     /// The listing reports another file system mounted on this directory.
     pub mount: bool,
+    /// Block sharing of a file (`ObjectRow::shared_blocks`); `None` from `fstat`, which has no
+    /// such field.
+    pub shared_blocks: Option<bool>,
 }
 
 impl Meta {
@@ -150,6 +153,7 @@ impl Meta {
             mtime: Some(st.st_mtime),
             flags: st.st_flags,
             mount: false,
+            shared_blocks: None,
         }
     }
 }

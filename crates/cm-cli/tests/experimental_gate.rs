@@ -121,8 +121,13 @@ fn capabilities_report_gated_tools_off_and_never_available() {
     }
     run(&s, &["experimental", "--state", "on"]);
     let (_, on) = run(&s, &["capabilities"]);
+    // With the switch on, the platform's own report shows through: `unverified` on Windows; on macOS `unsupported` until
+    // a module declares a row for the capability (then that row, never `available`).
+    let own = cm_core::capability::CapabilityProvider::capabilities(&cm_platform::host());
     for c in gated(&on) {
-        assert_eq!(c["state"], if cfg!(windows) { "unverified" } else { "unsupported" }, "{c}");
+        let row = own.iter().find(|o| c["name"] == o.name.as_str()).unwrap();
+        let expected = if cfg!(windows) { Value::from("unverified") } else { serde_json::to_value(row.state).unwrap() };
+        assert_eq!(c["state"], expected, "{c}");
     }
     assert!(on["capabilities"].as_array().unwrap().iter().all(|c| c["state"] != "available"));
     // Core capabilities do not change with the switch.

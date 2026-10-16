@@ -23,8 +23,9 @@ fn actions(store_dir: &std::path::Path) -> impl cm_core::execute::FileActions {
     cm_platform::windows::actions::WindowsActions::with_store(store_dir.to_path_buf())
 }
 
-/// macOS file actions (`cm_platform::macos::actions`): every live check reports unsupported until they are verified,
-/// so plans are skipped item by item and nothing is touched.
+/// macOS file actions (`cm_platform::macos::actions`): descriptor-verified quarantine/delete behind the trusted-namespace
+/// gate (otherwise `race_safety_unavailable`) and identity-confirmed Trash moves; quarantine under this store when it is
+/// on the target's volume.
 #[cfg(target_os = "macos")]
 fn actions(store_dir: &std::path::Path) -> impl cm_core::execute::FileActions {
     cm_platform::macos::actions::file_actions(store_dir)

@@ -1,0 +1,52 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "macos.user-temp.stale-files",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "user_essentials",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "macos"
+  },
+  "root_resolver": "user_temp",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Files directly in the user's temporary folder ($TMPDIR) whose last modification is at least 7 days old.",
+    "regeneration": "Not regenerated: temporary files belong to whichever program wrote them; review before removing.",
+    "offline_effect": "A program that still expects the file may fail; files in use are skipped at execution."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

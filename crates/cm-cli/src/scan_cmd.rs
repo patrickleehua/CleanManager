@@ -47,8 +47,9 @@ pub fn backend() -> impl ScanBackend {
     cm_platform::windows::directory::DirectoryBackend
 }
 
-/// macOS: the portable POSIX walker is the default until the bulk backend's record layout is
-/// verified on real hardware (MVP 5.x); both produce identical row shapes.
+/// macOS: the portable POSIX walker stays the default until the real-Mac benchmark (MVP 6.2) and
+/// the G0 decision (6.3) choose between it and `mac.bulk`. Both produce identical row shapes; only
+/// `mac.bulk` observes APFS block sharing (`shared_blocks`), which `mac.posix` reports as unknown.
 #[cfg(target_os = "macos")]
 pub fn backend() -> impl ScanBackend {
     cm_platform::macos::posix::PosixBackend

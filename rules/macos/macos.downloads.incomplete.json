@@ -1,0 +1,57 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "macos.downloads.incomplete",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "incomplete_downloads",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "macos.downloads"
+  },
+  "root_resolver": "installer_location",
+  "match": {
+    "object_type": "any",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [
+      "crdownload",
+      "part",
+      "partial",
+      "download"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "incomplete_download_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Unfinished browser downloads directly in Downloads (*.crdownload, *.part, *.partial files and Safari *.download bundles), untouched for at least 7 days.",
+    "regeneration": "Not regenerated: the download has to be started again.",
+    "offline_effect": "A paused download that was meant to be resumed cannot be resumed."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

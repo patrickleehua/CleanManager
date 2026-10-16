@@ -352,6 +352,10 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
                     None => ActionOutcome::Skipped { code: "quarantine_unavailable".into(), message: "no same-volume quarantine location".into() },
                 },
             },
+            // macOS: an untrusted namespace (another principal could swap the name) keeps its own code.
+            LiveCheck::Unsupported(m) if m.starts_with("race_safety_unavailable") => {
+                ActionOutcome::Skipped { code: "race_safety_unavailable".into(), message: m }
+            }
             other => {
                 let code = serde_json::to_value(&other).ok().and_then(|v| v["check"].as_str().map(str::to_owned)).unwrap_or_else(|| "precondition".into());
                 ActionOutcome::Skipped { code: format!("precondition_{code}"), message: format!("{other:?}") }

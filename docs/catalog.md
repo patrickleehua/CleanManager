@@ -162,6 +162,34 @@ tier = min(规则上限, 实测登记, 保护, 证据)；任一占用探测为 i
 - **大项提示行**（CAT-09）：`review_only_row` 规则生成的行没有文件模式、从不预选，`clean` 计划直接拒绝，也不会吞并其下可执行的子候选；只给出大小与处理指引（例如 WSL 磁盘请在发行版内释放或用 WSL 自身工具压缩/注销）。
 - **外接卷元数据**（CAT-08）：Windows 自身在外接卷上生成的元数据没有安全的清理对象——`System Volume Information` 与 `$RECYCLE.BIN` 属硬拒绝，`desktop.ini` 是用户的文件夹自定义，`Thumbs.db` 属数据库保护类。因此 Windows 一侧只针对 Mac 在该卷上留下的 `.DS_Store`、`._*`、`.Spotlight-V100`，且仅当用户以 `clean --volume E:` 明确选择一个**可移动**驱动器根（非系统盘、驱动器类型为 removable）时才解析出根；分析只在该卷扫描内按身份匹配，链接与挂载点是边界，不会进入其他卷。三条规则因本机没有可移动卷保持 experimental。
 
+## macOS 第 1 波规则（全部 experimental）
+
+`rules/macos` 按第 1 波 Windows 规则在 macOS 上有对应物的部分镜像，并补齐 design D4 第 1 波的 macOS 项。**没有任何一条经过真机实测登记**，因此全部为 `experimental`、`max_tier = review_only`、无 `tested_registry_ref`：常规分析不产生候选，`analyze --preview-rule` 只给不可计划的预览，`clean` 不预选任何行，类目在 macOS 上为 `unverified`（`tests/macos_rule_pack.rs` 在所有平台上检查这些约束）。登记只能来自真实 Mac 的运行记录；托管 CI runner 不是参考设备。
+
+| 类目 | 规则 | 解析根（`$HOME` 下） |
+| --- | --- | --- |
+| browsers | `google.chrome.{code,gpu,http}-cache`、`microsoft.edge.{code,gpu,http}-cache` | 配置档：`Library/Application Support/Google/Chrome`、`Library/Caches/Google/Chrome`（Edge 同理）下的 `Default`、`Profile N` |
+| browsers | `mozilla.firefox.cache2` | `Library/Caches/Firefox/Profiles/*` |
+| browsers | `apple.safari.cache` | `Library/Caches/com.apple.Safari`（TCC 保护，见下） |
+| developer | `microsoft.vscode.{cached-data,code-cache,gpu-cache}` | `Library/Application Support/Code` |
+| developer | `npm.cache-content`（所属工具 `npm.cache-verify`）、`npm.cache-logs` | `.npm`（`npm_config_cache`） |
+| developer | `cargo.registry-cache` | `.cargo`（`CARGO_HOME`） |
+| developer | `go.build-cache`（所属工具 `go.build-cache-clean`） | `Library/Caches/go-build`（`GOCACHE`） |
+| developer | `pnpm.metadata-cache`、`yarn.cache`、`pip.http-cache` | `Library/Caches/{pnpm,Yarn,pip}`（`XDG_CACHE_HOME/pnpm`、`PIP_CACHE_DIR`） |
+| developer | `uv.cache`、`gradle.caches` | `.cache/uv`（`UV_CACHE_DIR`、`XDG_CACHE_HOME/uv`）、`.gradle`（`GRADLE_USER_HOME`） |
+| developer | `apple.xcode.derived-data` | `Library/Developer/Xcode`，规则只匹配 `DerivedData/*`（`Archives`、设备支持文件不匹配） |
+| ai_tools | `anysphere.cursor.{cached-data,code-cache,gpu-cache}`、`anthropic.claude.{code-cache,gpu-cache}`、`openai.codex.{code-cache,gpu-cache}` | `Library/Application Support/{Cursor,Claude,Codex}`；只匹配缓存目录，会话、worktree 与 `~/.claude`、`~/.codex` 仍按 ANA-03 保护 |
+| user_essentials | `macos.user-temp.stale-files`（7 天） | `$TMPDIR` |
+| logs | `macos.diagnostic-reports.user`（7 天） | `Library/Logs/DiagnosticReports` |
+| incomplete_downloads | `macos.downloads.incomplete`（7 天，含 Safari `.download` 包） | Downloads |
+| removable_metadata | `apple.metadata.{ds-store,appledouble}` | `clean --volume /Volumes/NAME` 选中的卷 |
+
+- **解析**（`crates/cm-platform/src/macos/resolve.rs`）：根目录在其父目录中以 `fstatat` 取身份（不跟随、链接不算根），与扫描记录的 `volume_id`/`file_id` 一致。包管理器自身的变量优先；`CM_RESOLVE_HOME`/`CM_RESOLVE_TEMP`/`CM_RESOLVE_DOWNLOADS` 重定向到夹具并各报一条 `resolver_override`，家目录被重定向时忽略这些工具变量（它们指向真实用户位置），Downloads 跟随被重定向的家目录。未列入 Windows 的 `.Spotlight-V100` 规则：它在 `/Volumes/*` 下属硬拒绝。
+- **TCC**：Safari 缓存只有完全磁盘访问才能读取。按平台文档 §6，本构建不打开、不列举该位置去试探授权：位置存在时规则报告 `permission_required`（`permission_cause=undetermined`，并给出下一步），不解析为根。其他因权限无法检查的根同样报告 `permission_required`。
+- **占用探测**（`crates/cm-platform/src/macos/probes.rs`）：`owner_process` 用 libproc 进程快照，按所属应用包名（可执行路径中的 `Google Chrome.app` 等路径组件，含包内 helper）或命令行工具名（`cargo`、`go`、`pnpm`、`uv`）判断；`open_file_handle`/`open_database_handle`/`incomplete_download_handle` 用各进程打开的 vnode 索引，只要有进程的描述符不可读（其他用户或受保护进程，普通用户总会遇到）且未发现持有者，结果就是 `unknown`（跳过）；`elevated_token` 只有以 root 运行时为 `not_in_use`（本构建在 macOS 上没有提权路径）。
+- **`--volume`**：只接受 `/Volumes/NAME` 本身，它必须是挂载点（`/Volumes/Macintosh HD` 这类指向 `/` 的链接被拒）、`statfs` 带 `MNT_LOCAL` 且不带 `MNT_ROOTFS`。
+- **夹具**：`rules/macos/fixtures/wave1.json` 以登记条目 `fixtures` 的形状给出每条规则的正反例（`home:`/`temp:`/`downloads:`/`volume:` 前缀的相对路径）。`resolve/tests.rs` 在 macOS 上用真实 `mac.posix` 扫描夹具树，经 `CM_RESOLVE_*` 同样的覆盖解析，断言每条规则的候选恰为其正例、反例不命中；Safari 规则断言为 `permission_required`。夹具不是登记证据。
+
 ## 命令
 
 ```text

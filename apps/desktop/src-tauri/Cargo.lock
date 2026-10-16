@@ -372,6 +372,7 @@ dependencies = [
  "core-foundation",
  "libc",
  "security-framework",
+ "serde_json",
  "windows",
  "windows-core",
  "windows-sys 0.61.2",

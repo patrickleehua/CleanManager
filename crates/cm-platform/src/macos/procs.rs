@@ -255,7 +255,9 @@ fn list_fds(pid: i32) -> Result<Vec<libc::proc_fdinfo>, i32> {
     Ok(fds)
 }
 
-/// `(st_dev, st_ino)` of a vnode descriptor; `None` when it closed or changed meanwhile.
+/// `(st_dev, st_ino)` of a vnode descriptor; `None` when it closed or changed meanwhile, or when it is an event-only
+/// (`O_EVTONLY`) watch such as a Finder window or a kqueue file watcher: those never hold content or block a move
+/// (libproc's `PROC_LISTPIDSPATH_EXCLUDE_EVTONLY` skips them the same way).
 fn fd_vnode(pid: i32, fd: i32) -> Option<(i32, u64)> {
     // SAFETY: zeroed POD out-parameter of the declared type.
     let mut info: VnodeFdInfoWithPath = unsafe { std::mem::zeroed() };
@@ -263,7 +265,7 @@ fn fd_vnode(pid: i32, fd: i32) -> Option<(i32, u64)> {
     // SAFETY: buffer is a properly sized vnode_fdinfowithpath.
     let n = unsafe { libc::proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO, (&mut info as *mut VnodeFdInfoWithPath).cast(), size) };
     let st = &info.pvip.vip_vi.vi_stat;
-    (n == size).then_some((st.vst_dev as i32, st.vst_ino))
+    (n == size && info.pfi.fi_openflags & libc::O_EVTONLY as u32 == 0).then_some((st.vst_dev as i32, st.vst_ino))
 }
 
 fn cwd_vnode(pid: i32) -> Option<(i32, u64)> {
@@ -398,6 +400,15 @@ mod tests {
         }
         let cwd = std::fs::metadata(".").unwrap();
         assert!(index.holders(cwd.dev() as i32, cwd.ino()).holders.iter().any(|h| h.pid == me && h.hold == Hold::Cwd));
+        // An event-only watch is not a hold.
+        let watched = fx.write("watched.bin", b"x");
+        let watch = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().read(true).custom_flags(libc::O_EVTONLY).open(&watched).unwrap()
+        };
+        let w = watch.metadata().unwrap();
+        assert!(FdIndex::build().unwrap().holders(w.dev() as i32, w.ino()).holders.is_empty());
+        drop(watch);
         let other = fx.write("not-held.bin", b"x");
         let other = std::fs::metadata(other).unwrap();
         assert!(index.holders(other.dev() as i32, other.ino()).holders.is_empty());

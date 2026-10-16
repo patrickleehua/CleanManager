@@ -1,0 +1,419 @@
+{
+  "schema": "cleanmanager.mac-rule-fixtures/1",
+  "description": "Positive/negative fixtures of the macOS catalog rules (wave 1), in the shape of a tested-registry entry's `fixtures`. Each string is `<base>:<relative path>`; base is home (CM_RESOLVE_HOME), temp (CM_RESOLVE_TEMP), downloads (CM_RESOLVE_DOWNLOADS) or volume (a selected volume root); a trailing `/` makes a directory. Every fixture is written 30 days old except those in `fresh`. With the overrides pointing at the fixture tree, a rule's candidates must be exactly its positive fixtures; `expect: permission_required` marks a privacy-protected (TCC) location that the resolver reports instead of reading. Fixtures are not registry evidence: no rule here is registered and every rule stays experimental until it is tested on a real Mac.",
+  "rules": {
+    "google.chrome.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Google/Chrome/Default/Code Cache/",
+          "home:Library/Caches/Google/Chrome/Profile 1/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Caches/Google/Chrome/Guest Profile/Code Cache/",
+          "home:Library/Caches/Google/Chrome/Default/Code Cache.old/",
+          "home:Library/Application Support/Google/Chrome/Default/Local Storage/"
+        ]
+      }
+    },
+    "google.chrome.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Google/Chrome/Default/GPUCache/",
+          "home:Library/Application Support/Google/Chrome/Profile 2/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Google/Chrome/System Profile/GPUCache/",
+          "home:Library/Application Support/Google/Chrome/GrShaderCache/",
+          "home:Library/Application Support/Google/Chrome/Default/Service Worker/"
+        ]
+      }
+    },
+    "google.chrome.http-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Google/Chrome/Default/Cache/Cache_Data/"
+        ],
+        "negative": [
+          "home:Library/Caches/Google/Chrome/Default/Cache/index-dir/",
+          "home:Library/Application Support/Google/Chrome/Default/Cookies",
+          "home:Library/Caches/Google/Chrome/Crashpad/"
+        ]
+      }
+    },
+    "microsoft.edge.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Microsoft Edge/Default/Code Cache/",
+          "home:Library/Caches/Microsoft Edge/Profile 1/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Caches/Microsoft Edge/Guest Profile/Code Cache/",
+          "home:Library/Caches/Microsoft Edge/Default/Code Cache.old/",
+          "home:Library/Application Support/Microsoft Edge/Default/Local Storage/"
+        ]
+      }
+    },
+    "microsoft.edge.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Microsoft Edge/Default/GPUCache/",
+          "home:Library/Application Support/Microsoft Edge/Profile 2/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Microsoft Edge/System Profile/GPUCache/",
+          "home:Library/Application Support/Microsoft Edge/GrShaderCache/",
+          "home:Library/Application Support/Microsoft Edge/Default/Service Worker/"
+        ]
+      }
+    },
+    "microsoft.edge.http-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Microsoft Edge/Default/Cache/Cache_Data/"
+        ],
+        "negative": [
+          "home:Library/Caches/Microsoft Edge/Default/Cache/index-dir/",
+          "home:Library/Application Support/Microsoft Edge/Default/Cookies",
+          "home:Library/Caches/Microsoft Edge/Crashpad/"
+        ]
+      }
+    },
+    "mozilla.firefox.cache2": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Firefox/Profiles/abcd1234.default-release/cache2/"
+        ],
+        "negative": [
+          "home:Library/Caches/Firefox/Profiles/abcd1234.default-release/startupCache/",
+          "home:Library/Application Support/Firefox/Profiles/abcd1234.default-release/storage/"
+        ]
+      }
+    },
+    "apple.safari.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/com.apple.Safari/WebKitCache/"
+        ],
+        "negative": [
+          "home:Library/Caches/com.apple.Safari/Cache.db",
+          "home:Library/Caches/com.apple.SafariTechnologyPreview/WebKitCache/"
+        ]
+      },
+      "expect": "permission_required"
+    },
+    "microsoft.vscode.cached-data": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Code/CachedData/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Code/User/",
+          "home:Library/Application Support/Code/Local Storage/",
+          "home:Library/Application Support/Code/CachedExtensionVSIXs/"
+        ]
+      }
+    },
+    "microsoft.vscode.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Code/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Code/User/",
+          "home:Library/Application Support/Code/Local Storage/",
+          "home:Library/Application Support/Code/CachedExtensionVSIXs/"
+        ]
+      }
+    },
+    "microsoft.vscode.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Code/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Code/User/",
+          "home:Library/Application Support/Code/Local Storage/",
+          "home:Library/Application Support/Code/CachedExtensionVSIXs/"
+        ]
+      }
+    },
+    "anysphere.cursor.cached-data": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Cursor/CachedData/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Cursor/User/workspaceStorage/",
+          "home:.cursor/extensions/",
+          "home:Library/Application Support/Cursor/Local Storage/"
+        ]
+      }
+    },
+    "anysphere.cursor.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Cursor/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Cursor/User/workspaceStorage/",
+          "home:.cursor/extensions/",
+          "home:Library/Application Support/Cursor/Local Storage/"
+        ]
+      }
+    },
+    "anysphere.cursor.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Cursor/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Cursor/User/workspaceStorage/",
+          "home:.cursor/extensions/",
+          "home:Library/Application Support/Cursor/Local Storage/"
+        ]
+      }
+    },
+    "anthropic.claude.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Claude/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Claude/IndexedDB/",
+          "home:Library/Application Support/Claude/Local Storage/",
+          "home:.claude/projects/"
+        ]
+      }
+    },
+    "anthropic.claude.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Claude/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Claude/IndexedDB/",
+          "home:Library/Application Support/Claude/Local Storage/",
+          "home:.claude/projects/"
+        ]
+      }
+    },
+    "openai.codex.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Codex/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Codex/Local Storage/",
+          "home:.codex/sessions/",
+          "home:Library/Application Support/Codex/Session Storage/"
+        ]
+      }
+    },
+    "openai.codex.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Codex/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Codex/Local Storage/",
+          "home:.codex/sessions/",
+          "home:Library/Application Support/Codex/Session Storage/"
+        ]
+      }
+    },
+    "npm.cache-content": {
+      "fixtures": {
+        "positive": [
+          "home:.npm/_cacache/"
+        ],
+        "negative": [
+          "home:.npm/_npx/",
+          "home:.npm/_logs/",
+          "home:.npm/_update-notifier-last-checked"
+        ]
+      }
+    },
+    "npm.cache-logs": {
+      "fixtures": {
+        "positive": [
+          "home:.npm/_logs/2026-09-01T10_00_00_000Z-debug-0.log"
+        ],
+        "negative": [
+          "home:.npm/_logs/2026-10-16T10_00_00_000Z-debug-0.log",
+          "home:.npm/_logs/notes.txt",
+          "home:.npm/_cacache/old.log"
+        ]
+      },
+      "fresh": [
+        "home:.npm/_logs/2026-10-16T10_00_00_000Z-debug-0.log"
+      ]
+    },
+    "cargo.registry-cache": {
+      "fixtures": {
+        "positive": [
+          "home:.cargo/registry/cache/"
+        ],
+        "negative": [
+          "home:.cargo/registry/src/",
+          "home:.cargo/git/",
+          "home:.cargo/bin/"
+        ]
+      }
+    },
+    "go.build-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/go-build/"
+        ],
+        "negative": [
+          "home:Library/Caches/gopls/",
+          "home:go/pkg/mod/"
+        ]
+      }
+    },
+    "pnpm.metadata-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/pnpm/metadata-v1.3/",
+          "home:Library/Caches/pnpm/metadata-full-v1.3/"
+        ],
+        "negative": [
+          "home:Library/Caches/pnpm/dlx/",
+          "home:Library/pnpm/store/v3/",
+          "home:Library/Caches/pnpm/metadata.json"
+        ]
+      }
+    },
+    "yarn.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Yarn/v6/"
+        ],
+        "negative": [
+          "home:Library/Caches/Yarn/version-notes.txt",
+          "home:Library/Caches/Yarn/.tmp/",
+          "home:.yarn/berry/cache/"
+        ]
+      }
+    },
+    "pip.http-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/pip/http-v2/",
+          "home:Library/Caches/pip/http/"
+        ],
+        "negative": [
+          "home:Library/Caches/pip/wheels/",
+          "home:Library/Caches/pip/selfcheck/"
+        ]
+      }
+    },
+    "uv.cache": {
+      "fixtures": {
+        "positive": [
+          "home:.cache/uv/"
+        ],
+        "negative": [
+          "home:.cache/pre-commit/",
+          "home:.local/share/uv/python/"
+        ]
+      }
+    },
+    "gradle.caches": {
+      "fixtures": {
+        "positive": [
+          "home:.gradle/caches/"
+        ],
+        "negative": [
+          "home:.gradle/wrapper/",
+          "home:.gradle/gradle.properties"
+        ]
+      }
+    },
+    "apple.xcode.derived-data": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Developer/Xcode/DerivedData/MyApp-abcdefghijklmnop/",
+          "home:Library/Developer/Xcode/DerivedData/ModuleCache.noindex/"
+        ],
+        "negative": [
+          "home:Library/Developer/Xcode/Archives/2026-09-01/",
+          "home:Library/Developer/Xcode/iOS DeviceSupport/",
+          "home:Library/Developer/Xcode/DerivedData/info.txt"
+        ]
+      }
+    },
+    "macos.user-temp.stale-files": {
+      "fixtures": {
+        "positive": [
+          "temp:stale-export.tmp"
+        ],
+        "negative": [
+          "temp:fresh-export.tmp",
+          "temp:com.example.app/old-inside.tmp",
+          "temp:old-folder/"
+        ]
+      },
+      "fresh": [
+        "temp:fresh-export.tmp"
+      ]
+    },
+    "macos.diagnostic-reports.user": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Logs/DiagnosticReports/Example-2026-09-01-100000.ips",
+          "home:Library/Logs/DiagnosticReports/Example_2026-09-01.crash"
+        ],
+        "negative": [
+          "home:Library/Logs/DiagnosticReports/Example-2026-10-16-100000.ips",
+          "home:Library/Logs/DiagnosticReports/Retired/Older.ips",
+          "home:Library/Logs/DiagnosticReports/notes.txt"
+        ]
+      },
+      "fresh": [
+        "home:Library/Logs/DiagnosticReports/Example-2026-10-16-100000.ips"
+      ]
+    },
+    "macos.downloads.incomplete": {
+      "fixtures": {
+        "positive": [
+          "downloads:Installer.dmg.crdownload",
+          "downloads:movie.mkv.part",
+          "downloads:Archive.zip.download/"
+        ],
+        "negative": [
+          "downloads:fresh.iso.crdownload",
+          "downloads:done.zip",
+          "downloads:sub/old.part"
+        ]
+      },
+      "fresh": [
+        "downloads:fresh.iso.crdownload"
+      ]
+    },
+    "apple.metadata.ds-store": {
+      "fixtures": {
+        "positive": [
+          "volume:.DS_Store",
+          "volume:Photos/.DS_Store"
+        ],
+        "negative": [
+          "volume:Photos/DS_Store.txt",
+          "volume:Photos/.DS_Store.bak"
+        ]
+      }
+    },
+    "apple.metadata.appledouble": {
+      "fixtures": {
+        "positive": [
+          "volume:._Photo.jpg",
+          "volume:Photos/._Movie.mov"
+        ],
+        "negative": [
+          "volume:Photos/Photo.jpg",
+          "volume:Photos/_underscore.txt"
+        ]
+      }
+    }
+  }
+}

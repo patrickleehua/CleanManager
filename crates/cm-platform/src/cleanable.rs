@@ -39,17 +39,27 @@ pub fn cache_locations_with(rules: &[Rule], env: &crate::windows::resolve::Resol
     cm_core::cleanable::cache_locations(rules, cm_core::capability::Platform::Windows, &roots)
 }
 
-/// [`cache_locations_with`] for this machine's own locations. macOS has no rule resolvers in
-/// this build, so no catalog location can be confirmed there.
+/// Cache locations of the enabled catalog rules on macOS. Locations guarded by macOS privacy controls (TCC) are never
+/// base paths, so they never back a hint.
+#[cfg(target_os = "macos")]
+pub fn cache_locations_with(rules: &[Rule], env: &crate::macos::resolve::ResolverEnv) -> Vec<CacheLocation> {
+    let roots: Vec<(String, String)> = rules
+        .iter()
+        .filter(|r| cm_core::cleanable::is_cache_rule(r, cm_core::capability::Platform::Macos))
+        .flat_map(|r| crate::macos::resolve::base_paths(r, env).into_iter().map(move |p| (r.rule_id.clone(), p.display().to_string())))
+        .collect();
+    cm_core::cleanable::cache_locations(rules, cm_core::capability::Platform::Macos, &roots)
+}
+
+/// [`cache_locations_with`] for this machine's own locations.
 pub fn cache_locations(rules: &[Rule]) -> Vec<CacheLocation> {
     #[cfg(windows)]
     {
         cache_locations_with(rules, &crate::windows::resolve::ResolverEnv::from_os())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = rules;
-        Vec::new()
+        cache_locations_with(rules, &crate::macos::resolve::ResolverEnv::from_os())
     }
 }
 
@@ -188,6 +198,42 @@ mod tests {
         assert_eq!(page_hints(&[Some(&paths[0])], Some(&store), &[])[0], None);
         assert!(page_hints(&[Some(&paths[2])], Some(&store), &[])[0].is_some(), "only the protected subtree loses its hint");
         assert_eq!(page_hints(&[Some(&paths[2])], None, &[])[0], None, "no protection list, no hint");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// DIN-05 on macOS: catalog locations come from the resolvers, only for enabled cache rules, never for a location
+    /// guarded by privacy controls. The shipped macOS pack is experimental, so it confirms no location yet.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_cache_locations_follow_the_resolvers() {
+        let root = scratch("mac-locations");
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join("Library/Caches/Google/Chrome/Default")).unwrap();
+        let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules/macos");
+        let load = |id: &str| Rule::parse(&std::fs::read_to_string(pack.join(format!("{id}.json"))).unwrap()).unwrap();
+        let ids = ["google.chrome.code-cache", "microsoft.vscode.gpu-cache", "apple.safari.cache", "macos.user-temp.stale-files"];
+        let shipped: Vec<Rule> = ids.iter().map(|id| load(id)).collect();
+        let env = crate::macos::resolve::ResolverEnv { home: Some(home.clone()), temp: Some(root.join("tmp")), ..Default::default() };
+        assert!(cache_locations_with(&shipped, &env).is_empty(), "experimental rules confirm no location");
+        let enabled: Vec<Rule> = shipped
+            .into_iter()
+            .map(|mut r| {
+                r.status = cm_core::rules::RuleStatus::Enabled;
+                r
+            })
+            .collect();
+        let locs = cache_locations_with(&enabled, &env);
+        let bases: Vec<(&str, String)> = locs.iter().map(|l| (l.rule_id.as_str(), l.base.clone())).collect();
+        let h = home.display();
+        assert_eq!(
+            bases,
+            [
+                ("google.chrome.code-cache", format!("{h}/Library/Caches/Google/Chrome/Default/Code Cache")),
+                ("microsoft.vscode.gpu-cache", format!("{h}/Library/Application Support/Code/GPUCache")),
+            ],
+            "the TCC-protected Safari cache and the age-limited temp rule give no location"
+        );
+        assert!(locs[0].covers(&format!("{h}/Library/Caches/Google/Chrome/Default/Code Cache/js")));
         std::fs::remove_dir_all(&root).ok();
     }
 }

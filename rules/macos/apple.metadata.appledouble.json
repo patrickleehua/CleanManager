@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "apple.metadata.appledouble",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "removable_metadata",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "apple.metadata"
+  },
+  "root_resolver": "removable_volume_root",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": "._*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 8
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "AppleDouble companion files (._name) on an external volume you selected with --volume; only that volume is examined.",
+    "regeneration": "Recreated only when a Mac writes extended attributes to the volume again.",
+    "offline_effect": "Resource forks, Finder tags and other extended attributes stored in these files are lost on non-Apple file systems."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

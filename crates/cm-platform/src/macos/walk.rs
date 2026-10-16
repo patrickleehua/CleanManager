@@ -10,6 +10,14 @@
 //! - Unreadable subtrees and per-entry failures become skipped ranges, never empty directories
 //!   or zero sizes. Hard links share one object keyed by `(st_dev, st_ino)`.
 //! - Names are the raw bytes the kernel returned; nothing is Unicode-normalized.
+//! - The scope's root is re-checked (MVP 5.5, SCN-07) every [`RECHECK_EVERY_DIRS`] directories,
+//!   after any failed open or listing, and once before reporting `completed`: the held root
+//!   descriptor must still answer and the selected path must still name the same directory on
+//!   the same volume. A replaced or remounted volume (`volume_changed` / `volume_offline`) or a
+//!   replaced root directory (`root_changed`) stops the walk with `partial`; rows already
+//!   confirmed are kept, and nothing on the new volume or under the new directory is read, so
+//!   it never inherits the old scope. `EDEADLK` (materialization refused, TN3150) is a
+//!   `cloud_materialization_avoided` skip and is never retried.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -26,6 +34,9 @@ use super::sys::{Fd, Kind, Meta, NoMaterialize, Record, SF_DATALESS, describe, v
 /// Directory descriptors kept open along the current path. Deeper trees release the
 /// shallowest ones and re-derive them (with identity checks) from the nearest held ancestor.
 const MAX_HELD_DIR_FDS: usize = 64;
+/// Directories entered between two root identity re-checks (`open` + `fstat` + `fstatfs` +
+/// one volume-UUID `getattrlist` + `fstat` of the held root).
+pub(crate) const RECHECK_EVERY_DIRS: usize = 256;
 
 /// One directory listing as produced by a backend.
 pub(crate) struct Listing {
@@ -219,7 +230,7 @@ impl Ctx<'_> {
             link_count,
             cloud,
             modified_unix: meta.mtime,
-            shared_blocks: None,
+            shared_blocks: if kind == ObjectKind::File { meta.shared_blocks } else { None },
         });
         id
     }
@@ -361,6 +372,67 @@ impl Ctx<'_> {
     }
 }
 
+/// The scope root as it was when the scan started (MVP 5.5).
+struct RootWatch {
+    /// An own descriptor of the root directory (the walk's may be released with its frame).
+    held: Fd,
+    path: CString,
+    dev: i32,
+    ino: u64,
+    volume_id: String,
+}
+
+/// Why the scope stopped being the one the scan started on.
+struct RootChange {
+    code: &'static str,
+    reason: SkipReason,
+    message: String,
+}
+
+impl RootWatch {
+    /// `None` while the selected path still names the scanned directory on the same volume
+    /// and the held root still answers.
+    fn changed(&self) -> Option<RootChange> {
+        let volume = |message: String| Some(RootChange { code: "volume_changed", reason: SkipReason::VolumeChanged, message });
+        let root = |message: String| Some(RootChange { code: "root_changed", reason: SkipReason::Error, message });
+        match Fd::open_dir(&self.path).and_then(|fd| fd.stat().map(|st| (fd, st))) {
+            Err(e) => return root(format!("the selected root no longer opens ({}); the scan does not continue", describe(e))),
+            Ok((fd, st)) if st.st_dev != self.dev => {
+                let now = volume_of(&fd, st.st_dev).map(|v| v.id).unwrap_or_else(|_| "unknown".into());
+                return volume(if now == self.volume_id {
+                    format!("the volume {now} was remounted under the selected root; the scan does not continue on the new mount")
+                } else {
+                    format!("the selected root is now on volume {now}, not {}; nothing on the new volume is read", self.volume_id)
+                });
+            }
+            Ok((_, st)) if st.st_ino != self.ino => {
+                return root("the selected path now names a different directory; it does not inherit this scan".into());
+            }
+            // A new volume can reuse both the device number and the root inode (a disk image
+            // re-attached on the same disk node): only the volume UUID tells them apart.
+            Ok((fd, st)) => {
+                if let Ok(v) = volume_of(&fd, st.st_dev)
+                    && v.id != self.volume_id
+                {
+                    return volume(format!(
+                        "the selected root is now on volume {}, not {} (same device number); nothing on the new volume is read",
+                        v.id, self.volume_id
+                    ));
+                }
+            }
+        }
+        match self.held.stat() {
+            Err(e) => Some(RootChange {
+                code: "volume_offline",
+                reason: SkipReason::VolumeChanged,
+                message: format!("the scanned volume no longer answers ({}); the scan does not continue", describe(e)),
+            }),
+            Ok(st) if st.st_dev != self.dev || st.st_ino != self.ino => volume("the scanned root changed identity under its descriptor".into()),
+            Ok(_) => None,
+        }
+    }
+}
+
 pub(crate) fn probe(backend: &'static str, root: &RawPath, method: &str) -> RootProbe {
     let fail = |reason: String, state| RootProbe { filesystem: None, volume_id: None, backend: backend.into(), state, reason };
     let Some(path) = root_bytes(root) else { return fail("not a macOS path".into(), CapabilityState::Unsupported) };
@@ -386,6 +458,19 @@ pub(crate) fn probe(backend: &'static str, root: &RawPath, method: &str) -> Root
 }
 
 pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &mut dyn ScanSink, options: &ScanOptions, lister: &mut dyn Lister) -> ScanReport {
+    scan_checked(backend, method, root, sink, options, lister, RECHECK_EVERY_DIRS)
+}
+
+/// [`scan`] with an explicit root re-check interval (tests use 1).
+pub(crate) fn scan_checked(
+    backend: &'static str,
+    method: &str,
+    root: &RawPath,
+    sink: &mut dyn ScanSink,
+    options: &ScanOptions,
+    lister: &mut dyn Lister,
+    recheck_every: usize,
+) -> ScanReport {
     // SAFETY: plain getter without arguments.
     let euid = unsafe { libc::geteuid() };
     let mut report = ScanReport {
@@ -453,6 +538,13 @@ pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &m
         });
     }
     let root_dev = root_meta.dev;
+    let watch = match root_fd.reopen_self() {
+        Ok(held) => RootWatch { held, path: cpath, dev: root_dev, ino: root_meta.ino, volume_id: volume.id.clone() },
+        Err(e) => {
+            report.issues.push(ScanIssue { code: "root_unavailable".into(), scope_display: root.display(), message: describe(e) });
+            return report;
+        }
+    };
     let mut ctx = Ctx {
         sink,
         batch: options.batch_entries.max(1),
@@ -495,6 +587,8 @@ pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &m
         frames.clear();
     }
 
+    let recheck_every = recheck_every.max(1);
+    let mut since_check = 0usize;
     while state == ScanState::Completed {
         let Some(last) = frames.len().checked_sub(1) else { break };
         let Some(child) = frames[last].pending.pop() else {
@@ -506,7 +600,19 @@ pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &m
             break;
         }
         let child_path = join(&frames[last].path, &child.name);
+        since_check += 1;
+        if since_check >= recheck_every {
+            since_check = 0;
+            if let Some(change) = watch.changed() {
+                ctx.issue(change.code, &path, change.message);
+                ctx.skip(Some(child.entry_id), &child_path, change.reason);
+                state = ScanState::Partial;
+                break;
+            }
+        }
+        // Any failure below re-checks the root before the next directory is entered.
         if let Err(fail) = ensure_top_fd(&mut frames, root_dev) {
+            since_check = recheck_every;
             // The parent can no longer be reached safely: none of its remaining children are read.
             let parent_path = frames[last].path.clone();
             let rest: Vec<Pending> = std::iter::once(child).chain(frames[last].pending.drain(..).rev()).collect();
@@ -525,11 +631,15 @@ pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &m
         let fd = match opened {
             Ok(fd) => fd,
             Err(fail) => {
+                since_check = recheck_every;
                 ctx.open_failed(child.entry_id, &child_path, fail);
                 continue;
             }
         };
         let pending = ctx.list(lister, &fd, child.entry_id, &child_path);
+        if pending.is_none() {
+            since_check = recheck_every;
+        }
         if let Err(msg) = ctx.maybe_flush() {
             ctx.issue("store_error", &child_path, msg);
             state = ScanState::Failed;
@@ -541,6 +651,13 @@ pub(crate) fn scan(backend: &'static str, method: &str, root: &RawPath, sink: &m
         }
     }
     drop(frames);
+    // Completed is claimed only for the root the scan started on (SCN-07).
+    if state == ScanState::Completed
+        && let Some(change) = watch.changed()
+    {
+        ctx.issue(change.code, &path, change.message);
+        state = ScanState::Partial;
+    }
     if let Err(msg) = ctx.flush() {
         ctx.report.issues.push(ScanIssue { code: "store_error".into(), scope_display: String::new(), message: msg });
         state = ScanState::Failed;

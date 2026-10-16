@@ -1,0 +1,58 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "macos.diagnostic-reports.user",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "macos.diagnostic-reports"
+  },
+  "root_resolver": "crash_reports",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [
+      "ips",
+      "crash",
+      "diag",
+      "hang",
+      "spin"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Per-user crash, hang and diagnostic reports (~/Library/Logs/DiagnosticReports, *.ips/*.crash/*.diag/*.hang/*.spin) older than 7 days.",
+    "regeneration": "Not regenerated: each report is a record of a past crash or hang.",
+    "offline_effect": "The reports are no longer available to send to a developer or for troubleshooting."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "google.chrome.gpu-cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "browsers",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "google.chrome"
+  },
+  "root_resolver": "browser_profile",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "GPUCache"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Chromium GPU shader cache of Google Chrome for one browser profile.",
+    "regeneration": "Google Chrome recreates it the next time the profile is opened; the first pages may render slightly slower.",
+    "offline_effect": "None expected: no page content, cookies or site data are inside."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

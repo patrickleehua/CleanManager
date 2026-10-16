@@ -285,8 +285,13 @@ impl ScanContext {
 /// Applications whose recorded location is or contains `path` (read-only inventory).
 pub fn ownership_for(path: &RawPath) -> OwnershipFacts {
     #[cfg(windows)]
+    let (instances, _issues) = cm_platform::windows::apps::inventory();
+    // macOS: an unusable test redirection leaves ownership unchecked rather than reading the real machine.
+    #[cfg(target_os = "macos")]
+    let Ok((instances, _issues)) = cm_platform::macos::apps::AppsEnv::from_process().map(|env| cm_platform::macos::apps::inventory(&env)) else {
+        return OwnershipFacts::default();
+    };
     {
-        let (instances, _issues) = cm_platform::windows::apps::inventory();
         let report = cm_core::apps::associate(&instances, &cm_core::model::Timestamp(now_utc()));
         let a = cm_core::apps::assess_directory(path, None, cm_core::apps::InstallRecordStatus::NotFound, &instances, &report.associations);
         match a.ownership {
@@ -300,11 +305,6 @@ pub fn ownership_for(path: &RawPath) -> OwnershipFacts {
             },
             cm_core::apps::Ownership::Unknown { .. } => OwnershipFacts { checked: true, apps: vec![], shared: false },
         }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        OwnershipFacts::default()
     }
 }
 

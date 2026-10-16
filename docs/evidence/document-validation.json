@@ -129,7 +129,7 @@
   "diagnosis_examples": 9,
   "run_records": 70,
   "locked_crates_documented": 94,
-  "production_rules": 53,
+  "production_rules": 86,
   "production_registry_entries": 38,
   "devices_observed": 1
 }

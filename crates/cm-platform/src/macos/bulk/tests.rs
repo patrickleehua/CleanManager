@@ -15,8 +15,14 @@ struct Rec {
     mount: Option<u32>,
     /// (link count, ATTR_FILE_ALLOCSIZE, ATTR_FILE_DATALENGTH)
     file: Option<(u32, i64, i64)>,
+    /// Extended common attributes (private size, clone id, ext flags), packed after the file ones.
+    private: Option<i64>,
+    clone: Option<u64>,
+    ext: Option<u64>,
     /// Extra bits forced into the returned common set (not packed).
     extra_common: u32,
+    /// Extra bits forced into the returned extended set (not packed).
+    extra_cmnext: u32,
 }
 
 fn file(name: &[u8], id: u64, size: i64) -> Rec {
@@ -48,7 +54,7 @@ fn dir(name: &[u8], id: u64, mount: u32) -> Rec {
 /// Encode as the kernel packs it: length, returned set, ERROR, fixed attributes in bit order
 /// (name as an attrreference_t), then the NUL-terminated name padded to 4 bytes.
 fn encode(r: &Rec) -> Vec<u8> {
-    let (mut common, mut dir_bits, mut file_bits) = (libc::ATTR_CMN_RETURNED_ATTRS | r.extra_common, 0u32, 0u32);
+    let (mut common, mut dir_bits, mut file_bits, mut cmnext) = (libc::ATTR_CMN_RETURNED_ATTRS | r.extra_common, 0u32, 0u32, r.extra_cmnext);
     let mut fixed: Vec<u8> = Vec::new();
     let mut name_ref = None;
     if let Some(e) = r.error {
@@ -91,8 +97,20 @@ fn encode(r: &Rec) -> Vec<u8> {
         fixed.extend_from_slice(&alloc.to_ne_bytes());
         fixed.extend_from_slice(&len.to_ne_bytes());
     }
+    if let Some(p) = r.private {
+        cmnext |= libc::ATTR_CMNEXT_PRIVATESIZE;
+        fixed.extend_from_slice(&p.to_ne_bytes());
+    }
+    if let Some(c) = r.clone {
+        cmnext |= libc::ATTR_CMNEXT_CLONEID;
+        fixed.extend_from_slice(&c.to_ne_bytes());
+    }
+    if let Some(f) = r.ext {
+        cmnext |= libc::ATTR_CMNEXT_EXT_FLAGS;
+        fixed.extend_from_slice(&f.to_ne_bytes());
+    }
     let mut out = vec![0u8; 4];
-    for v in [common, 0, dir_bits, file_bits, 0] {
+    for v in [common, 0, dir_bits, file_bits, cmnext] {
         out.extend_from_slice(&v.to_ne_bytes());
     }
     let fixed_start = out.len();
@@ -260,6 +278,79 @@ fn count_larger_than_the_records_present_stops_at_the_padding() {
     assert_eq!((p.records.len(), p.issues.len()), (1, 1), "header beyond the buffer");
 }
 
+fn ext_file(name: &[u8], id: u64, alloc: i64, private: Option<i64>, ext: Option<u64>) -> Rec {
+    let mut r = file(name, id, 10);
+    r.file = Some((1, alloc, 10));
+    r.private = private;
+    r.clone = Some(0xC10E);
+    r.ext = ext;
+    r
+}
+
+#[test]
+fn extended_attributes_follow_the_file_attributes_and_decide_sharing() {
+    let recs = [
+        ext_file(b"clone", 1, 8192, Some(0), Some(EF_MAY_SHARE_BLOCKS | 0x10)),
+        ext_file(b"plain", 2, 8192, Some(8192), Some(0x2)),
+        ext_file(b"snapshotted", 3, 8192, Some(4096), Some(0)),
+        ext_file(b"no-flags", 4, 8192, Some(8192), None),
+        ext_file(b"no-flags-trapped", 5, 8192, Some(0), None),
+        ext_file(b"nothing", 6, 8192, None, None),
+    ];
+    let p = parse_bulk_records(&reply(&recs), recs.len());
+    assert!(p.issues.is_empty(), "{:?}", p.issues);
+    let r = &p.records;
+    assert_eq!((r[0].private_size, r[0].clone_id, r[0].ext_flags), (Some(0), Some(0xC10E), Some(0x11)));
+    assert_eq!((r[0].link_count, r[0].alloc_size, r[0].data_length), (Some(1), Some(8192), Some(10)), "file attributes unshifted");
+    let shared: Vec<_> = r.iter().map(BulkRecord::shared_blocks).collect();
+    assert_eq!(shared, [Some(true), Some(false), Some(true), None, Some(true), None]);
+}
+
+#[test]
+fn only_some_extended_attributes_shift_the_layout() {
+    let mut r = ext_file(b"x", 1, 4096, None, Some(EF_MAY_SHARE_BLOCKS));
+    r.clone = None;
+    let rec = &parse_bulk_records(&reply(&[r]), 1).records[0];
+    assert_eq!((rec.private_size, rec.clone_id, rec.ext_flags), (None, None, Some(EF_MAY_SHARE_BLOCKS)));
+    let mut d = dir(b"d", 9, 0);
+    d.ext = Some(0);
+    let rec = &parse_bulk_records(&reply(&[d]), 1).records[0];
+    assert_eq!((rec.mount_status, rec.ext_flags), (Some(0), Some(0)), "a directory has no file attributes before them");
+    let neg = ext_file(b"n", 1, 4096, Some(-1), Some(0));
+    assert_eq!(parse_bulk_records(&reply(&[neg]), 1).records[0].private_size, None, "negative private size is unknown");
+}
+
+#[test]
+fn unrequested_extended_attribute_skips_the_record() {
+    let mut r = ext_file(b"x", 1, 4096, Some(4096), Some(0));
+    r.extra_cmnext = libc::ATTR_CMNEXT_LINKID; // size unknown to the parser: cannot be skipped over
+    let p = parse_bulk_records(&reply(&[r, file(b"next", 2, 1)]), 2);
+    assert_eq!(p.records.len(), 1);
+    assert!(p.issues[0].contains("cmnext"), "{:?}", p.issues);
+}
+
+#[test]
+fn estimates_stay_null_with_the_shared_blocks_basis() {
+    let row = |logical, shared| cm_core::scan::ObjectRow {
+        object_id: 1,
+        volume_id: "uuid:X".into(),
+        file_id: "inode64:0000000000000001".into(),
+        generation: None,
+        quality: cm_core::model::IdentityQuality::Strong,
+        kind: cm_core::model::ObjectKind::File,
+        logical,
+        allocated: Some(4096),
+        link_count: Some(1),
+        cloud: cm_core::model::CloudState::NotCloud,
+        modified_unix: None,
+        shared_blocks: shared,
+    };
+    for shared in [Some(true), Some(false), None] {
+        assert_eq!(reclaimable_estimate(&row(Some(10), shared)), (None, "shared_blocks_unknown"));
+    }
+    assert_eq!(reclaimable_estimate(&row(None, Some(false))), (None, "not_computed"));
+}
+
 /// Deterministic SplitMix64 for the robustness sweep.
 fn next(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -275,9 +366,10 @@ fn truncations_corruptions_and_noise_never_panic() {
         file("中文".as_bytes(), 1, 10),
         Rec { error: Some(1), name: Some(b"e".to_vec()), ..Rec::default() },
         dir(b"d", 2, 0),
+        ext_file(b"c", 3, 4096, Some(4096), Some(1)),
     ]);
     for cut in 0..=good.len() {
-        let _ = parse_bulk_records(&good[..cut], 3);
+        let _ = parse_bulk_records(&good[..cut], 4);
     }
     let mut state = 42u64;
     for _ in 0..2_000 {
@@ -286,8 +378,8 @@ fn truncations_corruptions_and_noise_never_panic() {
             let i = (next(&mut state) as usize) % b.len();
             b[i] = next(&mut state) as u8;
         }
-        let p = parse_bulk_records(&b, 3);
-        assert!(p.records.len() <= 3);
+        let p = parse_bulk_records(&b, 4);
+        assert!(p.records.len() <= 4);
     }
     for _ in 0..500 {
         let len = (next(&mut state) % 512) as usize;

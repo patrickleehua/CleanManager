@@ -1,0 +1,49 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "npm.cache-content",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "tool",
+    "id": "npm"
+  },
+  "root_resolver": "package_manager_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "_cacache"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "tool_adapter",
+  "adapter_ref": "npm.cache-verify",
+  "allowed_modes": [],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "npm's content-addressed package cache (_cacache) in ~/.npm.",
+    "regeneration": "Packages are downloaded again on the next install.",
+    "offline_effect": "Offline installs of removed packages fail until the network is available."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

@@ -210,8 +210,11 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
             Ok(root) => Some(root),
             Err(e) => return fail(req, ErrorCode::InvalidArgument, &format!("--volume refused: {e}"), p.format),
         },
-        #[cfg(not(windows))]
-        Some(_) => return fail(req, ErrorCode::Unsupported, "--volume is not available on this platform in this build", p.format),
+        #[cfg(target_os = "macos")]
+        Some(v) => match cm_platform::macos::resolve::removable_volume_root(std::path::Path::new(v)) {
+            Ok(root) => Some(root),
+            Err(e) => return fail(req, ErrorCode::InvalidArgument, &format!("--volume refused: {e}"), p.format),
+        },
     };
     let page_size: usize = match p.option("limit").map(str::parse::<usize>).unwrap_or(Ok(MAX_PAGE)) {
         Ok(n) if (1..=MAX_PAGE).contains(&n) => n,
@@ -384,6 +387,8 @@ pub(crate) fn with_stale(mut plan: Value, stale: &[Stale]) -> Value {
 fn probe_all(candidates: &mut [Candidate], facts: &mut std::collections::BTreeMap<String, CatalogFacts>) {
     #[cfg(windows)]
     let snap = cm_platform::windows::probes::ProcessSnapshot::take();
+    #[cfg(target_os = "macos")]
+    let snap = cm_platform::macos::probes::ProcessSnapshot::take();
     for c in candidates.iter_mut() {
         let Some(f) = facts.get_mut(&c.candidate_id) else { continue };
         if c.state == CandidateState::Blocked || f.action_kind == Some(ActionKind::ReviewOnlyRow) || c.probes.is_empty() {
@@ -391,9 +396,8 @@ fn probe_all(candidates: &mut [Candidate], facts: &mut std::collections::BTreeMa
         }
         #[cfg(windows)]
         let results = cm_platform::windows::probes::probe_candidate(&c.path, &c.probes, c.owner_id.as_deref(), &snap);
-        #[cfg(not(windows))]
-        let results: Vec<cm_core::catalog::ProbeResult> =
-            c.probes.iter().map(|k| cm_core::catalog::ProbeResult::new(k, cm_core::catalog::ProbeState::Unknown, "probes are not available on this platform in this build")).collect();
+        #[cfg(target_os = "macos")]
+        let results = cm_platform::macos::probes::probe_candidate(&c.path, &c.probes, c.owner_id.as_deref(), &snap);
         apply_probes(c, f, results);
     }
 }

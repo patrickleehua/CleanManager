@@ -158,6 +158,8 @@ pub enum EvidenceKind {
     CaskroomToken,
     /// The bundle's `Info.plist` is missing or could not be parsed.
     InfoPlistUnreadable,
+    /// A macOS installer package receipt (`/var/db/receipts`) whose identifier matches the bundle; evidence only.
+    PkgReceipt,
 }
 
 impl EvidenceKind {
@@ -180,6 +182,7 @@ impl EvidenceKind {
             EvidenceKind::MasReceipt => "mas_receipt",
             EvidenceKind::CaskroomToken => "caskroom_token",
             EvidenceKind::InfoPlistUnreadable => "info_plist_unreadable",
+            EvidenceKind::PkgReceipt => "pkg_receipt",
         }
     }
 }

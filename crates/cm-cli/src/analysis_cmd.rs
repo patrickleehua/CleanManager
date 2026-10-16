@@ -86,16 +86,31 @@ fn resolver_env(volume: Option<PathBuf>) -> (cm_platform::windows::resolve::Reso
     (env, issues)
 }
 
+/// macOS: `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` (platform doc §11).
+#[cfg(target_os = "macos")]
+fn resolver_env(volume: Option<PathBuf>) -> (cm_platform::macos::resolve::ResolverEnv, Vec<Value>) {
+    let (mut env, used) = cm_platform::macos::resolve::ResolverEnv::from_os().with_overrides(|k| std::env::var_os(k));
+    let issues = used
+        .into_iter()
+        .map(|var| json!({"code": "resolver_override", "scope_display": var,
+            "message": "rule roots resolved from an override (validation fixture), not the user's real location"}))
+        .collect();
+    env.removable_volume = volume;
+    (env, issues)
+}
+
 fn roots_for(rules: &[Rule], volume: Option<PathBuf>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<Value>) {
     #[cfg(windows)]
     {
         let (env, issues) = resolver_env(volume);
         (cm_platform::windows::resolve::resolve(rules, &env), issues)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = (rules, volume);
-        (Vec::new(), Vec::new())
+        let (env, mut issues) = resolver_env(volume);
+        let r = cm_platform::macos::resolve::resolve(rules, &env);
+        issues.extend(r.issues.into_iter().map(|i| json!({"code": i.code, "scope_display": i.scope, "message": i.message})));
+        (r.roots, issues)
     }
 }
 
@@ -108,10 +123,7 @@ pub fn entry_hints(items: &[cm_store::index::EntryItem], store_dir: &Path) -> Ve
         return vec![None; items.len()];
     }
     let caches = match load_rules(&default_rules_dir()) {
-        #[cfg(windows)]
         Ok(rules) => cm_platform::cleanable::cache_locations_with(&rules.rules, &resolver_env(None).0),
-        #[cfg(not(windows))]
-        Ok(rules) => cm_platform::cleanable::cache_locations(&rules.rules),
         Err(_) => Vec::new(),
     };
     cm_platform::cleanable::page_hints(&dirs, Some(store_dir), &caches)
@@ -123,10 +135,9 @@ pub fn installed_versions(rules: &[Rule]) -> BTreeMap<String, String> {
     {
         cm_platform::windows::resolve::installed_versions(rules)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = rules;
-        BTreeMap::new()
+        cm_platform::macos::resolve::installed_versions(rules)
     }
 }
 

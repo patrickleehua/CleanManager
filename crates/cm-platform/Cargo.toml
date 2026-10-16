@@ -45,12 +45,16 @@ libc = "0.2.177"
 core-foundation = "0.10.1"
 # Code-signature checks (SecStaticCode: Team ID / signer of bundles, startup targets and update packages).
 security-framework = "3.7.0"
+# Homebrew Caskroom metadata (`.metadata/**/<token>.json`) for the read-only app inventory.
+serde_json.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 cm-fixtures = { path = "../cm-fixtures" }
+# The macOS catalog fixture manifest (rules/macos/fixtures) in the resolver tests.
+serde_json.workspace = true
 
 # Test-only provider for the cloud placeholder boundary tests (Cloud Files API).
 [target.'cfg(windows)'.dev-dependencies]

@@ -1,6 +1,11 @@
 //! `mac.posix`: scoped, read-only enumeration with `openat` + `readdir` +
 //! `fstatat(AT_SYMLINK_NOFOLLOW)` (SCN-01/02/03/05/06/07). The baseline every other macOS
 //! backend is reconciled against; the walk itself lives in `walk.rs`.
+//!
+//! `shared_blocks` is always `None` here: `struct stat` has no clone/sharing field, and the
+//! only per-file source (`getattrlistat` with `ATTR_CMNEXT_EXT_FLAGS`) is one more syscall per
+//! entry, which would change what this baseline measures. Block sharing comes from `mac.bulk`,
+//! where the same attributes arrive in the listing itself at no extra call.
 
 use cm_core::path::RawPath;
 use cm_core::scan::{RootProbe, ScanBackend, ScanOptions, ScanReport, ScanSink};

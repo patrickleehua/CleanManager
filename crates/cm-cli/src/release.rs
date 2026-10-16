@@ -259,13 +259,15 @@ mod tests {
         let platform = if cfg!(windows) { "windows" } else { "macos" };
         for sub in ["registry", platform] {
             let embedded = embedded_json_files(&Path::new(EMBEDDED_RULES).join(sub)).unwrap();
-            // `rules/macos` does not exist yet: no macOS rule pack ships in this build, so the embedded platform pack is
-            // empty there, exactly as a missing directory reads (`read_json_files`).
-            let mut on_disk: Vec<String> = match std::fs::read_dir(repo.join(sub)) {
-                Ok(rd) => rd.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).map(|p| std::fs::read_to_string(p).unwrap()).collect(),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound && sub == "macos" => Vec::new(),
-                Err(e) => panic!("{sub}: {e}"),
-            };
+            // Rule files only: `rules/macos/fixtures` holds test fixtures, which are neither rules nor shipped.
+            let mut on_disk: Vec<String> = std::fs::read_dir(repo.join(sub))
+                .unwrap_or_else(|e| panic!("{sub}: {e}"))
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "json"))
+                .map(|p| std::fs::read_to_string(p).unwrap())
+                .collect();
+            assert!(!on_disk.is_empty(), "{sub}: the {platform} pack and the registry ship with every build");
             let mut texts: Vec<String> = embedded.into_iter().map(|(_, t)| t).collect();
             on_disk.sort();
             texts.sort();

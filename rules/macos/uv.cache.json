@@ -1,0 +1,53 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "uv.cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "tool",
+    "id": "uv"
+  },
+  "root_resolver": "package_manager_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "uv's package and build cache (~/.cache/uv by default, UV_CACHE_DIR or XDG_CACHE_HOME/uv when set).",
+    "regeneration": "Packages are downloaded and built again by the next uv run that needs them.",
+    "offline_effect": "Offline installs of removed packages fail until the network is available."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

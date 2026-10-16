@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "apple.metadata.ds-store",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "removable_metadata",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "apple.metadata"
+  },
+  "root_resolver": "removable_volume_root",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": ".DS_Store",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 8
+  },
+  "exclude": [],
+  "probes": [],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Finder view-settings files (.DS_Store) on an external volume you selected with --volume; only that volume is examined.",
+    "regeneration": "Finder recreates them when folders on the volume are opened again.",
+    "offline_effect": "Finder loses the volume's per-folder view settings (icon positions, sort order)."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

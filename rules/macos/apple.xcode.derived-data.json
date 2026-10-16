@@ -1,0 +1,55 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "apple.xcode.derived-data",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "apple.xcode"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "DerivedData"
+    ],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Xcode DerivedData: per-project build products, indexes and module caches (~/Library/Developer/Xcode/DerivedData/*).",
+    "regeneration": "Xcode rebuilds the project and re-indexes it on the next build; the first build after removal is slower.",
+    "offline_effect": "None expected: Archives, device support files and project sources are not inside and are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}
