@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "description": "Before publishing (2026-10-17) the history was rewritten only to replace the author/committer e-mail with the GitHub noreply address; every tree is byte-identical. Evidence records written earlier cite the original commit hashes in code_commit; this table maps them to the published commits.",
+  "mapping": [
+    {
+      "original": "bc380649652b39194413ac1cf2f1cd25e8ece245",
+      "published": "1ae0584856ea4da037a2a54472c9ab2d70147aae",
+      "subject": "chore: initial project setup"
+    },
+    {
+      "original": "b307e92fa8fd067728fc065123dfcfba25ab965e",
+      "published": "7ec778466a82d225175bcc54d094ae939e7352c6",
+      "subject": "docs(openspec): plan Mole parity suite and reconcile MVP scope"
+    },
+    {
+      "original": "200bd2cfff10a25260c16fe66017cc5c8301245e",
+      "published": "822665f38901972ba97aea94ac74270ca692135f",
+      "subject": "feat: Rust core, Windows read-only scanning, versioned index and rule analysis"
+    },
+    {
+      "original": "c1f36a33deec6158a9df0df2d195f37be604f3b0",
+      "published": "558f628a1a54f6d231033a979ae2faa5056e3cbd",
+      "subject": "feat: plans, authorization, verified Windows actions, protection policy"
+    },
+    {
+      "original": "1dfb4d77b289df66a93d83940abb65f770a90106",
+      "published": "e4165703cc61da90bdad088e033aec9282ace16a",
+      "subject": "feat(desktop): Tauri shell with scope, overview and disk views"
+    },
+    {
+      "original": "ddeae2f11fba1ac4ac5cc81178d98fb7625a1ae0",
+      "published": "8bec1928628142004ba347285c876b9da23706d0",
+      "subject": "feat: quarantine recovery, protection CLI, read-only system tools"
+    },
+    {
+      "original": "791b6240796381227f9f40231e72c4fbd657c1a6",
+      "published": "bf3766a5783b233f9fa24bcf57f999411c627807",
+      "subject": "feat: cleanup catalog, project purge, installer cleanup, desktop plan flows"
+    },
+    {
+      "original": "4ecf4f123ff55532daf53c3e3905c9d13f039d14",
+      "published": "7f0ceeef6d1e0c83e83fe764c216e13e15123ad6",
+      "subject": "feat: plan kinds, manual trash, uninstall, maintenance, status tools, AI diagnostics, five-tool desktop"
+    },
+    {
+      "original": "9772ecdcf81839656c135a5ef6d850373c1683fe",
+      "published": "2646309d4bd44261cef0a66079bd30a53f11ab0d",
+      "subject": "feat: desktop software/optimize/status pages and catalog wave 2 (Windows)"
+    },
+    {
+      "original": "03eaa068d72a9cf2f2e3fece0b7e403ff0335a60",
+      "published": "4f3f7d34ab03dd5b0e3edf4635b7e8c7a9d48295",
+      "subject": "feat: lifecycle, store migrations, dangerous-path corpus and CI"
+    },
+    {
+      "original": "e6d0ca3a4492fdfcadca1045255e9ca8431e6a24",
+      "published": "7c90c2adce3879358e503619aa379accd0814e3e",
+      "subject": "feat: resident utilities (Windows), parity review, honest capability and gate labels"
+    },
+    {
+      "original": "e96f2dcc1bd071df0813d0ed9625c051b24f0994",
+      "published": "bb81bc7b2b4c8ad48619500dd21f8021dac6d6db",
+      "subject": "feat: gate-off by default (D15), parity decisions D16, batch uninstall, --debug, cleanable hints, status prefs"
+    },
+    {
+      "original": "15478a610a012a623c0c3216e3abfe7fdddce320",
+      "published": "65153a809addaeaff64161baa49e33ae02128fa0",
+      "subject": "docs: adopt MIT license and rewrite README (en + zh-CN) with Mole acknowledgement"
+    }
+  ]
+}
