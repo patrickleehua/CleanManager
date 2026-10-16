@@ -143,7 +143,11 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("cm-hints-{name}-{}", std::process::id()));
+        // On macOS `$TMPDIR` goes through the `/var` symlink to the hard-deny root `/private/var` (a link on the way only
+        // adds denials): use the real `/private/var/...` path there, as a person's own folders are reached.
+        let t = std::env::temp_dir();
+        let t = if cfg!(windows) { t } else { std::fs::canonicalize(&t).unwrap() };
+        let d = t.join(format!("cm-hints-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

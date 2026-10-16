@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::install_self::tests::{MemPath, layout, scratch};
+use crate::install_self::tests::{MemPath, layout, other_dirs, path_value, scratch};
 use crate::release::{InstallState, sha256_bytes};
 use crate::update_self::InstallMethod;
 
@@ -32,7 +32,7 @@ fn fixture(name: &str) -> Fixture {
     let state = InstallState { installed_at: "2026-10-15T00:00:00Z".into(), path_entry_added: Some(install.display().to_string()) };
     std::fs::write(install.join(INSTALL_STATE_FILE), state.to_json()).unwrap();
     std::fs::create_dir_all(install.join(BACKUP_DIR).join("0.0.9")).unwrap();
-    std::fs::write(install.join(BACKUP_DIR).join("0.0.9").join("cleanmanager.exe"), b"older program").unwrap();
+    std::fs::write(install.join(BACKUP_DIR).join("0.0.9").join(release::exe_name()), b"older program").unwrap();
     let store = root.join("store");
     drop(cm_store::Stores::open(&store).unwrap());
     for (f, body) in [("protection.json", "{}"), ("app-updates.json", "{}"), ("purge-last-run.json", "{}"), ("notes-by-user.txt", "mine")] {
@@ -49,7 +49,8 @@ fn fixture(name: &str) -> Fixture {
     // A block that loads another copy is not ours to remove.
     let other_profile = root.join(".bashrc");
     std::fs::write(&other_profile, format!("{}\neval \"$('D:/Elsewhere/cleanmanager.exe' completion print bash)\"\n{}\n", crate::completion_cmd::BEGIN, crate::completion_cmd::END)).unwrap();
-    let path = MemPath(RefCell::new(Some((format!(r"C:\A;{};C:\B", install.display()), true))));
+    let (a, b) = other_dirs();
+    let path = MemPath(RefCell::new(Some((path_value(&[a, &install.display().to_string(), b]), true))));
     Fixture { install, store, profile, other_profile, path }
 }
 
@@ -102,7 +103,7 @@ fn the_default_plan_removes_only_the_program_caches_and_its_own_system_changes()
     for kept in ["audit.db", "protection.json", "app-updates.json", "notes-by-user.txt", "store"] {
         assert!(!a.iter().any(|x| x.0 == kept), "{kept} must be kept");
     }
-    for prog in ["cleanmanager.exe", "a.json", "THIRD-PARTY-NOTICES.txt", RELEASE_FILE, INSTALL_STATE_FILE] {
+    for prog in [release::exe_name(), "a.json", "THIRD-PARTY-NOTICES.txt", RELEASE_FILE, INSTALL_STATE_FILE] {
         assert!(a.contains(&(prog.into(), "cli", "remove_file")), "{prog}");
     }
     assert_eq!(a.last().map(|x| (x.0.as_str(), x.2)), Some(("CleanManager", "remove_empty_dir")));
@@ -126,7 +127,8 @@ fn executing_the_plan_restores_path_and_profile_and_keeps_user_data() {
     assert!(done.iter().all(|x| x.outcome == "removed"), "{done:?}");
     assert!(!f.install.exists(), "the install directory is gone");
     assert!(f.install.parent().unwrap().exists(), "only CleanManager's own directory is removed");
-    assert_eq!(f.path.read().unwrap().unwrap(), (r"C:\A;C:\B".to_owned(), true));
+    let (a, b) = other_dirs();
+    assert_eq!(f.path.read().unwrap().unwrap(), (path_value(&[a, b]), true));
     assert_eq!(std::fs::read_to_string(&f.profile).unwrap(), format!("{PROFILE_HEAD}{PROFILE_TAIL}"));
     assert!(std::fs::read_to_string(&f.other_profile).unwrap().contains(crate::completion_cmd::BEGIN));
     for kept in ["audit.db", "protection.json", "app-updates.json", "notes-by-user.txt"] {
@@ -196,7 +198,7 @@ fn modified_or_foreign_files_are_kept() {
     for kept in ["rules/windows/a.json", "my-script.ps1", "THIRD-PARTY-NOTICES.txt"] {
         assert!(f.install.join(kept).exists(), "{kept}");
     }
-    assert!(!f.install.join("cleanmanager.exe").exists());
+    assert!(!f.install.join(release::exe_name()).exists());
 }
 
 #[test]
@@ -211,7 +213,7 @@ fn package_manager_and_loose_copies_keep_their_program_files() {
     let p = plan(&inputs(&f, &loose, false));
     assert!(!p.items.iter().any(|i| i.component == "cli"));
     assert!(p.warnings.iter().any(|w| w.code == "no_release_manifest"));
-    assert_eq!(sha256_bytes(&std::fs::read(f.install.join("cleanmanager.exe")).unwrap()), sha256_bytes(b"program bytes"));
+    assert_eq!(sha256_bytes(&std::fs::read(f.install.join(release::exe_name())).unwrap()), sha256_bytes(b"program bytes"));
 }
 
 #[test]
@@ -254,4 +256,19 @@ fn the_resident_startup_value_is_listed_and_removed_by_its_own_name() {
     assert_eq!(calls.get(), 1);
     let d = done.iter().find(|x| x.item_id == item.item_id).unwrap();
     assert_eq!(d.outcome, "removed");
+}
+
+/// Outside Windows there is no user PATH store (`self install --add-to-path` reports `unsupported`), so the plan never
+/// lists a PATH entry and such an item fails without touching anything.
+#[cfg(not(windows))]
+#[test]
+fn without_a_user_path_store_no_path_entry_is_planned_or_changed() {
+    let f = fixture("no-user-path");
+    let d = standalone();
+    let p = plan(&Inputs { user_path: None, ..inputs(&f, &d, false) });
+    assert!(!p.items.iter().any(|i| i.action == "remove_path_entry"), "{:?}", actions(&p));
+    let item = Item { item_id: "i001".into(), component: "system_setting", action: "remove_path_entry", path: f.install.clone(), display: String::new(), sha256: None };
+    let only = Plan { items: vec![item], ..p };
+    let done = execute(&only, &f.install, &Effects { user_path: None, ..effects(&f) });
+    assert_eq!((done[0].outcome, done[0].reason.as_deref()), ("failed", Some("no user PATH on this platform")));
 }

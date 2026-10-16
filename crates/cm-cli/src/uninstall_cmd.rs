@@ -17,11 +17,10 @@
 use std::process::ExitCode;
 
 use cm_core::error::ErrorCode;
-use cm_core::protocol::record;
 use serde_json::{Value, json};
 
 use crate::args::Parsed;
-use crate::commands::{fields, open_stores};
+use crate::commands::open_stores;
 use crate::{emit, fail};
 
 fn ids(list: &str) -> Vec<String> {
@@ -63,6 +62,8 @@ fn grouped(items: &[cm_core::uninstall::Leftover]) -> Value {
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use crate::commands::fields;
+    use cm_core::protocol::record;
     use cm_platform::windows::uninstall::{UninstallEnv, records, route, route_capability};
 
     fn env(req: &str, p: &Parsed) -> Result<UninstallEnv, ExitCode> {

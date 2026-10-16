@@ -7,8 +7,15 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// On macOS `$TMPDIR` is reached through the `/var` symlink, whose target `/private/var` is a hard-deny root (a link on
+/// the way only adds denials), so the scratch directory is named by its real `/private/var/...` path there.
+fn temp_base() -> PathBuf {
+    let t = std::env::temp_dir();
+    if cfg!(windows) { t } else { std::fs::canonicalize(&t).unwrap() }
+}
+
 fn scratch(name: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!("cm-cli-protect-{}-{name}", std::process::id()));
+    let p = temp_base().join(format!("cm-cli-protect-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p

@@ -244,6 +244,8 @@ G0 首先要求语义正确、部分结果可解释、扫描无目标内容写�
 
 CI 通过**不**改变第 5–9 节任何用例状态，也不把真机、签名/公证或系统权限（UAC、FDA/TCC、SIP）验收标为完成；托管 runner 不是 ENV-WIN-X64 / ENV-MAC-ARM64 参考设备。**截至 2026-10-15 该工作流从未运行**：仓库没有 Git 远端，只做过 YAML 解析检查。等价命令已在本地 Windows x64 主机执行；macOS 一侧只有 `cargo check --target aarch64-apple-darwin` 编译检查，本机硬拒绝语料测试将在首次 macOS 运行时第一次执行。首次远端运行结果应单独登记。
 
+**远端运行登记（2026-10-16，仅托管 runner）**：首次运行 run 38947490646（`main`，提交 01de24c）两个 job 都在 `cargo test` 失败（macOS：路径分隔符、程序名、目标标识等测试与代码的 Windows 假设及 clippy 警告；Windows：依赖宿主应用版本与 runner 账户 SID 别名的测试）。修复后 `ci/green` 分支 run 38955708298（提交 cc172d3）`windows-x64` 与 `macos-arm64` 两个 job 全部步骤通过，其中 macOS 一侧首次执行了本机硬拒绝语料与身份测试；仅限 Windows 的 CLI 打包冒烟只在 Windows job 运行。这只说明托管 runner 上的单元/契约/夹具检查通过，第 5–9 节用例状态与任何真机、签名或权限验收均不因此改变。
+
 ## 11. 阶段门槛、偏差处理与未决点
 
 | 门槛 | 必须取得的证据 | 当前结论 |

@@ -68,6 +68,8 @@ Rust 核心 + Tauri 桌面应用 + 面向 AI Agent 的命令行。
 
 每项能力的权威状态以程序自身输出为准：`cleanmanager capabilities --json`。
 
+有 Mac？按 [macOS 真机验证指南](docs/platforms/macos-verification.md) 运行一个脚本（`tools/mac_verify.sh`），即可完成全部测试和只读的 CLI 冒烟。macOS 部分的推进就靠这些结果。
+
 ## 快速开始
 
 ### 环境要求

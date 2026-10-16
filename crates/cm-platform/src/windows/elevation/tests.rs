@@ -79,9 +79,36 @@ fn pipe_names_and_arguments_are_closed_sets() {
     assert!(WorkerArgs::parse(&user_task).is_err());
 }
 
+/// The SDDL text of the parts `info` selects of `sd`.
+fn sddl_text(sd: PSECURITY_DESCRIPTOR, info: u32) -> String {
+    use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
+    let mut text: *mut u16 = std::ptr::null_mut();
+    // SAFETY: valid descriptor; string freed below.
+    assert_ne!(unsafe { ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, info, &mut text, std::ptr::null_mut()) }, 0);
+    // SAFETY: NUL-terminated string from the conversion.
+    let s = unsafe { String::from_utf16_lossy(std::slice::from_raw_parts(text, (0..).take_while(|&i| *text.add(i) != 0).count())) };
+    // SAFETY: allocated by the conversion above.
+    unsafe { LocalFree(text.cast()) };
+    s
+}
+
+/// How SDDL writes `sid`: a well-known account is written as its alias (e.g. `LA` for the built-in Administrator
+/// that hosted CI runners use), any other as the `S-1-…` string.
+fn sddl_sid(sid: &str) -> String {
+    use windows_sys::Win32::Security::OWNER_SECURITY_INFORMATION;
+    let owner: Vec<u16> = format!("O:{sid}").encode_utf16().chain(std::iter::once(0)).collect();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: NUL-terminated SDDL; the descriptor is freed below.
+    assert_ne!(unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(owner.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) }, 0);
+    let s = sddl_text(sd, OWNER_SECURITY_INFORMATION);
+    // SAFETY: allocated by the conversion above.
+    unsafe { LocalFree(sd) };
+    s.strip_prefix("O:").expect("owner SDDL").to_owned()
+}
+
 #[test]
 fn the_pipe_dacl_grants_only_the_current_user() {
-    use windows_sys::Win32::Security::Authorization::{ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SE_KERNEL_OBJECT};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
     use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
     let sid = current_user_sid().unwrap();
     assert!(sid.starts_with("S-1-"));
@@ -91,19 +118,12 @@ fn the_pipe_dacl_grants_only_the_current_user() {
     // SAFETY: valid pipe handle; the descriptor is freed below.
     let rc = unsafe { GetSecurityInfo(pipe.raw(), SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut sd) };
     assert_eq!(rc, 0);
-    let mut text: *mut u16 = std::ptr::null_mut();
-    // SAFETY: valid descriptor; string freed below.
-    assert_ne!(unsafe { ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &mut text, std::ptr::null_mut()) }, 0);
-    // SAFETY: NUL-terminated string from the conversion.
-    let s = unsafe { String::from_utf16_lossy(std::slice::from_raw_parts(text, (0..).take_while(|&i| *text.add(i) != 0).count())) };
-    // SAFETY: both allocated by the APIs above.
-    unsafe {
-        LocalFree(text.cast());
-        LocalFree(sd);
-    }
+    let s = sddl_text(sd, DACL_SECURITY_INFORMATION);
+    // SAFETY: allocated by GetSecurityInfo.
+    unsafe { LocalFree(sd) };
     assert!(s.starts_with("D:P"), "protected DACL: {s}");
     assert_eq!(s.matches("(A;").count(), 1, "exactly one allow ACE: {s}");
-    assert!(s.ends_with(&format!(";;;{sid})")), "for the current user only: {s}");
+    assert!(s.ends_with(&format!(";;;{})", sddl_sid(&sid))), "for the current user ({sid}) only: {s}");
     // A second server instance of the same name is refused (single instance, first-instance flag).
     assert!(create_server(&name).is_err());
 }

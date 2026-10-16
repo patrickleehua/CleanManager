@@ -86,7 +86,9 @@ fn lower_path(p: &str) -> String {
 fn below(exe: &str, root: &str) -> Option<String> {
     below_lexical(exe, root).or_else(|| {
         // Environment values may use another spelling of the same directory (8.3 short names,
-        // junctions); the executable path is canonical, so compare with the canonical root too.
+        // junctions, macOS `/var` → `/private/var`); the executable path is canonical, so compare
+        // with the canonical root too. Roots are written with `\`; outside Windows that is `/`.
+        let root = if cfg!(windows) { root.to_owned() } else { root.replace('\\', "/") };
         let canon = std::fs::canonicalize(root).ok()?.display().to_string();
         let canon = canon.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(canon);
         below_lexical(exe, &canon)
@@ -430,11 +432,19 @@ impl Transport for SystemTransport {
 
 /// Resolve a file `url` against the manifest location: absolute https stays; anything else is
 /// relative to the manifest's directory. A remote manifest can never point at a local file.
+/// Relative urls are `/`-separated on every platform: a root, drive (`C:`), `\` or `..` that the
+/// local path syntax of one platform would treat as an escape is refused on all of them.
 pub fn resolve(base: &str, url: &str) -> Result<String, String> {
     if url.starts_with("https://") {
         return Ok(url.to_owned());
     }
-    if url.contains("://") || url.starts_with("file:") || Path::new(url).is_absolute() || url.split('/').any(|c| c == "..") {
+    if url.contains("://")
+        || url.contains(':')
+        || url.contains('\\')
+        || url.starts_with('/')
+        || Path::new(url).is_absolute()
+        || url.split('/').any(|c| c == "..")
+    {
         return Err(format!("file url {url:?} must be https or relative to the manifest"));
     }
     if base.starts_with("https://") {
@@ -624,6 +634,14 @@ fn stage(ctx: &Context<'_>, m: &UpdateManifest, staging: &Path) -> Result<(), Ou
         let written = dest.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&dest, &bytes));
         if let Err(e) = written {
             return fail(Status::RolledBack, format!("cannot stage {}: {e}", f.path), false);
+        }
+        // Downloaded bytes carry no file mode: the program must be executable to start (smoke test) and after the swap.
+        #[cfg(unix)]
+        if f.path == exe_name() {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)) {
+                return fail(Status::RolledBack, format!("cannot make the staged {} executable: {e}", f.path), false);
+            }
         }
         // Read back what reached the disk.
         match release::sha256_file(&dest) {

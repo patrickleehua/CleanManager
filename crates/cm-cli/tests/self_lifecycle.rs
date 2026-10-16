@@ -43,18 +43,23 @@ fn test_key_hex() -> String {
     hex(&key(7).verifying_key().to_bytes())
 }
 
+/// This build's release target (`windows-x86_64`, `macos-aarch64`, ...).
 fn target() -> String {
-    format!("windows-{}", std::env::consts::ARCH)
+    let os = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { std::env::consts::OS };
+    format!("{os}-{}", std::env::consts::ARCH)
 }
+
+/// The program's file name in a release layout on this platform.
+const EXE: &str = if cfg!(windows) { "cleanmanager.exe" } else { "cleanmanager" };
 
 /// A release layout in `dir` whose program is a copy of the test binary.
 fn release_copy(dir: &Path) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
-    let exe = dir.join("cleanmanager.exe");
+    let exe = dir.join(EXE);
     std::fs::copy(env!("CARGO_BIN_EXE_cleanmanager"), &exe).unwrap();
     let bytes = std::fs::read(&exe).unwrap();
     let manifest = json!({"contract": "cleanmanager-release/1", "product": "cleanmanager-cli", "version": env!("CARGO_PKG_VERSION"),
-        "target": target(), "install_source": "zip", "files": [{"path": "cleanmanager.exe", "sha256": sha(&bytes), "size": bytes.len()}]});
+        "target": target(), "install_source": "zip", "files": [{"path": EXE, "sha256": sha(&bytes), "size": bytes.len()}]});
     std::fs::write(dir.join("cleanmanager-release.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
     exe
 }
@@ -62,11 +67,11 @@ fn release_copy(dir: &Path) -> PathBuf {
 /// A signed channel in `dir`: `manifest.json` describes `described` but serves `served`.
 fn channel(dir: &Path, version: &str, described: &[u8], served: &[u8], signer: &SigningKey) -> PathBuf {
     std::fs::create_dir_all(dir.join("files")).unwrap();
-    std::fs::write(dir.join("files").join("cleanmanager.exe"), served).unwrap();
+    std::fs::write(dir.join("files").join(EXE), served).unwrap();
     let payload = serde_json::to_vec(&json!({
         "contract": "cleanmanager-update/1", "product": "cleanmanager-cli", "version": version, "published_at": "2026-10-15T00:00:00Z",
         "compat": {"protocol_schema": "1.0", "index_schema": 1, "audit_schema": 1},
-        "targets": {target(): {"files": [{"path": "cleanmanager.exe", "url": "files/cleanmanager.exe", "sha256": sha(described), "size": described.len()}]}},
+        "targets": {target(): {"files": [{"path": EXE, "url": format!("files/{EXE}"), "sha256": sha(described), "size": described.len()}]}},
     }))
     .unwrap();
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -118,17 +123,23 @@ fn a_development_build_cannot_self_update_and_says_why() {
     schema_shape(&o.rec);
 }
 
+/// Scoop on Windows; cargo (`CARGO_HOME`) elsewhere, where Scoop does not exist.
 #[test]
 fn a_package_manager_copy_is_pointed_to_its_manager_and_never_replaced() {
-    let root = scratch("scoop");
-    let exe = release_copy(&root.join("scoop").join("apps").join("cleanmanager").join("current"));
+    let root = scratch("managed");
+    let (var, home, exe_dir, method, command) = if cfg!(windows) {
+        ("SCOOP", root.join("scoop"), root.join("scoop").join("apps").join("cleanmanager").join("current"), "scoop", "scoop update cleanmanager")
+    } else {
+        ("CARGO_HOME", root.join("cargo"), root.join("cargo").join("bin"), "cargo", "cargo install --path crates/cm-cli --locked --force")
+    };
+    let exe = release_copy(&exe_dir);
     let before = std::fs::read(&exe).unwrap();
-    let scoop = root.join("scoop").display().to_string();
+    let home = home.display().to_string();
     for args in [&["self", "update"][..], &["self", "update", "--check"][..]] {
-        let o = run(&exe, args, &root.join("store"), &[("SCOOP", &scoop)]);
-        assert_eq!(o.code, 0);
-        assert_eq!((o.rec["status"].as_str(), o.rec["install_method"].as_str()), (Some("use_package_manager"), Some("scoop")));
-        assert_eq!(o.rec["manager_command"], "scoop update cleanmanager");
+        let o = run(&exe, args, &root.join("store"), &[(var, &home)]);
+        assert_eq!(o.code, 0, "{}", o.rec);
+        assert_eq!((o.rec["status"].as_str(), o.rec["install_method"].as_str()), (Some("use_package_manager"), Some(method)));
+        assert_eq!(o.rec["manager_command"], command);
         schema_shape(&o.rec);
     }
     assert_eq!(std::fs::read(&exe).unwrap(), before);
@@ -162,7 +173,9 @@ fn a_program_that_does_not_start_as_the_signed_version_is_not_installed() {
     let manifest = channel(&root.join("channel"), "99.0.0", &bytes, &bytes, &key(7));
     let o = run(&exe, &["self", "update", "--manifest", manifest.to_str().unwrap()], &root.join("store"), &[]);
     assert_eq!((o.code, o.rec["status"].as_str(), o.rec["checksum_verified"].as_bool()), (3, Some("verification_failed"), Some(true)), "{}", o.rec);
-    assert!(o.rec["reason"].as_str().unwrap().contains("did not start as 99.0.0"));
+    // It did start (the staged program is runnable) and reported another version.
+    let reason = o.rec["reason"].as_str().unwrap();
+    assert!(reason.contains("did not start as 99.0.0") && reason.contains("it reports version"), "{reason}");
     assert_eq!(std::fs::read(&exe).unwrap(), bytes);
 }
 
@@ -240,7 +253,7 @@ fn self_uninstall_previews_a_plan_that_keeps_user_data_and_changes_nothing() {
             assert!(keep.contains(&k), "{keep:?}");
         }
         let removes: Vec<(&str, &str)> = o.rec["remove"].as_array().unwrap().iter().map(|r| (r["component"].as_str().unwrap(), r["display"].as_str().unwrap())).collect();
-        assert!(removes.iter().any(|(c, d)| *c == "cli" && d.ends_with("cleanmanager.exe")), "{removes:?}");
+        assert!(removes.iter().any(|(c, d)| *c == "cli" && d.ends_with(EXE)), "{removes:?}");
         assert!(removes.iter().any(|(c, d)| *c == "caches" && d.ends_with("index.db")), "{removes:?}");
         assert!(!removes.iter().any(|(_, d)| d.ends_with("audit.db") || d.ends_with("protection.json")), "{removes:?}");
         assert_eq!(o.rec["requires_interactive_confirmation"], true);
@@ -255,7 +268,7 @@ fn self_install_previews_reports_other_programs_on_path_and_never_overwrites() {
     let exe = release_copy(&root.join("inst"));
     let other = root.join("other-bin");
     std::fs::create_dir_all(&other).unwrap();
-    std::fs::write(other.join("cleanmanager.exe"), b"a different cleanmanager").unwrap();
+    std::fs::write(other.join(EXE), b"a different cleanmanager").unwrap();
     let path = std::env::join_paths([&other]).unwrap();
     let target = root.join("chosen").join("CleanManager");
     let o = run(&exe, &["self", "install", "--dir", target.to_str().unwrap(), "--add-to-path"], &root.join("store"), &[("PATH", path.to_str().unwrap())]);
@@ -264,10 +277,18 @@ fn self_install_previews_reports_other_programs_on_path_and_never_overwrites() {
     assert_eq!(o.rec["path_entry"], "refused_conflict");
     assert_eq!(o.rec["path_conflicts"][0]["relation"], "different");
     assert!(!target.exists(), "a preview writes nothing");
+    // The user PATH is a Windows setting: elsewhere a request without conflicts is answered `unsupported`.
+    if !cfg!(windows) {
+        let empty = root.join("empty-bin");
+        std::fs::create_dir_all(&empty).unwrap();
+        let path = std::env::join_paths([&empty]).unwrap();
+        let o = run(&exe, &["self", "install", "--dir", target.to_str().unwrap(), "--add-to-path"], &root.join("store"), &[("PATH", path.to_str().unwrap())]);
+        assert_eq!((o.code, o.rec["status"].as_str(), o.rec["path_entry"].as_str()), (0, Some("preview"), Some("unsupported")), "{}", o.rec);
+    }
     // A directory that already holds files is a conflict; nothing there is touched.
     let o = run(&exe, &["self", "install", "--dir", other.to_str().unwrap()], &root.join("store"), &[]);
     assert_eq!((o.code, o.rec["code"].as_str()), (6, Some("conflict")));
-    assert_eq!(std::fs::read(other.join("cleanmanager.exe")).unwrap(), b"a different cleanmanager");
+    assert_eq!(std::fs::read(other.join(EXE)).unwrap(), b"a different cleanmanager");
     // The development binary has no release layout to install from.
     let o = run(Path::new(env!("CARGO_BIN_EXE_cleanmanager")), &["self", "install", "--dir", target.to_str().unwrap()], &root.join("store"), &[]);
     assert_eq!((o.code, o.rec["code"].as_str()), (2, Some("invalid_argument")));

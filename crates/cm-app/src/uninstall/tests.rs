@@ -10,9 +10,9 @@ use cm_core::authz::{KindReceipt, ReceiptSource};
 use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled};
 use cm_core::host::HostRef;
 use cm_core::path::RawPath;
-use cm_core::plan::v2::Hive;
+use cm_core::plan::v2::{ExecutableRef, Hive, RegistryBackupDeleteAction, ToolAdapterAction};
 use cm_core::startup::{RegValue, RegView};
-use cm_core::uninstall::{AdapterChoice, AdapterKind, KeyTree, RecordSource, RegLocation, Rescan, RunningProcess, UninstallRecord};
+use cm_core::uninstall::{ADAPTER_VERSION, AdapterChoice, AdapterKind, KeyTree, RecordSource, RegLocation, Rescan, RunningProcess, UninstallRecord, adapter_digest};
 
 const T0: i64 = 1_800_000_000;
 const PRINCIPAL: &str = "user:alice";

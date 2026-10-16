@@ -278,16 +278,26 @@ pub fn apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str) ->
     }
 }
 
+/// This platform's diagnosis sample over `window` seconds; `None` where the diagnosis is not implemented.
+#[cfg(windows)]
+fn sample(window: u64) -> Option<cm_core::maintenance::DiagnosisInput> {
+    Some(cm_platform::windows::maintenance_diag::sample(std::time::Duration::from_secs(window)))
+}
+
+#[cfg(not(windows))]
+fn sample(_window: u64) -> Option<cm_core::maintenance::DiagnosisInput> {
+    None
+}
+
 /// `optimize diagnose [--window SECONDS]` → `maintenance_diagnosis` (read-only).
 pub fn diagnose(req: &str, p: &Parsed) -> ExitCode {
     let window = match p.option("window").map(str::parse::<u64>).unwrap_or(Ok(2)) {
         Ok(n) if (1..=30).contains(&n) => n,
         _ => return fail(req, ErrorCode::InvalidArgument, "--window must be 1 to 30 seconds", p.format),
     };
-    #[cfg(windows)]
-    let input = cm_platform::windows::maintenance_diag::sample(std::time::Duration::from_secs(window));
-    #[cfg(not(windows))]
-    let input: cm_core::maintenance::DiagnosisInput = return fail(req, ErrorCode::Unsupported, "the diagnosis is not implemented on this platform yet", p.format);
+    let Some(input) = sample(window) else {
+        return fail(req, ErrorCode::Unsupported, "the diagnosis is not implemented on this platform yet", p.format);
+    };
     let findings = cm_core::maintenance::diagnose(&input);
     let top: Vec<Value> = {
         let mut ps: Vec<_> = input.processes.iter().filter(|x| x.pid != 0).collect();

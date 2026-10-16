@@ -45,7 +45,11 @@ fn plan_requires_approval_and_machines_cannot_approve() {
     let (_, analysis) = cli(&["analyze", "--scan", scan["scan_id"].as_str().unwrap()], &store, &local);
     assert_eq!(analysis["candidate_count"], 1, "{analysis}");
     let set = analysis["candidate_set_id"].as_str().unwrap().to_owned();
-    let (code, plan) = cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--all-default-selected"], &store, &local);
+    // Select the candidate explicitly: whether a rule is selected by default depends on the host's OS and Edge versions
+    // matching its real-device registration, which a CI runner need not do.
+    let (_, listed) = cli(&["candidates", "list", "--set", &set], &store, &local);
+    let id = listed["items"][0]["candidate_id"].as_str().unwrap().to_owned();
+    let (code, plan) = cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--candidates", &id], &store, &local);
     assert_eq!(code, 0, "{plan}");
     assert_eq!(plan["authorization_status"], "required");
     assert_eq!(plan["body"]["items"].as_array().unwrap().len(), 2, "two observed files, directories untouched");

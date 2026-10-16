@@ -25,7 +25,7 @@ PURPOSE = {
 
 def main():
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"],
-                                     cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+                                     cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8").stdout)
     members = set(meta["workspace_members"])
     packages = {p["id"]: p for p in meta["packages"]}
     required_by: dict[str, set[str]] = {}
@@ -57,7 +57,7 @@ def main():
 | Crate | 版本 | 许可 | 来源 | 用途 |
 | --- | --- | --- | --- | --- |
 """ + "\n".join(rows) + "\n"
-    (ROOT / "docs/dependencies.md").write_text(text, encoding="utf-8")
+    (ROOT / "docs/dependencies.md").write_text(text, encoding="utf-8", newline="\n")
     print(f"Documented {len(rows)} locked third-party crates.")
     desktop()
 
@@ -81,7 +81,7 @@ def desktop():
     """Write docs/dependencies-desktop.md from the desktop Cargo.lock and package-lock.json."""
     app = ROOT / "apps/desktop"
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"],
-                                     cwd=app / "src-tauri", check=True, capture_output=True, text=True).stdout)
+                                     cwd=app / "src-tauri", check=True, capture_output=True, text=True, encoding="utf-8").stdout)
     packages = {p["id"]: p for p in meta["packages"]}
     local = {pid for pid, p in packages.items() if p["source"] is None}
     root_ids = set(meta["workspace_members"])
@@ -140,7 +140,7 @@ def desktop():
 | 包 | 版本 | 许可 | 范围 | 用途 |
 | --- | --- | --- | --- | --- |
 """ + "\n".join(npm_rows) + "\n"
-    (ROOT / "docs/dependencies-desktop.md").write_text(text, encoding="utf-8")
+    (ROOT / "docs/dependencies-desktop.md").write_text(text, encoding="utf-8", newline="\n")
     print(f"Documented {len(crate_rows)} desktop crates and {len(npm_rows)} npm packages.")
 
 

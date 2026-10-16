@@ -17,6 +17,7 @@
 | [核心架构](core-architecture.md) | 模块、数据对象、索引、并发和状态机 |
 | [Windows 后端](platforms/windows.md) | NTFS、USN、权限、云占位、应用管理与发布 |
 | [macOS 后端](platforms/macos.md) | 批量枚举、APFS、FSEvents、TCC 与平台限制 |
+| [macOS 真机验证指南](platforms/macos-verification.md) | 在自己的 Mac 上用 `tools/mac_verify.sh` 收集测试与 CLI 冒烟结果 |
 | [规则与执行](safety-and-rules.md) | 候选如何成为固定计划，如何授权和核验 |
 | [清理目录](catalog.md) | 第 1 波 Windows 类目、档位计算、占用探测、所属工具委托与实测证据 |
 | [手选移入回收站](manual-trash.md) | manual_selection 计划、系统目录只读、占用进程、回收站内永久删除与放回方式 |

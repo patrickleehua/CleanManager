@@ -16,14 +16,10 @@
 //!   ([`app_outcomes`]) and its own leftover review; one that fails, is skipped or went stale stops nothing else, and
 //!   its leftovers are never reviewed or removed. Protected classes are refused per application, as for one.
 
-use cm_core::plan::v2::{
-    ActionMeta, AppQuitAction, ExecutableRef, HeaderInput, NO_RULES_DIGEST, PlanAction, PlanKind, PlanV2, QuitForce, RegistryBackupDeleteAction, RegistryRestoreAction,
-    ToolAdapterAction,
-};
+use cm_core::plan::v2::{ActionMeta, AppQuitAction, HeaderInput, NO_RULES_DIGEST, PlanAction, PlanKind, PlanV2, QuitForce, RegistryRestoreAction};
 use cm_core::time::utc_from_unix;
 use cm_core::uninstall::{
-    ADAPTER_VERSION, AppIdentity, KEY_BACKUP_PREFIX, KeyBackup, RunningState, StepStatus, UNINSTALLER_TIMEOUT_SECONDS, UninstallActions, UninstallMeta, adapter_digest,
-    end_refusal, key_digest, uninstaller_outcome,
+    AppIdentity, KEY_BACKUP_PREFIX, KeyBackup, RunningState, StepStatus, UninstallActions, UninstallMeta, end_refusal, key_digest, uninstaller_outcome,
 };
 use cm_store::Stores;
 
@@ -384,9 +380,9 @@ mod win {
     use cm_core::host::HostRef;
     use cm_core::manual_trash::{ManualInput, SelectionGuard, build_trash_plan};
     use cm_core::path::RawPath;
-    use cm_core::plan::v2::{StartupOperation, StartupToggleAction};
+    use cm_core::plan::v2::{ExecutableRef, RegistryBackupDeleteAction, StartupOperation, StartupToggleAction, ToolAdapterAction};
     use cm_core::startup::StartupActions;
-    use cm_core::uninstall::{Binding, Group, Leftover, UninstallRecord, select_adapter};
+    use cm_core::uninstall::{ADAPTER_VERSION, Binding, Group, Leftover, UNINSTALLER_TIMEOUT_SECONDS, UninstallRecord, adapter_digest, select_adapter};
     use cm_platform::windows::uninstall::{DiscoveryInput, UninstallEnv, WindowsUninstall, adapter_env, discover, installed_apps, records, verify_program};
 
     use super::*;

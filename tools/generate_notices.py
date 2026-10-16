@@ -24,7 +24,7 @@ LICENSE_PREFIXES = ("license", "licence", "copying", "notice", "copyright", "unl
 
 def metadata(cwd: Path) -> dict:
     return json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=cwd, check=True,
-                                     capture_output=True, text=True).stdout)
+                                     capture_output=True, text=True, encoding="utf-8").stdout)
 
 
 def closure(meta: dict, root_names: set[str]) -> list[dict]:
@@ -150,7 +150,7 @@ def collect():
 
 def write_markdown(cli, desktop, npm) -> Path:
     path = ROOT / "docs/third-party-notices.md"
-    path.write_text(markdown(cli, desktop, npm), encoding="utf-8")
+    path.write_text(markdown(cli, desktop, npm), encoding="utf-8", newline="\n")
     return path
 
 
@@ -166,7 +166,7 @@ def main():
         items = {"cli": cli, "desktop": desktop, "all": sorted({(p["name"], p["version"]): p for p in [*cli, *desktop]}.values(), key=lambda p: (p["name"], p["version"]))}[args.scope]
         text, missing = full_text(items, npm if args.scope != "cli" else [], f"CleanManager {args.scope} package: third-party notices")
         args.full.parent.mkdir(parents=True, exist_ok=True)
-        args.full.write_text(text, encoding="utf-8")
+        args.full.write_text(text, encoding="utf-8", newline="\n")
         print(f"Wrote {args.full} ({len(items)} components; {len(missing)} without a separate license file).")
 
 

@@ -156,9 +156,11 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
     // PUR-03: purge plans re-read version-control state per artifact before acting.
     #[cfg(windows)]
     let gate = stored.as_ref().map(cm_platform::windows::purge::vcs_gate);
-    #[cfg(not(windows))]
-    let gate: Option<fn(&cm_core::execute::ActionTarget<'_>) -> Result<(), String>> = None;
+    #[cfg(windows)]
     let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t).and_then(|()| gate.as_ref().map_or(Ok(()), |g| g(t)));
+    // Purge plans are created on Windows only in this build, so there is no version-control gate elsewhere.
+    #[cfg(not(windows))]
+    let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t);
     let ctx = ApplyContext {
         principal: &principal,
         host: &host,

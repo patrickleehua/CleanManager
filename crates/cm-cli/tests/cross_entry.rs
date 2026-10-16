@@ -102,7 +102,11 @@ fn cli_and_desktop_core_freeze_the_same_plan_body() {
     let (_, analysis) = cli(&["analyze", "--scan", scan["scan_id"].as_str().unwrap()], &store, &local);
     let set = analysis["candidate_set_id"].as_str().unwrap().to_owned();
     assert_eq!(analysis["candidate_count"], 2, "{analysis}");
-    let (code, plan) = cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--all-default-selected"], &store, &local);
+    // Select both candidates explicitly: whether a rule is selected by default depends on the host's OS and Edge
+    // versions matching its real-device registration, which a CI runner need not do.
+    let (_, listed) = cli(&["candidates", "list", "--set", &set], &store, &local);
+    let ids: Vec<&str> = listed["items"].as_array().unwrap().iter().map(|c| c["candidate_id"].as_str().unwrap()).collect();
+    let (code, plan) = cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--candidates", &ids.join(",")], &store, &local);
     assert_eq!(code, 0, "{plan}");
     let body = &plan["body"];
     let mut order: Vec<String> = Vec::new();

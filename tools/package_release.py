@@ -218,6 +218,9 @@ def smoke(z: Path) -> dict:
     if not results["embedded_rule_pack_same_digest"]:
         raise SystemExit("the embedded rule pack differs from the packaged one")
     shutil.move(str(work / "rules-moved-away"), str(inst / "rules"))
+    # D15: lifecycle tools are off by default (exit 7, `unsupported`); a person opts in per store, as below.
+    step("self update --check (off by default)", ["self", "update", "--check"], "error", want_exit=7)
+    step("experimental --state on", ["experimental", "--state", "on"], "experimental_features")
     upd = step("self update --check", ["self", "update", "--check"], "release_info", want_exit=7)
     results["self_update_check"] = {"status": upd["status"], "install_method": upd["install_method"], "reason": upd["reason"]}
     rem = step("self uninstall (preview)", ["self", "uninstall", "--store", str(store)], "self_remove_preview")

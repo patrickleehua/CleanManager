@@ -348,6 +348,12 @@ fn copy_new(from: &Path, to: &Path) -> Result<(), String> {
     let mut src = std::fs::File::open(from).map_err(|e| format!("cannot read {}: {e}", release::display(from)))?;
     let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).open(to).map_err(|e| format!("cannot create {}: {e}", release::display(to)))?;
     std::io::copy(&mut src, &mut dst).map_err(|e| format!("cannot copy to {}: {e}", release::display(to)))?;
+    // The program stays executable (a new file gets only the default mode).
+    #[cfg(unix)]
+    {
+        let mode = src.metadata().map_err(|e| e.to_string())?.permissions();
+        dst.set_permissions(mode).map_err(|e| format!("cannot set the mode of {}: {e}", release::display(to)))?;
+    }
     dst.sync_all().map_err(|e| e.to_string())
 }
 

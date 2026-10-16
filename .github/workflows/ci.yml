@@ -107,7 +107,7 @@ jobs:
         run: cargo test --locked -p cm-fixtures -p cm-core -p cm-platform -- corpus property smb_loopback file_id_and_resolution --nocapture
 
       - name: Unit and integration tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
 
       - name: Lints
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

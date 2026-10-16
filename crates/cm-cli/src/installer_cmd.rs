@@ -9,6 +9,7 @@ use std::process::ExitCode;
 #[cfg(not(windows))]
 use crate::args::Parsed;
 
+#[cfg(windows)]
 pub(crate) const LAST_RUN_INSTALLER: &str = "installer-last-run.json";
 
 #[cfg(not(windows))]

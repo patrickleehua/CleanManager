@@ -68,6 +68,8 @@ Plus **Plans**, **Activity** and **Recovery** history, an **Agent** page for the
 
 The authoritative state of every capability comes from the tool itself: `cleanmanager capabilities --json`.
 
+Have a Mac? The [macOS verification guide](docs/platforms/macos-verification.md) runs the whole suite plus a read-only CLI smoke test with one script (`tools/mac_verify.sh`). Its results are what unblock the macOS work.
+
 ## Getting started
 
 ### Prerequisites

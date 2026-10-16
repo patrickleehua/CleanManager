@@ -134,7 +134,15 @@ fn fake_run(spec: &'static TaskSpec) -> TaskRun {
 fn exe08_worker_grant_accepts_only_catalog_admin_tasks() {
     grant().validate(TaskPlatform::Windows).unwrap();
     let args = grant().to_args();
-    assert_eq!(WorkerGrant::parse(&args[1], &args[3]).unwrap(), grant());
+    // `parse` checks against this machine's catalog: the elevated worker exists on Windows only, and macOS has no
+    // maintenance catalog in this build, so a grant can never reach a worker there.
+    match TaskPlatform::current() {
+        TaskPlatform::Windows => assert_eq!(WorkerGrant::parse(&args[1], &args[3]).unwrap(), grant()),
+        TaskPlatform::Macos => {
+            assert!(catalog(TaskPlatform::Macos).is_empty());
+            assert!(WorkerGrant::parse(&args[1], &args[3]).unwrap_err().contains("not in the catalog"));
+        }
+    }
     let bad = |g: WorkerGrant| g.validate(TaskPlatform::Windows).unwrap_err();
     bad(WorkerGrant { plan_digest: "ABC".into(), ..grant() });
     bad(WorkerGrant { tasks: vec![], ..grant() });
