@@ -328,7 +328,7 @@ pub fn review_lines(plan: &cm_core::plan::v2::PlanV2) -> Vec<String> {
             PlanAction::AppQuit(q) => format!("  {}  {note}: never ended automatically; if it does not close, nothing is uninstalled", q.action_id),
             PlanAction::ToolAdapter(t) => format!("  {}  runs {note}; exit code and duration are recorded, then the folder and registration are checked again", t.action_id),
             PlanAction::RegistryBackupDelete(r) => format!("  {}  delete {}\\{} after its backup is stored ({})", r.action_id, r.hive.as_str(), r.key_path, r.owner_evidence),
-            PlanAction::FsTrash(f) => format!("  {}  to the Recycle Bin: {}  {note}", f.action_id, f.target.path.display()),
+            PlanAction::FsTrash(f) => format!("  {}  to the {}: {}  {note}", f.action_id, cm_core::manual_trash::BIN_NAME, f.target.path.display()),
             PlanAction::StartupToggle(s) => format!("  {}  remove stale startup entry {note} after its backup", s.action_id),
             other => format!("  {}  {}", other.action_id(), other.action_type().as_str()),
         });

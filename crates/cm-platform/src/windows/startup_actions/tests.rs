@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use cm_core::capability::CapabilityState;
 use cm_core::plan::v2::StartupOperation;
 use cm_core::startup::{StartupItem, StartupScope, StartupState, change_decision};
-use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteKeyW, RegDeleteTreeW};
+use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteTreeW};
 
 use super::super::startup::{APPROVED, RUN, RegKey, inventory_with};
 use super::*;
@@ -25,10 +25,8 @@ impl TestRoot {
         let z = wide(&self.0);
         // SAFETY: NUL-terminated subkey of HKCU; only the test key is removed.
         unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, z.as_ptr()) };
-        // The shared parent goes too once no other test key is under it (RegDeleteKey refuses a key with subkeys).
-        let parent = wide(r"Software\CleanManagerTest");
-        // SAFETY: NUL-terminated subkey of HKCU.
-        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr()) };
+        // The shared parent `Software\CleanManagerTest` is left in place: deleting it while a test running in parallel
+        // opens a key below it fails that test with ERROR_KEY_DELETED (1018). The CLI uninstall tests remove the tree.
     }
     fn env(&self, is_admin: bool) -> StartupEnv {
         StartupEnv { registry_root: self.0.clone(), user_folder: None, common_folder: None, is_admin }

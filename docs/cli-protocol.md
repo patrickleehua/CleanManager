@@ -50,10 +50,10 @@
 | `purge.plan` | `purge plan create (--candidates ID,ID \| --all-default-selected) [--set ID] [--mode trash\|quarantine\|delete]`（已实现，默认 trash） | plan（cleanup） | 只写计划 |
 | `installer.preview` | `installer scan [--source LABEL] [--max-depth N]`，等价 `installer --dry-run`；`installer locations` 列出声明位置（已实现） | selection_preview；installer_locations | 只写本工具索引与候选集 |
 | `installer.plan` | `installer plan create (--candidates ID,ID \| --source LABEL) [--set ID] [--mode ...]`（已实现；`--source` 仅交互终端） | plan（cleanup） | 只写计划 |
-| `trash.plan` | `trash --scan ID --entry ID[,ID...]`（已实现 Windows；只接受已发布扫描的条目 ID，见 [手选移入回收站](manual-trash.md)） | plan（manual_selection）；受保护/覆盖不全为 error（policy_denied） | 只写计划 |
-| `trash.purge_plan` | `trash purge --item ID[,ID...]`（已实现 Windows；ID 来自 `trash list`） | plan（manual_selection，仅回收站内对象） | 只写计划 |
-| `trash.inspect` | `trash inspect --scan ID --entry ID`（已实现 Windows） | trash_inspection | 无（只读索引与占用进程查询，不打开、不下载） |
-| `trash.list` | `trash list`（已实现 Windows，仅当前用户的回收站） | trash_list | 无 |
+| `trash.plan` | `trash --scan ID --entry ID[,ID...]`（已实现 Windows 与 macOS（macOS 仅文件）；只接受已发布扫描的条目 ID，见 [手选移入回收站](manual-trash.md)） | plan（manual_selection）；受保护/覆盖不全为 error（policy_denied）；卷没有回收站/废纸篓为 error（unsupported，macOS 的 message 以 `trash_unavailable:` 开头） | 只写计划 |
+| `trash.purge_plan` | `trash purge --item ID[,ID...]`（已实现 Windows 与 macOS；ID 来自 `trash list`） | plan（manual_selection，仅回收站内对象） | 只写计划 |
+| `trash.inspect` | `trash inspect --scan ID --entry ID`（已实现 Windows 与 macOS） | trash_inspection | 无（只读索引与占用进程查询，不打开、不下载） |
+| `trash.list` | `trash list`（已实现 Windows 与 macOS，仅当前用户的回收站/废纸篓） | trash_list；macOS 的 `~/.Trash` 受隐私保护无法列出时为 error（permission_required），从不当作空 | 无 |
 | `insights.list` | `insights`（已实现 Windows 已知大对象） | insight_list | 无 |
 | `insights.overview` | `insights overview [--older-than-days N]`（已实现 Windows，见 [系统状态与洞察卡片](system-status.md)） | insight_overview | 无 |
 | `insights.downloads` | `insights downloads [--older-than-days N] [--limit N]`（已实现 Windows；按大小排序、无预选） | old_downloads_review | 无 |

@@ -22,11 +22,23 @@ use crate::plan::v2::{ActionMeta, FsAction, HeaderInput, MemberMeta, PlanAction,
 use crate::plan::{ItemKind, WireIdentity, observe};
 use crate::protect::{HardDenySet, ObjectIdentity, UserProtection, prefilter};
 
-/// How to put back what this tool moved to the Recycle Bin (it never restores from the bin itself).
+/// What the platform calls its bin, in messages (the Recycle Bin on Windows, the Trash on macOS).
+#[cfg(not(target_os = "macos"))]
+pub const BIN_NAME: &str = "Recycle Bin";
+#[cfg(target_os = "macos")]
+pub const BIN_NAME: &str = "Trash";
+/// How to put back what this tool moved to the bin (it never restores from the bin itself).
+#[cfg(not(target_os = "macos"))]
 pub const PUT_BACK_GUIDANCE: &str = "To put it back: open the Recycle Bin, select the item and choose Restore (or drag it out).";
+#[cfg(target_os = "macos")]
+pub const PUT_BACK_GUIDANCE: &str = "To put it back: open the Trash in Finder, select the item and choose File › Put Back (or drag it out).";
 /// Guidance when a move could not be confirmed.
+#[cfg(not(target_os = "macos"))]
 pub const UNKNOWN_GUIDANCE: &str =
     "Check the Recycle Bin and the original folder: if the item is in the Recycle Bin, restore it there if it was not the one you meant; nothing was permanently deleted by this action.";
+#[cfg(target_os = "macos")]
+pub const UNKNOWN_GUIDANCE: &str =
+    "Check the Trash and the original folder: if the item is in the Trash, put it back with Finder (File › Put Back) if it was not the one you meant; nothing was permanently deleted by this action.";
 /// Why system and protected locations offer no trash action (MTR-02).
 pub const VIEW_ONLY_EXPLANATION: &str =
     "System folders, protected categories and your protection list are view-only: CleanManager can show, copy the path of, or diagnose them, never move them.";

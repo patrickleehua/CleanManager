@@ -1,6 +1,6 @@
 # macOS 平台设计
 
-日期：2026-10-14。状态：**拟议设计；当前主机为 Windows，尚无 CleanManager 实现，也没有真实 Mac 验证结果**。
+日期：2026-10-14，状态更新 2026-10-17。状态：**部分实现，尚无真实 Mac 验证结果**。已实现并在 GitHub 托管 macOS arm64 runner 上通过测试：`mac.posix`/`mac.bulk` 扫描（含 `shared_blocks`、卷/根替换检测）、文件动作（隔离、删除、空目录、废纸篓，带描述符校验的父链与可信命名空间门槛）、隔离恢复与清除、清理目录解析与第 1 波规则（全部 experimental、仅审阅）、应用清单、手选废纸篓、空间洞察、构建产物与安装包清理。状态、启动项、维护、更新、卸载与常驻工具尚未实现；特权 helper、风扇/电池、Touch ID 与公证需要签名与真机，本构建不提供。所有 macOS 能力都报告为 `unverified` 或 `unsupported`，从不为 `available`；托管 runner 不是参考设备，真机验证见 [macOS 真机验证指南](macos-verification.md)。下文是设计说明，实现与之不一致处以代码和测试为准。
 
 本文细化 [架构分析](../architecture-analysis.zh-CN.md)，与 [Windows 设计](windows.md) 共享领域模型，测试与阶段 0 基准统一见 [验证计划](../verification-plan.md)。竞品研究沿用现有架构文档；本文不重新研究 Mole/WizTree 的内部实现。
 
@@ -225,7 +225,7 @@ macOS 后端的自动化测试与 Windows 使用同名的环境变量重定向�
 | --- | --- | --- |
 | `CM_STORE_DIR` | 索引、审计、隔离区与设置所在目录 | 同名 |
 | `CM_RULES_DIR` | 规则包目录（测试用夹具规则） | 同名 |
-| `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` | 规则根解析使用的家目录（`~/Library/Caches`、`~/Library/Logs`、`~/.Trash` 等都相对它）、临时目录与下载目录 | `CM_RESOLVE_USERPROFILE` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` |
+| `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` | 规则根解析使用的家目录（`~/Library/Caches`、`~/Library/Logs`、`~/.Trash` 等都相对它）、临时目录与下载目录；设置 `CM_RESOLVE_HOME` 时 `trash list`/`trash purge` 只列出 `$CM_RESOLVE_HOME/.Trash`，不列 `/Volumes` 下的废纸篓 | `CM_RESOLVE_USERPROFILE` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` |
 | `CM_UNINSTALL_TEST_ROOT` + `CM_UNINSTALL_TEST_HOME` | 卸载清单与残留扫描的假根：`ROOT` 下放 `Applications/`、`opt/homebrew/Caskroom/`（及 `Cellar/`）、`Library/`，`HOME` 下放用户 `Library/`；路径一律以该前缀解析，不读真实 `/Applications` 或 Homebrew | 同名（注册表根与家目录） |
 | `CM_STARTUP_TEST_ROOT` / `CM_STARTUP_TEST_FOLDER` | 启动项清单与启停的假根：launchd plist 目录（`Library/LaunchAgents`、`Library/LaunchDaemons`）在其下解析；计划中的位置记录该根，换根的计划不能作用于真实域 | 同名（测试注册表键与启动文件夹） |
 | `CM_MAINTENANCE_TEST_SCRIPT` / `CM_MAINTENANCE_TEST_ELEVATION` | 维护任务以脚本结果代替真实执行；`ELEVATION` 只模拟“拒绝/直接”两种提权结果 | 同名 |

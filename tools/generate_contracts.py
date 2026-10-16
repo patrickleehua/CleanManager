@@ -467,7 +467,7 @@ def main():
         "layers": arr(obj({"layer": protection_layer, "result": enum("clear", "denied", "unavailable"), "detail": STR,
             "protection_id": nullable(STR)}), 3)})
     defs["insight"] = obj({"insight_id": STR, "kind": STR, "title": STR, "path": nullable(ref("path")), "logical_bytes": nullable(UINT),
-        "count": nullable(COUNT), "size_basis": enum("file_metadata", "directory_walk", "system_query", "not_measured"),
+        "count": nullable(COUNT), "size_basis": enum("file_metadata", "directory_walk", "system_query", "allocated", "estimate", "not_measured"),
         "size_note": nullable(STR), "observed_at": nullable(TIME), "explanation": STR, "handling": enum("read_only_guidance",
             "open_system_settings", "open_owner_tool", "manual_trash_review", "installer_review"),
         "guidance": arr(obj({"tool": STR, "steps": STR, "requires_admin": {"type": "boolean"}, "impact": STR}))})
@@ -548,7 +548,7 @@ def main():
         "window_seconds": {"type": "integer", "minimum": 10, "maximum": 3600}, "cooldown_seconds": {"type": "integer", "minimum": 60, "maximum": 86400}, "note": STR})
     # Parity 7.3 (DIN-03/04): overview cards (known size or unknown + observation time) and the old-downloads review.
     defs["insight_card"] = obj({"card_id": STR, "kind": enum("old_downloads", "virtual_machines", "snapshots", "system_files", "component_store",
-            "previous_installation", "update_cache", "developer_tools", "model_libraries", "device_backups"), "title": STR,
+            "previous_installation", "update_cache", "developer_tools", "model_libraries", "device_backups", "purgeable_space"), "title": STR,
         "logical_bytes": nullable(UINT), "count": nullable(COUNT), "size_note": nullable(STR), "observed_at": nullable(TIME),
         "link": obj({"view": enum("analyze", "insights.downloads", "insights"), "path": nullable(ref("path")), "insight_ids": arr(STR)})})
     defs["insight_card"]["allOf"] = [{"if": {"properties": {"logical_bytes": {"type": "null"}}}, "then": {"properties": {"size_note": STR}}}]

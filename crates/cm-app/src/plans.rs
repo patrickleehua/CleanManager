@@ -13,7 +13,7 @@
 
 use cm_core::authz::{KindReceipt, kind_receipt_valid};
 use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery, TreeMember};
-use cm_core::manual_trash::{PUT_BACK_GUIDANCE, UNKNOWN_GUIDANCE, in_recycle_bin};
+use cm_core::manual_trash::{BIN_NAME, PUT_BACK_GUIDANCE, UNKNOWN_GUIDANCE, in_recycle_bin};
 use cm_core::path::RawPath;
 use cm_core::plan::v2::{ActionMeta, FsAction, PlanAction, PlanKind, PlanProblem, PlanV2, StartupOperation, StartupToggleAction, check_plan_v2};
 use cm_core::plan::{ItemKind, parse_utc};
@@ -147,8 +147,8 @@ fn trash_one(b: &V2Backends<'_>, ctx: &ApplyContext<'_>, a: &FsAction, m: &Actio
         }
     };
     match outcome {
-        ActionOutcome::Succeeded { recovery: Recovery::Trash } => res(id, ActionStatus::Succeeded, "done", format!("moved to the Recycle Bin. {PUT_BACK_GUIDANCE}"), "trash"),
-        ActionOutcome::Succeeded { .. } => res(id, ActionStatus::Unknown, "outcome_unconfirmed", format!("the platform reported a move that was not to the Recycle Bin. {UNKNOWN_GUIDANCE}"), "unknown"),
+        ActionOutcome::Succeeded { recovery: Recovery::Trash } => res(id, ActionStatus::Succeeded, "done", format!("moved to the {BIN_NAME}. {PUT_BACK_GUIDANCE}"), "trash"),
+        ActionOutcome::Succeeded { .. } => res(id, ActionStatus::Unknown, "outcome_unconfirmed", format!("the platform reported a move that was not to the {BIN_NAME}. {UNKNOWN_GUIDANCE}"), "unknown"),
         ActionOutcome::Unknown { message } => res(id, ActionStatus::Unknown, "outcome_unconfirmed", format!("{message}. {UNKNOWN_GUIDANCE}"), "unknown"),
         ActionOutcome::Skipped { code, .. } if code == "in_use" => res(id, ActionStatus::Failed, "in_use", in_use_message(holders()), "not_applicable"),
         ActionOutcome::Skipped { code, message } => res(id, ActionStatus::Skipped, &crate_precondition(&code), format!("{message}; nothing was moved"), "not_applicable"),
@@ -579,8 +579,8 @@ impl RestoreError {
 pub fn history_facts(stores: &Stores, plan_id: &str, operation_id: &str) -> Option<(&'static str, &'static str, String)> {
     let plan = stores.audit.load_plan_v2(plan_id).ok()?;
     Some(match (plan.body.plan_kind, plan.body.items.first()?) {
-        (PlanKind::ManualSelection, PlanAction::FsTrash(_)) => ("trash", "system_recycle_bin", format!("Moved to the Recycle Bin. {PUT_BACK_GUIDANCE} CleanManager cannot restore it.")),
-        (PlanKind::ManualSelection, _) => ("delete", "unavailable", "Permanently deleted from the Recycle Bin; there is no undo.".into()),
+        (PlanKind::ManualSelection, PlanAction::FsTrash(_)) => ("trash", "system_recycle_bin", format!("Moved to the {BIN_NAME}. {PUT_BACK_GUIDANCE} CleanManager cannot restore it.")),
+        (PlanKind::ManualSelection, _) => ("delete", "unavailable", format!("Permanently deleted from the {BIN_NAME}; there is no undo.")),
         (PlanKind::Startup, _) => {
             let open = stores.audit.startup_backups_for_operation(operation_id).ok()?.iter().any(|(_, _, s)| s == "recorded");
             if open {

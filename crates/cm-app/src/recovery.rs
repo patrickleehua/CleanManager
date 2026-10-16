@@ -388,7 +388,14 @@ fn availability(item: &HistoryItem, stores: &Stores) -> Result<(&'static str, St
                 ("not_applicable", "Its quarantined items were restored or purged since; see the later operations.".into())
             }
         }
-        Some("trash") => ("system_recycle_bin", "Restore from the system Recycle Bin (Explorer, Recycle Bin, Restore); CleanManager cannot restore it.".into()),
+        Some("trash") => (
+            "system_recycle_bin",
+            if cfg!(target_os = "macos") {
+                "Put it back from the Trash (Finder, Trash, File › Put Back); CleanManager cannot restore it.".into()
+            } else {
+                "Restore from the system Recycle Bin (Explorer, Recycle Bin, Restore); CleanManager cannot restore it.".into()
+            },
+        ),
         Some("delete") => ("unavailable", "Permanently deleted; there is no undo.".into()),
         Some("purge") => ("unavailable", "Purged from quarantine permanently; there is no undo.".into()),
         Some("restore") => ("not_applicable", "Objects were moved back to their original locations.".into()),

@@ -2,8 +2,8 @@
 //!
 //! [`overview_wire`] is pure: it turns the known objects, the old-downloads review and the measured tool directories
 //! into the `insight_overview` record body (cards with a known size or unknown, each with its observation time). The
-//! desktop calls [`overview`] / [`old_downloads`], which gather the inputs on Windows. Nothing here selects, plans or
-//! changes anything: old downloads are a review list with no item selected.
+//! CLI and the desktop call [`overview`] / [`old_downloads`], which gather the inputs on Windows and macOS. Nothing here
+//! selects, plans or changes anything: old downloads are a review list with no item selected.
 
 use cm_core::insights::{Insight, MeasuredDir, OLD_DOWNLOADS_DAYS, OldDownloadsReview, overview_cards};
 
@@ -44,6 +44,23 @@ pub fn overview(days: u32) -> serde_json::Value {
 #[cfg(windows)]
 pub fn old_downloads(days: u32, limit: usize) -> serde_json::Value {
     old_downloads_wire(&cm_platform::windows::insights::old_downloads(days), limit)
+}
+
+/// Overview of this Mac: known objects (snapshot count, virtual machines and containers, device backups, swap,
+/// purgeable estimate), Downloads older than `days` and tool directories, all below the resolver's home (so the
+/// `CM_RESOLVE_*` fixture overrides apply).
+#[cfg(target_os = "macos")]
+pub fn overview(days: u32) -> serde_json::Value {
+    let known = cm_platform::macos::insights::list();
+    let downloads = cm_platform::macos::insights::old_downloads(days);
+    let dirs = cm_platform::macos::insights::card_dirs();
+    overview_wire(&known, &downloads, &dirs, &cm_core::time::now_utc())
+}
+
+/// Old-downloads review of this Mac's Downloads folder (the resolver's).
+#[cfg(target_os = "macos")]
+pub fn old_downloads(days: u32, limit: usize) -> serde_json::Value {
+    old_downloads_wire(&cm_platform::macos::insights::old_downloads(days), limit)
 }
 
 #[cfg(test)]

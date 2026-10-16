@@ -38,7 +38,9 @@ const RESTORE_VERIFIED: bool = true;
 #[cfg(target_os = "macos")]
 const RESTORE_VERIFIED: bool = cm_platform::macos::actions::recovery::RESTORE_VERIFIED;
 
-/// macOS recovery actions (`cm_platform::macos::actions::recovery`; pending, MVP 10.4): nothing is touched until verified.
+/// macOS recovery actions (`cm_platform::macos::actions::recovery`, MVP 10.4): descriptor-verified restore (exclusive
+/// rename, identity confirmed afterwards) and purge inside the private quarantine. Real-device acceptance is still
+/// pending; the `recovery.restore` / `recovery.purge` capability rows say so.
 #[cfg(target_os = "macos")]
 pub fn actions() -> impl RecoveryActions {
     cm_platform::macos::actions::recovery::recovery_actions()

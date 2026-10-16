@@ -9176,6 +9176,8 @@
             "file_metadata",
             "directory_walk",
             "system_query",
+            "allocated",
+            "estimate",
             "not_measured"
           ]
         },
@@ -10749,7 +10751,8 @@
             "update_cache",
             "developer_tools",
             "model_libraries",
-            "device_backups"
+            "device_backups",
+            "purgeable_space"
           ]
         },
         "title": {

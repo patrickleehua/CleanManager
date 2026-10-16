@@ -369,6 +369,15 @@ pub trait InstallerProbe {
     fn mounted(&self, path: &RawPath) -> Option<bool>;
     /// Whether another process holds the file open now (`None`: cannot tell).
     fn in_use(&self, path: &RawPath) -> Option<bool>;
+    /// Whether this platform reads a signer for installers of `kind` (Authenticode formats on Windows, flat
+    /// packages through `pkgutil` on macOS).
+    fn signs(&self, kind: InstallerKind) -> bool {
+        kind.signable()
+    }
+    /// How a person ejects an attached image on this platform (shown with `mounted_image`).
+    fn eject_hint(&self) -> &'static str {
+        "File Explorer > Eject, or Dismount-DiskImage"
+    }
 }
 
 pub struct InstallerInput<'a> {
@@ -458,7 +467,7 @@ pub fn analyze_installers(view: &dyn IndexView, input: &InstallerInput<'_>, prot
             let path = view.path(e);
             let Verdict::Installer { kind, evidence } = probe.classify(&path) else { continue };
             let name = view.name(e).lossy();
-            let signer = if kind.signable() { probe.signer(&path) } else { None };
+            let signer = if probe.signs(kind) { probe.signer(&path) } else { None };
             let hint = installed_hint(&name, signer.as_deref(), input.apps);
             let mounted = if kind.is_image() { probe.mounted(&path) } else { Some(false) };
             let in_use = probe.in_use(&path);
@@ -480,7 +489,7 @@ pub fn analyze_installers(view: &dyn IndexView, input: &InstallerInput<'_>, prot
                 UserList::Unavailable(_) => pending.push("user_protection_unavailable".to_string()),
             }
             match mounted {
-                Some(true) => pending.push("mounted_image: eject it first (File Explorer > Eject, or Dismount-DiskImage)".into()),
+                Some(true) => pending.push(format!("mounted_image: eject it first ({})", probe.eject_hint())),
                 None => pending.push("mounted_state_unknown".into()),
                 Some(false) => {}
             }

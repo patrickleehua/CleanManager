@@ -1,5 +1,5 @@
-//! Discovery review shared by `purge` and `installer` (both Windows-only in this build): the last discovery run per
-//! store, preview records and plan creation from the stored candidate sets.
+//! Discovery review shared by `purge` and `installer` (Windows and macOS; platform-neutral): the last discovery run
+//! per store, preview records and plan creation from the stored candidate sets.
 
 use std::process::ExitCode;
 

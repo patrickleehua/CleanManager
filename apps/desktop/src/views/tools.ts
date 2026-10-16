@@ -210,6 +210,17 @@ const INSIGHT_TITLE: Record<string, [string, string]> = {
   'windows.hyperv_disks': ['Hyper-V 虚拟磁盘', '虚拟机的磁盘文件。'],
   'windows.previous_installation': ['旧版 Windows（Windows.old）', '升级后保留的旧系统，用于回退。'],
   'windows.delivery_optimization_cache': ['传递优化缓存', 'Windows 更新的点对点分发缓存。'],
+  'macos.local_snapshots': ['本地快照', 'Time Machine 等在启动磁盘上保留的 APFS 本地快照；系统不报告它们占用的空间。'],
+  'macos.docker_disk': ['Docker 磁盘映像', 'Docker Desktop 的镜像、容器和卷所在的磁盘映像。'],
+  'macos.orbstack_disk': ['OrbStack 数据映像', 'OrbStack 的容器与虚拟机数据。'],
+  'macos.parallels_vms': ['Parallels 虚拟机', '虚拟机包及其磁盘。'],
+  'macos.vmware_vms': ['VMware 虚拟机', '虚拟机包及其磁盘。'],
+  'macos.utm_vms': ['UTM 虚拟机', '位于受保护的应用容器中，未读取大小。'],
+  'macos.lima_vms': ['Lima 虚拟机', '轻量 Linux 虚拟机的磁盘与状态。'],
+  'macos.colima_vms': ['Colima 虚拟机', 'Colima 容器运行时虚拟机的磁盘与状态。'],
+  'macos.device_backups': ['设备备份', 'iPhone/iPad 的本地备份；读取需要“完全磁盘访问权限”。'],
+  'macos.swap': ['交换文件', '内存不足时系统使用的交换空间，由系统管理。'],
+  'macos.purgeable_space': ['可清除空间（估算）', '系统可在需要时自动释放的空间，按“重要用途可用容量”减去可用容量估算。'],
   old_downloads: ['旧下载', '下载文件夹中较久未修改的文件。'],
 };
 
@@ -224,6 +235,17 @@ const CARD_OF: Record<string, string> = {
   'windows.component_store': '组件存储',
   'windows.previous_installation': '旧版系统',
   'windows.delivery_optimization_cache': '更新缓存',
+  'macos.local_snapshots': '还原点',
+  'macos.docker_disk': '虚拟机与容器',
+  'macos.orbstack_disk': '虚拟机与容器',
+  'macos.parallels_vms': '虚拟机与容器',
+  'macos.vmware_vms': '虚拟机与容器',
+  'macos.utm_vms': '虚拟机与容器',
+  'macos.lima_vms': '虚拟机与容器',
+  'macos.colima_vms': '虚拟机与容器',
+  'macos.device_backups': '设备备份',
+  'macos.swap': '系统文件',
+  'macos.purgeable_space': '可清除空间',
   old_downloads: '旧下载',
 };
 
@@ -253,6 +275,7 @@ export const CARD_TITLE: Record<string, string> = {
   developer_tools: '开发工具缓存',
   model_libraries: 'AI 模型库',
   device_backups: '设备备份',
+  purgeable_space: '可清除空间（估算）',
 };
 
 /** One overview card as shown: never a partial sum presented as the total. */

@@ -3,40 +3,75 @@
 //! review-only: plans come from explicit candidate ids or, in an interactive terminal, from one
 //! source label. Plans are the shared identity-bound file plans (`plan review/apply`).
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use std::process::ExitCode;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use crate::args::Parsed;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) const LAST_RUN_INSTALLER: &str = "installer-last-run.json";
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn unsupported(req: &str, p: &Parsed) -> ExitCode {
-    crate::fail(req, cm_core::error::ErrorCode::Unsupported, "installer cleanup is implemented on Windows only in this build", p.format)
+    crate::fail(req, cm_core::error::ErrorCode::Unsupported, "installer cleanup is implemented on Windows and macOS only in this build", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn locations(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn scan(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(windows)]
-pub use win::{locations, plan_create, scan};
+#[cfg(any(windows, target_os = "macos"))]
+pub use discovery::{locations, plan_create, scan};
 
+/// The platform side of discovery: declared locations and labels, the evidence probe, installed apps and the
+/// platform's wording of signer and eject guidance.
 #[cfg(windows)]
-mod win {
+mod plat {
+    use cm_core::installer::InstallerKind;
+    pub use cm_platform::windows::installer::{WinInstallerProbe as Probe, declared_locations, installed_apps};
+    use cm_platform::windows::installer::{SOURCE_BROWSER, SOURCE_DESKTOP, SOURCE_DOWNLOADS};
+    pub use cm_platform::windows::purge::{os, raw};
+
+    pub const LABELS: &[&str] = &[SOURCE_DOWNLOADS, SOURCE_DESKTOP, SOURCE_BROWSER];
+    pub const EJECT_NOTE: &str = "attached: eject it in File Explorer (right-click > Eject) or with Dismount-DiskImage, then scan again";
+
+    pub fn probe() -> Probe {
+        Probe
+    }
+
+    pub fn signer_note(kind: InstallerKind, signer: Option<&str>) -> String {
+        match signer {
+            Some(s) => format!("signed by {s}"),
+            None if kind.signable() => "no verified Authenticode signer".into(),
+            None => "images carry no Authenticode signer".into(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod plat {
+    pub use cm_platform::macos::installer::{EJECT_NOTE, LABELS, MacInstallerProbe as Probe, declared_locations, installed_apps, signer_note};
+    pub use cm_platform::macos::purge::{os, raw};
+
+    pub fn probe() -> Probe {
+        Probe::default()
+    }
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+mod discovery {
     use std::process::ExitCode;
 
     use cm_app::scan::{ScanRequest, run_scan};
@@ -48,12 +83,11 @@ mod win {
     use cm_core::protocol::record;
     use cm_core::scan::ScanOptions;
     use cm_platform::host::OsHostProbe;
-    use cm_platform::windows::installer::{WinInstallerProbe, declared_locations, installed_apps};
-    use cm_platform::windows::purge::os;
     use serde_json::json;
     use sha2::{Digest, Sha256};
 
     use super::LAST_RUN_INSTALLER;
+    use super::plat::{self, declared_locations, installed_apps, os};
     use crate::args::Parsed;
     use crate::commands::{fields, open_stores, store_error};
     use crate::purge_cmd::{PreviewRow, last_run_write, non_interactive, plan_from_sets, preview_record};
@@ -63,11 +97,11 @@ mod win {
     /// fixtures only; every preview item then carries a note saying so).
     fn override_locations() -> Option<Vec<(RawPath, &'static str)>> {
         let v = std::env::var("CM_INSTALLER_LOCATIONS").ok()?;
-        let labels = [cm_platform::windows::installer::SOURCE_DOWNLOADS, cm_platform::windows::installer::SOURCE_DESKTOP, cm_platform::windows::installer::SOURCE_BROWSER];
+        let labels = plat::LABELS;
         Some(
             v.split(';')
                 .filter_map(|e| e.split_once('='))
-                .filter_map(|(l, p)| labels.iter().find(|x| **x == l).and_then(|l| cm_platform::windows::purge::raw(std::path::Path::new(p)).map(|r| (r, *l))))
+                .filter_map(|(l, p)| labels.iter().find(|x| **x == l).and_then(|l| plat::raw(std::path::Path::new(p)).map(|r| (r, *l))))
                 .collect(),
         )
     }
@@ -131,6 +165,7 @@ mod win {
             worktrees: &[],
         };
         let apps = installed_apps();
+        let probe = plat::probe();
         let host = OsHostProbe.current("cli");
         let mut analyses = Vec::new();
         let mut runs = Vec::new();
@@ -142,7 +177,7 @@ mod win {
             let digest: String = Sha256::digest(root.raw_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
             let scan_id = format!("s_{}_{i}", &req[4..]);
             let request = ScanRequest { scan_id: scan_id.clone(), scope_id: format!("scope_{digest}"), root: root.clone(), host: host.clone() };
-            if let Err(e) = run_scan(&stores.index, &cm_platform::windows::directory::DirectoryBackend, &request, &ScanOptions::default()) {
+            if let Err(e) = run_scan(&stores.index, &crate::scan_cmd::backend(), &request, &ScanOptions::default()) {
                 return store_error(req, &e, p.format);
             }
             let (status, view) = match (stores.index.scan_status(&scan_id), stores.index.view(&scan_id)) {
@@ -150,7 +185,7 @@ mod win {
                 (Err(e), _) | (_, Err(e)) => return store_error(req, &e, p.format),
             };
             let input = InstallerInput { scan_id: &scan_id, revision: status.revision, source_label: label, max_depth, apps: &apps };
-            let a = analyze_installers(&view, &input, &prot, &WinInstallerProbe);
+            let a = analyze_installers(&view, &input, &prot, &probe);
             if let Err(e) = stores.index.save_candidates(&a.set) {
                 return store_error(req, &e, p.format);
             }
@@ -163,11 +198,7 @@ mod win {
             .flat_map(|(_, _, a)| a.set.candidates.iter().zip(&a.facts).map(move |(c, f)| (a.set.candidate_set_id.as_str(), c, f)))
             .map(|(set_id, c, f)| {
                 let mut notes = vec![format!("recognized: {}", f.evidence), format!("candidate set: {set_id}")];
-                notes.push(match &f.signer {
-                    Some(s) => format!("signed by {s}"),
-                    None if f.kind.signable() => "no verified Authenticode signer".into(),
-                    None => "images carry no Authenticode signer".into(),
-                });
+                notes.push(plat::signer_note(f.kind, f.signer.as_deref()));
                 if let Some(h) = &f.installed_hint {
                     notes.push(h.clone());
                 }
@@ -175,7 +206,7 @@ mod win {
                     notes.push("location from CM_INSTALLER_LOCATIONS (validation fixture), not a declared user folder".into());
                 }
                 if f.mounted == Some(true) {
-                    notes.push("attached: eject it in File Explorer (right-click > Eject) or with Dismount-DiskImage, then scan again".into());
+                    notes.push(plat::EJECT_NOTE.into());
                 }
                 PreviewRow { c, tier_reason: tier_reason(c), rebuild_class: "network_redownload", source_label: Some(f.source_label.clone()), notes }
             })

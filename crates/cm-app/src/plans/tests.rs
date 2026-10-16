@@ -182,7 +182,7 @@ fn manual_plans_need_a_review_even_with_an_enabled_policy() {
     let r = apply(&s, &b, "mp_policy").unwrap();
     assert_eq!(r.status, "completed", "{r:?}");
     assert_eq!(r.items[0].recovery, "trash");
-    assert!(r.items[0].message.contains("Restore"), "put-back guidance: {}", r.items[0].message);
+    assert!(r.items[0].message.contains(cm_core::manual_trash::PUT_BACK_GUIDANCE), "put-back guidance: {}", r.items[0].message);
     assert_eq!((r.processed_logical_bytes.as_str(), r.estimated_freed_bytes.as_str()), ("5000", "0"), "a bin move frees nothing by itself");
     assert!(r.volume_free_before_bytes.is_some() && r.observed_free_delta_bytes.is_some());
     assert_eq!(apply(&s, &b, "mp_policy").unwrap(), r, "same plan, same operation");
@@ -219,7 +219,7 @@ fn in_use_and_unconfirmed_moves_are_reported_truthfully() {
     let none = |_: &[RawPath]| None;
     let r = apply(&s, &backends(&fake, None, &none), "mp_unknown").unwrap();
     assert_eq!((r.status.as_str(), r.items[0].status), ("reconciliation_required", ActionStatus::Unknown));
-    assert!(r.items[0].message.contains("Check the Recycle Bin"), "{}", r.items[0].message);
+    assert!(r.items[0].message.contains(cm_core::manual_trash::UNKNOWN_GUIDANCE), "{}", r.items[0].message);
 }
 
 /// MTR-03: a recycled item's steps run in order and stop at the first failure; the report counts only what was freed.

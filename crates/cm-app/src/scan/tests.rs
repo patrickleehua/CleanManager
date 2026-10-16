@@ -154,17 +154,21 @@ fn spent_wait_budget_stops_at_a_safe_boundary_without_claiming_rollback() {
     let other = IndexStore::open(&db).unwrap();
     let started_seen = RefCell::new(None);
     let started = |id: &str| *started_seen.borrow_mut() = Some(other.scan_status(id).unwrap().state);
+    // A generous budget that batches 0 and 1 cannot exhaust even on a loaded machine; batch 2 then waits until the
+    // deadline has passed, so the next safe boundary stops the scan regardless of timing.
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
     let backend = ScriptedBackend {
         batches: 5,
-        on_batch: RefCell::new(Box::new(|b| {
+        on_batch: RefCell::new(Box::new(move |b| {
             if b == 2 {
-                std::thread::sleep(std::time::Duration::from_millis(600));
+                while Instant::now() <= deadline + std::time::Duration::from_millis(50) {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
             }
         })),
         after_cancel_seen: RefCell::new(Box::new(|| {})),
     };
-    // The deadline passes during batch 2, so the next safe boundary stops the scan.
-    let hooks = ScanHooks { started: Some(&started), deadline: Some(Instant::now() + std::time::Duration::from_millis(300)), ..ScanHooks::default() };
+    let hooks = ScanHooks { started: Some(&started), deadline: Some(deadline), ..ScanHooks::default() };
     let out = run_scan_hooked(&index, &backend, &request("t"), &ScanOptions::default(), &hooks).unwrap();
     assert_eq!(*started_seen.borrow(), Some(ScanState::Running), "the record exists before any batch");
     assert_eq!(out.state, ScanState::Cancelled);

@@ -101,9 +101,14 @@ impl MacActions {
         Ok(slot.as_ref().map(|(_, i)| i.holders(dev, ino)).unwrap_or(HolderReport { holders: vec![], uninspected: 0 }))
     }
 
-    /// In-use check of a verified object: any descriptor (or working directory) of an inspectable process.
+    /// In-use check of a verified object: any descriptor (or working directory) of an inspectable process. This
+    /// process's own descriptors are the executor's verification handles (a planned directory is held as the parent
+    /// of the items removed before it, and the snapshot may be up to [`HOLDER_TTL`] old), so they never count; its
+    /// working directory does.
     fn in_use(&self, live: &libc::stat) -> Result<(), Stop> {
-        let report = self.holders_of(live.st_dev, live.st_ino).map_err(Stop::Error)?;
+        let mut report = self.holders_of(live.st_dev, live.st_ino).map_err(Stop::Error)?;
+        let me = std::process::id() as i32;
+        report.holders.retain(|h| !(h.pid == me && matches!(h.hold, super::procs::Hold::Fd(_))));
         if let Some(h) = report.holders.first() {
             cm_core::debug_trace!("execute", "in use: pid {} ({}) holds the object; {} holder(s)", h.pid, h.name, report.holders.len());
             return Err(Stop::InUse);

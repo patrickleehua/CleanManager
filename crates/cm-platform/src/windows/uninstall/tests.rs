@@ -24,9 +24,8 @@ impl TestRoot {
         let z = wide(&self.0);
         // SAFETY: as above (the now empty key itself).
         unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, z.as_ptr()) };
-        let parent = wide(r"Software\CleanManagerTest");
-        // SAFETY: removes the shared parent only when no other test key is below it.
-        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr()) };
+        // The shared parent `Software\CleanManagerTest` is left in place: deleting it while a test running in parallel
+        // opens a key below it fails that test with ERROR_KEY_DELETED (1018). The CLI uninstall tests remove the tree.
     }
     fn env(&self, home: &Path) -> UninstallEnv {
         UninstallEnv { registry_root: self.0.clone(), home: Some(home.to_path_buf()), is_admin: false, quit_wait: Duration::from_millis(600) }

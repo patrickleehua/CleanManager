@@ -197,7 +197,7 @@ pub fn plan_review(req: &str, p: &Parsed, id: &str) -> ExitCode {
     println!("Expires: {}   Digest: {}", plan.body.expires_at, plan.digest);
     match plan.body.mode {
         Mode::Delete => println!("Permanent delete: there is no undo."),
-        Mode::Trash => println!("Moved to the Recycle Bin; restore with the system UI."),
+        Mode::Trash => println!("Moved to the {}; restore with the system UI.", cm_core::manual_trash::BIN_NAME),
         Mode::Quarantine => println!("Moved to a same-volume quarantine; this does not free space until it is purged."),
     }
     for item in plan.body.items.iter().take(20) {
@@ -413,7 +413,7 @@ fn v2_summary(plan: &PlanV2) -> bool {
             crate::uninstall_cmd::review_lines(plan).iter().for_each(|l| println!("{l}"));
         }
         PlanKind::ManualSelection if permanent => {
-            println!("PERMANENTLY deletes these objects from the Recycle Bin ({}). There is no undo.", bytes_text(b.total_logical()));
+            println!("PERMANENTLY deletes these objects from the {} ({}). There is no undo.", cm_core::manual_trash::BIN_NAME, bytes_text(b.total_logical()));
             for (a, m) in shown {
                 let f = a.fs().expect("manual actions are file actions");
                 let was = m.note.as_deref().map(|n| format!("  (was {n})")).unwrap_or_default();
@@ -421,7 +421,7 @@ fn v2_summary(plan: &PlanV2) -> bool {
             }
         }
         PlanKind::ManualSelection => {
-            println!("Moves these objects to the Recycle Bin ({}); nothing is permanently deleted.", bytes_text(b.total_logical()));
+            println!("Moves these objects to the {} ({}); nothing is permanently deleted.", cm_core::manual_trash::BIN_NAME, bytes_text(b.total_logical()));
             println!("{}", cm_core::manual_trash::PUT_BACK_GUIDANCE);
             for (a, _) in shown {
                 let f = a.fs().expect("manual actions are file actions");

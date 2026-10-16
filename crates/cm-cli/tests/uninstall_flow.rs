@@ -110,11 +110,16 @@ impl Drop for TestKey {
     }
 }
 
+/// The real uninstall keys and Run values, reduced to lines that carry a fixture marker. Other software on the
+/// machine (a CI runner's updaters, for one) may change unrelated entries during the run; what must hold is that
+/// nothing this test plants or names ever reaches the real keys.
 fn real_snapshot() -> String {
-    let (_, a) = reg(&["query", &format!(r"HKCU\{UNINSTALL}")]);
-    let (_, b) = reg(&["query", &format!(r"HKLM\{UNINSTALL}")]);
+    const MARKERS: [&str; 7] = ["fooapp", "unsigned thing", "mystery tool", "cleanmanagertest", "cm-cli-uninst", "cleanmanager", "contoso"];
+    let (_, a) = reg(&["query", &format!(r"HKCU\{UNINSTALL}"), "/s"]);
+    let (_, b) = reg(&["query", &format!(r"HKLM\{UNINSTALL}"), "/s"]);
     let (_, c) = reg(&["query", &format!(r"HKCU\{RUN}")]);
-    format!("{a}\n{b}\n{c}")
+    let all = format!("{a}\n{b}\n{c}");
+    all.lines().filter(|l| MARKERS.iter().any(|m| l.to_ascii_lowercase().contains(m))).collect::<Vec<_>>().join("\n")
 }
 
 struct Fixture {

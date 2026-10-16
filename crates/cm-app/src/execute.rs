@@ -155,7 +155,7 @@ pub(crate) fn final_status(results: &[ActionResult], cancelled: bool) -> &'stati
 /// Protocol messages are never empty (`action_result.message`).
 fn done_message(r: &Recovery) -> &'static str {
     match r {
-        Recovery::Trash => "moved to the Recycle Bin",
+        Recovery::Trash => if cfg!(target_os = "macos") { "moved to the Trash" } else { "moved to the Recycle Bin" },
         Recovery::Quarantine { .. } => "moved to the same-volume quarantine",
         Recovery::Unavailable => "permanently deleted",
     }
@@ -297,7 +297,7 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
                 return Err(ApplyError::Crashed("after_action".into()));
             }
             let (status, code, message, recovery) = match &outcome {
-                ActionOutcome::Succeeded { .. } => (ActionStatus::Succeeded, "done", "moved to the Recycle Bin with its directory".to_string(), "trash"),
+                ActionOutcome::Succeeded { .. } => (ActionStatus::Succeeded, "done", format!("moved to the {} with its directory", cm_core::manual_trash::BIN_NAME), "trash"),
                 ActionOutcome::Unknown { message } => (ActionStatus::Unknown, "outcome_unconfirmed", message.clone(), "unknown"),
                 _ => continue, // nothing changed: fall back to leaves + empty-directory removal
             };

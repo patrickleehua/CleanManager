@@ -162,10 +162,8 @@ pub fn delete_test_key(subkey: &str) {
     let sub = wide(subkey);
     // SAFETY: valid NUL-terminated subkey under HKCU.
     unsafe { windows_sys::Win32::System::Registry::RegDeleteTreeW(HKEY_CURRENT_USER, sub.as_ptr()) };
-    // The shared parent goes too once empty (RegDeleteKeyW refuses a key that still has subkeys).
-    let parent = wide(r"Software\CleanManagerTest");
-    // SAFETY: valid NUL-terminated subkey under HKCU.
-    unsafe { windows_sys::Win32::System::Registry::RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr()) };
+    // The shared parent `Software\CleanManagerTest` is left in place: deleting it while a test running in parallel
+    // opens a key below it fails that test with ERROR_KEY_DELETED (1018). The CLI uninstall tests remove the tree.
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -4,47 +4,63 @@
 //! catalog and stores an ordinary candidate set, so `candidates list`, `plan show/review/apply`,
 //! `operations` and recovery work unchanged. Nothing here approves a plan or touches a target.
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use std::process::ExitCode;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use cm_core::error::ErrorCode;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use crate::args::Parsed;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use crate::fail;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod review;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) use review::*;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn unsupported(req: &str, p: &Parsed) -> ExitCode {
-    fail(req, ErrorCode::Unsupported, "purge is implemented on Windows only in this build", p.format)
+    fail(req, ErrorCode::Unsupported, "purge is implemented on Windows and macOS only in this build", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn roots(req: &str, p: &Parsed, _: Option<bool>) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn scan(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     unsupported(req, p)
 }
 
-#[cfg(windows)]
-pub use win::{plan_create, roots, scan};
+#[cfg(any(windows, target_os = "macos"))]
+pub use discovery::{plan_create, roots, scan};
 
+/// The platform side of discovery: default roots, the settings file, path conversion and the evidence probe.
 #[cfg(windows)]
-mod win {
+mod plat {
+    pub use cm_platform::windows::purge::{FsProbe, default_roots, load_settings, os, raw, save_settings};
+
+    /// Whether two root paths name the same folder (Windows paths compare case-insensitively).
+    pub fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+        a.to_string_lossy().trim_end_matches('\\').eq_ignore_ascii_case(b.to_string_lossy().trim_end_matches('\\'))
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod plat {
+    pub use cm_platform::macos::purge::{FsProbe, default_roots, load_settings, os, raw, same_dir, save_settings};
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+mod discovery {
     use std::path::Path;
     use std::process::ExitCode;
 
@@ -57,10 +73,10 @@ mod win {
     use cm_core::purge::{ArtifactClass, MAX_DEPTH_LIMIT, PurgeInput, PurgeSettings, analyze_purge, artifact_for_rule};
     use cm_core::scan::ScanOptions;
     use cm_platform::host::OsHostProbe;
-    use cm_platform::windows::purge::{FsProbe, default_roots, load_settings, os, save_settings};
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
 
+    use super::plat::{FsProbe, default_roots, load_settings, os, save_settings};
     use super::{LAST_RUN_PURGE, PreviewRow, last_run_write, non_interactive, plan_from_sets, preview_record};
     use crate::args::Parsed;
     use crate::commands::{fields, open_stores, store_error};
@@ -93,7 +109,7 @@ mod win {
         if let Some(add) = add {
             let Some(raw) = p.raw_option("path") else { return fail(req, ErrorCode::InvalidArgument, "needs --path PATH", p.format) };
             let abs = std::path::absolute(raw).unwrap_or_else(|_| raw.into());
-            let Some(path) = cm_platform::windows::purge::raw(&abs) else { return fail(req, ErrorCode::InvalidArgument, "invalid path", p.format) };
+            let Some(path) = super::plat::raw(&abs) else { return fail(req, ErrorCode::InvalidArgument, "invalid path", p.format) };
             if add {
                 if !abs.is_dir() {
                     return fail(req, ErrorCode::InvalidArgument, "not an existing directory", p.format);
@@ -158,7 +174,7 @@ mod win {
         let roots: Vec<RawPath> = match p.raw_option("root") {
             Some(raw) => {
                 let abs = std::path::absolute(raw).unwrap_or_else(|_| raw.into());
-                match configured.iter().find(|c| os(c).is_some_and(|c| c.to_string_lossy().trim_end_matches('\\').eq_ignore_ascii_case(abs.to_string_lossy().trim_end_matches('\\')))) {
+                match configured.iter().find(|c| os(c).is_some_and(|c| super::plat::same_dir(&c, &abs))) {
                     Some(r) => vec![r.clone()],
                     None => return fail(req, ErrorCode::InvalidArgument, "not a configured purge root; add it with `purge roots add --path PATH`", p.format),
                 }
@@ -191,7 +207,7 @@ mod win {
             let digest: String = Sha256::digest(root.raw_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
             let scan_id = format!("s_{}_{i}", &req[4..]);
             let request = ScanRequest { scan_id: scan_id.clone(), scope_id: format!("scope_{digest}"), root: root.clone(), host: host.clone() };
-            if let Err(e) = run_scan(&stores.index, &cm_platform::windows::directory::DirectoryBackend, &request, &ScanOptions::default()) {
+            if let Err(e) = run_scan(&stores.index, &crate::scan_cmd::backend(), &request, &ScanOptions::default()) {
                 return store_error(req, &e, p.format);
             }
             let (status, view) = match (stores.index.scan_status(&scan_id), stores.index.view(&scan_id)) {
@@ -246,10 +262,18 @@ mod win {
     }
 }
 
-/// Seam for `plan apply` (PUR-03): the version-control gate of purge plans on macOS, re-reading each artifact's
-/// repository state before it is acted on. `None` = no purge plans are created on macOS in this build.
+/// Seam for `plan apply`: the execution-time gates of discovery plans on macOS. Purge plans (PUR-03) ask Git again for
+/// each artifact before it is acted on; installer plans (INC-04) re-read the attached disk images so an image attached
+/// after planning is skipped, never removed. `None` for every other plan.
 #[cfg(target_os = "macos")]
 #[allow(clippy::type_complexity)]
-pub(crate) fn mac_vcs_gate(_plan: &cm_core::plan::Plan) -> Option<Box<dyn Fn(&cm_core::execute::ActionTarget<'_>) -> Result<(), String>>> {
-    None
+pub(crate) fn mac_vcs_gate(plan: &cm_core::plan::Plan) -> Option<Box<dyn Fn(&cm_core::execute::ActionTarget<'_>) -> Result<(), String>>> {
+    use cm_platform::macos::{installer, purge};
+    if purge::is_purge_plan(plan) {
+        Some(Box::new(purge::vcs_gate(plan)))
+    } else if installer::is_installer_plan(plan) {
+        Some(Box::new(installer::mounted_gate(plan)))
+    } else {
+        None
+    }
 }

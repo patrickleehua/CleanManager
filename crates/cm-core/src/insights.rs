@@ -32,6 +32,11 @@ pub enum SizeBasis {
     DirectoryWalk,
     /// Reported by a system interface (for example shadow storage used space).
     SystemQuery,
+    /// Space the filesystem reports as allocated (`st_blocks * 512` on macOS), summed by a bounded read-only walk with
+    /// hard links counted once. Not exclusive: APFS clones and snapshots may share these blocks.
+    Allocated,
+    /// Derived from system figures that are not a measurement of the object (macOS purgeable space); labelled estimate.
+    Estimate,
     NotMeasured,
 }
 
@@ -216,6 +221,187 @@ impl WindowsObject {
     }
 }
 
+/// macOS known-object kinds (parity 7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacObject {
+    LocalSnapshots,
+    DockerDisk,
+    UtmVms,
+    ParallelsVms,
+    VmwareVms,
+    LimaVms,
+    ColimaVms,
+    OrbStackDisk,
+    DeviceBackups,
+    Swap,
+    PurgeableSpace,
+}
+
+impl MacObject {
+    pub const ALL: [MacObject; 11] = [
+        MacObject::LocalSnapshots,
+        MacObject::DockerDisk,
+        MacObject::UtmVms,
+        MacObject::ParallelsVms,
+        MacObject::VmwareVms,
+        MacObject::LimaVms,
+        MacObject::ColimaVms,
+        MacObject::OrbStackDisk,
+        MacObject::DeviceBackups,
+        MacObject::Swap,
+        MacObject::PurgeableSpace,
+    ];
+
+    pub fn kind(self) -> &'static str {
+        match self {
+            MacObject::LocalSnapshots => "macos.local_snapshots",
+            MacObject::DockerDisk => "macos.docker_disk",
+            MacObject::UtmVms => "macos.utm_vms",
+            MacObject::ParallelsVms => "macos.parallels_vms",
+            MacObject::VmwareVms => "macos.vmware_vms",
+            MacObject::LimaVms => "macos.lima_vms",
+            MacObject::ColimaVms => "macos.colima_vms",
+            MacObject::OrbStackDisk => "macos.orbstack_disk",
+            MacObject::DeviceBackups => "macos.device_backups",
+            MacObject::Swap => "macos.swap",
+            MacObject::PurgeableSpace => "macos.purgeable_space",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            MacObject::LocalSnapshots => "Time Machine local snapshots",
+            MacObject::DockerDisk => "Docker Desktop disk image",
+            MacObject::UtmVms => "UTM virtual machines",
+            MacObject::ParallelsVms => "Parallels Desktop virtual machines",
+            MacObject::VmwareVms => "VMware Fusion virtual machines",
+            MacObject::LimaVms => "Lima instances",
+            MacObject::ColimaVms => "Colima virtual machines",
+            MacObject::OrbStackDisk => "OrbStack data disk",
+            MacObject::DeviceBackups => "iPhone and iPad backups",
+            MacObject::Swap => "Swap files",
+            MacObject::PurgeableSpace => "Purgeable space",
+        }
+    }
+
+    fn handling(self) -> Handling {
+        match self {
+            MacObject::LocalSnapshots | MacObject::DeviceBackups | MacObject::PurgeableSpace => Handling::OpenSystemSettings,
+            MacObject::DockerDisk
+            | MacObject::UtmVms
+            | MacObject::ParallelsVms
+            | MacObject::VmwareVms
+            | MacObject::LimaVms
+            | MacObject::ColimaVms
+            | MacObject::OrbStackDisk => Handling::OpenOwnerTool,
+            MacObject::Swap => Handling::ReadOnlyGuidance,
+        }
+    }
+
+    fn explanation(self) -> &'static str {
+        match self {
+            MacObject::LocalSnapshots => {
+                "APFS snapshots Time Machine (and macOS updates) keep on the startup disk so recent versions of files can be restored without the backup disk. A snapshot holds the blocks that changed since it was taken, which is why deleting files may not free space at once. macOS deletes local snapshots automatically after 24 hours or when space runs low; the space a single snapshot holds is not reported, so only their number is shown."
+            }
+            MacObject::DockerDisk => {
+                "Docker Desktop's virtual disk with every image, container, volume and build cache. It is a sparse file: Finder and ls show its maximum size, the space actually allocated is shown here. It grows with use and is not shrunk by deleting files inside it. Deleting the file removes all Docker data; manage it from Docker."
+            }
+            MacObject::UtmVms => {
+                "UTM virtual machines (.utm bundles) with their disk images, stored inside UTM's app container. Disk images grow as the guest writes data. Deleting a bundle destroys that virtual machine."
+            }
+            MacObject::ParallelsVms => {
+                "Parallels Desktop virtual machines (.pvm bundles) in the default ~/Parallels folder, with their disks, snapshots and suspended memory. Expanding disks and snapshots grow with use. Deleting a bundle destroys that virtual machine."
+            }
+            MacObject::VmwareVms => {
+                "VMware Fusion virtual machines (.vmwarevm bundles) in the default Virtual Machines folder in the home folder, with their disks and snapshots. Growable disks and snapshots grow with use. Deleting a bundle destroys that virtual machine."
+            }
+            MacObject::LimaVms => {
+                "Lima's instances (~/.lima): each Linux virtual machine's sparse disk image plus downloaded base images. The space allocated by the images is shown. Deleting files here by hand breaks or destroys the instances; use limactl."
+            }
+            MacObject::ColimaVms => {
+                "Colima's virtual machines (~/.colima): the Lima-based VM that runs containers for Docker or containerd, with its sparse disk image. The space allocated is shown. Deleting files here by hand destroys the containers and images inside; use colima."
+            }
+            MacObject::OrbStackDisk => {
+                "OrbStack's data disk image with its Linux machines and its Docker images, containers and volumes. It is a sparse file; the space allocated is shown. Deleting it removes all OrbStack data; manage it from OrbStack."
+            }
+            MacObject::DeviceBackups => {
+                "Local backups of iPhone and iPad made by Finder (MobileSync). Each backup can hold many gigabytes and old devices' backups stay until removed. Deleting a backup means that device can no longer be restored from it."
+            }
+            MacObject::Swap => {
+                "Virtual memory files in /private/var/vm that macOS creates and removes as memory pressure changes. They are encrypted and in use while the system runs; deleting them is neither possible nor useful. Size follows memory use and shrinks after apps are quit or after a restart."
+            }
+            MacObject::PurgeableSpace => {
+                "Space macOS reports it can make available for important use beyond the free space: local snapshots, caches and iCloud files with a local copy that the system removes by itself when an app needs the room. It is an estimate from two system figures, not something CleanManager can or should delete."
+            }
+        }
+    }
+
+    fn guidance(self) -> Vec<Guidance> {
+        match self {
+            MacObject::LocalSnapshots => vec![
+                g("System Settings", "General > Storage: macOS frees local snapshots by itself when space is needed", false, "None; the system decides which snapshots to remove"),
+                g("tmutil (Terminal)", "tmutil listlocalsnapshots / lists them; sudo tmutil deletelocalsnapshots <date> removes one when you choose to", true, "Files can no longer be restored from the removed snapshot; Time Machine backups on the backup disk are unaffected"),
+            ],
+            MacObject::DockerDisk => vec![
+                g("Docker", "docker system df to see usage, then docker system prune (add --volumes only if you no longer need the data)", false, "Pruned images are downloaded again when needed; pruned volumes lose their data"),
+                g("Docker Desktop", "Settings > Resources > Advanced: lower the disk usage limit; Troubleshoot > Clean / Purge data", false, "Purging removes all images, containers and volumes"),
+            ],
+            MacObject::UtmVms => vec![g(
+                "UTM",
+                "Select a stopped virtual machine: Delete removes it; Edit > Drives offers Reclaim Space / Compress for QCOW2 disks",
+                false,
+                "Deleting a virtual machine deletes its data",
+            )],
+            MacObject::ParallelsVms => vec![g(
+                "Parallels Desktop",
+                "Control Center > virtual machine > Configure > General > Reclaim (Free Up Disk Space); Snapshots: delete old snapshots",
+                false,
+                "Deleted snapshots cannot be reverted to; removing a virtual machine deletes its data",
+            )],
+            MacObject::VmwareVms => vec![g(
+                "VMware Fusion",
+                "Virtual Machine > Settings > Hard Disk > Clean Up Virtual Machine; Snapshots: delete old snapshots",
+                false,
+                "Deleted snapshots cannot be reverted to; deleting a virtual machine deletes its data",
+            )],
+            MacObject::LimaVms => vec![g(
+                "limactl (Terminal)",
+                "limactl list; limactl prune clears cached downloads; limactl delete <instance> removes an instance",
+                false,
+                "Deleting an instance deletes every file inside it",
+            )],
+            MacObject::ColimaVms => vec![g(
+                "colima (Terminal)",
+                "colima list; docker system prune inside the running VM; colima prune clears cached assets; colima delete <profile> removes a VM",
+                false,
+                "Deleting a profile deletes its containers, images and volumes",
+            )],
+            MacObject::OrbStackDisk => vec![g(
+                "OrbStack",
+                "docker system prune for containers and images; orb delete <machine> for Linux machines; Settings > Storage for the disk limit",
+                false,
+                "Pruned images are downloaded again when needed; deleted machines lose their data",
+            )],
+            MacObject::DeviceBackups => vec![
+                g("Finder", "Select the device in the sidebar > General > Manage Backups: choose a backup you no longer need", false, "The device can no longer be restored from that backup"),
+                g("System Settings", "General > Storage > iOS Files", false, "Same effect as Manage Backups"),
+            ],
+            MacObject::Swap => vec![g(
+                "Activity Monitor",
+                "Memory tab: check Swap Used and Memory Pressure; quit memory-heavy apps or restart to let macOS remove swap files",
+                false,
+                "Quitting an app ends its unsaved work",
+            )],
+            MacObject::PurgeableSpace => vec![g(
+                "System Settings",
+                "General > Storage: review the recommendations (Optimize Storage, Store in iCloud); macOS purges this space itself when needed",
+                false,
+                "Optimize Storage removes local copies of iCloud files and watched media; they are downloaded again when opened",
+            )],
+        }
+    }
+}
+
 /// Stable insight ID from the kind and the object's discriminator (path or name).
 pub fn insight_id(kind: &str, discriminator: &str) -> String {
     let mut h = Sha256::new();
@@ -235,30 +421,69 @@ pub enum Measured {
     Unknown(String),
 }
 
+/// Catalog text of one known-object kind.
+struct Entry {
+    kind: &'static str,
+    title: &'static str,
+    explanation: &'static str,
+    handling: Handling,
+    guidance: Vec<Guidance>,
+}
+
+/// What was observed about one object.
+struct Observed<'a> {
+    label: Option<&'a str>,
+    discriminator: &'a str,
+    path: Option<RawPath>,
+    size: Measured,
+    count: Option<u64>,
+    observed_at: &'a str,
+}
+
 impl Insight {
     /// Build an insight for a Windows known object. `label` qualifies the title (volume, distribution name).
     pub fn windows(object: WindowsObject, label: Option<&str>, discriminator: &str, path: Option<RawPath>, size: Measured, count: Option<u64>, observed_at: &str) -> Self {
-        let (logical_bytes, size_basis, size_note) = match size {
+        let entry = Entry { kind: object.kind(), title: object.title(), explanation: object.explanation(), handling: object.handling(), guidance: object.guidance() };
+        Self::build(entry, Observed { label, discriminator, path, size, count, observed_at })
+    }
+
+    /// Build an insight for a macOS known object. `label` qualifies the title; `note` is added to the size note (it
+    /// must say what an [`SizeBasis::Estimate`] is derived from).
+    #[allow(clippy::too_many_arguments)]
+    pub fn macos(object: MacObject, label: Option<&str>, discriminator: &str, path: Option<RawPath>, size: Measured, count: Option<u64>, note: Option<String>, observed_at: &str) -> Self {
+        let entry = Entry { kind: object.kind(), title: object.title(), explanation: object.explanation(), handling: object.handling(), guidance: object.guidance() };
+        let mut i = Self::build(entry, Observed { label, discriminator, path, size, count, observed_at });
+        if let Some(n) = note {
+            i.size_note = Some(match i.size_note.take() {
+                Some(why) => format!("{why}. {n}"),
+                None => n,
+            });
+        }
+        i
+    }
+
+    fn build(entry: Entry, o: Observed<'_>) -> Self {
+        let (logical_bytes, size_basis, size_note) = match o.size {
             Measured::Bytes { bytes, basis } => (Some(bytes), basis, None),
             Measured::Unknown(why) => (None, SizeBasis::NotMeasured, Some(why)),
         };
-        let title = match label {
-            Some(l) => format!("{} ({l})", object.title()),
-            None => object.title().to_owned(),
+        let title = match o.label {
+            Some(l) => format!("{} ({l})", entry.title),
+            None => entry.title.to_owned(),
         };
         Insight {
-            insight_id: insight_id(object.kind(), discriminator),
-            kind: object.kind().into(),
+            insight_id: insight_id(entry.kind, o.discriminator),
+            kind: entry.kind.into(),
             title,
-            path,
+            path: o.path,
             logical_bytes,
-            count,
+            count: o.count,
             size_basis,
             size_note,
-            observed_at: Some(observed_at.into()),
-            explanation: object.explanation().into(),
-            handling: object.handling(),
-            guidance: object.guidance(),
+            observed_at: Some(o.observed_at.into()),
+            explanation: entry.explanation.into(),
+            handling: entry.handling,
+            guidance: entry.guidance,
         }
     }
 
@@ -302,6 +527,8 @@ pub enum CardKind {
     DeveloperTools,
     ModelLibraries,
     DeviceBackups,
+    /// macOS: space the system reports it can free for important use beyond the free space (an estimate).
+    PurgeableSpace,
 }
 
 impl CardKind {
@@ -317,12 +544,20 @@ impl CardKind {
             CardKind::DeveloperTools => "Developer tool caches",
             CardKind::ModelLibraries => "AI model libraries",
             CardKind::DeviceBackups => "Device backups",
+            CardKind::PurgeableSpace => "Purgeable space (estimate)",
         }
     }
 
-    /// Card a known Windows object belongs to.
+    /// Card a known Windows or macOS object belongs to.
     pub fn of_insight(kind: &str) -> Option<CardKind> {
         Some(match kind {
+            "macos.docker_disk" | "macos.utm_vms" | "macos.parallels_vms" | "macos.vmware_vms" | "macos.lima_vms" | "macos.colima_vms" | "macos.orbstack_disk" => {
+                CardKind::VirtualMachines
+            }
+            "macos.local_snapshots" => CardKind::Snapshots,
+            "macos.swap" => CardKind::SystemFiles,
+            "macos.device_backups" => CardKind::DeviceBackups,
+            "macos.purgeable_space" => CardKind::PurgeableSpace,
             "windows.wsl_disk" | "windows.docker_disk" | "windows.hyperv_disks" => CardKind::VirtualMachines,
             "windows.shadow_storage" => CardKind::Snapshots,
             "windows.hibernation_file" | "windows.page_file" | "windows.swap_file" => CardKind::SystemFiles,
@@ -442,6 +677,8 @@ pub struct InsightCard {
 
 struct Member {
     bytes: Option<u64>,
+    /// The size is an estimate: its note is carried to the card even when every size is known.
+    estimate: bool,
     count: Option<u64>,
     note: Option<String>,
     observed_at: Option<String>,
@@ -454,7 +691,8 @@ fn card(kind: CardKind, members: &[Member]) -> InsightCard {
     let unknown = members.len() - known.len();
     let sum = known.iter().copied().fold(0u64, u64::saturating_add);
     let (logical_bytes, size_note) = if unknown == 0 {
-        (Some(sum), None)
+        let estimates: Vec<String> = members.iter().filter(|m| m.estimate).map(|m| m.note.clone().unwrap_or_else(|| "derived from system figures".into())).collect();
+        (Some(sum), (!estimates.is_empty()).then(|| format!("Estimate: {}", estimates.join("; "))))
     } else {
         let why = members.iter().filter(|m| m.bytes.is_none()).find_map(|m| m.note.clone()).unwrap_or_else(|| "size not available".into());
         let known_part = if known.is_empty() { String::new() } else { format!("; {} of {} measured: {sum} bytes", known.len(), members.len()) };
@@ -483,6 +721,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
         CardKind::OldDownloads,
         vec![Member {
             bytes: downloads.total_logical_bytes,
+            estimate: false,
             count: Some(downloads.item_count),
             note: downloads.note.clone(),
             observed_at: Some(downloads.observed_at.clone()),
@@ -494,6 +733,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
         if let Some(kind) = CardKind::of_insight(&i.kind) {
             groups.entry(kind).or_default().push(Member {
                 bytes: i.logical_bytes,
+                estimate: i.size_basis == SizeBasis::Estimate,
                 count: i.count,
                 note: i.size_note.clone(),
                 observed_at: i.observed_at.clone(),
@@ -507,7 +747,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
             Measured::Bytes { bytes, .. } => (Some(*bytes), None),
             Measured::Unknown(why) => (None, Some(format!("{}: {why}", d.label))),
         };
-        groups.entry(d.card).or_default().push(Member { bytes, count: None, note, observed_at: Some(d.observed_at.clone()), path: Some(d.path.clone()), insight_id: None });
+        groups.entry(d.card).or_default().push(Member { bytes, estimate: false, count: None, note, observed_at: Some(d.observed_at.clone()), path: Some(d.path.clone()), insight_id: None });
     }
     let mut cards: Vec<InsightCard> = groups.iter().map(|(k, m)| card(*k, m)).collect();
     if let Some(c) = cards.iter_mut().find(|c| c.kind == CardKind::OldDownloads) {
@@ -529,7 +769,7 @@ impl InsightCard {
 
 /// Review text of the old-downloads list: how to act on a file without CleanManager choosing for the user.
 pub const OLD_DOWNLOADS_GUIDANCE: &str =
-    "Review only: nothing is selected. Pick files yourself and move them to the Recycle Bin with the trash command, or review installer packages with installer scan.";
+    "Review only: nothing is selected. Pick files yourself and move them to the Recycle Bin (the Trash on macOS) with the trash command, or review installer packages with installer scan.";
 
 impl OldDownloadsReview {
     pub fn to_wire(&self) -> serde_json::Value {
@@ -658,5 +898,52 @@ mod tests {
         let mut v = vec![b.clone(), c.clone(), a.clone()];
         sort(&mut v);
         assert_eq!(v.iter().map(|i| i.logical_bytes).collect::<Vec<_>>(), [Some(42), Some(7), None]);
+    }
+
+    /// DIN-01/02 on macOS: every known object explains itself, names an owner or system tool, never offers a trash or
+    /// file-delete route, and belongs to an overview card.
+    #[test]
+    fn macos_catalog_is_guidance_only() {
+        for o in MacObject::ALL {
+            let i = Insight::macos(o, None, "x", None, Measured::Unknown("n/a".into()), None, None, "2026-01-01T00:00:00Z");
+            assert!(matches!(i.handling, Handling::ReadOnlyGuidance | Handling::OpenSystemSettings | Handling::OpenOwnerTool), "{o:?}");
+            assert!(!i.guidance.is_empty() && i.explanation.len() > 60, "{o:?}");
+            assert!(i.kind.starts_with("macos.") && CardKind::of_insight(&i.kind).is_some(), "{o:?} has a card");
+            for step in &i.guidance {
+                assert!(!step.tool.is_empty() && !step.steps.is_empty() && !step.impact.is_empty());
+                let l = step.steps.to_lowercase();
+                assert!(!l.contains("trash") && !l.contains("rm ") && !l.contains("del "), "{o:?}: guidance must not be a file delete");
+            }
+            assert!(i.to_wire()["logical_bytes"].is_null());
+        }
+        let snap = MacObject::LocalSnapshots.guidance();
+        assert!(snap.iter().any(|g| g.steps.contains("tmutil deletelocalsnapshots") && g.requires_admin), "DIN-02: admin step marked");
+        assert!(MacObject::DockerDisk.explanation().contains("sparse"));
+    }
+
+    /// DIN-03: snapshots with a known count and no size show the count and "unavailable", never 0; an estimate keeps
+    /// its label on the card; allocated sizes are carried as known.
+    #[test]
+    fn macos_cards_count_snapshots_and_label_estimates() {
+        let p = |s: &str| RawPath::unix(s.as_bytes().to_vec()).unwrap();
+        let downloads = old_downloads(Some(p("/Users/a/Downloads")), vec![], 1_800_000_000, 90, "2026-10-15T08:00:00Z", None);
+        let t = "2026-10-15T08:00:01Z";
+        let known = vec![
+            Insight::macos(MacObject::LocalSnapshots, None, "/", None, Measured::Unknown("snapshot sizes are not reported".into()), Some(0), None, t),
+            Insight::macos(MacObject::PurgeableSpace, None, "/", None, Measured::Bytes { bytes: 5_000, basis: SizeBasis::Estimate }, None, Some("important-use capacity minus free space".into()), t),
+            Insight::macos(MacObject::DockerDisk, None, "d", Some(p("/Users/a/Docker.raw")), Measured::Bytes { bytes: 4096, basis: SizeBasis::Allocated }, None, None, t),
+        ];
+        let cards = overview_cards(&known, &downloads, &[]);
+        let by = |k: CardKind| cards.iter().find(|c| c.kind == k).unwrap();
+        let snap = by(CardKind::Snapshots);
+        assert_eq!((snap.logical_bytes, snap.count), (None, Some(0)), "a known count of zero, size unavailable");
+        assert!(snap.size_note.as_deref().unwrap().starts_with("Size unavailable"));
+        let purge = by(CardKind::PurgeableSpace);
+        assert_eq!(purge.logical_bytes, Some(5_000));
+        assert!(purge.size_note.as_deref().unwrap().starts_with("Estimate: important-use"), "{:?}", purge.size_note);
+        assert_eq!(by(CardKind::VirtualMachines).logical_bytes, Some(4096));
+        assert_eq!(by(CardKind::VirtualMachines).size_note, None);
+        assert_eq!(known[1].to_wire()["size_basis"], "estimate");
+        assert_eq!(known[2].to_wire()["size_basis"], "allocated");
     }
 }

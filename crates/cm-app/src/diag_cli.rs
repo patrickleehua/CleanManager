@@ -8,10 +8,15 @@
 //!   make it unsupported; it is never started "just to try".
 //! - Codex (`codex exec`) is always unsupported: its read-only sandbox still lets the model run
 //!   shell commands that read any file, and no documented flag disables that tool.
+//!
+//! On macOS and Linux the CLI starts in its own process group (set at spawn, before it runs). Its exit
+//! is detected without reaping it, so the group id stays reserved; then the whole group is killed on
+//! timeout, cancellation, the output limit and also after a normal exit, so helpers or grandchildren
+//! it started never outlive the call or hold its pipes open.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -108,6 +113,12 @@ fn run_in(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::os::unix::process::CommandExt;
+        // Own process group, led by the CLI: `group::kill` reaches everything it starts.
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().map_err(|e| RunError::Failed(failure(FailureCode::ProcessFailed, format!("无法启动 CLI：{e}"))))?;
     let mut sin = child.stdin.take().expect("piped");
     let data = stdin.to_vec();
@@ -144,21 +155,18 @@ fn run_in(
     let start = Instant::now();
     let status = loop {
         if cancel.load(Ordering::Acquire) {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child);
             return Err(RunError::Cancelled);
         }
         if over.load(Ordering::Acquire) {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child);
             return Err(RunError::Failed(failure(FailureCode::OutputTooLarge, "CLI 输出超过上限，进程已终止，结果已丢弃。")));
         }
         if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child);
             return Err(RunError::Failed(failure(FailureCode::Timeout, "CLI 在时限内没有结束，进程已终止。")));
         }
-        match child.try_wait() {
+        match poll_exit(&mut child) {
             Ok(Some(s)) => break s,
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(e) => return Err(RunError::Failed(failure(FailureCode::ProcessFailed, format!("无法等待 CLI：{e}")))),
@@ -173,6 +181,82 @@ fn run_in(
         return Err(RunError::Failed(failure(FailureCode::OutputTooLarge, "CLI 输出超过上限，结果已丢弃。")));
     }
     Ok(Output { status: status.code(), stdout, stderr })
+}
+
+/// End the CLI (and on macOS/Linux its whole process group) and reap it.
+fn terminate(child: &mut Child) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    group::kill(child);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The CLI's exit status once it has ended. On macOS/Linux the exit is seen before the CLI is reaped, so its group
+/// id cannot be reused yet: whatever it left running in the group is killed, then it is reaped.
+fn poll_exit(child: &mut Child) -> std::io::Result<Option<ExitStatus>> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        if !group::exited_unreaped(child)? {
+            return Ok(None);
+        }
+        group::kill(child);
+        child.wait().map(Some)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    child.try_wait()
+}
+
+/// Process-group control without a libc dependency; declarations follow `<signal.h>` and `<sys/wait.h>`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod group {
+    use std::process::Child;
+
+    const SIGKILL: i32 = 9;
+    /// `idtype_t` `P_PID`.
+    const P_PID: i32 = 1;
+    const WNOHANG: i32 = 0x1;
+    const WEXITED: i32 = 0x4;
+    #[cfg(target_os = "macos")]
+    const WNOWAIT: i32 = 0x20;
+    #[cfg(target_os = "linux")]
+    const WNOWAIT: i32 = 0x0100_0000;
+    const EINTR: i32 = 4;
+
+    /// `siginfo_t` with `si_signo` first on both systems (104 bytes on macOS, 128 on Linux); oversized and
+    /// zero-initialized, only `si_signo` is read.
+    #[repr(C, align(8))]
+    struct SigInfo {
+        si_signo: i32,
+        _rest: [u8; 252],
+    }
+
+    unsafe extern "C" {
+        /// `int killpg(pid_t pgrp, int sig);`
+        fn killpg(pgrp: i32, sig: i32) -> i32;
+        /// `int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);`
+        fn waitid(idtype: i32, id: u32, infop: *mut SigInfo, options: i32) -> i32;
+    }
+
+    /// Whether the CLI has exited, without reaping it (the zombie keeps its pid and group id reserved).
+    pub(super) fn exited_unreaped(child: &Child) -> std::io::Result<bool> {
+        let mut info = SigInfo { si_signo: 0, _rest: [0; 252] };
+        // SAFETY: our own unreaped child's pid and a valid, zeroed out-buffer larger than `siginfo_t`; WNOWAIT leaves
+        // the child waitable, WNOHANG returns at once (with `si_signo` left 0 when it is still running).
+        let rc = unsafe { waitid(P_PID, child.id(), &mut info, WEXITED | WNOHANG | WNOWAIT) };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            return if e.raw_os_error() == Some(EINTR) { Ok(false) } else { Err(e) };
+        }
+        Ok(info.si_signo != 0)
+    }
+
+    /// SIGKILL to the CLI's process group. Only called while the leader is not yet reaped, so the group id still
+    /// names that group.
+    pub(super) fn kill(child: &Child) {
+        let Ok(pgid) = i32::try_from(child.id()) else { return };
+        // SAFETY: plain syscall; the group is led by our unreaped child.
+        unsafe { killpg(pgid, SIGKILL) };
+    }
 }
 
 /// Check a CLI without sending any data: `--version` and `--help` only.
@@ -244,5 +328,105 @@ pub fn claude_result(out: &Output) -> Result<String, cm_core::diag::Failure> {
         Some(t) if !t.trim().is_empty() && t.len() <= budget::RAW_ANSWER_BYTES => Ok(t.to_owned()),
         Some(t) if t.len() > budget::RAW_ANSWER_BYTES => Err(failure(FailureCode::OutputTooLarge, "回答超过长度上限，已丢弃。")),
         _ => Err(failure(FailureCode::InvalidStructure, "CLI 没有返回回答文本。")),
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod group_tests {
+    use super::*;
+
+    /// Unique scratch directory for the pid file (the CLI's own working directory is removed after the run).
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let d = std::env::temp_dir().join(format!("cm-diag-group-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The grandchild's pid, written by the fixture shell before it blocks.
+    fn grandchild(pid_file: &Path) -> i32 {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(pid) = std::fs::read_to_string(pid_file).ok().and_then(|t| t.trim().parse().ok()) {
+                return pid;
+            }
+            assert!(Instant::now() < until, "fixture did not write its grandchild pid");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    unsafe extern "C" {
+        /// `int kill(pid_t pid, int sig);`
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    /// The process is gone (killed and reaped by init/launchd once orphaned).
+    fn gone(pid: i32) -> bool {
+        let until = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < until {
+            // SAFETY: signal 0 only checks for existence.
+            if unsafe { kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(3) {
+                return true; // ESRCH
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    /// A shell that starts a long-running grandchild, records its pid and then `script`s; no shell is involved in
+    /// starting the fixture itself (fixed argument vector).
+    fn fixture(pid_file: &Path, then: &str) -> Vec<String> {
+        vec!["-c".into(), format!("sleep 60 & echo $! > '{}'; {then}", pid_file.display())]
+    }
+
+    #[test]
+    fn timeout_kills_the_grandchild_too() {
+        let dir = scratch("timeout");
+        let pid_file = dir.join("pid");
+        let never = Arc::new(AtomicBool::new(false));
+        let started = Instant::now();
+        let r = run(Path::new("/bin/sh"), &fixture(&pid_file, "wait"), b"", Duration::from_millis(700), 1 << 20, &never, &[]);
+        assert!(matches!(&r, Err(RunError::Failed(f)) if f.code == FailureCode::Timeout), "{:?}", r.as_ref().err());
+        assert!(started.elapsed() < Duration::from_secs(15), "returned without waiting for the grandchild");
+        assert!(gone(grandchild(&pid_file)), "the grandchild survived the timeout");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn output_limit_and_cancel_kill_the_grandchild_too() {
+        let dir = scratch("limit");
+        let pid_file = dir.join("pid");
+        let never = Arc::new(AtomicBool::new(false));
+        let r = run(Path::new("/bin/sh"), &fixture(&pid_file, "yes"), b"", Duration::from_secs(30), 64 * 1024, &never, &[]);
+        assert!(matches!(&r, Err(RunError::Failed(f)) if f.code == FailureCode::OutputTooLarge), "{:?}", r.as_ref().err());
+        assert!(gone(grandchild(&pid_file)), "the grandchild survived the output limit");
+
+        let pid_file = dir.join("pid2");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            flag.store(true, Ordering::Release);
+        });
+        let r = run(Path::new("/bin/sh"), &fixture(&pid_file, "wait"), b"", Duration::from_secs(30), 1 << 20, &cancel, &[]);
+        t.join().unwrap();
+        assert!(matches!(r, Err(RunError::Cancelled)));
+        assert!(gone(grandchild(&pid_file)), "the grandchild survived cancellation");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A CLI that exits normally while a grandchild still holds its output pipe: the call returns at once, with the
+    /// output, and the grandchild is ended.
+    #[test]
+    fn leftover_grandchild_is_ended_after_a_normal_exit() {
+        let dir = scratch("exit");
+        let pid_file = dir.join("pid");
+        let never = Arc::new(AtomicBool::new(false));
+        let started = Instant::now();
+        let out = run(Path::new("/bin/sh"), &fixture(&pid_file, "echo done"), b"", Duration::from_secs(30), 1 << 20, &never, &[]).unwrap();
+        assert_eq!((out.status, String::from_utf8_lossy(&out.stdout).trim()), (Some(0), "done"));
+        assert!(started.elapsed() < Duration::from_secs(15), "waited for the grandchild");
+        assert!(gone(grandchild(&pid_file)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

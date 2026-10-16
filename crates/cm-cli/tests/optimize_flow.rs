@@ -222,7 +222,8 @@ fn mnt06_diagnosis_is_read_only() {
     let store = scratch("diag");
     let script = store.join("script.json");
     std::fs::write(&script, "{}").unwrap();
-    let mut sleeper = Command::new("cmd").args(["/c", "ping", "-n", "6", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+    // Lives far longer than the diagnosis (~60 s, killed below), so a slow run cannot mistake its natural exit for one.
+    let mut sleeper = Command::new("cmd").args(["/c", "ping", "-n", "61", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
     let (code, d) = cli(&["optimize", "diagnose", "--window", "1"], &Env { store: &store, script: &script, elevation: None });
     assert_eq!(code, 0);
     assert_eq!(d["read_only"], true);

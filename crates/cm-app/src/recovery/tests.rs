@@ -320,7 +320,7 @@ fn history_reports_truthful_recovery_availability() {
     assert!(page[1].guidance.contains("no undo"));
     let (page, next) = operation_history(&s, 2, next.as_deref()).unwrap();
     assert_eq!((page[0].action.as_deref(), page[0].availability, next), (Some("trash"), "system_recycle_bin", None));
-    assert!(page[0].guidance.contains("Recycle Bin"));
+    assert!(page[0].guidance.contains(cm_core::manual_trash::BIN_NAME), "{}", page[0].guidance);
     s.audit.set_quarantine_state("q", "purged").unwrap();
     assert_eq!(operation_history(&s, 1, None).unwrap().0[0].availability, "not_applicable");
 }

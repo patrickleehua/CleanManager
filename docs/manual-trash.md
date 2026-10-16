@@ -1,6 +1,6 @@
-# 手选移入回收站（Windows）
+# 手选移入回收站 / 废纸篓
 
-状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现，其中 6.2（回收站/废纸篓移动与 D6 竞态夹具）因 macOS 未实现而未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、命令 `trash`。macOS 一侧未实现，`trash` 在 macOS 返回 `unsupported`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现；macOS 一侧（废纸篓移动、列出、废纸篓内永久删除、占用进程）已实现但只在托管 CI runner 上运行过，没有参考设备证据，见下文“macOS”一节，6.2 仍未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、`macos/actions/trash.rs`，命令 `trash`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 默认关闭（设计 D15）：手选移入回收站尚未通过门禁 G1，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -45,3 +45,16 @@ cleanmanager trash purge --item tb_0123456789abcdef --json       # 另一份计�
 ## 如何放回
 
 CleanManager 不从回收站恢复对象（系统回收站没有可核验的身份记录）。放回方法：打开“回收站”，选中对象，选择“还原”（或拖回原文件夹）。`operations list` 中这类操作的 `recovery.availability` 为 `system_recycle_bin`；回收站内永久删除的操作为 `unavailable`（没有撤销）。
+
+## macOS
+
+与 Windows 共用同一套命令、计划种类和审阅；以下是不同之处（实现见 `cm_platform::macos::actions::trash` 与 `crates/cm-cli/src/trash_cmd.rs`，平台背景见 [macOS 平台说明](platforms/macos.md) 第 6、7、11 节）。
+
+- **就绪检查**：创建计划前，对每个所选对象调用 `-[NSFileManager URLForDirectory:NSTrashDirectory inDomain:NSUserDomainMask appropriateForURL:<对象> create:NO error:]`，只问系统“这个卷的废纸篓在哪里”，不创建、不列出、不移动。系统返回错误（卷没有废纸篓，如部分网络卷、只读卷）时整份计划被拒绝：`code: "unsupported"`（退出 7），`message` 以 `trash_unavailable:` 开头并写明没有永久删除替代。
+- **只移文件**：macOS 的移动经 NSFileManager 按路径进行，移动前后用描述符核对身份（design D6，见 [macOS 平台说明](platforms/macos.md) 第 7 节）；本构建不能把整个文件夹作为一个已核验对象移动，所以选择文件夹时 `trash inspect` 显示 `trashable: false`、`refusal.reason: "folder_move_unavailable"`，`trash` 返回 `unsupported`，可以改选文件夹里的文件。
+- **占用进程**（MTR-04）：从本用户进程的打开描述符与工作目录查询（`procs::FdIndex`），显示为 `名称 (pid N)`；其他用户的进程没有权限检查，`trash inspect` 的 `guidance` 会写明有多少个进程没能检查，执行结果里被占用的消息也会附上这一句。没有看到占用者不等于没有占用者；从不结束进程。
+- **列出废纸篓**：`trash list` 列出 `~/.Trash` 与已挂载卷上的 `/Volumes/<卷>/.Trashes/<uid>`。访达自己的记录 `.DS_Store`（其中有“放回原处”的位置）从不列出、不删除；也因此 `original_path` 与 `deleted_at` 始终为 `null`，CleanManager 不声称知道原位置。`~/.Trash` 受隐私保护（TCC）或权限阻止时，命令返回 `permission_required`（退出 4，`required_action` 说明给运行 cleanmanager 的程序授予“完全磁盘访问权限”或改用访达），绝不当作空废纸篓；某个卷的废纸篓读不了时作为 `issues` 中的一条（`permission_required` 或 `bin_unreadable`），退出 5。含链接、挂载点、云占位、硬链接或被锁定对象的项 `purge_capability: "unsupported"`，请在访达中清倒。
+- **废纸篓内永久删除**（MTR-03）：`trash purge` 与 Windows 相同是单独的计划，审阅时先输入 `DELETE`；执行走与清理删除相同的核验（逐级描述符、可信命名空间门槛、身份与元数据），目录在其内容之后、仅为空时删除。
+- **如何放回**：在访达中打开废纸篓，选中对象，选择“文件 › 放回原处”（或拖出）。
+
+测试：`crates/cm-cli/tests/mac_trash_flow.rs` 在临时目录夹具上覆盖检查、计划、占用进程与夹具废纸篓的列出和永久删除（`CM_RESOLVE_HOME` 重定向，此时只列 `$CM_RESOLVE_HOME/.Trash`），并用模式 000 的夹具模拟 TCC 拒绝；把文件真正移入用户废纸篓的一段只在 `CM_ALLOW_MAC_DEVICE_TESTS=1` 或托管 runner（`GITHUB_ACTIONS=true`）上运行，并删除它放进去的文件。

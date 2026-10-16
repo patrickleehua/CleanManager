@@ -13,12 +13,16 @@ use cm_core::error::ErrorCode;
 
 use crate::args::Parsed;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn insights_list(req: &str, p: &Parsed) -> ExitCode {
     use cm_core::protocol::record;
     use serde_json::json;
 
-    let items: Vec<_> = cm_platform::windows::insights::list().iter().map(|i| i.to_wire()).collect();
+    #[cfg(windows)]
+    let known = cm_platform::windows::insights::list();
+    #[cfg(target_os = "macos")]
+    let known = cm_platform::macos::insights::list();
+    let items: Vec<_> = known.iter().map(|i| i.to_wire()).collect();
     crate::emit(&record("insight_list", req, crate::commands::fields(json!({"items": items}))), p.format);
     ExitCode::SUCCESS
 }
@@ -31,7 +35,7 @@ fn days(req: &str, p: &Parsed) -> Result<u32, ExitCode> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn insights_overview(req: &str, p: &Parsed) -> ExitCode {
     let d = match days(req, p) {
         Ok(d) => d,
@@ -42,7 +46,7 @@ pub fn insights_overview(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn insights_downloads(req: &str, p: &Parsed) -> ExitCode {
     let d = match days(req, p) {
         Ok(d) => d,
@@ -57,18 +61,18 @@ pub fn insights_downloads(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn insights_list(req: &str, p: &Parsed) -> ExitCode {
     crate::fail(req, ErrorCode::Unsupported, "disk insights are not implemented on this platform yet", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn insights_overview(req: &str, p: &Parsed) -> ExitCode {
     let _ = days;
     crate::fail(req, ErrorCode::Unsupported, "disk insights are not implemented on this platform yet", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn insights_downloads(req: &str, p: &Parsed) -> ExitCode {
     crate::fail(req, ErrorCode::Unsupported, "disk insights are not implemented on this platform yet", p.format)
 }
