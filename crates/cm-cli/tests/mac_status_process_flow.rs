@@ -156,12 +156,24 @@ fn process_list_protection_and_ending_a_spawned_child() {
     let (code, e) = run(&s, &["process", "end", "1"]);
     assert_eq!((code, e["code"].as_str()), (3, Some("policy_denied")), "{e}");
     if !is_root() {
-        // The oldest launchd daemon of another user stays alive; short-lived ones may exit before `process end`.
-        let other = items
-            .iter()
-            .filter(|i| i["end_capability"]["protection"] == "other_user" && i["parent_pid"] == 1)
-            .min_by_key(|i| i["pid"].as_u64())
-            .expect("a process of another user");
+        // The oldest launchd daemon of another user stays alive; short-lived ones may exit before `process end`. It is
+        // taken from `ps`, not the list: a real Mac runs more processes than `--limit` allows and other users' rows,
+        // with memory withheld, sort last.
+        let me = Command::new("/usr/bin/id").arg("-u").output().unwrap();
+        let me = String::from_utf8_lossy(&me.stdout).trim().to_owned();
+        let ps = Command::new("/bin/ps").args(["-Ao", "pid=,uid=,ppid="]).output().unwrap();
+        let pid = String::from_utf8_lossy(&ps.stdout)
+            .lines()
+            .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
+                [pid, uid, "1"] if uid != me => pid.parse::<u64>().ok(),
+                _ => None,
+            })
+            .min()
+            .expect("a launchd daemon of another user");
+        let (code, shown) = run(&s, &["process", "show", &pid.to_string()]);
+        assert_eq!(code, 0, "{shown}");
+        let other = &shown["items"][0];
+        assert_eq!(other["end_capability"]["protection"], "other_user", "{other}");
         assert!(other["memory_bytes"].is_null() && other["cpu_percent"].is_null(), "withheld, never 0: {other}");
         let (code, e) = run(&s, &["process", "end", &other["pid"].to_string()]);
         assert_eq!((code, e["code"].as_str()), (3, Some("policy_denied")), "{e}");
