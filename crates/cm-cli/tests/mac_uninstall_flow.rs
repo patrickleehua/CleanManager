@@ -193,14 +193,27 @@ fn write(path: &Path, bytes: impl AsRef<[u8]>) {
 }
 
 /// A fake app bundle: `Contents/Info.plist` and a copy of a system binary as its executable.
+/// Copy the system binary `program` to `exe`. Some macOS releases kill a copy of an Apple platform binary at launch
+/// (SIGKILL, seen on macOS 27.0.1); only then is the copy signed ad hoc. Where the plain copy runs it is left as it is.
+fn copy_system_binary(program: &str, exe: &Path) {
+    use std::os::unix::process::ExitStatusExt;
+    // The probe runs a throwaway copy: a file the system once killed at launch stays unusable here even after signing.
+    let probe_path = exe.with_extension("probe");
+    std::fs::copy(program, &probe_path).unwrap();
+    let probe = Command::new(&probe_path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    std::fs::remove_file(&probe_path).unwrap();
+    std::fs::copy(program, exe).unwrap();
+    if probe.signal() == Some(9) {
+        let signed = Command::new("/usr/bin/codesign").args(["-s", "-", "-f"]).arg(exe).output().unwrap();
+        assert!(signed.status.success(), "ad-hoc signing {}: {}", exe.display(), String::from_utf8_lossy(&signed.stderr));
+    }
+}
+
 fn bundle(path: &Path, bid: &str, name: &str, program: &str) -> PathBuf {
     write(&path.join("Contents/Info.plist"), info_xml(&[("CFBundleIdentifier", bid), ("CFBundleName", name), ("CFBundleExecutable", name), ("CFBundleShortVersionString", "1.0")]));
     let exe = path.join("Contents/MacOS").join(name);
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-    std::fs::copy(program, &exe).unwrap();
-    // A copy of an Apple platform binary run from outside the system folders is killed at launch (SIGKILL, seen on
-    // macOS 27.0.1); an ad-hoc signature makes it an ordinary binary.
-    assert!(Command::new("/usr/bin/codesign").args(["-s", "-", "-f"]).arg(&exe).output().unwrap().status.success(), "ad-hoc signing {}", exe.display());
+    copy_system_binary(program, &exe);
     exe
 }
 

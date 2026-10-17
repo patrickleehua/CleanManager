@@ -51,10 +51,7 @@ fn info(pairs: &[(&str, &str)]) -> Vec<u8> {
 fn bundle(at: &Path, bid: &str, name: &str, program: &str) -> PathBuf {
     let exe = at.join("Contents/MacOS").join(name);
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-    std::fs::copy(program, &exe).unwrap();
-    // A copy of an Apple platform binary run from outside the system folders is killed at launch (SIGKILL, seen on
-    // macOS 27.0.1); an ad-hoc signature makes it an ordinary binary.
-    assert!(Command::new("/usr/bin/codesign").args(["-s", "-", "-f"]).arg(&exe).output().unwrap().status.success(), "ad-hoc signing {}", exe.display());
+    crate::macos::testfs::copy_system_binary(program, &exe);
     std::fs::write(at.join("Contents/Info.plist"), info(&[("CFBundleIdentifier", bid), ("CFBundleName", name), ("CFBundleExecutable", name), ("CFBundleShortVersionString", "1.0")]))
         .unwrap();
     exe

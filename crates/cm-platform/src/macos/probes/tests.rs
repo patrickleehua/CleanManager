@@ -49,10 +49,7 @@ struct FixtureApp(Child);
 impl FixtureApp {
     fn start(fx: &Fixture) -> FixtureApp {
         let exe = fx.mkdir("Fixture Owner.app/Contents/MacOS").join("fixture-owner");
-        std::fs::copy("/bin/sleep", &exe).unwrap();
-        // A copy of an Apple platform binary run from outside the system folders is killed at launch (SIGKILL, seen on
-        // macOS 27.0.1); an ad-hoc signature makes it an ordinary binary.
-        assert!(Command::new("/usr/bin/codesign").args(["-s", "-", "-f"]).arg(&exe).output().unwrap().status.success(), "ad-hoc signing {}", exe.display());
+        crate::macos::testfs::copy_system_binary("/bin/sleep", &exe);
         FixtureApp(Command::new(&exe).arg("60").spawn().unwrap())
     }
 }

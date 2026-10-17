@@ -70,6 +70,24 @@ impl Drop for Fixture {
     }
 }
 
+/// Copy the system binary `program` to `exe` so a fixture process runs from there. Some macOS releases kill a copy of an
+/// Apple platform binary at launch (SIGKILL, seen on macOS 27.0.1 for `/bin/bash`, `/bin/sleep` and `/bin/sh`); only
+/// then is the copy signed ad hoc, which makes it an ordinary binary. Where the plain copy runs it is left as it is.
+pub(crate) fn copy_system_binary(program: &str, exe: &Path) {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{Command, Stdio};
+    // The probe runs a throwaway copy: a file the system once killed at launch stays unusable here even after signing.
+    let probe_path = exe.with_extension("probe");
+    std::fs::copy(program, &probe_path).unwrap();
+    let probe = Command::new(&probe_path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    std::fs::remove_file(&probe_path).unwrap();
+    std::fs::copy(program, exe).unwrap();
+    if probe.signal() == Some(libc::SIGKILL) {
+        let signed = Command::new("/usr/bin/codesign").args(["-s", "-", "-f"]).arg(exe).output().unwrap();
+        assert!(signed.status.success(), "ad-hoc signing {}: {}", exe.display(), String::from_utf8_lossy(&signed.stderr));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
