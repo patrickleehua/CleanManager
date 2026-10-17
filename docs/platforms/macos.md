@@ -135,6 +135,8 @@ Time Machine 本地快照由系统管理，删除活体文件后块也可能仍�
 
 CLI 从 Terminal、GUI 子进程、launchd/XPC helper 启动时分别测试权限归属。`permission_required` 必须说明对象、可证实的阻塞层和可执行的下一步；仅凭 `EACCES/EPERM` 无法判别时写 `permission_cause=undetermined`。首版不批量请求 FDA，不访问私人目录来试探授权，也不修改 TCC 数据库。
 
+**隐私弹窗期间的读取（2026-10-18 真机实测）：**负责的应用对某个受保护位置（下载、桌面、文稿、其他应用的数据）还没有做过选择时，第一次 `open(2)` 会卡在内核里等对话框的回答，没有超时，也不返回 `EPERM`；在 launchd Background 会话里也一样。`lstat` 不等待；只卡住发起调用的线程，进程仍能正常退出。复现方法与日志见 [macOS 真机验证指南](macos-verification.md#已知的真机现象隐私弹窗会让读取停住已处理)。因此对受保护位置的第一次访问都经由 `cm-platform` 的 `macos::privacy::bounded`：放在单独的线程上执行，最多等 `PROMPT_WAIT`（5 秒）。超时后该位置报告为 `permission_required (permission_cause=privacy_prompt_pending)`，说明位置与下一步（回答对话框后重新测量），大小与数量未知，不按 0 或空计算；调用方继续执行，等待中的线程在对话框回答后自行结束，结果丢弃。同一路径还在等待时，再次请求会立刻报告等待中，不会再开新线程。`--debug` 轨迹在等待超过 250 毫秒和超时时各写一行（`privacy:`）；桌面端据此显示“正在等待 macOS 授权”。这不是试探授权：只包住本来就要做的那次读取，不重试，不改任何隐私设置。目前接入的是空间洞察（下载文件夹、iPhone 备份、其他应用容器内的磁盘映像）；扫描与清理目录解析尚未接入。
+
 **helper 设计：**默认不安装常驻服务；需要时选择本应用 bundle 内签名 helper，优先基于 `SMAppService` 注册并由系统/用户批准，launchd 按需激活。注册生命周期与一次操作授权分开。`SMAppService` 管理的是本应用的 helper，而非第三方任意进程。[官方 Service Management](https://developer.apple.com/documentation/servicemanagement/smappservice)
 
 XPC 协议采用固定消息类型、最大条目数与数据量、nonce、deadline、caller、计划摘要、scope 与一次性批准凭据。高权限服务核验真实连接的 audit token/代码签名要求（Team ID、designated requirement、允许的客户端身份），不能信任消息里的 UID/PID/path。具体可用的 XPC peer 校验 API 随最低系统确定；无法建立可信 caller 绑定时不发布写 helper。普通用户可写的 SQLite 记录不能单独证明特权授权。

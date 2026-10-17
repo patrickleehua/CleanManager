@@ -15,6 +15,10 @@
 //!   minus `volumeAvailableCapacity` of the startup volume, labelled `estimate`.
 //! - Old downloads: the Downloads folder the catalog resolver uses (so `CM_RESOLVE_HOME` / `CM_RESOLVE_DOWNLOADS`
 //!   redirect it into fixtures), a review list with nothing selected.
+//! - Privacy prompts: the first access to a privacy-protected location (Downloads, device backups, files inside other
+//!   apps' containers) goes through [`super::privacy::bounded`]. When macOS has not answered within
+//!   [`super::privacy::PROMPT_WAIT`] (it is showing a "would like to access…" prompt) the location is reported
+//!   `permission_required (permission_cause=privacy_prompt_pending)` with an unknown size, and the command goes on.
 //!
 //! Safety boundary: directory listings and `lstat` only (links are not followed, mount points not crossed, dataless
 //! iCloud folders not listed and nothing materialized); the one external tool is a fixed read-only `tmutil` query.
@@ -33,6 +37,7 @@ use cm_core::path::RawPath;
 
 use super::cmd::{Tool, ToolError, ToolOutput};
 use super::ffi::cf;
+use super::privacy;
 use super::resolve::ResolverEnv;
 use super::sys::{NoMaterialize, SF_DATALESS, errno};
 
@@ -332,6 +337,8 @@ pub fn purgeable(observed_at: &str) -> Insight {
 struct Found<'a> {
     home: &'a Path,
     now: &'a str,
+    /// How long a first access to a privacy-protected location may wait for macOS.
+    wait: Duration,
     items: Vec<Insight>,
 }
 
@@ -343,7 +350,12 @@ impl Found<'_> {
 
     /// One disk image file, by allocated size (its logical size, the sparse maximum, goes in the note).
     fn image(&mut self, object: MacObject, label: Option<&str>, path: &Path) {
-        match std::fs::symlink_metadata(path) {
+        let p = path.to_path_buf();
+        let meta = match privacy::bounded(path, self.wait, move || std::fs::symlink_metadata(&p)) {
+            Ok(m) => m,
+            Err(why) => return self.push(object, label, path, Measured::Unknown(why), None, None),
+        };
+        match meta {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => self.push(object, label, path, Measured::Unknown(read_error(path, &e)), None, None),
             Ok(m) if m.is_file() => {
@@ -403,7 +415,15 @@ impl Found<'_> {
         self.image(MacObject::DockerDisk, Some("Docker.qcow2"), &docker.join("Docker.qcow2"));
         self.image(MacObject::OrbStackDisk, None, &join(&home, ORBSTACK_DATA));
         let utm = join(&home, UTM_CONTAINER);
-        if std::fs::symlink_metadata(&utm).is_ok_and(|m| m.is_dir()) {
+        let probe = utm.clone();
+        let utm_dir = match privacy::bounded(&utm, self.wait, move || std::fs::symlink_metadata(&probe).is_ok_and(|m| m.is_dir())) {
+            Ok(is_dir) => is_dir,
+            Err(why) => {
+                self.push(MacObject::UtmVms, None, &utm, Measured::Unknown(why), None, None);
+                false
+            }
+        };
+        if utm_dir {
             let why = format!(
                 "{PERMISSION_REQUIRED}: UTM keeps its virtual machines in its app container, which macOS protects as another app's data; CleanManager does not open it. See their sizes in UTM or System Settings > General > Storage"
             );
@@ -421,17 +441,22 @@ impl Found<'_> {
         if !std::fs::symlink_metadata(&root).is_ok_and(|m| m.is_dir()) {
             return;
         }
-        let rd = match std::fs::read_dir(&root) {
-            Ok(rd) => rd,
-            Err(e) if denied(&e) => {
+        let dir = root.clone();
+        let first = privacy::bounded(&root, self.wait, move || {
+            let _guard = NoMaterialize::enter().map_err(std::io::Error::from_raw_os_error)?;
+            std::fs::read_dir(&dir).map(|rd| rd.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).count() as u64)
+        });
+        let count = match first {
+            Err(why) => return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(why), None, None),
+            Ok(Ok(count)) => count,
+            Ok(Err(e)) if denied(&e) => {
                 let why = format!(
                     "{PERMISSION_REQUIRED}: macOS privacy protection (Full Disk Access) guards device backups ({e}). Grant Full Disk Access to the app that runs CleanManager in System Settings > Privacy & Security > Full Disk Access, or see the backups in Finder > Manage Backups"
                 );
                 return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(why), None, None);
             }
-            Err(e) => return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(read_error(&root, &e)), None, None),
+            Ok(Err(e)) => return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(read_error(&root, &e)), None, None),
         };
-        let count = rd.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).count() as u64;
         let size = match allocated_size(&root, WALK_LIMIT) {
             Ok((bytes, _)) => Measured::Bytes { bytes, basis: SizeBasis::Allocated },
             Err(why) => Measured::Unknown(why),
@@ -442,7 +467,7 @@ impl Found<'_> {
 
 /// Known objects below `home` (virtual machines, containers, device backups).
 pub(crate) fn home_objects(home: &Path, now: &str) -> Vec<Insight> {
-    let mut f = Found { home, now, items: Vec::new() };
+    let mut f = Found { home, now, wait: privacy::PROMPT_WAIT, items: Vec::new() };
     f.virtual_machines();
     f.device_backups();
     f.items
@@ -504,28 +529,47 @@ pub(crate) fn download_entries(root: &Path) -> Result<(Vec<DownloadEntry>, Optio
 
 /// The old-downloads review of `downloads` (`None`: not resolved).
 pub(crate) fn old_downloads_at(downloads: Option<&Path>, days: u32) -> OldDownloadsReview {
+    old_downloads_gated(downloads, days, privacy::PROMPT_WAIT, first_listing)
+}
+
+/// The first open of the Downloads folder, the access macOS holds while it shows its privacy prompt.
+fn first_listing(dir: PathBuf) -> std::io::Result<()> {
+    let _guard = NoMaterialize::enter().map_err(std::io::Error::from_raw_os_error)?;
+    std::fs::read_dir(&dir).map(drop)
+}
+
+/// [`old_downloads_at`] with the first access (`first`, run through [`privacy::bounded`]) and its deadline injected.
+pub(crate) fn old_downloads_gated(
+    downloads: Option<&Path>,
+    days: u32,
+    wait: Duration,
+    first: impl FnOnce(PathBuf) -> std::io::Result<()> + Send + 'static,
+) -> OldDownloadsReview {
     let now = cm_core::time::now_utc();
     let now_unix = cm_core::plan::parse_utc(&now).unwrap_or(0);
     let review = |root: Option<RawPath>, entries: Vec<DownloadEntry>, note: Option<String>| cm_core::insights::old_downloads(root, entries, now_unix, days, &now, note);
     let Some(dir) = downloads else {
         return review(None, Vec::new(), Some("The Downloads folder could not be resolved".into()));
     };
-    match download_entries(dir) {
+    let unknown = |note: String| {
+        let mut r = review(raw(dir), Vec::new(), Some(note));
+        r.total_logical_bytes = None; // unknown, not 0
+        r
+    };
+    let owned = dir.to_path_buf();
+    let listed = match privacy::bounded(dir, wait, move || first(owned)) {
+        Err(why) => return unknown(why),
+        Ok(Ok(())) => download_entries(dir),
+        Ok(Err(e)) => Err(e),
+    };
+    match listed {
         Ok((entries, note)) => review(raw(dir), entries, note),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => review(None, Vec::new(), Some(format!("No Downloads folder at {}", dir.display()))),
-        Err(e) => {
-            let note = if denied(&e) {
-                format!(
-                    "{PERMISSION_REQUIRED}: macOS denied listing {} ({e}). Allow the app that runs CleanManager to access the Downloads folder in System Settings > Privacy & Security > Files and Folders",
-                    dir.display()
-                )
-            } else {
-                format!("{} could not be read ({e})", dir.display())
-            };
-            let mut r = review(raw(dir), Vec::new(), Some(note));
-            r.total_logical_bytes = None; // unknown, not 0
-            r
-        }
+        Err(e) if denied(&e) => unknown(format!(
+            "{PERMISSION_REQUIRED}: macOS denied listing {} ({e}). Allow the app that runs CleanManager to access the Downloads folder in System Settings > Privacy & Security > Files and Folders",
+            dir.display()
+        )),
+        Err(e) => unknown(format!("{} could not be read ({e})", dir.display())),
     }
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { plannable, shownState } from './updates';
 import { allDone, prohibitedWords, taskReason, taskSelectable, taskTitle } from './maintenance';
-import { alertText, overviewCard } from './tools';
+import { PRIVACY_PENDING_SIZE, alertText, overviewCard, privacyPending } from './tools';
 import { leftoverTier, updateReason, whyNotWord } from '../lib/suiteWords';
 import type { MaintenanceTask, UpdateCheck } from '../lib/suiteTypes';
 
@@ -63,6 +63,16 @@ describe('UNI-05 leftovers and DIN-03/STS-05 words', () => {
     expect(overviewCard(c)).toMatchObject({ title: '还原点与快照', size: '3 个', note: 'no admin' });
     expect(overviewCard({ ...c, count: null }).size).toBe('大小未知');
     expect(overviewCard({ ...c, logical_bytes: '1073741824' }).size).toBe('1.0 GiB');
+  });
+  it('a card waiting for a macOS privacy prompt says so, with no size or count', () => {
+    const note = 'Downloads: permission_required (permission_cause=privacy_prompt_pending): macOS did not answer within 5 s';
+    const c = { card_id: 'c', kind: 'old_downloads', title: 'Old downloads', logical_bytes: null, count: null, size_note: note, observed_at: null };
+    const v = overviewCard(c);
+    expect(v).toMatchObject({ size: PRIVACY_PENDING_SIZE, pending: true });
+    expect(v.note).toMatch(/隐私对话框/);
+    expect(v.note).toMatch(/不按 0 计算/);
+    expect(privacyPending('permission_required (permission_cause=undetermined): denied')).toBe(false);
+    expect(overviewCard({ ...c, logical_bytes: '10' }).pending).toBe(false);
   });
   it('a sustained-CPU alert names the process, window and threshold', () => {
     const text = alertText({ pid: 7, name: 'node.exe', image_path: null, min_cpu_percent: 86.4, threshold_percent: 80, window_seconds: 120, since: '', raised_at: '', link: '' });

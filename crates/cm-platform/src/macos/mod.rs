@@ -19,6 +19,7 @@ pub mod maintenance_diag;
 pub mod posix;
 pub mod probes;
 pub mod processes;
+pub mod privacy;
 pub mod purge;
 pub mod resident;
 pub mod resolve;

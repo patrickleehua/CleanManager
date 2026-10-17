@@ -722,7 +722,8 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
         vec![Member {
             bytes: downloads.total_logical_bytes,
             estimate: false,
-            count: Some(downloads.item_count),
+            // An unreadable or pending folder has no known file count either (unknown is never 0).
+            count: downloads.total_logical_bytes.map(|_| downloads.item_count),
             note: downloads.note.clone(),
             observed_at: Some(downloads.observed_at.clone()),
             path: downloads.root.clone(),
@@ -751,7 +752,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
     }
     let mut cards: Vec<InsightCard> = groups.iter().map(|(k, m)| card(*k, m)).collect();
     if let Some(c) = cards.iter_mut().find(|c| c.kind == CardKind::OldDownloads) {
-        c.count = Some(downloads.item_count);
+        c.count = downloads.total_logical_bytes.map(|_| downloads.item_count);
         c.title = format!("Downloads older than {} days", downloads.older_than_days);
     }
     // Largest known size first, unknown after, then by kind.

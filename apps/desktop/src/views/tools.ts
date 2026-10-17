@@ -369,9 +369,18 @@ export const CARD_TITLE: Record<string, string> = {
 };
 
 /** One overview card as shown: never a partial sum presented as the total. */
-export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; count: number | null; observed: string | null } {
-  const size = c.logical_bytes === null ? (c.count !== null ? `${c.count} 个` : '大小未知') : formatBytes(c.logical_bytes);
-  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at };
+/** Whether a host note says macOS has not answered its privacy prompt yet (`permission_cause=privacy_prompt_pending`). */
+export function privacyPending(note: string | null | undefined): boolean {
+  return !!note && note.includes('permission_cause=privacy_prompt_pending');
+}
+
+export const PRIVACY_PENDING_SIZE = '等待 macOS 授权';
+export const PRIVACY_PENDING_TEXT = 'macOS 没有及时答复读取请求，可能正在显示“想要访问……”的隐私对话框。请在对话框中选择允许或不允许，然后点“重新测量”。在此之前大小未知，不按 0 计算。';
+
+export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; count: number | null; observed: string | null; pending: boolean } {
+  const pending = c.logical_bytes === null && privacyPending(c.size_note);
+  const size = pending ? PRIVACY_PENDING_SIZE : c.logical_bytes === null ? (c.count !== null ? `${c.count} 个` : '大小未知') : formatBytes(c.logical_bytes);
+  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: pending ? PRIVACY_PENDING_TEXT : c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at, pending };
 }
 
 const OLD_DAYS = 90;
@@ -459,10 +468,13 @@ export class InsightsPage implements PageLike {
     const refresh = h('button', { type: 'button', id: 'insights-refresh' }, icon('refresh'), '重新测量');
     refresh.addEventListener('click', () => ((this.data = null), (this.overview = null), this.update(), void this.load()));
     const ov = this.overview;
+    // Some location is still waiting for a macOS privacy prompt: say so once, above the cards.
+    const waiting = !!ov?.cards.some((c) => c.logical_bytes === null && privacyPending(c.size_note)) || !!d?.items.some((i) => i.logical_bytes === null && privacyPending(i.size_note)) || privacyPending(ov?.downloads?.note);
     replace(
       this.body,
       pageHead({ id: 'insights-title', title: '空间洞察', meta: d ? [`观测于 ${formatTime(d.observed_at)}`, '系统对象只读说明，没有删除入口'] : ['系统对象只读说明，没有删除入口'], actions: [refresh] }),
       errorLine(this.error),
+      waiting ? noticeLine(`正在等待 macOS 授权。${PRIVACY_PENDING_TEXT}`, 'warn') : null,
       d && !d.supported ? emptyState('此平台暂不提供', notOnThisPlatform('空间洞察目前只在 Windows 上实现。'), null) : null,
       d && d.supported
         ? h(
@@ -476,7 +488,7 @@ export class InsightsPage implements PageLike {
                     const v = overviewCard(c);
                     return h(
                       'li',
-                      { class: 'icard', 'data-kind': c.kind },
+                      { class: `icard${v.pending ? ' pending' : ''}`, 'data-kind': c.kind },
                       h('span', { class: 'icard-title' }, v.title),
                       h('span', { class: 'icard-size num' }, v.size),
                       h('span', { class: 'icard-meta muted' }, [v.count !== null && c.logical_bytes !== null ? `${v.count} 个对象` : null, v.observed ? formatTime(v.observed) : null].filter(Boolean).join(' · ')),
@@ -497,7 +509,7 @@ export class InsightsPage implements PageLike {
             ...d.items.map((i) => this.item(i)),
           )
         : !this.error
-          ? h('p', { class: 'muted', role: 'status' }, '正在测量已知的大型系统对象…')
+          ? h('p', { class: 'muted', role: 'status' }, '正在测量已知的大型系统对象…如果 macOS 询问是否允许访问，请回答对话框。')
           : null,
       this.dlBar(),
     );
@@ -508,7 +520,10 @@ export class InsightsPage implements PageLike {
     const dl = ov?.downloads ?? null;
     if (!ov) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small', role: 'status' }, this.ovError ? '' : '正在列出下载文件夹中较久未修改的文件…'));
     if (!dl) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small' }, '没有找到下载文件夹。'));
-    const total = dl.total_logical_bytes === null ? '大小未知' : formatBytes(dl.total_logical_bytes);
+    // An unreadable or pending folder: neither the file count nor the size is known (never "0 files").
+    const known = dl.total_logical_bytes !== null;
+    const pending = !known && privacyPending(dl.note);
+    const summary = known ? `${groupDigits(dl.item_count)} 个文件，共 ${formatBytes(dl.total_logical_bytes as string)}` : pending ? PRIVACY_PENDING_SIZE : '文件数与大小未知';
     const rows = dl.items.map((x) => {
       const id = `dl-${x.item_id}`;
       const check = h('input', { type: 'checkbox', id: `${id}-check`, 'aria-label': `选择 ${x.name}` }) as HTMLInputElement;
@@ -532,10 +547,10 @@ export class InsightsPage implements PageLike {
     return h(
       'section',
       { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'dl-title' }, `旧下载：超过 ${dl.older_than_days} 天没有修改`), h('span', { class: 'muted small num' }, `${groupDigits(dl.item_count)} 个文件，共 ${total}`)),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'dl-title' }, `旧下载：超过 ${dl.older_than_days} 天没有修改`), h('span', { class: 'muted small num' }, summary)),
       h('p', { class: 'muted small' }, `只供审阅：没有预先勾选任何文件，按大小从大到小排列。勾选的文件会先生成“${words().moveToBin}”计划，由你审阅批准后才移动。`),
       dl.root_display ? h('p', { class: 'path small muted' }, dl.root_display) : null,
-      dl.note ? noticeLine(dl.note, 'warn') : null,
+      dl.note ? noticeLine(pending ? PRIVACY_PENDING_TEXT : dl.note, 'warn') : null,
       dl.items.length
         ? h(
             'div',
@@ -548,7 +563,9 @@ export class InsightsPage implements PageLike {
               h('tbody', {}, ...rows),
             ),
           )
-        : h('p', { class: 'small' }, `没有超过 ${dl.older_than_days} 天没有修改的文件。`),
+        : known
+          ? h('p', { class: 'small' }, `没有超过 ${dl.older_than_days} 天没有修改的文件。`)
+          : null,
       dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, `显示最大的 ${groupDigits(dl.items.length)} 个，共 ${groupDigits(dl.item_count)} 个；合计包括全部文件。`) : null,
       errorLine(this.createError),
     );
@@ -570,7 +587,9 @@ export class InsightsPage implements PageLike {
 
   private item(i: Insight): HTMLElement {
     const [title, explain] = INSIGHT_TITLE[i.kind] ?? [i.title, i.explanation];
-    const size = i.logical_bytes === null ? '大小未知' : formatBytes(i.logical_bytes);
+    const pending = i.logical_bytes === null && privacyPending(i.size_note);
+    const size = pending ? PRIVACY_PENDING_SIZE : i.logical_bytes === null ? '大小未知' : formatBytes(i.logical_bytes);
+    const note = pending ? PRIVACY_PENDING_TEXT : i.size_note;
     return h(
       'section',
       { class: 'panel insight', 'aria-labelledby': `ins-${i.insight_id}` },
@@ -578,7 +597,7 @@ export class InsightsPage implements PageLike {
         'div',
         { class: 'insight-head' },
         h('div', {}, h('h2', { id: `ins-${i.insight_id}` }, title), i.path ? h('p', { class: 'path muted small' }, i.path.display) : null),
-        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, `${i.count} 个`) : null, i.size_note ? h('small', {}, i.size_note) : null),
+        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, `${i.count} 个`) : null, note ? h('small', {}, note) : null),
       ),
       h('p', {}, explain),
       ...i.guidance.map((g) =>

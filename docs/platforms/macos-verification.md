@@ -1,6 +1,6 @@
 # macOS 真机验证指南
 
-更新：2026-10-17。面向在自己的 Mac 上帮忙验证的人。托管 CI 的 macOS runner 只能证明“能编译、单元与夹具测试通过”，不是参考设备（见 [验证计划](../verification-plan.md)）；真机结果才能推进 MVP 第 5、6 组与对标套件的 macOS 任务。
+更新：2026-10-18。面向在自己的 Mac 上帮忙验证的人。托管 CI 的 macOS runner 只能证明“能编译、单元与夹具测试通过”，不是参考设备（见 [验证计划](../verification-plan.md)）；真机结果才能推进 MVP 第 5、6 组与对标套件的 macOS 任务。
 
 ## 现在 macOS 上有什么
 
@@ -46,9 +46,21 @@ tools/mac_verify.sh --quick --scan-dir ~/Downloads   # 只做 CLI 冒烟，并�
 2. 再**打开**终端的完全磁盘访问，重开终端后运行同一条命令。
 3. 两次结果目录都附上。期望：没有权限时受保护子树记为 `permission_required` 的跳过范围，而不是空目录；有权限后这些范围被读到。不要把有 FDA 的结果当成“全访问保证”。
 
-## 已知的真机现象：隐私弹窗会让命令停住
+## 已知的真机现象：隐私弹窗会让读取停住（已处理）
 
-下载、桌面以及其他应用的容器（例如 Docker 的 `~/Library/Containers/com.docker.docker`）受 macOS 隐私保护。第一次读取时系统可能弹出“想要访问……”对话框，回答之前进程会一直等待，没有超时也没有提示。2026-10-17 在 Mac17,14 / macOS 27.0.1 上，第一次运行 `insights overview` 用了 155 秒，第二次只用了 0.4 秒，结果相同。看到某一步特别慢时，先找一下有没有没回答的对话框，并在提交结果时说明你点了允许还是拒绝。
+下载、桌面、文稿以及其他应用的数据受 macOS 隐私保护（TCC）。负责的应用（终端、Claude、桌面版 CleanManager）还没有做过选择时，第一次打开这些位置会弹出“想要访问……”对话框，**回答之前那次 `open(2)` 一直卡在内核里**：没有超时，也不会返回 `EPERM`。2026-10-17 在 Mac17,14 / macOS 27.0.1 上，第一次运行 `insights overview` 用了 155 秒，第二次只用了 0.4 秒，结果相同。
+
+2026-10-18 在同一台 Mac 上用一个专用测试包（bundle ID `com.cleanmanager.tccprobe`，放在 `$TMPDIR`，`tccutil reset` 只针对这个 ID）复现并确认了机制：
+
+- `lstat(~/Downloads)` 立刻返回；`opendir(~/Downloads)` 内部的 `open(O_DIRECTORY)` 卡住。`sample` 显示主线程停在 `__open`。tccd 日志在同一时刻记录了 `kTCCServiceSystemPolicyDownloadsFolder` 的 `display_prompt`，请求方是 sandboxd，等到 `CFUserNotification response` 之后调用才返回。
+- 由 launchd 在 Background 会话里启动的同一程序也一样：对话框照样出现在登录用户的屏幕上，调用照样卡住，不会因为没有界面就得到 `EPERM`。
+- 卡住的只有发起调用的线程，其他线程照常运行，进程也能在它卡住时正常退出。对话框在进程退出后仍然留在屏幕上，回答结果照常记录下来。
+- 已经允许后不再等待，读取立刻返回。这次没有实测“不允许”的情形，按 Apple 的说明应立刻得到 `EPERM`（报告为 `permission_required`）。不允许弹窗的服务（日志里的 `kTCCServiceDeveloperTool`；完全磁盘访问也从不弹窗）由 tccd 直接拒绝，不会卡住。
+- Docker Desktop 不是沙盒应用，读取 `~/Library/Containers/com.docker.docker` 时没有触发任何 TCC 检查。
+
+现在的处理：空间洞察第一次打开这些位置（下载文件夹、iPhone 备份、其他应用容器内的磁盘映像）时，会放到单独的线程上执行，最多等 5 秒。超时后该位置报告为 `permission_required (permission_cause=privacy_prompt_pending)`，大小未知，不按 0 或空计算，命令随后继续执行。`--debug` 会在等待超过 250 毫秒时写一行 `privacy: … macOS may be showing a privacy prompt`，超时时再写一行。桌面端会显示“正在等待 macOS 授权”，并提示回答对话框后点“重新测量”。对话框回答之前，再次请求同一位置会立刻报告等待中，不会再开新线程。
+
+验证时如果看到某张卡片或某一项显示等待授权，请回答对话框后重新运行同一条命令，并在提交结果时说明你点了允许还是拒绝。其他命令（磁盘分析扫描、清理目录解析等）打开这些位置时还没有这层保护；遇到哪一步特别慢，先看看有没有没回答的对话框。
 
 ## 结果怎样用
 

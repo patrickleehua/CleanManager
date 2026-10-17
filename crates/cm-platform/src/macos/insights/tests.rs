@@ -261,6 +261,48 @@ fn old_downloads_review_of_a_fixture_folder() {
     assert_eq!((missing.root.is_none(), missing.total_logical_bytes), (true, None));
 }
 
+/// The Downloads folder while macOS shows its privacy prompt: the first open does not return, so after the deadline
+/// the review is pending with an unknown total (never an empty folder), and the overview card shows no count or size.
+/// An answer within the deadline lists the folder; a denial is `permission_required`.
+#[test]
+fn old_downloads_while_a_privacy_prompt_is_unanswered() {
+    let fx = Fixture::new("insights-dl-prompt");
+    let dl = fx.mkdir("Downloads");
+    let p = fx.write("Downloads/old.dmg", &[0u8; 700]);
+    std::fs::File::options().write(true).open(&p).unwrap().set_modified(SystemTime::now() - Duration::from_secs(200 * 86_400)).unwrap();
+
+    // Answered (allowed) within the deadline: listed as usual.
+    let allowed = old_downloads_gated(Some(&dl), 90, Duration::from_secs(5), |dir| {
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::read_dir(dir).map(drop)
+    });
+    assert_eq!((allowed.total_logical_bytes, allowed.item_count, allowed.note.as_deref()), (Some(700), 1, None));
+
+    // Denied: macOS answers EPERM, reported as permission_required with the settings path.
+    let denied = old_downloads_gated(Some(&dl), 90, Duration::from_secs(5), |_| Err(std::io::Error::from_raw_os_error(libc::EPERM)));
+    assert_eq!(denied.total_logical_bytes, None);
+    let note = denied.note.as_deref().unwrap();
+    assert!(note.starts_with(PERMISSION_REQUIRED) && note.contains("Files and Folders") && !privacy::is_pending(note), "{note}");
+
+    let (answer, prompt) = std::sync::mpsc::channel::<()>();
+    let t = std::time::Instant::now();
+    let r = old_downloads_gated(Some(&dl), 90, Duration::from_millis(200), move |dir| {
+        let _ = prompt.recv(); // held in the kernel until the person answers
+        std::fs::read_dir(dir).map(drop)
+    });
+    assert!(t.elapsed() < Duration::from_secs(3), "the command is not held by the prompt: {:?}", t.elapsed());
+    let note = r.note.as_deref().unwrap();
+    assert!(note.starts_with(privacy::PERMISSION_PENDING), "{note}");
+    assert!(note.contains(&*dl.to_string_lossy()) && note.contains("Answer it"), "{note}");
+    assert_eq!((r.total_logical_bytes, r.items.len()), (None, 0), "pending is unknown, not 0");
+    assert_eq!(r.root.as_ref().map(|p| p.display()), Some(dl.to_string_lossy().into_owned()));
+    let cards = cm_core::insights::overview_cards(&[], &r, &[]);
+    let card = cards.iter().find(|c| c.kind == CardKind::OldDownloads).unwrap();
+    assert_eq!((card.logical_bytes, card.count), (None, None), "an unknown folder has no file count either");
+    assert!(card.size_note.as_deref().is_some_and(privacy::is_pending), "{:?}", card.size_note);
+    answer.send(()).unwrap(); // the parked reader ends
+}
+
 #[test]
 fn card_dirs_below_a_fixture_home() {
     let fx = Fixture::new("insights-cards");
