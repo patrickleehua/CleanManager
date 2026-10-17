@@ -461,3 +461,66 @@ fn administrator_rules_are_skipped_without_root() {
         }
     }
 }
+
+/// Catalog roots inside privacy-protected locations while macOS shows its prompt: the lookup of Docker's logs (inside
+/// its container) and the existence check of Teams' container caches do not return, so after the deadline each rule
+/// reports `permission_required (permission_cause=privacy_prompt_pending)` and stays unresolved; Downloads (answered)
+/// and an unprotected root resolve. Only lookups at or below a protected location run through the gate.
+#[test]
+fn roots_held_by_a_privacy_prompt_are_pending_not_absent() {
+    use std::sync::{Arc, Mutex, mpsc};
+    let fx = Fixture::new("resolve-prompt");
+    let home = fx.mkdir("home");
+    fx.mkdir("home/Library/Containers/com.docker.docker/Data/log");
+    fx.mkdir("home/Library/Containers/com.microsoft.teams2/Data/Library/Caches");
+    fx.mkdir("home/Library/Application Support/Code");
+    fx.mkdir("home/Downloads");
+    let rules = [
+        rule_like(RootResolver::UserLogs, "docker.desktop"),
+        rule_like(RootResolver::AppContainer, "microsoft.teams"),
+        rule_like(RootResolver::InstallerLocation, "macos.downloads"),
+        rule_like(RootResolver::ApplicationCache, "microsoft.vscode"),
+    ];
+    let env = ResolverEnv { home: Some(home.clone()), downloads: Some(home.join("Downloads")), ..ResolverEnv::default() };
+
+    let (answer, prompt) = mpsc::channel::<()>();
+    let prompt = Arc::new(Mutex::new(prompt));
+    let calls: Arc<Mutex<Vec<(PathBuf, bool)>>> = Arc::default();
+    let held = |p: &Path| p.components().any(|c| c.as_os_str() == "com.docker.docker" || c.as_os_str() == "com.microsoft.teams2");
+    let (seen, wait_for) = (Arc::clone(&calls), Arc::clone(&prompt));
+    let identity = Arc::new(move |p: &Path| {
+        seen.lock().unwrap().push((p.to_path_buf(), std::thread::current().name() == Some("cm-privacy-gate")));
+        if held(p) {
+            let _ = wait_for.lock().unwrap().recv(); // held in the kernel until the person answers
+        }
+        identity_of(p)
+    });
+    let wait_for = Arc::clone(&prompt);
+    let exists = Arc::new(move |p: &Path| {
+        if held(p) {
+            let _ = wait_for.lock().unwrap().recv();
+        }
+        std::fs::symlink_metadata(p).is_ok()
+    });
+    let t = std::time::Instant::now();
+    let res = resolve_gated(&rules, &env, Duration::from_millis(200), &FirstAccess { identity, exists });
+    assert!(t.elapsed() < Duration::from_secs(3), "resolution is not held by the prompt: {:?}", t.elapsed());
+
+    let resolved: BTreeSet<&str> = res.roots.iter().map(|r| r.rule_id.as_str()).collect();
+    assert_eq!(resolved, BTreeSet::from([rules[2].rule_id.as_str(), rules[3].rule_id.as_str()]), "{res:?}");
+    assert_eq!(res.issues.len(), 2, "{:?}", res.issues);
+    for (issue, rule, what) in [(&res.issues[0], &rules[0], "com.docker.docker/Data/log"), (&res.issues[1], &rules[1], "com.microsoft.teams2")] {
+        assert_eq!((issue.code, issue.scope.as_str()), ("permission_required", rule.rule_id.as_str()));
+        assert!(issue.message.starts_with(privacy::PERMISSION_PENDING) && issue.message.contains(what), "{}", issue.message);
+    }
+    let gated: BTreeMap<String, bool> = calls.lock().unwrap().iter().map(|(p, g)| (p.strip_prefix(&home).unwrap().display().to_string(), *g)).collect();
+    assert_eq!(
+        gated,
+        BTreeMap::from([
+            ("Library/Containers/com.docker.docker/Data/log".to_owned(), true),
+            ("Downloads".to_owned(), true),
+            ("Library/Application Support/Code".to_owned(), false),
+        ])
+    );
+    drop(answer); // the parked lookups end
+}

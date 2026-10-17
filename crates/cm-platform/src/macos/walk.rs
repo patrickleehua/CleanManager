@@ -18,17 +18,27 @@
 //!   confirmed are kept, and nothing on the new volume or under the new directory is read, so
 //!   it never inherits the old scope. `EDEADLK` (materialization refused, TN3150) is a
 //!   `cloud_materialization_avoided` skip and is never retried.
+//! - Privacy prompts (docs/platforms/macos.md §6): the root and every privacy-protected location
+//!   the walk reaches ([`privacy::protected_root`]: Desktop, Documents, Downloads, iCloud Drive,
+//!   one app's container) are first opened through [`privacy::bounded`], since macOS holds that
+//!   `open(2)` while it shows its "would like to access…" prompt. One not answered within
+//!   [`privacy::PROMPT_WAIT`] is a `permission_required` skipped range
+//!   (`permission_cause=privacy_prompt_pending`): unknown, never empty. Everything below an
+//!   opened protected location is walked as usual, without further gating.
 
 use std::collections::HashMap;
-use std::ffi::CString;
-use std::os::unix::ffi::OsStringExt;
+use std::ffi::{CStr, CString, OsStr};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use cm_core::capability::CapabilityState;
 use cm_core::model::{BoundaryKind, CloudState, IdentityQuality, ObjectKind, ScanState, SkipReason};
 use cm_core::path::RawPath;
 use cm_core::scan::{EntryRow, ObjectRow, RootProbe, ScanIssue, ScanOptions, ScanReport, ScanSink, SkippedRow};
 
-use super::ids;
+use super::{ids, privacy};
 use super::sys::{Fd, Kind, Meta, NoMaterialize, Record, SF_DATALESS, describe, volume_of};
 
 /// Directory descriptors kept open along the current path. Deeper trees release the
@@ -94,9 +104,69 @@ fn classify(e: i32) -> (SkipReason, &'static str) {
     }
 }
 
+/// Opens one directory without following a link: the scan root by path (`parent` `None`) or a
+/// child of `parent` by name. Injected so tests can stand in for an unanswered privacy prompt.
+pub(crate) type Opener = Arc<dyn Fn(Option<&Fd>, &CStr) -> Result<Fd, i32> + Send + Sync>;
+
+/// First opens that may wait for a macOS privacy prompt: the root and each protected location.
+pub(crate) struct PrivacyGate {
+    /// `$HOME`, besides every `/Users/<name>`, for [`privacy::protected_root`].
+    pub home: Option<PathBuf>,
+    pub wait: Duration,
+    pub open: Opener,
+}
+
+fn plain_open(parent: Option<&Fd>, name: &CStr) -> Result<Fd, i32> {
+    match parent {
+        None => Fd::open_dir(name),
+        Some(p) => p.open_child_dir(name),
+    }
+}
+
+fn as_path(path: &[u8]) -> &Path {
+    Path::new(OsStr::from_bytes(path))
+}
+
+impl PrivacyGate {
+    pub(crate) fn from_os() -> Self {
+        let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+        PrivacyGate { home, wait: privacy::PROMPT_WAIT, open: Arc::new(plain_open) }
+    }
+
+    /// Whether `path` is itself a protected location (below one, its first open was already answered).
+    fn guards(&self, path: &[u8]) -> bool {
+        privacy::protected_root(as_path(path), self.home.as_deref()).is_some_and(|r| r == as_path(path))
+    }
+
+    /// Open `name` (in `parent`, or the root path) on a worker thread, waiting at most `wait`. `Err` is the
+    /// reason from [`privacy::bounded`]; the worker uses its own duplicate of `parent`, so a late answer never
+    /// opens relative to a reused descriptor number.
+    fn open(&self, parent: Option<&Fd>, name: &CStr, path: &[u8]) -> Result<Result<Fd, i32>, String> {
+        let parent = match parent.map(Fd::duplicate).transpose() {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(e)),
+        };
+        let (name, open) = (name.to_owned(), Arc::clone(&self.open));
+        // Keyed on the prompt: while one app's container waits, the next is answered pending at once.
+        let prompt = privacy::prompt_key(as_path(path), self.home.as_deref()).unwrap_or_else(|| as_path(path).to_path_buf());
+        privacy::bounded_as(&prompt, as_path(path), self.wait, move || {
+            // The scan thread's policy does not carry over; opening a directory does not materialize it anyway.
+            let _policy = NoMaterialize::enter();
+            open(parent.as_ref(), &name)
+        })
+    }
+}
+
+/// The issue code of a first open that did not return: pending prompt, or no worker.
+fn gate_code(why: &str) -> &'static str {
+    if privacy::is_pending(why) { "permission_required" } else { "io_error" }
+}
+
 /// Why an expected directory could not be entered.
 enum OpenFail {
     Errno(i32),
+    /// The privacy gate gave no result ([`privacy::pending_reason`], or no worker thread).
+    Gate(String),
     /// Different object (or now a symlink / non-directory) under the listed name.
     Changed,
     /// Another device under the listed name: a mount appeared or was not reported.
@@ -107,7 +177,18 @@ enum OpenFail {
 
 fn open_verified(parent: &Fd, name: &[u8], dev: i32, ino: u64, root_dev: i32) -> Result<Fd, OpenFail> {
     let c = CString::new(name).map_err(|_| OpenFail::Errno(libc::EINVAL))?;
-    let fd = parent.open_child_dir(&c).map_err(|e| match e {
+    verified(parent.open_child_dir(&c), dev, ino, root_dev)
+}
+
+/// [`open_verified`] for a protected location: opened through the privacy gate.
+fn open_gated(gate: &PrivacyGate, parent: &Fd, name: &[u8], path: &[u8], dev: i32, ino: u64, root_dev: i32) -> Result<Fd, OpenFail> {
+    let c = CString::new(name).map_err(|_| OpenFail::Errno(libc::EINVAL))?;
+    verified(gate.open(Some(parent), &c, path).map_err(OpenFail::Gate)?, dev, ino, root_dev)
+}
+
+/// Check a just-opened child against the identity its parent listing reported.
+fn verified(opened: Result<Fd, i32>, dev: i32, ino: u64, root_dev: i32) -> Result<Fd, OpenFail> {
+    let fd = opened.map_err(|e| match e {
         // O_NOFOLLOW on a symlink, or a non-directory now sits under the name.
         libc::ELOOP | libc::ENOTDIR => OpenFail::Changed,
         e => OpenFail::Errno(e),
@@ -274,6 +355,7 @@ fn fail_info(fail: OpenFail) -> (SkipReason, &'static str, String) {
                 let (reason, code) = classify(e);
                 (reason, code, describe(e))
             }
+            OpenFail::Gate(why) => (if privacy::is_pending(&why) { SkipReason::PermissionDenied } else { SkipReason::Error }, gate_code(&why), why),
             OpenFail::Changed => (SkipReason::Error, "identity_changed", "directory was replaced after it was listed; not traversed".into()),
             OpenFail::OtherVolume => (
                 SkipReason::VolumeChanged,
@@ -434,14 +516,21 @@ impl RootWatch {
 }
 
 pub(crate) fn probe(backend: &'static str, root: &RawPath, method: &str) -> RootProbe {
+    probe_gated(backend, root, method, &PrivacyGate::from_os())
+}
+
+/// [`probe`] with the privacy gate injected.
+pub(crate) fn probe_gated(backend: &'static str, root: &RawPath, method: &str, gate: &PrivacyGate) -> RootProbe {
     let fail = |reason: String, state| RootProbe { filesystem: None, volume_id: None, backend: backend.into(), state, reason };
     let Some(path) = root_bytes(root) else { return fail("not a macOS path".into(), CapabilityState::Unsupported) };
-    let Ok(cpath) = CString::new(path) else { return fail("path contains NUL".into(), CapabilityState::Unsupported) };
-    let fd = match Fd::open_dir(&cpath) {
-        Ok(fd) => fd,
-        Err(e @ (libc::EACCES | libc::EPERM)) => return fail(format!("root not readable: {}", describe(e)), CapabilityState::PermissionRequired),
-        Err(libc::ELOOP) => return fail("root is a symbolic link; links are not followed".into(), CapabilityState::Unsupported),
-        Err(e) => return fail(format!("root unavailable: {}", describe(e)), CapabilityState::Unsupported),
+    let Ok(cpath) = CString::new(path.clone()) else { return fail("path contains NUL".into(), CapabilityState::Unsupported) };
+    let fd = match gate.open(None, &cpath, &path) {
+        Err(why) if privacy::is_pending(&why) => return fail(why, CapabilityState::PermissionRequired),
+        Err(why) => return fail(why, CapabilityState::Unsupported),
+        Ok(Ok(fd)) => fd,
+        Ok(Err(e @ (libc::EACCES | libc::EPERM))) => return fail(format!("root not readable: {}", describe(e)), CapabilityState::PermissionRequired),
+        Ok(Err(libc::ELOOP)) => return fail("root is a symbolic link; links are not followed".into(), CapabilityState::Unsupported),
+        Ok(Err(e)) => return fail(format!("root unavailable: {}", describe(e)), CapabilityState::Unsupported),
     };
     let volume = fd.stat().ok().and_then(|st| volume_of(&fd, st.st_dev).ok());
     RootProbe {
@@ -471,6 +560,21 @@ pub(crate) fn scan_checked(
     lister: &mut dyn Lister,
     recheck_every: usize,
 ) -> ScanReport {
+    scan_gated(backend, method, root, sink, options, lister, recheck_every, &PrivacyGate::from_os())
+}
+
+/// [`scan_checked`] with the privacy gate injected.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_gated(
+    backend: &'static str,
+    method: &str,
+    root: &RawPath,
+    sink: &mut dyn ScanSink,
+    options: &ScanOptions,
+    lister: &mut dyn Lister,
+    recheck_every: usize,
+    gate: &PrivacyGate,
+) -> ScanReport {
     // SAFETY: plain getter without arguments.
     let euid = unsafe { libc::geteuid() };
     let mut report = ScanReport {
@@ -493,9 +597,14 @@ pub(crate) fn scan_checked(
     };
     // Held for the whole scan: every scan syscall runs on this thread.
     let policy = NoMaterialize::enter();
-    let root_fd = match Fd::open_dir(&cpath) {
-        Ok(fd) => fd,
-        Err(e) => {
+    let root_fd = match gate.open(None, &cpath, &path) {
+        Ok(Ok(fd)) => fd,
+        Err(why) => {
+            // Unknown, not empty: nothing below the root was read.
+            report.issues.push(ScanIssue { code: gate_code(&why).into(), scope_display: root.display(), message: why });
+            return report;
+        }
+        Ok(Err(e)) => {
             let code = if matches!(e, libc::EACCES | libc::EPERM) { "permission_required" } else { "root_unavailable" };
             let message = if e == libc::ELOOP { "root is a symbolic link; links are not followed".into() } else { describe(e) };
             report.issues.push(ScanIssue { code: code.into(), scope_display: root.display(), message });
@@ -625,6 +734,7 @@ pub(crate) fn scan_checked(
             continue;
         }
         let opened = match &frames[last].fd {
+            Some(parent) if gate.guards(&child_path) => open_gated(gate, parent, &child.name, &child_path, child.dev, child.ino, root_dev),
             Some(parent) => open_verified(parent, &child.name, child.dev, child.ino, root_dev),
             None => Err(OpenFail::Errno(libc::EBADF)),
         };

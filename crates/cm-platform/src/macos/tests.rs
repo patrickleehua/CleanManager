@@ -840,3 +840,149 @@ fn bench_posix_vs_bulk() {
         );
     }
 }
+
+/// An opener that stands in for macOS while it shows a privacy prompt: the open of `held` (a name, or the root path)
+/// does not return until the returned sender is used or dropped; every other open is the real one. Records what it
+/// was asked to open.
+type Asked = std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
+
+fn prompt_opener(held: &'static [u8]) -> (std::sync::mpsc::Sender<()>, walk::Opener, Asked) {
+    let (answer, prompt) = std::sync::mpsc::channel::<()>();
+    let prompt = std::sync::Mutex::new(prompt);
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&asked);
+    let open: walk::Opener = std::sync::Arc::new(move |parent: Option<&Fd>, name: &std::ffi::CStr| {
+        let name = name.to_bytes();
+        seen.lock().unwrap().push(name.to_vec());
+        if name == held || name.ends_with(&[b"/", held].concat()) {
+            let _ = prompt.lock().unwrap().recv(); // held in the kernel until the person answers
+        }
+        match parent {
+            None => Fd::open_dir(&CString::new(name).unwrap()),
+            Some(p) => p.open_child_dir(&CString::new(name).unwrap()),
+        }
+    });
+    (answer, open, asked)
+}
+
+/// A scan of a home while macOS asks about Downloads: only the first open of each protected location (Desktop,
+/// Documents, Downloads, one app's container) goes through the privacy gate; the unanswered one becomes a
+/// `permission_required` skipped range with `permission_cause=privacy_prompt_pending` (unknown, never empty) after the
+/// deadline, and the rest of the home, other protected folders included, is walked as usual.
+#[test]
+fn a_privacy_prompt_skips_only_the_location_it_holds() {
+    for backend in NAMES {
+        let fx = crate::macos::testfs::Fixture::new(&format!("walk-prompt-{backend}"));
+        let home = fx.path();
+        fx.write("Downloads/held.dmg", &[0u8; 64]);
+        fx.write("Downloads/deep/inner.txt", b"x");
+        fx.write("Documents/notes/a.txt", b"a");
+        fx.write("Library/Containers/app.one/Data/Library/Caches/c.bin", b"c");
+        fx.write("Library/Group Containers/group.two/g.txt", b"g");
+        fx.write("Library/Caches/plain/p.txt", b"p");
+        fx.write("Projects/Downloads/not-protected.txt", b"n"); // the held name, but not a protected location
+        let (answer, open, asked) = prompt_opener(b"Downloads");
+        let gate = walk::PrivacyGate { home: Some(home.to_path_buf()), wait: Duration::from_millis(200), open };
+        let mut sink = MemSink::default();
+        let mut lister = lister_for(backend);
+        let options = ScanOptions { batch_entries: 4, ..Default::default() };
+        let t = Instant::now();
+        let report = walk::scan_gated(backend, "test walk", &raw(home), &mut sink, &options, lister.as_mut(), walk::RECHECK_EVERY_DIRS, &gate);
+        assert!(t.elapsed() < Duration::from_secs(3), "{backend}: the scan is not held by the prompt: {:?}", t.elapsed());
+        assert_eq!(report.state, ScanState::Completed, "{backend}: {:?}", report.issues);
+
+        let downloads = home.join("Downloads");
+        let skip: Vec<_> = sink.skipped.iter().filter(|s| s.path.raw_bytes() == downloads.as_os_str().as_bytes()).collect();
+        assert_eq!(skip.len(), 1, "{backend}: {:?}", sink.skipped);
+        assert_eq!(skip[0].reason, SkipReason::PermissionDenied);
+        assert_eq!(skip[0].parent_entry_id, Some(sink.by_name("Downloads").entry_id), "the skipped range hangs under its entry");
+        let issue = report.issues.iter().find(|i| i.code == "permission_required").unwrap_or_else(|| panic!("{backend}: {:?}", report.issues));
+        assert!(issue.message.starts_with(super::privacy::PERMISSION_PENDING) && issue.message.contains(&*downloads.to_string_lossy()), "{}", issue.message);
+        assert!(!sink.has("held.dmg") && !sink.has("deep") && !sink.has("inner.txt"), "{backend}: nothing below the held folder is read");
+        for name in ["a.txt", "c.bin", "g.txt", "p.txt", "not-protected.txt"] {
+            assert!(sink.has(name), "{backend}: {name} is walked as usual");
+        }
+        assert_eq!(sink.skipped.len(), 1, "{backend}: {:?}", sink.skipped);
+
+        // Gated: the root (by path) and each protected location's first open; nothing below them, nothing else.
+        let mut gated = asked.lock().unwrap().clone();
+        gated.sort();
+        let mut want: Vec<Vec<u8>> = vec![home.as_os_str().as_bytes().to_vec(), b"Documents".to_vec(), b"Downloads".to_vec(), b"app.one".to_vec(), b"group.two".to_vec()];
+        want.sort();
+        assert_eq!(gated, want, "{backend}");
+        answer.send(()).unwrap(); // the parked open ends; its descriptor is dropped
+    }
+}
+
+/// The scan root itself held by a prompt: the scan stops with `permission_required` (pending) and no entries, and so
+/// does a probe of it; neither reports an empty folder.
+#[test]
+fn a_root_held_by_a_privacy_prompt_is_never_an_empty_scan() {
+    for backend in NAMES {
+        let fx = crate::macos::testfs::Fixture::new(&format!("walk-prompt-root-{backend}"));
+        let root = fx.mkdir("Desktop");
+        fx.write("Desktop/file.txt", b"d");
+        let (answer, open, _) = prompt_opener(b"Desktop");
+        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(200), open };
+        let mut sink = MemSink::default();
+        let mut lister = lister_for(backend);
+        let t = Instant::now();
+        let report = walk::scan_gated(backend, "test walk", &raw(&root), &mut sink, &ScanOptions::default(), lister.as_mut(), walk::RECHECK_EVERY_DIRS, &gate);
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        assert_eq!((report.state, report.entries, sink.entries.len()), (ScanState::Failed, 0, 0), "{backend}");
+        assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+        assert_eq!(report.issues[0].code, "permission_required");
+        assert!(super::privacy::is_pending(&report.issues[0].message), "{}", report.issues[0].message);
+
+        // Still parked: the probe is answered pending at once.
+        let t = Instant::now();
+        let probe = walk::probe_gated(backend, &raw(&root), "test walk", &gate);
+        assert!(t.elapsed() < Duration::from_secs(1), "a parked root is not waited for again");
+        assert_eq!(probe.state, CapabilityState::PermissionRequired);
+        assert!(super::privacy::is_pending(&probe.reason), "{}", probe.reason);
+        answer.send(()).unwrap();
+    }
+}
+
+/// Every app's container waits for the same "data from other apps" prompt: while the first one is parked, the others
+/// are skipped as pending at once, without another open and without waiting again.
+#[test]
+fn one_pending_app_data_prompt_is_waited_for_once() {
+    for backend in NAMES {
+        let fx = crate::macos::testfs::Fixture::new(&format!("walk-prompt-apps-{backend}"));
+        for app in ["app.a", "app.b", "app.c"] {
+            fx.write(format!("Library/Containers/{app}/Data/f.txt"), b"f");
+        }
+        fx.write("Documents/d.txt", b"d");
+        let (answer, prompt) = std::sync::mpsc::channel::<()>();
+        let prompt = std::sync::Mutex::new(prompt);
+        let asked: Asked = std::sync::Arc::default();
+        let seen = std::sync::Arc::clone(&asked);
+        let open: walk::Opener = std::sync::Arc::new(move |parent: Option<&Fd>, name: &std::ffi::CStr| {
+            seen.lock().unwrap().push(name.to_bytes().to_vec());
+            if name.to_bytes().starts_with(b"app.") {
+                let _ = prompt.lock().unwrap().recv(); // held until the person answers
+            }
+            match parent {
+                None => Fd::open_dir(name),
+                Some(p) => p.open_child_dir(name),
+            }
+        });
+        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(300), open };
+        let mut sink = MemSink::default();
+        let mut lister = lister_for(backend);
+        let t = Instant::now();
+        let report = walk::scan_gated(backend, "test walk", &raw(fx.path()), &mut sink, &ScanOptions::default(), lister.as_mut(), walk::RECHECK_EVERY_DIRS, &gate);
+        let took = t.elapsed();
+        assert!(took < Duration::from_millis(900), "{backend}: waited once, not three times: {took:?}");
+        assert_eq!(report.state, ScanState::Completed, "{backend}: {:?}", report.issues);
+        assert_eq!(sink.skipped.len(), 3, "{backend}: {:?}", sink.skipped);
+        assert!(sink.skipped.iter().all(|s| s.reason == SkipReason::PermissionDenied));
+        let pending = report.issues.iter().filter(|i| i.code == "permission_required" && super::privacy::is_pending(&i.message)).count();
+        assert_eq!(pending, 3, "{backend}: {:?}", report.issues);
+        assert!(sink.has("d.txt") && !sink.has("f.txt"));
+        let apps = asked.lock().unwrap().iter().filter(|n| n.starts_with(b"app.")).count();
+        assert_eq!(apps, 1, "{backend}: only the first container was opened");
+        drop(answer);
+    }
+}

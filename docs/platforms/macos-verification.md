@@ -58,9 +58,9 @@ tools/mac_verify.sh --quick --scan-dir ~/Downloads   # 只做 CLI 冒烟，并�
 - 已经允许后不再等待，读取立刻返回。这次没有实测“不允许”的情形，按 Apple 的说明应立刻得到 `EPERM`（报告为 `permission_required`）。不允许弹窗的服务（日志里的 `kTCCServiceDeveloperTool`；完全磁盘访问也从不弹窗）由 tccd 直接拒绝，不会卡住。
 - Docker Desktop 不是沙盒应用，读取 `~/Library/Containers/com.docker.docker` 时没有触发任何 TCC 检查。
 
-现在的处理：空间洞察第一次打开这些位置（下载文件夹、iPhone 备份、其他应用容器内的磁盘映像）时，会放到单独的线程上执行，最多等 5 秒。超时后该位置报告为 `permission_required (permission_cause=privacy_prompt_pending)`，大小未知，不按 0 或空计算，命令随后继续执行。`--debug` 会在等待超过 250 毫秒时写一行 `privacy: … macOS may be showing a privacy prompt`，超时时再写一行。桌面端会显示“正在等待 macOS 授权”，并提示回答对话框后点“重新测量”。对话框回答之前，再次请求同一位置会立刻报告等待中，不会再开新线程。
+现在的处理：空间洞察、磁盘分析扫描、清理目录解析与废纸篓列表第一次打开这些位置（下载、桌面、文稿、iCloud 云盘、其他应用的容器、外部卷；范围见 [macOS 平台说明 §6](macos.md)）时，会放到单独的线程上执行，最多等 5 秒。超时后该位置报告为 `permission_required (permission_cause=privacy_prompt_pending)`，大小未知，不按 0 或空计算，命令随后继续执行。`--debug` 会在等待超过 250 毫秒时写一行 `privacy: … macOS may be showing a privacy prompt`，超时时再写一行。扫描中等待的位置记为 `permission_required` 跳过区间，其余部分照常扫描。桌面端的空间洞察页会显示“正在等待 macOS 授权”，并提示回答对话框后点“重新测量”。对话框回答之前，再次请求同一位置会立刻报告等待中，不会再开新线程。
 
-验证时如果看到某张卡片或某一项显示等待授权，请回答对话框后重新运行同一条命令，并在提交结果时说明你点了允许还是拒绝。其他命令（磁盘分析扫描、清理目录解析等）打开这些位置时还没有这层保护；遇到哪一步特别慢，先看看有没有没回答的对话框。
+验证时如果看到某张卡片或某一项显示等待授权，请回答对话框后重新运行同一条命令，并在提交结果时说明你点了允许还是拒绝。扫描结果里出现 `privacy_prompt_pending` 的跳过区间、清理规则或废纸篓时同样处理。其他命令仍可能在别处碰到这类对话框；遇到哪一步特别慢，先看看有没有没回答的对话框。
 
 ## 结果怎样用
 

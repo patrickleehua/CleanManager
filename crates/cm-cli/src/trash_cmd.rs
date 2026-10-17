@@ -94,6 +94,8 @@ mod plat {
 
     /// Next step when privacy protection (TCC) or permissions block the Trash listing.
     const GRANT_ACCESS: &str = "Give the program that runs cleanmanager (for example Terminal) Full Disk Access in System Settings › Privacy & Security › Full Disk Access, then retry; or open the Trash in Finder";
+    /// Next step while macOS is still asking whether the program may open the Trash.
+    const ANSWER_PROMPT: &str = "Answer the macOS privacy prompt (\"would like to access…\") for the program that runs cleanmanager, then list the Trash again; or open the Trash in Finder";
     /// Next step when the folder's own permissions block it.
     const FIX_PERMISSIONS: &str = "The Trash folder should belong to you and be readable by you; check its permissions, or open the Trash in Finder";
 
@@ -141,12 +143,13 @@ mod plat {
 
     fn issue(dir: &std::path::Path, e: &ListError) -> Value {
         let code = match e {
-            ListError::PermissionRequired { .. } => "permission_required",
+            ListError::PermissionRequired { .. } | ListError::PromptPending(_) => "permission_required",
             ListError::Unreadable(_) => "bin_unreadable",
         };
         let message = match e {
             ListError::PermissionRequired { .. } if e.privacy_blocked() => format!("{} (blocked by privacy protection or another policy layer; permission_cause=undetermined). {GRANT_ACCESS}", e.message()),
             ListError::PermissionRequired { .. } => format!("{} (its permissions do not allow listing it). {FIX_PERMISSIONS}", e.message()),
+            ListError::PromptPending(_) => format!("{} {ANSWER_PROMPT}", e.message()),
             ListError::Unreadable(_) => e.message().to_owned(),
         };
         json!({"code": code, "scope_display": dir.display().to_string(), "message": message})
@@ -167,6 +170,7 @@ mod plat {
                     let (code, action) = match &e {
                         ListError::PermissionRequired { .. } if e.privacy_blocked() => (ErrorCode::PermissionRequired, Some(GRANT_ACCESS)),
                         ListError::PermissionRequired { .. } => (ErrorCode::PermissionRequired, Some(FIX_PERMISSIONS)),
+                        ListError::PromptPending(_) => (ErrorCode::PermissionRequired, Some(ANSWER_PROMPT)),
                         ListError::Unreadable(_) => (ErrorCode::IoError, None),
                     };
                     let message = issue(&dir, &e)["message"].as_str().unwrap_or_default().to_owned();

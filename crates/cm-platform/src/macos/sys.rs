@@ -69,6 +69,14 @@ impl Fd {
         self.open_child_dir(c".")
     }
 
+    /// A second descriptor of the same open file description (`F_DUPFD_CLOEXEC`), owned separately: a worker thread can
+    /// keep using it after this one is closed, and its number is never reused under it.
+    pub(crate) fn duplicate(&self) -> Result<Fd, i32> {
+        // SAFETY: valid fd; F_DUPFD_CLOEXEC takes the lowest acceptable new descriptor number.
+        let fd = unsafe { libc::fcntl(self.0, libc::F_DUPFD_CLOEXEC, 0) };
+        if fd < 0 { Err(errno()) } else { Ok(Fd(fd)) }
+    }
+
     pub(crate) fn raw(&self) -> c_int {
         self.0
     }

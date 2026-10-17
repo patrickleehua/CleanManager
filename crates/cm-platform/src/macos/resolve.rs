@@ -14,6 +14,11 @@
 //!   whether access was granted (§6: no probing of private directories): when such a location exists the rule reports
 //!   `permission_required` (`permission_cause=undetermined`) and the root stays unresolved. Any other root that cannot
 //!   be read for lack of permission reports the same issue.
+//! - Privacy prompts (§6): a root at or below a privacy-protected location ([`privacy::protected_root`]: Downloads,
+//!   another app's container such as Docker's logs, a selected volume) is looked up through [`privacy::bounded`], as is
+//!   the existence check of a TCC location inside a container. When macOS has not answered within
+//!   [`privacy::PROMPT_WAIT`] the rule reports `permission_required (permission_cause=privacy_prompt_pending)` and the
+//!   root stays unresolved (never an empty location).
 //! - `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` / `CM_RESOLVE_SYSTEM` redirect resolution into
 //!   validation fixtures. With a home override the package managers' own variables (`CARGO_HOME`, `GOCACHE`...) are
 //!   ignored, since they name the real user's locations, and system-wide locations are not resolved unless
@@ -29,14 +34,16 @@ use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use cm_core::analysis::ResolvedRoot;
 use cm_core::capability::CapabilityState;
 use cm_core::path::RawPath;
 use cm_core::rules::{RootResolver, Rule};
 
-use super::ids;
 use super::sys::{Fd, describe};
+use super::{ids, privacy};
 
 /// Capability rows this module backs (name, state, reason); concatenated by `HostPlatform::capabilities`.
 pub(crate) const CAPS: &[(&str, CapabilityState, &str)] = &[(
@@ -335,20 +342,67 @@ fn permission_issue(rule: &str, path: &Path, tcc: bool) -> ResolveIssue {
     ResolveIssue { code: "permission_required", scope: rule.to_owned(), message }
 }
 
+/// [`identity_of`] as an injectable function.
+pub(crate) type IdentityFn = Arc<dyn Fn(&Path) -> Result<(String, String), i32> + Send + Sync>;
+
+/// The first accesses [`resolve`] makes to a candidate root, injected so tests can stand in for a pending prompt.
+#[derive(Clone)]
+pub(crate) struct FirstAccess {
+    /// [`identity_of`].
+    pub identity: IdentityFn,
+    /// Whether a TCC location exists (`lstat`, not followed).
+    pub exists: Arc<dyn Fn(&Path) -> bool + Send + Sync>,
+}
+
+impl FirstAccess {
+    fn os() -> Self {
+        FirstAccess { identity: Arc::new(identity_of), exists: Arc::new(|p| std::fs::symlink_metadata(p).is_ok()) }
+    }
+}
+
+/// Run one first access to `path`, through the privacy gate when `path` is at or below a protected location.
+fn gated<T: Send + 'static>(path: &Path, home: Option<&Path>, wait: Duration, op: impl FnOnce(&Path) -> T + Send + 'static) -> Result<T, String> {
+    let Some(prompt) = privacy::prompt_key(path, home) else { return Ok(op(path)) };
+    let owned = path.to_path_buf();
+    privacy::bounded_as(&prompt, path, wait, move || op(&owned))
+}
+
+fn pending_issue(rule: &str, why: String) -> ResolveIssue {
+    let code = if privacy::is_pending(&why) { "permission_required" } else { "io_error" };
+    ResolveIssue { code, scope: rule.to_owned(), message: format!("{why}; the rule is not applied there") }
+}
+
 /// Resolve every rule's roots to identities. Missing locations are simply absent; privacy-protected or unreadable
 /// ones are reported as `permission_required` issues.
 pub fn resolve(rules: &[Rule], env: &ResolverEnv) -> Resolution {
+    resolve_gated(rules, env, privacy::PROMPT_WAIT, &FirstAccess::os())
+}
+
+/// [`resolve`] with the privacy-prompt deadline and the first accesses injected.
+pub(crate) fn resolve_gated(rules: &[Rule], env: &ResolverEnv, wait: Duration, access: &FirstAccess) -> Resolution {
     let mut out = Resolution::default();
+    let home = env.home.as_deref();
     for rule in rules {
         for t in targets(rule, env) {
             if t.tcc_protected {
                 // Existence only (lstat in the unprotected parent): the contents are never touched.
-                if std::fs::symlink_metadata(&t.path).is_ok() {
-                    out.issues.push(permission_issue(&rule.rule_id, &t.path, true));
+                let exists = Arc::clone(&access.exists);
+                match gated(&t.path, home, wait, move |p| exists(p)) {
+                    Ok(true) => out.issues.push(permission_issue(&rule.rule_id, &t.path, true)),
+                    Ok(false) => {}
+                    Err(why) => out.issues.push(pending_issue(&rule.rule_id, why)),
                 }
                 continue;
             }
-            match (identity_of(&t.path), RawPath::unix(t.path.as_os_str().as_bytes().to_vec())) {
+            let identity = Arc::clone(&access.identity);
+            let found = match gated(&t.path, home, wait, move |p| identity(p)) {
+                Ok(found) => found,
+                Err(why) => {
+                    out.issues.push(pending_issue(&rule.rule_id, why));
+                    continue;
+                }
+            };
+            match (found, RawPath::unix(t.path.as_os_str().as_bytes().to_vec())) {
                 (Ok((volume_id, file_id)), Ok(path)) => out.roots.push(ResolvedRoot { rule_id: rule.rule_id.clone(), path, volume_id, file_id }),
                 (Err(libc::EACCES | libc::EPERM), _) => out.issues.push(permission_issue(&rule.rule_id, &t.path, false)),
                 _ => {}
@@ -377,7 +431,9 @@ pub fn removable_volume_root(arg: &Path) -> Result<PathBuf, String> {
     if !meta.is_dir() {
         return Err(format!("{} is not a directory", root.display()));
     }
-    let fd = Fd::open_dir(&cstr(&root).map_err(describe)?).map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
+    let c = cstr(&root).map_err(describe)?;
+    // Opening a volume can wait for the Removable / Network Volumes prompt.
+    let fd = privacy::bounded(&root, privacy::PROMPT_WAIT, move || Fd::open_dir(&c))?.map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
     let sfs = fd.statfs().map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
     if sfs.f_flags & libc::MNT_ROOTFS as u32 != 0 {
         return Err(format!("{} is on the startup volume, not a separate mounted volume", root.display()));
