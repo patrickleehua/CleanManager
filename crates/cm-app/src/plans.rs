@@ -10,12 +10,18 @@
 //! Executed kinds: `manual_selection` (fs_trash at the original place, fs_delete of recycled objects), `startup`
 //! (enable/disable through the enable record, stale Run-value removal after a stored backup) and `recovery` (put back
 //! enable records and removed values, never over something changed or recreated since). Other kinds are refused.
+//!
+//! Maintenance setting changes (parity 14.5): [`run_setting_change`] backs up the prior value before it writes (called by
+//! the maintenance runner), [`create_settings_restore_plan`] freezes those backups into a `recovery` plan and its
+//! `settings_change` actions put the prior value back only while the setting still has the value written.
 
 use cm_core::authz::{KindReceipt, kind_receipt_valid};
 use cm_core::execute::{ActionOutcome, ActionTarget, FileActions, LiveCheck, Reconciled, Recovery, TreeMember};
+use cm_core::maintenance::TaskOutcome;
+use cm_core::maintenance::settings::{SETTING_BACKUP_PREFIX, SettingBackup, SettingSpec, SettingsActions};
 use cm_core::manual_trash::{BIN_NAME, PUT_BACK_GUIDANCE, UNKNOWN_GUIDANCE, in_recycle_bin};
 use cm_core::path::RawPath;
-use cm_core::plan::v2::{ActionMeta, FsAction, PlanAction, PlanKind, PlanProblem, PlanV2, StartupOperation, StartupToggleAction, check_plan_v2};
+use cm_core::plan::v2::{ActionMeta, FsAction, PlanAction, PlanKind, PlanProblem, PlanV2, SettingsChangeAction, StartupOperation, StartupToggleAction, check_plan_v2};
 use cm_core::plan::{ItemKind, parse_utc};
 use cm_core::rules::Mode;
 use cm_core::startup::{RegValue, StartupActions, StartupBackup, StartupObservation, StartupOutcome, observation_digest};
@@ -212,6 +218,7 @@ struct Run<'a> {
     plan: &'a PlanV2,
     operation_id: String,
     ctx: &'a ApplyContext<'a>,
+    settings: Option<&'a dyn SettingsActions>,
 }
 
 impl Run<'_> {
@@ -290,6 +297,47 @@ impl Run<'_> {
         r
     }
 
+    /// Put a backed-up setting value back (recovery plans; the action id is the backup id).
+    fn settings_restore(&self, a: &SettingsChangeAction) -> ActionResult {
+        let id = &a.action_id;
+        let Some(sa) = self.settings else { return res(id, ActionStatus::Skipped, "unsupported", "setting restores are not available on this platform", "not_applicable") };
+        let Some(spec) = cm_core::maintenance::settings::by_id(&a.setting_id) else {
+            return res(id, ActionStatus::Skipped, "setting_unknown", format!("setting {} is not known to this build", a.setting_id), "not_applicable");
+        };
+        let (backup, state) = match self.stores.audit.setting_backup(id) {
+            Ok(b) => b,
+            Err(e) => return res(id, ActionStatus::Failed, "backup_unavailable", e.to_string(), "not_applicable"),
+        };
+        if backup.setting_id != a.setting_id || backup.written_value != a.from_value || backup.prior_value != a.to_value {
+            return res(id, ActionStatus::Skipped, "backup_changed", "the recorded prior value differs from the planned one", "not_applicable");
+        }
+        if state != "recorded" {
+            return res(id, ActionStatus::Skipped, "already_restored", format!("this backup is {state}; nothing was written"), "not_applicable");
+        }
+        let current = match sa.read(spec) {
+            Ok(v) => v,
+            Err(e) => return res(id, ActionStatus::Skipped, "state_unknown", format!("{e}; skipped rather than tried"), "not_applicable"),
+        };
+        if current == a.to_value {
+            let _ = self.stores.audit.set_startup_backup_state(id, "restored");
+            return res(id, ActionStatus::Succeeded, "already_prior", format!("{} already has its prior value {current}; nothing was written", spec.title), "not_applicable");
+        }
+        if current != a.from_value {
+            return res(id, ActionStatus::Skipped, "changed_since", format!("{} was changed since ({current}, not {}); it is left as is", spec.title, a.from_value), "not_applicable");
+        }
+        if let Err(e) = sa.write(spec, &a.to_value) {
+            return res(id, ActionStatus::Failed, "write_failed", e, "not_applicable");
+        }
+        match sa.read(spec) {
+            Ok(v) if v == a.to_value => {
+                let _ = self.stores.audit.set_startup_backup_state(id, "restored");
+                res(id, ActionStatus::Succeeded, "restored", format!("{}: prior value {} put back ({})", spec.title, a.to_value, sa.location(spec)), "not_applicable")
+            }
+            Ok(v) => res(id, ActionStatus::Unknown, "outcome_unconfirmed", format!("written, but the setting now reads {v}"), "unknown"),
+            Err(e) => res(id, ActionStatus::Unknown, "outcome_unconfirmed", format!("written, but the setting cannot be read back: {e}"), "unknown"),
+        }
+    }
+
     fn intent(&self, a: &PlanAction) -> serde_json::Value {
         match a {
             PlanAction::FsTrash(f) | PlanAction::FsDelete(f) => serde_json::json!({"action_type": a.action_type(), "path": f.target.path, "identity": f.target.identity,
@@ -301,6 +349,14 @@ impl Run<'_> {
 
 /// Apply a stored `plan/v2` plan. Returns the final report, or an error before anything was touched.
 pub fn apply_plan_v2(stores: &Stores, b: &V2Backends<'_>, plan_id: &str, ctx: &ApplyContext<'_>) -> Result<OperationReport, ApplyError> {
+    apply_plan_v2_with_settings(stores, b, None, plan_id, ctx)
+}
+
+/// [`apply_plan_v2`] with the platform's settings backend, which `settings_change` restores of recovery plans need
+/// (`None` = they are skipped `unsupported`).
+pub fn apply_plan_v2_with_settings(
+    stores: &Stores, b: &V2Backends<'_>, settings: Option<&dyn SettingsActions>, plan_id: &str, ctx: &ApplyContext<'_>,
+) -> Result<OperationReport, ApplyError> {
     let plan = stores.audit.load_plan_v2(plan_id)?;
     let dedupe_key = format!("{}#{}", plan.body.plan_id, plan.digest);
     // EXE-03: the same plan never produces a second operation.
@@ -332,7 +388,7 @@ pub fn apply_plan_v2(stores: &Stores, b: &V2Backends<'_>, plan_id: &str, ctx: &A
     stores.audit.set_operation_state(&operation_id, "running")?;
     let first_path = plan.body.items.iter().find_map(|a| a.fs().map(|f| f.target.path.clone()));
     let free_before = first_path.as_ref().and_then(|p| b.files.free_space(p));
-    let run = Run { stores, plan: &plan, operation_id: operation_id.clone(), ctx };
+    let run = Run { stores, plan: &plan, operation_id: operation_id.clone(), ctx, settings };
     let expires = parse_utc(&plan.body.expires_at).unwrap_or(i64::MIN);
     let mut results: Vec<ActionResult> = Vec::with_capacity(plan.body.items.len());
     let mut cancelled = false;
@@ -383,6 +439,7 @@ pub fn apply_plan_v2(stores: &Stores, b: &V2Backends<'_>, plan_id: &str, ctx: &A
             }
             PlanAction::RegistryRestore(rr) => run.registry_restore(b, rr),
             PlanAction::ProcessEnd(pe) => crate::processes::run_end(b.processes, pe),
+            PlanAction::SettingsChange(sc) if plan.body.plan_kind == PlanKind::Recovery => run.settings_restore(sc),
             PlanAction::ToolAdapter(t) if plan.body.plan_kind == PlanKind::Update => crate::updates::run_update(b.updates, t, m),
             other => res(id, ActionStatus::Skipped, "unsupported", format!("{} actions are not executed by this build", other.action_type().as_str()), "not_applicable"),
         };
@@ -554,6 +611,8 @@ pub fn create_startup_restore_plan(stores: &Stores, operation_id: &str, plan_id:
 pub enum RestoreError {
     #[error("operation belongs to a {0} plan; only startup operations are restored here")]
     NotStartup(&'static str),
+    #[error("operation belongs to a {0} plan; only maintenance setting changes are restored here")]
+    NotMaintenance(&'static str),
     #[error("operation {0} has not finished")]
     NotFinished(String),
     #[error("{1}")]
@@ -566,13 +625,104 @@ impl RestoreError {
     pub fn code(&self) -> cm_core::error::ErrorCode {
         use cm_core::error::ErrorCode;
         match self {
-            RestoreError::NotStartup(_) | RestoreError::NotFinished(_) => ErrorCode::InvalidArgument,
+            RestoreError::NotStartup(_) | RestoreError::NotMaintenance(_) | RestoreError::NotFinished(_) => ErrorCode::InvalidArgument,
             RestoreError::Refused("unsupported", _) => ErrorCode::Unsupported,
             RestoreError::Refused("internal_error", _) => ErrorCode::InternalError,
             RestoreError::Refused(..) => ErrorCode::InvalidArgument,
             RestoreError::Store(e) => e.code(),
         }
     }
+}
+
+/// Backup id of one setting change of an operation.
+pub fn setting_backup_id(operation_id: &str, action_id: &str) -> String {
+    format!("{SETTING_BACKUP_PREFIX}{}_{action_id}", operation_id.strip_prefix("op_").unwrap_or(operation_id))
+}
+
+/// What one maintenance setting change did (14.5, MNT-03): its outcome, code, reason and recovery availability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingRun {
+    pub outcome: TaskOutcome,
+    pub code: String,
+    pub reason: String,
+    /// `in_app_restore` once a value was written after its backup was stored.
+    pub recovery: &'static str,
+}
+
+fn setting_run(outcome: TaskOutcome, code: &str, reason: impl Into<String>, recovery: &'static str) -> SettingRun {
+    SettingRun { outcome, code: code.into(), reason: reason.into(), recovery }
+}
+
+/// Run one `settings_change` action of a maintenance plan: only while the setting still has the reviewed value, and
+/// only after its prior value is stored as a backup. The write is read back before it counts as applied.
+pub fn run_setting_change(
+    stores: &Stores, settings: Option<&dyn SettingsActions>, operation_id: &str, plan_id: &str, a: &SettingsChangeAction, spec: &SettingSpec, now: &dyn Fn() -> i64,
+) -> SettingRun {
+    let Some(sa) = settings else { return setting_run(TaskOutcome::Unavailable, "settings_unavailable", "this platform cannot change this setting in this build", "not_applicable") };
+    let current = match sa.read(spec) {
+        Ok(v) => v,
+        Err(e) => return setting_run(TaskOutcome::Skipped, "state_unknown", format!("{e}; skipped rather than tried"), "not_applicable"),
+    };
+    if current == a.to_value {
+        return setting_run(TaskOutcome::Unchanged, "already_set", format!("{}: already {current}; nothing was written", spec.title), "not_applicable");
+    }
+    if current != a.from_value {
+        return setting_run(
+            TaskOutcome::Skipped,
+            "changed_since_review",
+            format!("{} is now {current}; the plan was reviewed when it was {}. Nothing was written; create a new plan", spec.title, a.from_value),
+            "not_applicable",
+        );
+    }
+    let backup = SettingBackup {
+        backup_id: setting_backup_id(operation_id, &a.action_id),
+        setting_id: spec.id.into(),
+        location: sa.location(spec),
+        prior_value: current,
+        written_value: a.to_value.clone(),
+        created_at: utc_from_unix(now()),
+    };
+    if let Err(e) = stores.audit.save_setting_backup(operation_id, &a.action_id, plan_id, &backup) {
+        return setting_run(TaskOutcome::Failed, "backup_not_stored", format!("the prior value could not be backed up ({e}); nothing was written"), "not_applicable");
+    }
+    if let Err(e) = sa.write(spec, &a.to_value) {
+        let _ = stores.audit.set_startup_backup_state(&backup.backup_id, "not_written");
+        return setting_run(TaskOutcome::Failed, "write_failed", format!("{e}; the setting keeps {}", backup.prior_value), "not_applicable");
+    }
+    match sa.read(spec) {
+        Ok(v) if v == a.to_value => setting_run(
+            TaskOutcome::Applied,
+            "set",
+            format!(
+                "{}: set to {} ({}); the prior value {} is backed up. Restore it with `cleanmanager optimize restore --operation {operation_id}`",
+                spec.title, a.to_value, backup.location, backup.prior_value
+            ),
+            "in_app_restore",
+        ),
+        Ok(v) => setting_run(TaskOutcome::Failed, "not_persisted", format!("written, but the setting reads {v}; the backup of {} is kept", backup.prior_value), "in_app_restore"),
+        Err(e) => setting_run(TaskOutcome::Failed, "not_persisted", format!("written, but it cannot be read back ({e}); the backup of {} is kept", backup.prior_value), "in_app_restore"),
+    }
+}
+
+/// Freeze the recorded setting backups of a finished maintenance operation into a `recovery` plan and store it.
+pub fn create_settings_restore_plan(stores: &Stores, operation_id: &str, plan_id: &str, now: i64, policy_digest: &str) -> Result<PlanV2, RestoreError> {
+    let source = stores.audit.load_plan_v2(&stores.audit.operation_plan(operation_id)?)?;
+    if source.body.plan_kind != PlanKind::Maintenance {
+        return Err(RestoreError::NotMaintenance(source.body.plan_kind.as_str()));
+    }
+    let report: Option<OperationReport> = stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str(&j).ok());
+    let Some(report) = report else { return Err(RestoreError::NotFinished(operation_id.into())) };
+    let mut backups = Vec::new();
+    for (action_id, backup_id, state) in stores.audit.backup_ids_for_operation(operation_id)? {
+        let written = report.items.iter().any(|i| i.action_id == action_id && i.recovery == "in_app_restore");
+        if !backup_id.starts_with(SETTING_BACKUP_PREFIX) || state != "recorded" || !written {
+            continue;
+        }
+        backups.push(stores.audit.setting_backup(&backup_id)?.0);
+    }
+    let plan = cm_core::maintenance::settings::build_settings_recovery_plan(&backups, plan_id, now, policy_digest).map_err(|r| RestoreError::Refused(r.code, r.message))?;
+    stores.audit.save_plan_v2(&plan)?;
+    Ok(plan)
 }
 
 /// History facts of a `plan/v2` operation: (`action`, availability, guidance) for protocol `operation_summary`.
@@ -589,9 +739,17 @@ pub fn history_facts(stores: &Stores, plan_id: &str, operation_id: &str) -> Opti
                 ("startup", "not_applicable", "Its prior state was restored since, or nothing was changed.".into())
             }
         }
-        (PlanKind::Recovery, _) => ("restore", "not_applicable", "Prior startup states were put back where nothing had changed since.".into()),
-        // MNT-07: maintenance runs are recorded per task (`optimize history`) and never undone.
-        (PlanKind::Maintenance, _) => ("maintenance", "unavailable", "Maintenance tasks are not undone; `cleanmanager optimize history` lists each task's outcome and reason.".into()),
+        (PlanKind::Recovery, _) => ("restore", "not_applicable", "Prior states (startup items or settings) were put back where nothing had changed since.".into()),
+        // MNT-07: maintenance runs are recorded per task (`optimize history`) and never undone; only a recorded setting
+        // change (14.5) has a restore entry.
+        (PlanKind::Maintenance, _) => {
+            let open = stores.audit.backup_ids_for_operation(operation_id).ok()?.iter().any(|(_, id, s)| id.starts_with(SETTING_BACKUP_PREFIX) && s == "recorded");
+            if open {
+                ("maintenance", "in_app_restore", format!("Setting changes are restorable here: `cleanmanager optimize restore --operation {operation_id}` (skipped if the setting changed since); other maintenance tasks are not undone."))
+            } else {
+                ("maintenance", "unavailable", "Maintenance tasks are not undone; `cleanmanager optimize history` lists each task's outcome and reason.".into())
+            }
+        }
         _ => return None,
     })
 }

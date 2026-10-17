@@ -75,12 +75,41 @@ pub fn status_alerts(req: &str, p: &Parsed) -> ExitCode {
 }
 
 #[cfg(windows)]
+use cm_platform::windows::status::Sampler;
+#[cfg(target_os = "macos")]
+use cm_platform::macos::status::Sampler;
+
+/// Per-process CPU (share of the whole machine) for sustained-CPU alerts; `None` when the list cannot be read.
+#[cfg(windows)]
+fn process_cpu() -> Option<Vec<cm_core::alerts::ProcessCpu>> {
+    let procs = cm_platform::windows::processes::list_with(std::time::Duration::from_millis(500), false).ok()?;
+    Some(
+        procs
+            .into_iter()
+            .filter(|f| f.pid != 0)
+            .map(|f| cm_core::alerts::ProcessCpu { pid: f.pid, image_path: f.image_path.as_ref().map(|i| i.display()), name: f.name, cpu_percent: f.cpu_percent })
+            .collect(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn process_cpu() -> Option<Vec<cm_core::alerts::ProcessCpu>> {
+    let procs = cm_platform::macos::processes::list_with(std::time::Duration::from_millis(500), false).ok()?;
+    Some(
+        procs
+            .into_iter()
+            .filter(|p| !p.zombie)
+            .map(|p| p.facts)
+            .map(|f| cm_core::alerts::ProcessCpu { pid: f.pid, image_path: f.image_path.as_ref().map(|i| i.display()), name: f.name, cpu_percent: f.cpu_percent })
+            .collect(),
+    )
+}
+
 enum Msg {
     Sample(cm_core::status::StatusSnapshot),
     Alert(cm_core::alerts::Alert),
 }
 
-#[cfg(windows)]
 fn run(req: &str, p: &Parsed, stream: Option<(u64, Option<u64>)>) -> ExitCode {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -91,15 +120,15 @@ fn run(req: &str, p: &Parsed, stream: Option<(u64, Option<u64>)>) -> ExitCode {
 
     let snapshot = |s: &cm_core::status::StatusSnapshot| record("status_snapshot", req, crate::commands::fields(s.to_wire()));
     let Some((interval, count)) = stream else {
-        emit(&snapshot(&cm_platform::windows::status::Sampler::new().sample()), p.format);
+        emit(&snapshot(&Sampler::new().sample()), p.format);
         return ExitCode::SUCCESS;
     };
     let alerts = crate::commands::store_dir(p).map(|d| cm_app::processes::load_alerts(&d)).unwrap_or_default();
     let period = Duration::from_secs(interval);
     let (tx, rx) = mpsc::channel::<Msg>();
-    // Sampler thread: owns the PDH query; ends when the receiver is gone.
+    // Sampler thread: owns the platform sampler (PDH query / previous readings); ends when the receiver is gone.
     std::thread::spawn(move || {
-        let mut sampler = cm_platform::windows::status::Sampler::new();
+        let mut sampler = Sampler::new();
         let mut engine = cm_core::alerts::AlertEngine::new(alerts);
         let mut next = Instant::now();
         loop {
@@ -107,14 +136,9 @@ fn run(req: &str, p: &Parsed, stream: Option<(u64, Option<u64>)>) -> ExitCode {
                 return;
             }
             if engine.needs_sampling()
-                && let Ok(procs) = cm_platform::windows::processes::list_with(Duration::from_millis(500), false)
+                && let Some(mut sample) = process_cpu()
             {
                 let now = cm_core::plan::parse_utc(&cm_core::time::now_utc()).unwrap_or(0);
-                let mut sample: Vec<cm_core::alerts::ProcessCpu> = procs
-                    .into_iter()
-                    .filter(|f| f.pid != 0)
-                    .map(|f| cm_core::alerts::ProcessCpu { pid: f.pid, image_path: f.image_path.as_ref().map(|i| i.display()), name: f.name, cpu_percent: f.cpu_percent })
-                    .collect();
                 sample.sort_by(|a, b| b.cpu_percent.unwrap_or(0.0).total_cmp(&a.cpu_percent.unwrap_or(0.0)));
                 for a in engine.observe(now, &sample) {
                     if tx.send(Msg::Alert(a)).is_err() {
@@ -173,9 +197,4 @@ fn run(req: &str, p: &Parsed, stream: Option<(u64, Option<u64>)>) -> ExitCode {
             std::thread::sleep(next - now);
         }
     }
-}
-
-#[cfg(not(windows))]
-fn run(req: &str, p: &Parsed, _stream: Option<(u64, Option<u64>)>) -> ExitCode {
-    fail(req, ErrorCode::Unsupported, "status sampling is not implemented on this platform yet", p.format)
 }

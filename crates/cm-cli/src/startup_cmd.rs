@@ -17,19 +17,23 @@ fn env(req: &str, p: &Parsed) -> Result<cm_platform::windows::startup::StartupEn
 
 #[cfg(windows)]
 pub fn startup_list(req: &str, p: &Parsed) -> ExitCode {
-    use cm_core::error::ExitClass;
-    use cm_core::protocol::record;
-    use serde_json::json;
-
     let env = match env(req, p) {
         Ok(e) => e,
         Err(c) => return c,
     };
     let (items, issues) = cm_platform::windows::startup::inventory_with(&env);
+    emit_list(req, p, &items, &issues)
+}
+
+/// One `startup_list` record; a source that could not be read makes the list incomplete: partial, not success (CLI-05).
+fn emit_list(req: &str, p: &Parsed, items: &[cm_core::startup::StartupItem], issues: &[cm_core::apps::InventoryIssue]) -> ExitCode {
+    use cm_core::error::ExitClass;
+    use cm_core::protocol::record;
+    use serde_json::json;
+
     let items: Vec<_> = items.iter().map(|i| i.to_wire()).collect();
     let issue_records: Vec<_> = issues.iter().map(|i| json!({"code": i.code, "scope_display": i.source, "message": i.message})).collect();
     crate::emit(&record("startup_list", req, crate::commands::fields(json!({"items": items, "issues": issue_records}))), p.format);
-    // A source that could not be read makes the list incomplete: partial, not success (CLI-05).
     ExitCode::from(if issues.is_empty() { ExitClass::Success } else { ExitClass::Partial }.code() as u8)
 }
 
@@ -111,18 +115,48 @@ pub fn startup_restore(req: &str, p: &Parsed) -> ExitCode {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS: the read-only launchd / Service Management inventory (`cm_platform::macos::startup`).
+#[cfg(target_os = "macos")]
+fn mac_inventory(req: &str, p: &Parsed) -> Result<(Vec<cm_core::startup::StartupItem>, Vec<cm_core::apps::InventoryIssue>), ExitCode> {
+    let env = cm_platform::macos::startup::StartupEnv::from_process().map_err(|e| crate::fail(req, cm_core::error::ErrorCode::InvalidArgument, &e, p.format))?;
+    Ok(cm_platform::macos::startup::inventory_with(&env))
+}
+
+#[cfg(target_os = "macos")]
 pub fn startup_list(req: &str, p: &Parsed) -> ExitCode {
-    crate::fail(req, cm_core::error::ErrorCode::Unsupported, "startup inventory is not implemented on this platform yet", p.format)
+    match mac_inventory(req, p) {
+        Ok((items, issues)) => emit_list(req, p, &items, &issues),
+        Err(c) => c,
+    }
 }
 
-#[cfg(not(windows))]
-pub fn startup_plan(req: &str, p: &Parsed, _: &str, _: &str) -> ExitCode {
-    let _ = refusal_code;
-    crate::fail(req, cm_core::error::ErrorCode::Unsupported, "startup changes are not implemented on this platform yet", p.format)
+/// macOS: no item toggles in this build. The item is looked up so the refusal names the real reason (protected:
+/// `policy_denied`; otherwise `unsupported` with the row's reason); no plan is ever created.
+#[cfg(target_os = "macos")]
+pub fn startup_plan(req: &str, p: &Parsed, op: &str, item_id: &str) -> ExitCode {
+    use cm_core::error::ErrorCode;
+    use cm_core::plan::v2::StartupOperation;
+
+    let operation = match op {
+        "disable" => StartupOperation::Disable,
+        "enable" => StartupOperation::Enable,
+        _ => StartupOperation::RemoveWithBackup,
+    };
+    let (items, _) = match mac_inventory(req, p) {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let Some(item) = items.iter().find(|i| i.item_id == item_id) else {
+        return crate::fail(req, ErrorCode::InvalidArgument, &format!("no startup item {item_id}; run `cleanmanager startup list`"), p.format);
+    };
+    match cm_core::startup::change_decision(item, operation, false) {
+        Err(r) => crate::fail(req, refusal_code(r.code), &r.message, p.format),
+        Ok(()) => crate::fail(req, ErrorCode::Unsupported, cm_platform::macos::startup::TOGGLE_UNSUPPORTED, p.format),
+    }
 }
 
-/// Seam for `plan apply` (plan/v2 backends): login/background item and launchd changes on macOS. `None` = unsupported here.
+/// Seam for `plan apply` (plan/v2 backends): login/background item and launchd changes on macOS. `None`: this build only
+/// lists them (`startup list`), so no macOS startup plan is ever created and a stored one is refused as unsupported.
 #[cfg(target_os = "macos")]
 pub(crate) fn mac_startup_backend() -> Option<Box<dyn cm_core::startup::StartupActions>> {
     None

@@ -77,9 +77,9 @@
 | `status.snapshot` | `status --json`（可选 `network`：合计只计物理网卡，回环排除，隧道/虚拟网卡单独列出；无法分类时 `may_double_count: true`，见 [系统状态](system-status.md#网络合计去重sts-07)） | status_snapshot | 无 |
 | `status.watch` | `status --watch [--interval N] [--count M]`（`--format jsonl` 等价；默认间隔 5 s，不限次数；未及时完成的采样以原时间重复并标 `stale`） | JSONL 的 status_snapshot；开启提醒时另有 status_alert | 无 |
 | `status.alerts` | `status alerts [--state on\|off] [--cpu-threshold PCT] [--window-seconds N] [--cooldown-seconds N]`（已实现，默认关闭） | status_alert_settings | 只写本工具设置（`status-alerts.json`） |
-| `process.list` | `process list [--by cpu\|memory\|disk\|network\|name] [--search TEXT] [--limit N]`；`process show PID`（已实现 Windows） | process_list | 无 |
+| `process.list` | `process list [--by cpu\|memory\|disk\|network\|name] [--search TEXT] [--limit N]`；`process show PID`（已实现 Windows 与 macOS） | process_list | 无 |
 | `process.pin` | `process pin\|unpin NAME`（已实现） | process_pins | 只写本工具设置（`process-pins.json`） |
-| `process.end_plan` | `process end PID`（已实现 Windows；关键进程、安全软件与本工具自身为 policy_denied） | plan（process） | 只写计划 |
+| `process.end_plan` | `process end PID`（已实现 Windows 与 macOS；关键进程、安全软件与本工具自身为 policy_denied，macOS 上其他用户的进程也是） | plan（process） | 只写计划 |
 | `protect.list` | `protect list` | protection_list；名单不可用时为 error（protection_unavailable） | 无 |
 | `protect.add` | `protect add --path P [--match descendants\|exact\|ancestors]\|--glob G\|--rule ID\|--task ID [--note TEXT]` | protection_list | 只写保护名单（指向硬拒绝位置的条目被拒绝） |
 | `protect.remove` | `protect remove PROTECTION_ID` | protection_list；仅交互终端并输入条目 ID 确认 | 只写保护名单（硬拒绝与默认类目不可移除） |
@@ -129,6 +129,7 @@
 - `plan apply` 先核对用户保护（PRT-06，`protect add --task ID`，记为 skipped `protected`），再在任何任务运行前把需管理员的任务集中起来**只请求一次**提权：已是管理员则进程内执行；否则通过 UAC 启动一个短生命周期工作进程，只接受本计划摘要内的这些任务 ID（见 [提权边界](privilege-boundary.md)）。拒绝 UAC → 这些任务 skipped（`elevation_declined`），其余任务照常执行。
 - 每项任务先做只读适用性探测，再执行固定动作；结果为 applied、unchanged、skipped、unavailable、attention、failed 之一并附 `code` 与原因。`all_clear` 仅在没有 failed/attention 时为真；退出码：全部 applied/unchanged 为 0，否则 5（全部 failed 为 8）。
 - 每次运行写入 `maintenance_report`（任务版本、入口、执行者、提权情况、逐项结果与时间），`optimize history` 与 `operations list`（`action: maintenance`，恢复 `unavailable`）可查；维护动作没有通用撤销。
+- macOS（14.3/14.5）：没有提权路径，`maintenance_catalog.elevation` 为 `unavailable`，需管理员的任务恒为 skipped（`elevation_unavailable`）。设置任务在计划中是 `settings_change` 动作（`from_value` 为审阅时的值）；成功写入后操作的恢复为 `in_app_restore`，`optimize restore --operation OP_ID` 生成 `recovery` 计划把原值改回。卷任务的 `maintenance_task` 动作带 `volume`（计划时 `--volume` 点名的挂载点），受摘要覆盖。`maintenance_task_info.reversible` 只有设置任务为 true。
 
 ### plan/v2 计划种类与动作
 

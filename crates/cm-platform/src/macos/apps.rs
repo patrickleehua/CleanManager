@@ -258,7 +258,7 @@ fn on_system_volume(path: &Path) -> bool {
 /// Publisher text from a signature: `Apple` for Apple's own code, else the leaf certificate's
 /// name when it carries the Team ID (`Developer ID Application: Name (TEAMID)` gives
 /// `Name (TEAMID)`), else the Team ID alone.
-fn publisher_of(sig: &Signature) -> Option<String> {
+pub(crate) fn publisher_of(sig: &Signature) -> Option<String> {
     if sig.apple {
         return Some("Apple".into());
     }

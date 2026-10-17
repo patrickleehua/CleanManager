@@ -75,15 +75,19 @@ pub enum Protection {
     CleanManager,
     /// Antivirus / endpoint protection.
     SecuritySoftware,
+    /// Runs as another user (macOS): never ended from this user's session.
+    OtherUser,
 }
 
 impl Protection {
     pub fn reason(self) -> &'static str {
         match self {
+            Protection::CriticalSystem if cfg!(target_os = "macos") => "Critical macOS process (launchd, kernel_task, WindowServer, loginwindow): ending it logs you out or stops the system",
             Protection::CriticalSystem => "Critical Windows process: ending it stops or restarts the system",
             Protection::OsCritical => "Windows marks this process critical: ending it stops the system",
             Protection::CleanManager => "This is CleanManager itself",
             Protection::SecuritySoftware => "Security software is never ended from CleanManager; use the product's own console",
+            Protection::OtherUser => "This process belongs to another user or the system; CleanManager only ends your own processes",
         }
     }
 }

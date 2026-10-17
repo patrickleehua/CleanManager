@@ -64,6 +64,22 @@ const OWNERS: &[(&str, OwnerMatch)] = &[
     ("anthropic.claude", app(&["Claude.app"])),
     ("openai.codex", app(&["Codex.app"])),
     ("apple.xcode", app(&["Xcode.app"])),
+    // Catalog wave 2.
+    ("slack", app(&["Slack.app"])),
+    ("discord", app(&["Discord.app"])),
+    ("microsoft.teams", app(&["Microsoft Teams.app"])),
+    ("bytedance.feishu", app(&["Feishu.app", "Lark.app"])),
+    ("tencent.wechat", app(&["WeChat.app"])),
+    ("figma", app(&["Figma.app"])),
+    ("spotify", app(&["Spotify.app"])),
+    // The Steam client runs `steam_osx` from `Steam.AppBundle` inside its data folder, not only from `/Applications/Steam.app`.
+    ("valve.steam", OwnerMatch { bundles: &["Steam.app"], executables: &["steam_osx"] }),
+    ("epicgames.launcher", app(&["Epic Games Launcher.app"])),
+    ("microsoft.office", app(&["Microsoft Word.app", "Microsoft Excel.app", "Microsoft PowerPoint.app"])),
+    ("docker.desktop", app(&["Docker.app"])),
+    // Simulator.app and the CoreSimulator service that keeps the caches open.
+    ("apple.coresimulator", OwnerMatch { bundles: &["Simulator.app"], executables: &["com.apple.CoreSimulator.CoreSimulatorService"] }),
+    ("carthage", tool(&["carthage"])),
     ("cargo", tool(&["cargo"])),
     ("go", tool(&["go"])),
     ("pnpm", tool(&["pnpm"])),

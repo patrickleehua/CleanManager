@@ -5,7 +5,11 @@
 //!   its original check time) or `not_checked`, and the channels are never called (UPD-04).
 //! - [`plan_updates`] puts the selected package-manager updates into one `update` plan (one `tool_adapter` action per
 //!   app, reviewed together, executed item by item) and routes the rest: Store apps to the Store, self-updating apps
-//!   to the app, unverifiable ones to the official page.
+//!   to the app, unverifiable ones to the official page. On macOS Homebrew updates are the plan's actions (Homebrew
+//!   verifies its downloads); Mac App Store apps go to the App Store and Sparkle/Electron apps to the app itself.
+//! - macOS ([`MacChannels`]): `brew outdated` once per check (only when a Homebrew package is installed), each
+//!   https `SUFeedURL` appcast fetched once (GET of exactly that URL: no app list, no system profile), file probes
+//!   for everything else (`cm_core::updates::mac`).
 //! - [`run_update`] is the executor arm for `update` plans: [`cm_core::updates::execute`] mapped to an action result.
 
 use std::path::Path;
@@ -14,8 +18,8 @@ use cm_core::apps::AppInstance;
 use cm_core::path::RawPath;
 use cm_core::plan::v2::{ActionMeta, BuildError, ExecutableRef, HeaderInput, NO_RULES_DIGEST, PlanAction, PlanKind, PlanV2, ToolAdapterAction, build};
 use cm_core::updates::{
-    ADAPTER_VERSION, Channel, DetectInput, Route, STORE_UPDATES_URI, ScoopApp, SelfUpdaterProbe, UpdateBackend, UpdateCheck, UpdateOutcome, UpdateState, UpdateTarget,
-    detect, parse_winget_list, upgrade_argv, when_disabled,
+    ADAPTER_VERSION, Channel, DetectInput, Route, ScoopApp, SelfUpdaterProbe, UpdateBackend, UpdateCheck, UpdateOutcome, UpdateState, UpdateTarget, detect,
+    parse_winget_list, store_updates_uri, upgrade_argv, verified_by_channel, when_disabled,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +78,11 @@ pub trait UpdateChannels {
     /// Scoop apps from the local Scoop directory (no network).
     fn scoop_apps(&self) -> Vec<ScoopApp>;
     fn self_updater(&self, app: &AppInstance) -> Option<SelfUpdaterProbe>;
+    /// A platform whose channels are decided per app outside winget/Scoop (macOS: Homebrew, Sparkle, App Store,
+    /// Electron) returns the whole detection pass here. `None` (the default) runs the winget/Scoop pass.
+    fn platform_detect(&self, _apps: &[AppInstance], _checked_at: &str) -> Option<Vec<UpdateCheck>> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +99,7 @@ impl CheckReport {
         let mut items: Vec<serde_json::Value> = self.items.iter().map(UpdateCheck::to_wire).collect();
         for (w, c) in items.iter_mut().zip(&self.items) {
             if c.route == Route::OpenStore {
-                w["official_url"] = STORE_UPDATES_URI.into();
+                w["official_url"] = store_updates_uri(c.channel).into();
             }
         }
         let count = |s: UpdateState| self.items.iter().filter(|c| c.state == s).count();
@@ -117,10 +126,15 @@ pub fn check(store: &Path, apps: &[AppInstance], ch: &dyn UpdateChannels, now_ut
     if !s.settings.checks_enabled {
         return Ok(cached(store, apps));
     }
-    let winget = Some(ch.winget_list().and_then(|t| parse_winget_list(&t)));
-    let scoop = ch.scoop_apps();
-    let probe = |a: &AppInstance| ch.self_updater(a);
-    let items = detect(&DetectInput { apps, winget, scoop: &scoop, self_updater: &probe, checked_at: now_utc });
+    let items = match ch.platform_detect(apps, now_utc) {
+        Some(items) => items,
+        None => {
+            let winget = Some(ch.winget_list().and_then(|t| parse_winget_list(&t)));
+            let scoop = ch.scoop_apps();
+            let probe = |a: &AppInstance| ch.self_updater(a);
+            detect(&DetectInput { apps, winget, scoop: &scoop, self_updater: &probe, checked_at: now_utc })
+        }
+    };
     s.last_checked_at = Some(now_utc.into());
     s.results = items.clone();
     save(store, &s)?;
@@ -150,6 +164,8 @@ pub struct PlanInputs<'a> {
     pub ids: &'a [String],
     pub winget: Option<UpdateTool>,
     pub scoop: Option<UpdateTool>,
+    /// macOS: Homebrew's `brew` (passed the user-owned trust policy when the plan was made).
+    pub homebrew: Option<UpdateTool>,
     /// Verified signer of the installed app's executables (`None` = unverifiable).
     pub installed_signer: &'a dyn Fn(&AppInstance) -> Option<String>,
 }
@@ -173,7 +189,7 @@ pub fn plan_updates(i: &PlanInputs<'_>, plan_id: &str, now_unix: i64, policy_dig
         let route = |route: Route, reason: String, url: Option<String>| Routed { app_instance_id: id.clone(), name: app.name.clone(), route, reason, url };
         if check.state != UpdateState::UpdateAvailable {
             let why = check.reason.clone().unwrap_or_else(|| format!("no update is available ({:?})", check.state).to_lowercase());
-            let url = (check.route == Route::OpenStore).then(|| STORE_UPDATES_URI.to_owned()).or(check.official_url.clone());
+            let url = (check.route == Route::OpenStore).then(|| store_updates_uri(check.channel).to_owned()).or(check.official_url.clone());
             routed.push(route(if check.route == Route::PackageManager { Route::None } else { check.route }, why, url));
             continue;
         }
@@ -181,7 +197,21 @@ pub fn plan_updates(i: &PlanInputs<'_>, plan_id: &str, now_unix: i64, policy_dig
             Some(Channel::Winget) => i.winget.as_ref(),
             Some(Channel::Scoop) => i.scoop.as_ref(),
             Some(Channel::MicrosoftStore) => {
-                routed.push(route(Route::OpenStore, "Microsoft Store updates its own apps".into(), Some(STORE_UPDATES_URI.into())));
+                routed.push(route(Route::OpenStore, "Microsoft Store updates its own apps".into(), Some(store_updates_uri(check.channel).into())));
+                continue;
+            }
+            Some(Channel::Homebrew) if check.route == Route::PackageManager => i.homebrew.as_ref(),
+            Some(Channel::Homebrew) => {
+                routed.push(route(Route::None, check.reason.clone().unwrap_or_else(|| "Homebrew will not upgrade this package".into()), None));
+                continue;
+            }
+            Some(Channel::MacAppStore) => {
+                routed.push(route(Route::OpenStore, "The Mac App Store updates its own apps".into(), Some(store_updates_uri(check.channel).into())));
+                continue;
+            }
+            Some(Channel::Sparkle | Channel::Electron) => {
+                let why = check.reason.clone().unwrap_or_else(|| "the app installs its own updates; open it and use its update command".into());
+                routed.push(route(Route::OpenApp, why, check.official_url.clone()));
                 continue;
             }
             _ => None,
@@ -190,26 +220,32 @@ pub fn plan_updates(i: &PlanInputs<'_>, plan_id: &str, now_unix: i64, policy_dig
             routed.push(route(Route::OpenOfficialPage, "the package manager for this app was not found on this computer".into(), check.official_url.clone()));
             continue;
         };
-        let Some(signer) = (i.installed_signer)(app) else {
+        let signer = (i.installed_signer)(app);
+        let channel = check.channel.expect("matched above");
+        // Homebrew verifies its own downloads (D8); the claimed signer is recorded and compared after the upgrade.
+        if signer.is_none() && !verified_by_channel(channel) {
             routed.push(route(
                 Route::OpenOfficialPage,
                 "the installed app has no verifiable signer, so a downloaded package cannot be checked against it".into(),
                 check.official_url.clone(),
             ));
             continue;
-        };
+        }
         let target = UpdateTarget {
             app_instance_id: id.clone(),
             name: app.name.clone(),
-            channel: check.channel.expect("matched above"),
+            channel,
             package_id,
             from_version: check.current_version.clone(),
             to_version,
-            installed_signer: Some(signer),
+            installed_signer: signer,
             install_location: app.install_location.as_ref().map(RawPath::display),
             official_url: check.official_url.clone(),
         };
-        let (adapter_id, argv) = upgrade_argv(&target).expect("package-manager channel");
+        let Some((adapter_id, argv)) = upgrade_argv(&target) else {
+            routed.push(route(Route::OpenOfficialPage, "the package identifier cannot be passed to the package manager safely".into(), check.official_url.clone()));
+            continue;
+        };
         actions.push(PlanAction::ToolAdapter(ToolAdapterAction {
             action_id: format!("a{:02}", actions.len() + 1),
             adapter_id: adapter_id.into(),
@@ -256,6 +292,15 @@ pub fn run_update(b: Option<&dyn UpdateBackend>, a: &ToolAdapterAction, m: &Acti
 /// Display line of an update action for reviews.
 pub fn describe(a: &ToolAdapterAction, m: &ActionMeta) -> String {
     match m.note.as_deref().and_then(|n| serde_json::from_str::<UpdateTarget>(n).ok()) {
+        Some(t) if verified_by_channel(t.channel) => format!(
+            "{}: {} -> {} via {:?} ({}), Homebrew verifies the download's checksum{}",
+            t.name,
+            t.from_version.as_deref().unwrap_or("?"),
+            t.to_version,
+            t.channel,
+            a.argv.join(" "),
+            t.installed_signer.as_deref().map(|s| format!("; the app must still be signed by {s} afterwards")).unwrap_or_default()
+        ),
         Some(t) => format!(
             "{}: {} -> {} via {:?} ({}), package signer must be {}",
             t.name,
@@ -318,6 +363,98 @@ pub fn windows_tools(apps: &[AppInstance]) -> (Option<UpdateTool>, Option<Update
         Some(UpdateTool { sha256: file_sha256(&s)?, exe: RawPath::windows(s.encode_utf16().collect()).ok()? })
     };
     (cm_platform::windows::updates::winget_exe(apps).and_then(tool), cm_platform::windows::updates::scoop_exe().and_then(tool))
+}
+
+/// macOS channels: `brew outdated`, Sparkle appcasts (https, user-triggered only) and file probes.
+#[cfg(target_os = "macos")]
+pub struct MacChannels {
+    pub env: cm_platform::macos::apps::AppsEnv,
+    pub brew: Option<std::path::PathBuf>,
+}
+
+#[cfg(target_os = "macos")]
+impl MacChannels {
+    pub fn new(env: cm_platform::macos::apps::AppsEnv) -> MacChannels {
+        let brew = cm_platform::macos::updates::brew_exe(&env);
+        MacChannels { env, brew }
+    }
+
+    /// The appcast bytes: an https GET of exactly the feed URL; while the inventory is redirected (tests) only the
+    /// fixture directory is read and the network is never used.
+    fn appcast(&self, url: &str) -> Result<Vec<u8>, String> {
+        use cm_core::updates::mac::APPCAST_MAX;
+        if self.env.is_redirected() {
+            let dir = std::env::var_os(cm_platform::macos::updates::TEST_APPCAST_DIR_VAR)
+                .ok_or("network access is off while CM_UNINSTALL_TEST_ROOT redirects the inventory")?;
+            let name: String = url.trim_start_matches("https://").chars().map(|c| if c.is_ascii_alphanumeric() || ".-".contains(c) { c } else { '_' }).collect();
+            return std::fs::read(std::path::Path::new(&dir).join(name)).map_err(|e| format!("no fixture appcast for {url}: {e}"));
+        }
+        use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+        let tls = TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .timeout_connect(Some(std::time::Duration::from_secs(10)))
+            .https_only(true)
+            .max_redirects(5)
+            .tls_config(tls)
+            .user_agent(format!("CleanManager/{} (update check)", cm_core::ENGINE_VERSION))
+            .build()
+            .into();
+        let shown = url.split(['?', '#']).next().unwrap_or_default();
+        let resp = agent.get(url).call().map_err(|e| {
+            cm_core::debug_trace!("http", "GET {shown} failed: {e}");
+            format!("{e}")
+        })?;
+        cm_core::debug_trace!("http", "GET {shown} status={}", resp.status().as_u16());
+        resp.into_body().with_config().limit(APPCAST_MAX).read_to_vec().map_err(|e| format!("{e}"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl UpdateChannels for MacChannels {
+    fn winget_list(&self) -> Result<String, String> {
+        Err("winget is a Windows package manager".into())
+    }
+
+    fn scoop_apps(&self) -> Vec<ScoopApp> {
+        Vec::new()
+    }
+
+    fn self_updater(&self, _app: &AppInstance) -> Option<SelfUpdaterProbe> {
+        None
+    }
+
+    fn platform_detect(&self, apps: &[AppInstance], checked_at: &str) -> Option<Vec<UpdateCheck>> {
+        use cm_core::updates::mac::{MacDetectInput, mac_detect, parse_brew_outdated};
+        use cm_platform::macos::updates as mu;
+        // Homebrew is asked once, and only when a Homebrew package is installed.
+        let homebrew = apps.iter().any(|a| matches!(a.source, cm_core::apps::AppSource::Homebrew { .. })).then(|| match &self.brew {
+            Some(exe) => mu::brew_outdated(exe, &self.env).and_then(|t| parse_brew_outdated(&t)),
+            None => Err(format!("Homebrew's brew was not found ({})", mu::BREW_PATHS.join(", "))),
+        });
+        let probe = |a: &AppInstance| mu::probe(a, &self.env);
+        let fetch = |url: &str| self.appcast(url).and_then(|b| mu::parse_appcast(&b));
+        let os = mu::os_version();
+        Some(mac_detect(&MacDetectInput { apps, homebrew, probe: &probe, fetch_appcast: &fetch, os_version: os.as_deref(), checked_at }))
+    }
+}
+
+/// Installed apps for update checks on macOS: the bundle inventory plus formulae installed on request. Local reads only.
+#[cfg(target_os = "macos")]
+pub fn mac_apps(env: &cm_platform::macos::apps::AppsEnv) -> Vec<AppInstance> {
+    let mut apps = cm_platform::macos::apps::inventory(env).0;
+    apps.extend(cm_platform::macos::updates::formula_instances(env));
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.instance_id.cmp(&b.instance_id)));
+    apps
+}
+
+/// Homebrew's `brew` to bind into update actions (path + SHA-256 now), when it passes the user-owned trust policy.
+#[cfg(target_os = "macos")]
+pub fn mac_brew_tool(env: &cm_platform::macos::apps::AppsEnv) -> Option<UpdateTool> {
+    use std::os::unix::ffi::OsStrExt;
+    let exe = cm_platform::macos::updates::brew_trusted(&cm_platform::macos::updates::brew_exe(env)?).ok()?;
+    let sha256 = cm_core::adapter::sha256_hex(std::fs::File::open(&exe).ok()?).ok()?;
+    Some(UpdateTool { exe: RawPath::unix(exe.as_os_str().as_bytes().to_vec()).ok()?, sha256 })
 }
 
 #[cfg(test)]

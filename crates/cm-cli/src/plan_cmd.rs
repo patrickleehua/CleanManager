@@ -435,7 +435,15 @@ fn v2_summary(plan: &PlanV2) -> bool {
                 match a {
                     PlanAction::StartupToggle(t) => println!("  {}  {:?} {name}  {}  scope={:?}", t.action_id, t.operation, t.definition.as_deref().unwrap_or(""), t.scope),
                     PlanAction::RegistryRestore(r) => println!("  {}  recreate {}\\{} : {} unless it exists again", r.action_id, r.hive.as_str(), r.key_path, r.value_name.as_deref().unwrap_or("(key)")),
-                    PlanAction::MaintenanceTask(t) => println!("  {}  {}@{}  {name}{}", t.action_id, t.task_id, t.task_version, if t.requires_admin { "  (administrator)" } else { "" }),
+                    PlanAction::MaintenanceTask(t) => println!(
+                        "  {}  {}@{}  {name}{}{}",
+                        t.action_id,
+                        t.task_id,
+                        t.task_version,
+                        t.volume.as_deref().map(|v| format!("  volume {v}")).unwrap_or_default(),
+                        if t.requires_admin { "  (administrator)" } else { "" }
+                    ),
+                    PlanAction::SettingsChange(c) => println!("  {}  set {}: {} -> {}  {name}", c.action_id, c.setting_id, c.from_value, c.to_value),
                     PlanAction::ProcessEnd(e) => println!("  {}  end {name}  {}", e.action_id, e.image_path.as_ref().map(|i| i.display()).unwrap_or_default()),
                     PlanAction::ToolAdapter(t) if b.plan_kind == PlanKind::Update => println!("  {}  {}", t.action_id, cm_app::updates::describe(t, m)),
                     other => println!("  {}  {}", other.action_id(), other.action_type().as_str()),

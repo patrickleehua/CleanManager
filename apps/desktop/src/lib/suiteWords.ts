@@ -217,6 +217,7 @@ export const PROTECTION_WORD: Record<string, string> = {
   os_critical: 'Windows 将它标记为关键进程',
   clean_manager: '这是 CleanManager 自己',
   security_software: '安全软件从不在 CleanManager 中结束；请使用产品自己的控制台',
+  other_user: '属于其他用户或系统的进程；CleanManager 只结束你自己的进程',
 };
 
 export const SORT_WORD: Record<string, string> = { cpu: '处理器', memory: '内存', disk: '磁盘', network: '网络', name: '名称' };

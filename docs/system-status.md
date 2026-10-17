@@ -1,6 +1,6 @@
-# 系统状态、进程与空间洞察卡片（Windows）
+# 系统状态、进程与空间洞察卡片（Windows / macOS）
 
-状态：变更 `add-mole-parity-suite` 任务 12.3（进程列表）、12.4（可选持续高占用提醒、状态流过期标记）、12.5（显示偏好与网络合计去重）与 7.3（概览洞察卡片、旧下载审阅）的 Windows 部分已实现；macOS 返回 `unsupported`。核心 `cm_core::{process, alerts, status, insights}`，服务 `cm_app::{processes, insights}`，平台 `windows/processes.rs`、`windows/status.rs`、`windows/insights.rs`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 12.3（进程列表）、12.4（可选持续高占用提醒、状态流过期标记）、12.5（显示偏好与网络合计去重）与 7.3（概览洞察卡片、旧下载审阅）的 Windows 部分已实现；macOS 的状态采样、僵尸进程计数、进程列表与结束进程见下文“macOS”一节（只在托管 CI 运行器上测试过，能力为 `unverified`）。核心 `cm_core::{process, alerts, status, insights}`，服务 `cm_app::{processes, insights}`，平台 `windows/processes.rs`、`windows/status.rs`、`windows/insights.rs`、`macos/status.rs`、`macos/processes.rs`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 默认关闭（设计 D15）：系统状态与进程（G3）和空间洞察（G1）尚未通过各自的门禁，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -62,3 +62,16 @@ cleanmanager plan apply pp_demo --json                    # 重新核对身份�
   - `cachedir_tag`：目录内直接有一个普通本地文件 `CACHEDIR.TAG`，开头恰为 `Signature: 8a477f597d28d172789f06886806bc55`（链接、云占位、签名不符都不算）。`flow: manual_trash`。
 - 保护优先：硬拒绝（含祖先与目录内的硬拒绝位置）、默认保护类目（含祖先与带 `.git` 的工作树）、用户保护路径会使线索消失；用户保护了对应规则时只能退到另一种成立的依据。保护名单不可读、父目录无法列出、签名读不到时一律不标记。
 - 线索只读：不预选、不生成候选或计划、不改变档位或保护判定。桌面行内显示“可手动清理”小标记（悬停提示与读屏文字给出依据），详情面板列出依据并提供入口：`purge` 打开“清理 › 构建产物”，`manual_trash` 只针对这一项打开移到回收站的审阅（与多选的手选回收站相同流程，先检查保护与占用、批准后才移动），当前选择不受影响。
+
+## macOS
+
+命令与记录形状与 Windows 相同（`status`、`status --watch`、`process list|show|pin|unpin|end`、`plan review|apply`），同样受实验功能开关约束。
+
+- 指标来源（全部只读、公开接口）：CPU 为 `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` 两次读数的节拍差（总体与每核），另有 `getloadavg` 负载；内存为 `host_statistics64(HOST_VM_INFO64)` 页计数与 `hw.memsize`，“已用”= 应用内存（internal − purgeable）+ 联动（wired）+ 压缩，与活动监视器的“已使用内存”一致，另报 `kern.memorystatus_vm_pressure_level`（1 正常、2 警告、4 严重）与 `vm.swapusage`；磁盘容量与剩余为数据卷 `statfs`（不含可清除空间），可清除空间为 `CFURL` 的“重要用途可用容量”减去 `statfs` 可用值；磁盘读写速率与繁忙度来自各 `IOBlockStorageDriver` 的 `Statistics`（繁忙度为请求时间占区间的比例，按盘求和并封顶 100，并发请求会重叠）；GPU 为 `IOAccelerator` 的 `PerformanceStatistics` 中最高的利用率，读不到时为 `unavailable`；电池为 `IOPSCopyPowerSourcesInfo`（电量、供电来源）与 `AppleSmartBattery`（循环次数、设计与满充容量 → 健康度；Apple 芯片的 `MaxCapacity` 是百分比，改用 `AppleRawMaxCapacity`）。
+- 温度与风扇只通过系统管理控制器（SMC）与 HID 传感器服务这类私有接口提供，本产品不使用：`thermal.max_zone_celsius`、`gpu.temperature_celsius`、`fan.rpm` 恒为 `unavailable` 并附原因，健康分的温度维度因此不参与计算（权重按其余维度重新归一）。系统盘 SMART/NVMe 健康需要存储驱动的用户客户端，`disk.system.failure_predicted` 为 `unavailable`。
+- 僵尸进程（N13）：`process.zombie_count` 为 libproc 快照中状态为 `SZOMB` 的进程数（已退出、父进程尚未回收，不占 CPU 与内存）；只在 macOS 报告。
+- 网络（STS-07）：`sysctl(NET_RT_IFLIST2)` 的 `if_msghdr2` 记录给出每个接口的类型、标志与 64 位字节计数；计数回退时，回绕后的差值小于取值范围一半才视为回绕，否则视为重置，该区间无速率。分类：`lo*` 或 `IFF_LOOPBACK` → 回环（排除）；`utun`/`ipsec`/`ppp`/`gif`/`stf` 或点对点接口 → 隧道；`bridge`/`vmnet`/`vmenet`/`vnic`/`vboxnet`/`feth`/`tap`/`anpi`/`awdl`/`llw`/`ap`/`XHC` → 虚拟；类型为以太网或 Wi-Fi 的 `en*` → 物理；其余为未知（计入合计并标 `may_double_count`）。去重规则与 Windows 共用 `cm_core::status::network`。
+- 进程列表：libproc 快照（PID、父进程、所有者、启动时间、状态、可执行路径）加每进程 `proc_pid_rusage(RUSAGE_INFO_V2)`（CPU 时间、物理占用即活动监视器的“内存”、磁盘读写字节），速率取 1 秒窗口。没有管理员权限时内核不提供其他用户进程的用量，这些值为 `null` 并附说明，从不写 0；每进程网络需要私有的 NetworkStatistics，恒为 `null`。`started_at` 为启动时间的 Unix 微秒数。
+- 发布者：静态代码签名声明的 Team ID（满足 `anchor apple` 的系统代码报告为 Apple）；`signature.reason` 注明是“声明”的 Team ID，页面哈希未校验。用途说明来自 macOS 本地知识表，名称、位置（系统卷或应用包内）与签名者三者一致才显示。
+- 结束进程：`process end PID` 生成 `process` 计划（绑定 PID、启动时间、可执行路径与 SHA-256），审阅后 `plan apply` 重新核对启动时间、路径、摘要与保护判定，紧接着再核对一次启动时间后发送 `SIGTERM`，最多等待 5 秒确认退出（成为僵尸也算已退出）。macOS 没有进程句柄，最后一次核对与发信号之间只隔几个系统调用。不提供结束入口、执行时再次拒绝：PID 0/1、`launchd`、`kernel_task`、`WindowServer`、`loginwindow`、CleanManager 自身、安全软件，以及任何其他用户的进程（`other_user`）。
+- 供维护诊断等调用方使用的采样入口：`cm_platform::macos::status::sample(window)`（单次快照，速率覆盖 `window`，至少 1 秒）、`snapshot()`、可复用的 `Sampler::new()` / `sample()`，以及 `zombies()`。

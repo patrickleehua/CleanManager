@@ -1,0 +1,53 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "microsoft.teams.cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "app_caches",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "app",
+    "id": "microsoft.teams"
+  },
+  "root_resolver": "app_container",
+  "match": {
+    "object_type": "any",
+    "relative_components": [],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "New Microsoft Teams cache (~/Library/Containers/com.microsoft.teams2/Data/Library/Caches/*). The app container is protected by macOS privacy controls.",
+    "regeneration": "Teams downloads and rebuilds its caches after the next sign-in; the first start is slower.",
+    "offline_effect": "Recent conversations and images are fetched again from the service. Chat history kept by the service is not affected."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

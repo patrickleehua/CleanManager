@@ -541,7 +541,7 @@ mod win {
         }
         let apps = cm_app::updates::windows_apps();
         let (winget, scoop) = cm_app::updates::windows_tools(&apps);
-        let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids, winget, scoop, installed_signer: &cm_platform::windows::updates::installed_signer };
+        let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids, winget, scoop, homebrew: None, installed_signer: &cm_platform::windows::updates::installed_signer };
         let plan_id = new_id("ud");
         let pdigest = crate::cleanup::policy_digest(&st);
         let (plan, routed) = match cm_app::updates::plan_updates(&inputs, &plan_id, now_unix(), &pdigest) {

@@ -144,9 +144,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     },
     // System maintenance (MNT-01..07): runs are reviewed `maintenance` plans; diagnosis and history are read-only.
     c(&["optimize", "list"], None, &["store", "search"], &[], "Maintenance tasks, applicability and what is not offered", "维护任务、适用性与不提供的操作"),
-    w(&["optimize", "plan", "create"], None, &["store", "tasks"], &[], "Plan maintenance tasks (review required; one UAC prompt for admin tasks)", "生成维护任务计划（需审阅；管理员任务一次 UAC）"),
+    w(&["optimize", "plan", "create"], None, &["store", "tasks", "volume"], &[], "Plan maintenance tasks (review required; one UAC prompt for admin tasks; --volume for a volume task)", "生成维护任务计划（需审阅；管理员任务一次 UAC；卷任务用 --volume）"),
     c(&["optimize", "diagnose"], None, &["window"], &[], "Read-only performance diagnosis (never ends processes)", "只读性能诊断（不结束进程）"),
     c(&["optimize", "history"], None, &["store", "limit"], &[], "Recorded maintenance runs (no undo)", "维护运行记录（无撤销）"),
+    w(&["optimize", "restore"], None, &["store", "operation"], &[], "Plan restoring the prior values a maintenance run's setting changes backed up", "生成恢复维护运行设置变更前原值的计划"),
     c(&["completion", "print"], Some("SHELL"), &[], &[], "Print a completion script to stdout", "向标准输出打印补全脚本"),
     w(&["completion", "install"], Some("SHELL"), &["profile"], &[], "Preview, then append completion to a shell profile after terminal confirmation", "预览补全安装，终端确认后才写入配置文件"),
     c(&["doctor"], None, &["store", "export"], &["no-redact"], "Read-only diagnostic report (redacted; export after preview)", "只读诊断报告（默认脱敏，预览后导出）"),

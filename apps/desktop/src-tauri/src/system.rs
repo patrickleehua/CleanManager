@@ -238,7 +238,7 @@ pub fn apply_maintenance(stores: &cm_store::Stores, plan_id: &str, cancel: &dyn 
     let exe = std::env::current_exe().map_err(|e| cm_app::execute::ApplyError::Store(cm_store::StoreError::InvalidArgument(format!("own executable unknown: {e}"))))?;
     let elevation = elevation::WorkerElevation { exe };
     let protect = task_protection(Some(&stores.dir));
-    let b = cm_app::maintenance::MaintenanceBackends { platform: cm_core::maintenance::TaskPlatform::Windows, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect };
+    let b = cm_app::maintenance::MaintenanceBackends { platform: cm_core::maintenance::TaskPlatform::Windows, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect, settings: None };
     let host = cm_platform::host::OsHostProbe.current("desktop");
     run_maintenance(stores, &b, plan_id, cancel, &host)
 }
@@ -352,7 +352,7 @@ mod win {
         let is_admin = tasks.is_admin;
         let protect = task_protection(s.store_dir.as_deref());
         let elevation = cm_app::maintenance::NoElevation("catalog view only");
-        let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect };
+        let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect, settings: None };
         let items = cm_app::maintenance::catalog_view(&b);
         let defaults: Vec<&str> = cm_app::maintenance::default_selection(&b).iter().map(|t| t.id).collect();
         json!({
@@ -720,7 +720,7 @@ mod tests {
         stores.audit.save_plan_v2(&plan).unwrap();
         let elevation = cm_app::maintenance::NoElevation("no worker in this test");
         let host = cm_core::host::HostProbe::current(&cm_platform::host::OsHostProbe, "desktop");
-        let b = cm_app::maintenance::MaintenanceBackends { platform: TaskPlatform::Windows, tasks: &Scripted, elevation: &elevation, is_admin: false, protect_task: &|_| Ok(()) };
+        let b = cm_app::maintenance::MaintenanceBackends { platform: TaskPlatform::Windows, tasks: &Scripted, elevation: &elevation, is_admin: false, protect_task: &|_| Ok(()), settings: None };
         // Not reviewed yet: refused before anything runs.
         assert!(matches!(run_maintenance(&stores, &b, "mt_test", &|| false, &host), Err(cm_app::execute::ApplyError::NeedsApproval(_))));
         stores

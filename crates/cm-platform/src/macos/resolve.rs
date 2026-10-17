@@ -1,6 +1,7 @@
-//! Rule-root resolution on macOS (`~/Library/Caches`, `~/Library/Logs`, `~/Library/Application Support`, browser
-//! profiles, package-manager caches, `$TMPDIR`, Downloads, a selected external volume) by file identity, with the test
-//! redirection of docs/platforms/macos.md §11.
+//! Rule-root resolution on macOS (`~/Library/Caches`, `~/Library/Logs`, `~/Library/Application Support`, app
+//! containers, browser profiles, package-manager caches, the administrator-only `/Library/Logs` and `/private/var/log`,
+//! `$TMPDIR`, Downloads, a selected external volume) by file identity, with the test redirection of
+//! docs/platforms/macos.md §11.
 //!
 //! As on Windows (ANA-01) each resolver kind maps to a fixed, documented location derived from the environment and a
 //! built-in owner table; a rule only adds literal components below it and can never supply a path. Resolved roots carry
@@ -8,13 +9,17 @@
 //!
 //! - A root is identified by `fstatat` in its parent (the root itself is not followed and, unless it is a mount point,
 //!   not opened). A root that is a symlink or not a directory is not resolved.
-//! - Locations macOS privacy controls (TCC) protect, such as Safari's cache, are never opened or listed to find out
+//! - Locations macOS privacy controls (TCC) protect, such as Safari's cache and other apps' containers
+//!   (`~/Library/Containers/<bundle id>`), are never opened or listed to find out
 //!   whether access was granted (§6: no probing of private directories): when such a location exists the rule reports
 //!   `permission_required` (`permission_cause=undetermined`) and the root stays unresolved. Any other root that cannot
 //!   be read for lack of permission reports the same issue.
-//! - `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` redirect resolution into validation fixtures. With
-//!   a home override the package managers' own variables (`CARGO_HOME`, `GOCACHE`...) are ignored, since they name the
-//!   real user's locations; Downloads follows the overridden home unless it has its own override.
+//! - `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` / `CM_RESOLVE_SYSTEM` redirect resolution into
+//!   validation fixtures. With a home override the package managers' own variables (`CARGO_HOME`, `GOCACHE`...) are
+//!   ignored, since they name the real user's locations, and system-wide locations are not resolved unless
+//!   `CM_RESOLVE_SYSTEM` names a stand-in for `/`; Downloads follows the overridden home unless it has its own override.
+//! - System-wide logs are administrator-only: their rules declare `requires_admin` and the `elevated_token` probe, so
+//!   without root (this build has no privileged helper) every candidate is skipped and never preselected.
 //!
 //! Also the installed-version facts the tested registry is checked against (CAT-03): app versions come from the
 //! `Info.plist` of the owner's bundle in `/Applications` or `~/Applications` (bundle identifier checked), the system
@@ -37,12 +42,12 @@ use super::sys::{Fd, describe};
 pub(crate) const CAPS: &[(&str, CapabilityState, &str)] = &[(
     "clean.catalog",
     CapabilityState::Unverified,
-    "macOS rule-root resolvers, owner probes and the wave-1 rule pack are implemented, but every macOS rule is experimental \
+    "macOS rule-root resolvers, owner probes and the wave-1 and wave-2 rule packs are implemented, but every macOS rule is experimental \
      (review-only, never preselected) until it is registered on a real Mac; gate G1 not passed",
 )];
 
 /// The validation-fixture overrides, in the order they are applied.
-pub const OVERRIDE_VARS: [&str; 3] = ["CM_RESOLVE_HOME", "CM_RESOLVE_TEMP", "CM_RESOLVE_DOWNLOADS"];
+pub const OVERRIDE_VARS: [&str; 4] = ["CM_RESOLVE_HOME", "CM_RESOLVE_TEMP", "CM_RESOLVE_DOWNLOADS", "CM_RESOLVE_SYSTEM"];
 
 /// Base locations; defaults come from the environment, overridable for controlled fixtures.
 #[derive(Debug, Clone, Default)]
@@ -56,6 +61,8 @@ pub struct ResolverEnv {
     pub tool_env: BTreeMap<String, PathBuf>,
     /// An external volume root the user explicitly selected (CAT-08); never set implicitly.
     pub removable_volume: Option<PathBuf>,
+    /// The root system-wide locations (`/Library/Logs`, `/private/var/log`) are below: `/`, or a fixture stand-in.
+    pub system: Option<PathBuf>,
 }
 
 impl ResolverEnv {
@@ -68,7 +75,14 @@ impl ResolverEnv {
         let get = |k: &str| var(k).filter(|v| !v.is_empty()).map(PathBuf::from);
         let home = get("HOME");
         let tool_env = TOOL_CACHES.iter().flat_map(|(_, vars, _)| vars.iter()).filter_map(|(v, _)| get(v).map(|p| ((*v).to_owned(), p))).collect();
-        ResolverEnv { downloads: home.as_ref().map(|h| h.join("Downloads")), temp: get("TMPDIR"), home, tool_env, removable_volume: None }
+        ResolverEnv {
+            downloads: home.as_ref().map(|h| h.join("Downloads")),
+            temp: get("TMPDIR"),
+            home,
+            tool_env,
+            removable_volume: None,
+            system: Some(PathBuf::from("/")),
+        }
     }
 
     /// Apply the `CM_RESOLVE_*` fixture overrides (empty values are ignored); returns the variables that were used,
@@ -83,8 +97,11 @@ impl ResolverEnv {
                     self.downloads = Some(p.join("Downloads"));
                     self.home = Some(p);
                     self.tool_env.clear();
+                    // A fixture home never reaches the real system logs either.
+                    self.system = None;
                 }
                 "CM_RESOLVE_TEMP" => self.temp = Some(p),
+                "CM_RESOLVE_SYSTEM" => self.system = Some(p),
                 _ => self.downloads = Some(p),
             }
         }
@@ -122,8 +139,15 @@ const BROWSERS: &[(&str, &[&str], Profiles)] = &[
     ("mozilla.firefox", &["Library", "Caches", "Firefox", "Profiles"], Profiles::Any),
 ];
 
-/// Application and system directories below `$HOME` (`application_cache`, `crash_reports`): owner id → its fixed
-/// folder. Rules only add literal components below it.
+/// `$HOME/Library/Containers/<bundle id>/Data/Library/Caches` of a sandboxed app; protected by macOS privacy controls.
+macro_rules! container_caches {
+    ($bundle:literal) => {
+        &["Library", "Containers", $bundle, "Data", "Library", "Caches"]
+    };
+}
+
+/// Application and system directories below `$HOME` (`application_cache`, `app_container`, `user_logs`,
+/// `crash_reports`): owner id → its fixed folders. Rules only add literal components below them.
 const APP_DIRS: &[(RootResolver, &str, &[&str], Privacy)] = &[
     (RootResolver::ApplicationCache, "apple.safari", &["Library", "Caches", "com.apple.Safari"], Privacy::Tcc),
     (RootResolver::ApplicationCache, "microsoft.vscode", &["Library", AS, "Code"], Privacy::Open),
@@ -132,6 +156,35 @@ const APP_DIRS: &[(RootResolver, &str, &[&str], Privacy)] = &[
     (RootResolver::ApplicationCache, "openai.codex", &["Library", AS, "Codex"], Privacy::Open),
     (RootResolver::ApplicationCache, "apple.xcode", &["Library", "Developer", "Xcode"], Privacy::Open),
     (RootResolver::CrashReports, "macos.diagnostic-reports", &["Library", "Logs", "DiagnosticReports"], Privacy::Open),
+    // Catalog wave 2: communication, design, media and games (caches only; never message stores or sign-in data).
+    (RootResolver::ApplicationCache, "slack", &["Library", AS, "Slack"], Privacy::Open),
+    (RootResolver::ApplicationCache, "discord", &["Library", AS, "discord"], Privacy::Open),
+    (RootResolver::AppContainer, "microsoft.teams", container_caches!("com.microsoft.teams2"), Privacy::Tcc),
+    (RootResolver::UserLogs, "zoom.us", &["Library", "Logs", "zoom.us"], Privacy::Open),
+    (RootResolver::ApplicationCache, "bytedance.feishu", &["Library", AS, "LarkShell"], Privacy::Open),
+    (RootResolver::UserLogs, "bytedance.feishu", &["Library", AS, "LarkShell", "sdk_storage", "log"], Privacy::Open),
+    (RootResolver::AppContainer, "tencent.wechat", container_caches!("com.tencent.xinWeChat"), Privacy::Tcc),
+    (RootResolver::ApplicationCache, "figma", &["Library", AS, "Figma"], Privacy::Open),
+    (RootResolver::ApplicationCache, "spotify", &["Library", "Caches", "com.spotify.client"], Privacy::Open),
+    (RootResolver::ApplicationCache, "valve.steam", &["Library", AS, "Steam"], Privacy::Open),
+    (RootResolver::ApplicationCache, "epicgames.launcher", &["Library", AS, "Epic", "EpicGamesLauncher", "Saved"], Privacy::Open),
+    // Cloud and office: logs and caches only, never synced content.
+    (RootResolver::UserLogs, "microsoft.onedrive", &["Library", "Logs", "OneDrive"], Privacy::Open),
+    (RootResolver::UserLogs, "google.drive", &["Library", AS, "Google", "DriveFS", "Logs"], Privacy::Open),
+    (RootResolver::AppContainer, "microsoft.office", container_caches!("com.microsoft.Word"), Privacy::Tcc),
+    (RootResolver::AppContainer, "microsoft.office", container_caches!("com.microsoft.Excel"), Privacy::Tcc),
+    (RootResolver::AppContainer, "microsoft.office", container_caches!("com.microsoft.Powerpoint"), Privacy::Tcc),
+    // Virtualization: Docker Desktop's own caches and logs, never the engine disk image (`Data/vms`).
+    (RootResolver::ApplicationCache, "docker.desktop", &["Library", AS, "Docker Desktop"], Privacy::Open),
+    (RootResolver::UserLogs, "docker.desktop", &["Library", "Containers", "com.docker.docker", "Data", "log"], Privacy::Open),
+    // Simulator runtimes: caches only, never simulator devices or their data.
+    (RootResolver::ApplicationCache, "apple.coresimulator", &["Library", "Developer", "CoreSimulator"], Privacy::Open),
+];
+
+/// Administrator-only system-wide locations (`system_logs`) below the system root: owner id → its fixed folder.
+const SYSTEM_DIRS: &[(RootResolver, &str, &[&str])] = &[
+    (RootResolver::SystemLogs, "macos.library-logs", &["Library", "Logs"]),
+    (RootResolver::SystemLogs, "macos.var-log", &["private", "var", "log"]),
 ];
 
 /// Package-manager caches: owner → (override variables the tool honours, each with the components it adds), default
@@ -147,6 +200,9 @@ const TOOL_CACHES: &[ToolCache] = &[
     ("pip", &[("PIP_CACHE_DIR", &[])], &["Library", "Caches", "pip"]),
     ("uv", &[("UV_CACHE_DIR", &[]), ("XDG_CACHE_HOME", &["uv"])], &[".cache", "uv"]),
     ("gradle", &[("GRADLE_USER_HOME", &[])], &[".gradle"]),
+    ("homebrew", &[("HOMEBREW_CACHE", &[])], &["Library", "Caches", "Homebrew"]),
+    ("cocoapods", &[], &["Library", "Caches", "CocoaPods"]),
+    ("carthage", &[], &["Library", "Caches", "org.carthage.CarthageKit"]),
 ];
 
 fn join(base: &Path, parts: &[&str]) -> PathBuf {
@@ -192,7 +248,7 @@ pub fn targets(rule: &Rule, env: &ResolverEnv) -> Vec<Target> {
             .flatten()
             .map(open)
             .collect(),
-        RootResolver::ApplicationCache | RootResolver::CrashReports => APP_DIRS
+        RootResolver::ApplicationCache | RootResolver::AppContainer | RootResolver::UserLogs | RootResolver::CrashReports => APP_DIRS
             .iter()
             .filter(|(r, id, ..)| *r == rule.root_resolver && *id == owner)
             .filter_map(|(_, _, parts, privacy)| home.map(|h| Target { path: join(h, parts), tcc_protected: *privacy == Privacy::Tcc }))
@@ -202,6 +258,11 @@ pub fn targets(rule: &Rule, env: &ResolverEnv) -> Vec<Target> {
             .filter(|(id, ..)| *id == owner)
             .filter_map(|(_, vars, parts)| vars.iter().find_map(|(v, add)| env.tool_env.get(*v).map(|p| join(p, add))).or_else(|| home.map(|h| join(h, parts))))
             .map(open)
+            .collect(),
+        RootResolver::SystemLogs => SYSTEM_DIRS
+            .iter()
+            .filter(|(r, id, _)| *r == rule.root_resolver && *id == owner)
+            .filter_map(|(_, _, parts)| env.system.as_deref().map(|s| open(join(s, parts))))
             .collect(),
         // Other resolver kinds have no macOS mapping yet: the rule stays inapplicable.
         _ => vec![],
@@ -345,6 +406,15 @@ const OWNER_BUNDLES: &[(&str, &str, &str)] = &[
     ("anthropic.claude", "Claude.app", "com.anthropic.claudefordesktop"),
     ("openai.codex", "Codex.app", "com.openai.codex"),
     ("apple.xcode", "Xcode.app", "com.apple.dt.Xcode"),
+    ("slack", "Slack.app", "com.tinyspeck.slackmacgap"),
+    ("discord", "Discord.app", "com.hnc.Discord"),
+    ("microsoft.teams", "Microsoft Teams.app", "com.microsoft.teams2"),
+    ("zoom.us", "zoom.us.app", "us.zoom.xos"),
+    ("tencent.wechat", "WeChat.app", "com.tencent.xinWeChat"),
+    ("figma", "Figma.app", "com.figma.Desktop"),
+    ("spotify", "Spotify.app", "com.spotify.client"),
+    ("google.drive", "Google Drive.app", "com.google.drivefs"),
+    ("docker.desktop", "Docker.app", "com.docker.docker"),
 ];
 
 /// Largest `Info.plist` read; real ones are a few KiB.

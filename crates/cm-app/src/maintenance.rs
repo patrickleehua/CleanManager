@@ -9,12 +9,16 @@
 //!    are skipped and the user-level tasks still run;
 //! 3. probes and runs each task (`cm_core::maintenance::run_task`), records the six-outcome result per task, and stores
 //!    a `maintenance_report` (MNT-07; no generic undo) next to the ordinary operation report.
+//!
+//! A setting task (14.5) is a `settings_change` action: checked against this build's settings, then run by
+//! [`crate::plans::run_setting_change`] (prior value backed up before the write; restorable through `optimize restore`).
 
 use cm_core::maintenance::{
     ElevationState, MaintenanceReport, OutcomeCounts, TaskBackend, TaskOutcome, TaskPlatform, TaskRef, TaskRun, TaskSpec, WorkerGrant, planned_task, run_task,
 };
 use cm_core::plan::parse_utc;
-use cm_core::plan::v2::{PlanAction, PlanKind, PlanProblem, check_plan_v2};
+use cm_core::maintenance::settings::{SettingSpec, SettingsActions};
+use cm_core::plan::v2::{PlanAction, PlanKind, PlanProblem, SettingsChangeAction, check_plan_v2};
 use cm_core::time::utc_from_unix;
 use cm_store::{StoreError, Stores};
 
@@ -49,6 +53,15 @@ pub struct MaintenanceBackends<'a> {
     pub is_admin: bool,
     /// User protection of a task id (PRT-06); `Err(reason)` skips it as `protected`. Fails closed.
     pub protect_task: &'a dyn Fn(&str) -> Result<(), String>,
+    /// Reads and writes the settings of setting tasks (14.5); `None` = their actions are `unavailable` here.
+    pub settings: Option<&'a dyn SettingsActions>,
+}
+
+/// What one planned action may do once checked against this build.
+enum Decided<'p> {
+    Task(&'static TaskSpec),
+    Setting(&'static SettingSpec, &'static TaskSpec, &'p SettingsChangeAction),
+    NotRun(TaskRun),
 }
 
 /// Protocol `maintenance_task_info` rows: catalog, probe result and protection (read-only).
@@ -61,7 +74,8 @@ pub fn catalog_view(b: &MaintenanceBackends<'_>) -> Vec<serde_json::Value> {
             serde_json::json!({
                 "task_id": t.id, "task_version": t.version, "platform": t.platform, "title": t.title, "problem": t.problem, "impact": t.impact,
                 "requires_admin": t.requires_admin, "applies_when": t.applies_when, "estimated_seconds": t.estimated_seconds,
-                "applicability": applicability, "applicability_reason": reason, "user_protected": protected, "reversible": false,
+                "applicability": applicability, "applicability_reason": reason, "user_protected": protected,
+                "reversible": cm_core::maintenance::reversible(t.id),
             })
         })
         .collect()
@@ -72,6 +86,8 @@ pub fn default_selection(b: &MaintenanceBackends<'_>) -> Vec<&'static TaskSpec> 
     cm_core::maintenance::catalog(b.platform)
         .iter()
         .filter(|t| (b.protect_task)(t.id).is_ok())
+        // A volume task needs the volume chosen explicitly (--volume); it is never part of a batch selection.
+        .filter(|t| !cm_core::maintenance::needs_volume(t.id))
         .filter(|t| matches!(b.tasks.probe(t), cm_core::maintenance::Probe::Applicable { .. } | cm_core::maintenance::Probe::Unknown { .. }))
         .collect()
 }
@@ -121,24 +137,37 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
     let at = || utc_from_unix((ctx.now)());
 
     // 1. What each action is allowed to run.
-    let mut decided: Vec<Result<&'static TaskSpec, TaskRun>> = Vec::with_capacity(plan.body.items.len());
+    let mut decided: Vec<Decided<'_>> = Vec::with_capacity(plan.body.items.len());
+    let protected = |spec: &TaskSpec| -> Option<TaskRun> {
+        (b.protect_task)(spec.id)
+            .err()
+            .map(|why| TaskRun::not_run(spec.id, spec.version, spec.requires_admin, TaskOutcome::Skipped, "protected", format!("protected by the user (PRT-06): {why}"), &at()))
+    };
     for a in &plan.body.items {
-        let PlanAction::MaintenanceTask(m) = a else {
-            decided.push(Err(TaskRun::not_run(a.action_id(), "-", a.needs_admin(), TaskOutcome::Skipped, "unsupported", format!("{} actions are not executed by this build", a.action_type().as_str()), &at())));
-            continue;
-        };
-        let d = match planned_task(m, b.platform) {
-            Err((code, why)) => Err(TaskRun::not_run(&m.task_id, &m.task_version, m.requires_admin, TaskOutcome::Skipped, code, why, &at())),
-            Ok(spec) => match (b.protect_task)(spec.id) {
-                Err(why) => Err(TaskRun::not_run(spec.id, spec.version, spec.requires_admin, TaskOutcome::Skipped, "protected", format!("protected by the user (PRT-06): {why}"), &at())),
-                Ok(()) => Ok(spec),
+        let d = match a {
+            PlanAction::MaintenanceTask(m) => match planned_task(m, b.platform) {
+                Err((code, why)) => Decided::NotRun(TaskRun::not_run(&m.task_id, &m.task_version, m.requires_admin, TaskOutcome::Skipped, code, why, &at())),
+                Ok(spec) => protected(spec).map_or(Decided::Task(spec), Decided::NotRun),
             },
+            PlanAction::SettingsChange(sc) => match cm_core::maintenance::planned_setting(sc, b.platform) {
+                Err((code, why)) => Decided::NotRun(TaskRun::not_run(&sc.setting_id, "-", false, TaskOutcome::Skipped, code, why, &at())),
+                Ok((setting, spec)) => protected(spec).map_or(Decided::Setting(setting, spec, sc), Decided::NotRun),
+            },
+            other => Decided::NotRun(TaskRun::not_run(
+                other.action_id(),
+                "-",
+                other.needs_admin(),
+                TaskOutcome::Skipped,
+                "unsupported",
+                format!("{} actions are not executed by this build", other.action_type().as_str()),
+                &at(),
+            )),
         };
         decided.push(d);
     }
 
     // 2. One elevation for all administrator tasks, before any task runs (MNT-04).
-    let admin: Vec<&TaskSpec> = decided.iter().filter_map(|d| d.as_ref().ok().copied()).filter(|t| t.requires_admin).collect();
+    let admin: Vec<&TaskSpec> = decided.iter().filter_map(|d| if let Decided::Task(t) = d { Some(*t) } else { None }).filter(|t| t.requires_admin).collect();
     let mut refused: Option<(TaskOutcome, &'static str, String)> = None;
     let mut session: Option<Box<dyn ElevatedSession + '_>> = None;
     let elevation = if admin.is_empty() {
@@ -184,14 +213,41 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
         } else {
             None
         };
+        let mut setting_recovery = None;
         let run = match (stop, d) {
-            (_, Err(r)) => r,
-            (Some((code, why)), Ok(spec)) => TaskRun::not_run(spec.id, spec.version, spec.requires_admin, TaskOutcome::Skipped, code, why, &at()),
-            (None, Ok(spec)) if spec.requires_admin && !b.is_admin && session.is_none() => {
+            (_, Decided::NotRun(r)) => r,
+            (Some((code, why)), Decided::Task(spec) | Decided::Setting(_, spec, _)) => TaskRun::not_run(spec.id, spec.version, spec.requires_admin, TaskOutcome::Skipped, code, why, &at()),
+            (None, Decided::Setting(setting, spec, sc)) => {
+                let intent = serde_json::json!({"action_type": "settings_change", "task_id": spec.id, "setting_id": setting.id, "from_value": sc.from_value, "to_value": sc.to_value});
+                stores.audit.record_intent(&operation_id, id, &intent.to_string(), &at())?;
+                if (ctx.fault)(crate::execute::FaultPoint::AfterIntent, id) {
+                    crash = Some(ApplyError::Crashed("after_intent".into()));
+                    break;
+                }
+                let started = at();
+                let s = crate::plans::run_setting_change(stores, b.settings, &operation_id, plan_id, sc, setting, ctx.now);
+                if (ctx.fault)(crate::execute::FaultPoint::AfterAction, id) {
+                    crash = Some(ApplyError::Crashed("after_action".into()));
+                    break;
+                }
+                setting_recovery = Some(s.recovery);
+                TaskRun {
+                    task_id: spec.id.into(),
+                    task_version: spec.version.into(),
+                    requires_admin: false,
+                    outcome: s.outcome,
+                    code: s.code,
+                    reason: s.reason,
+                    elevated: false,
+                    started_at: started,
+                    finished_at: at(),
+                }
+            }
+            (None, Decided::Task(spec)) if spec.requires_admin && !b.is_admin && session.is_none() => {
                 let (o, code, why) = refused.clone().expect("no session means elevation was refused");
                 TaskRun::not_run(spec.id, spec.version, true, o, code, why, &at())
             }
-            (None, Ok(spec)) => {
+            (None, Decided::Task(spec)) => {
                 let intent = serde_json::json!({"action_type": "maintenance_task", "task_id": spec.id, "task_version": spec.version, "elevated": spec.requires_admin});
                 stores.audit.record_intent(&operation_id, id, &intent.to_string(), &at())?;
                 if (ctx.fault)(crate::execute::FaultPoint::AfterIntent, id) {
@@ -209,7 +265,10 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
                 r
             }
         };
-        let ar = action_result(id, &run);
+        let mut ar = action_result(id, &run);
+        if let Some(r) = setting_recovery {
+            ar.recovery = r.into();
+        }
         cm_core::debug_trace!("maintenance.task", "{id} task={} outcome={:?} code={} elevated={}", run.task_id, run.outcome, run.code, run.elevated);
         let status = serde_json::to_value(ar.status).expect("status serializes");
         stores.audit.record_result(&operation_id, id, status.as_str().expect("string"), &serde_json::to_string(&ar).expect("result serializes"), &at())?;

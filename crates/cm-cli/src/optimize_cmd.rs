@@ -8,11 +8,18 @@
 //! - `plan apply` of a maintenance plan: administrator tasks ask for **one** UAC elevation of a short-lived worker before
 //!   any task runs; declined → those tasks are `skipped`, the rest run. The result is a `maintenance_report`.
 //! - `optimize diagnose [--window SECONDS]`: read-only performance diagnosis (MNT-06), never ends a process.
-//! - `optimize history [--limit N]`: recorded runs (MNT-07); maintenance has no undo.
+//! - `optimize history [--limit N]`: recorded runs (MNT-07); maintenance has no generic undo.
+//! - `optimize restore --operation OP_ID`: a `recovery` plan that puts back the prior values a run's setting changes
+//!   backed up (14.5); every other task stays not undone.
+//!
+//! macOS (14.3/14.5): the fixed tasks of `cm_platform::macos::maintenance`; there is no privilege path, so the
+//! catalog reports `elevation: unavailable` and administrator tasks are skipped `elevation_unavailable` in every run.
+//! `--volume MOUNT_POINT` names the volume of a volume task (Spotlight rebuild) when planning.
 //!
 //! Tests: `CM_MAINTENANCE_TEST_SCRIPT=<json>` replaces every task by a scripted result (nothing on the machine is
 //! touched) and then `CM_MAINTENANCE_TEST_ELEVATION=declined|direct` replaces the UAC launcher by a declining one or by
 //! an ordinary unelevated child of this binary (the real pipe protocol, no prompt). Without the script both are ignored.
+//! On macOS `CM_MAINTENANCE_TEST_PREFS_DIR` points setting tasks at an absolute-path preference domain in a fixture.
 
 use std::process::ExitCode;
 
@@ -76,9 +83,33 @@ fn backend() -> (Box<dyn TaskBackend>, bool, bool) {
         let admin = t.is_admin;
         (Box::new(t), admin, false)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        (Box::new(Scripted(serde_json::Map::new())), false, false)
+        // No privilege path on macOS in this build: never "already elevated", even when run as root.
+        (Box::new(cm_platform::macos::maintenance::MacTasks::from_process()), false, false)
+    }
+}
+
+/// Reads and writes the settings of setting tasks (14.5); `None` where no setting task exists.
+pub(crate) fn settings_backend() -> Option<Box<dyn cm_core::maintenance::settings::SettingsActions>> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(Box::new(cm_platform::macos::maintenance::MacSettings::from_process()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// The catalog's `elevation` field: how administrator tasks of a run would be authorized here.
+fn elevation_mode(is_admin: bool) -> &'static str {
+    if cfg!(target_os = "macos") {
+        "unavailable"
+    } else if is_admin {
+        "already_elevated"
+    } else {
+        "one_prompt_per_run"
     }
 }
 
@@ -95,7 +126,11 @@ fn protection(stores_dir: Option<&std::path::Path>) -> impl Fn(&str) -> Result<(
 }
 
 fn no_elevation() -> cm_app::maintenance::NoElevation {
-    cm_app::maintenance::NoElevation("this platform has no elevated worker in this build")
+    if cfg!(target_os = "macos") {
+        cm_app::maintenance::NoElevation("this build has no privilege path on macOS (no privileged helper; never osascript or AuthorizationExecuteWithPrivileges)")
+    } else {
+        cm_app::maintenance::NoElevation("this platform has no elevated worker in this build")
+    }
 }
 
 /// `optimize list [--search TEXT]` → `maintenance_catalog`.
@@ -105,7 +140,8 @@ pub fn list(req: &str, p: &Parsed) -> ExitCode {
     let dir = crate::commands::store_dir(p);
     let protect = protection(dir.as_deref());
     let elevation = no_elevation();
-    let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: tasks.as_ref(), elevation: &elevation, is_admin, protect_task: &protect };
+    let settings = settings_backend();
+    let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: tasks.as_ref(), elevation: &elevation, is_admin, protect_task: &protect, settings: settings.as_deref() };
     let mut items = cm_app::maintenance::catalog_view(&b);
     let query = p.option("search").map(str::to_owned);
     let prohibited: Vec<&cm_core::maintenance::Prohibited> = match &query {
@@ -121,7 +157,7 @@ pub fn list(req: &str, p: &Parsed) -> ExitCode {
         "query": query,
         "items": items,
         "prohibited": prohibited,
-        "elevation": if is_admin { "already_elevated" } else { "one_prompt_per_run" },
+        "elevation": elevation_mode(is_admin),
     }))), p.format);
     ExitCode::SUCCESS
 }
@@ -145,7 +181,8 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
         None => {
             let (backend, is_admin, _) = backend();
             let elevation = no_elevation();
-            let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: backend.as_ref(), elevation: &elevation, is_admin, protect_task: &protect };
+            let settings = settings_backend();
+            let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: backend.as_ref(), elevation: &elevation, is_admin, protect_task: &protect, settings: settings.as_deref() };
             let t = cm_app::maintenance::default_selection(&b);
             if t.is_empty() {
                 return fail(req, ErrorCode::InvalidArgument, "no maintenance task applies now (protected or not applicable); see `cleanmanager optimize list`", p.format);
@@ -157,9 +194,24 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     if let Some((t, why)) = tasks.iter().find_map(|t| protect(t.id).err().map(|w| (t, w))) {
         return fail(req, ErrorCode::PolicyDenied, &format!("task {} is protected by the user ({why}); remove the protection entry first", t.id), p.format);
     }
+    let volume = p.option("volume");
+    if let Some(v) = volume {
+        if let Err(r) = cm_core::maintenance::check_volume_text(v) {
+            return fail(req, ErrorCode::InvalidArgument, &r.message, p.format);
+        }
+        #[cfg(target_os = "macos")]
+        if let Err(e) = cm_platform::macos::maintenance::check_mount_point(v) {
+            return fail(req, ErrorCode::InvalidArgument, &e, p.format);
+        }
+    }
+    let settings = settings_backend();
+    let observe = |spec: &cm_core::maintenance::settings::SettingSpec| -> Result<String, String> {
+        settings.as_deref().ok_or_else(|| "settings are not available on this platform".to_owned())?.read(spec)
+    };
+    let inputs = cm_core::maintenance::PlanInputs { volume, setting: &observe };
     let plan_id = format!("mp_{}", &req[4..]);
     let pdigest = crate::plan_cmd::current_policy_digest(&stores);
-    let plan = match cm_core::maintenance::build_maintenance_plan(&tasks, platform, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+    let plan = match cm_core::maintenance::build_maintenance_plan_with(&tasks, platform, &plan_id, crate::plan_cmd::now_unix(), &pdigest, &inputs) {
         Ok(pl) => pl,
         Err(r) => return fail(req, refusal_code(r.code), &r.message, p.format),
     };
@@ -257,7 +309,15 @@ pub fn apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str) ->
     let (tasks, is_admin, scripted) = backend();
     let elevation = elevation_backend(scripted);
     let protect = protection(Some(&stores.dir));
-    let b = cm_app::maintenance::MaintenanceBackends { platform: TaskPlatform::current(), tasks: tasks.as_ref(), elevation: elevation.as_ref(), is_admin, protect_task: &protect };
+    let settings = settings_backend();
+    let b = cm_app::maintenance::MaintenanceBackends {
+        platform: TaskPlatform::current(),
+        tasks: tasks.as_ref(),
+        elevation: elevation.as_ref(),
+        is_admin,
+        protect_task: &protect,
+        settings: settings.as_deref(),
+    };
     let principal = cm_core::authz::current_principal();
     let host = cm_platform::host::OsHostProbe.current("cli");
     let ctx = cm_app::execute::ApplyContext {
@@ -284,7 +344,12 @@ fn sample(window: u64) -> Option<cm_core::maintenance::DiagnosisInput> {
     Some(cm_platform::windows::maintenance_diag::sample(std::time::Duration::from_secs(window)))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn sample(window: u64) -> Option<cm_core::maintenance::DiagnosisInput> {
+    Some(cm_platform::macos::maintenance_diag::sample(std::time::Duration::from_secs(window)))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn sample(_window: u64) -> Option<cm_core::maintenance::DiagnosisInput> {
     None
 }
@@ -316,6 +381,27 @@ pub fn diagnose(req: &str, p: &Parsed) -> ExitCode {
         "note": "Read-only: no process is ended and no setting is changed. Open the status view or Task Manager to act.",
     }))), p.format);
     ExitCode::SUCCESS
+}
+
+/// `optimize restore --operation OP_ID`: a `recovery` plan that puts back the prior values a maintenance run's setting
+/// changes backed up (14.5). Review and apply it like any recovery plan; a setting changed since is left as is.
+pub fn restore(req: &str, p: &Parsed) -> ExitCode {
+    let Some(op) = p.option("operation") else {
+        return fail(req, ErrorCode::InvalidArgument, "optimize restore needs --operation OP_ID (see `cleanmanager optimize history`)", p.format);
+    };
+    let stores = match open_stores(req, p) {
+        Ok(s) => s,
+        Err(c) => return c,
+    };
+    let plan_id = format!("rp_{}", &req[4..]);
+    let pdigest = crate::plan_cmd::current_policy_digest(&stores);
+    match cm_app::plans::create_settings_restore_plan(&stores, op, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+        Ok(plan) => {
+            emit(&crate::plan_cmd::v2_plan_record(req, &stores, &plan), p.format);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(req, e.code(), &e.to_string(), p.format),
+    }
 }
 
 /// `optimize history [--limit N]` → `maintenance_history`.

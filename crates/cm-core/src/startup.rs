@@ -55,6 +55,9 @@ pub enum StartupState {
     Disabled,
     Broken,
     TargetUnreachable,
+    /// The enabled state could not be established (macOS: a definition that does not parse, a launchd job that is
+    /// neither loaded nor disabled, Service Management items no public API lists); `reason` says why.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

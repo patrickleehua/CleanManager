@@ -295,7 +295,9 @@ fn v2_apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, kin
         if requires_admin && !is_admin {
             return Err(());
         }
-        Ok(cm_app::plans::apply_plan_v2(stores, b, plan_id, &ctx))
+        // Recovery plans may restore maintenance setting changes (14.5) through the settings backend.
+        let settings = crate::optimize_cmd::settings_backend();
+        Ok(cm_app::plans::apply_plan_v2_with_settings(stores, b, settings.as_deref(), plan_id, &ctx))
     });
     match out {
         Err(e) => fail(req, ErrorCode::InvalidArgument, &e, p.format),

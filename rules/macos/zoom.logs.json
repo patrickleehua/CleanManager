@@ -1,0 +1,54 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "zoom.logs",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "app",
+    "id": "zoom.us"
+  },
+  "root_resolver": "user_logs",
+  "match": {
+    "object_type": "file",
+    "relative_components": [],
+    "name_glob": null,
+    "extensions": [
+      "log"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 1
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Zoom client logs (~/Library/Logs/zoom.us, *.log) older than 7 days.",
+    "regeneration": "Not regenerated: records of past meetings' client diagnostics.",
+    "offline_effect": "Zoom support can no longer use these logs for troubleshooting. Meeting recordings and chat data live elsewhere and are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

@@ -117,9 +117,10 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         }
         ["installer", "plan", "create"] => p.allow(&["store", "set", "mode", "candidates", "source"], &["all-default-selected", "non-interactive"]).map(|_| crate::installer_cmd::plan_create(req, &p)),
         ["optimize", "list"] => p.allow(&["store", "search"], &[]).map(|_| crate::optimize_cmd::list(req, &p)),
-        ["optimize", "plan", "create"] => p.allow(&["store", "tasks"], &[]).map(|_| crate::optimize_cmd::plan_create(req, &p)),
+        ["optimize", "plan", "create"] => p.allow(&["store", "tasks", "volume"], &[]).map(|_| crate::optimize_cmd::plan_create(req, &p)),
         ["optimize", "diagnose"] => p.allow(&["window"], &[]).map(|_| crate::optimize_cmd::diagnose(req, &p)),
         ["optimize", "history"] => p.allow(&["store", "limit"], &[]).map(|_| crate::optimize_cmd::history(req, &p)),
+        ["optimize", "restore"] => p.allow(&["store", "operation"], &[]).map(|_| crate::optimize_cmd::restore(req, &p)),
         [] => Err("missing command".to_string()),
         other => Err(format!("unknown command: {}", other.join(" "))),
     };

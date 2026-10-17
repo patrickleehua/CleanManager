@@ -141,12 +141,12 @@ fn fake_run(spec: &'static TaskSpec) -> TaskRun {
 fn exe08_worker_grant_accepts_only_catalog_admin_tasks() {
     grant().validate(TaskPlatform::Windows).unwrap();
     let args = grant().to_args();
-    // `parse` checks against this machine's catalog: the elevated worker exists on Windows only, and macOS has no
-    // maintenance catalog in this build, so a grant can never reach a worker there.
+    // `parse` checks against this machine's catalog: the elevated worker exists on Windows only, and a Windows task is
+    // never in the macOS catalog (whose administrator tasks have no privilege path), so it can never reach a worker there.
     match TaskPlatform::current() {
         TaskPlatform::Windows => assert_eq!(WorkerGrant::parse(&args[1], &args[3]).unwrap(), grant()),
         TaskPlatform::Macos => {
-            assert!(catalog(TaskPlatform::Macos).is_empty());
+            assert!(catalog(TaskPlatform::Macos).iter().all(|t| t.id.starts_with("macos.")));
             assert!(WorkerGrant::parse(&args[1], &args[3]).unwrap_err().contains("not in the catalog"));
         }
     }
@@ -227,4 +227,89 @@ fn mnt06_diagnosis_lists_findings_and_never_acts() {
     assert_eq!(runaway.next_step, "status.processes");
     assert_eq!(f[4].subject, "C:");
     assert!(diagnose(&DiagnosisInput::default()).is_empty());
+}
+
+/// MNT-01 on macOS (14.3/14.5): the first batch and the two N15 tasks, each explained, none promising speed; the
+/// administrator ones are flagged; the registry-optimizer search still finds no task (MNT-05).
+#[test]
+fn mnt01_macos_catalog_covers_both_batches() {
+    let ids: Vec<&str> = MACOS_TASKS.iter().map(|t| t.id).collect();
+    assert_eq!(
+        ids,
+        [
+            ids::MAC_QUICKLOOK,
+            ids::MAC_ICON_CACHE,
+            ids::MAC_DNS_FLUSH,
+            ids::MAC_SPOTLIGHT_STATUS,
+            ids::MAC_BROKEN_PREFS,
+            ids::MAC_SAVED_STATE,
+            ids::MAC_DISK_VERIFY,
+            ids::MAC_LAUNCH_AGENTS,
+            ids::MAC_NETWORK_DSSTORE,
+            ids::MAC_SPOTLIGHT_REBUILD
+        ]
+    );
+    for t in MACOS_TASKS {
+        assert_eq!(t.platform, TaskPlatform::Macos);
+        assert!(t.id.starts_with("macos.") && !t.problem.is_empty() && !t.impact.is_empty() && !t.applies_when.is_empty() && t.timeout_seconds >= t.estimated_seconds);
+        let text = format!("{} {} {}", t.title, t.problem, t.impact).to_lowercase();
+        assert!(!text.contains('%') && !text.contains("faster") && !text.contains("boost"), "{}: no speed promise", t.id);
+    }
+    let admin: Vec<&str> = MACOS_TASKS.iter().filter(|t| t.requires_admin).map(|t| t.id).collect();
+    assert_eq!(admin, [ids::MAC_ICON_CACHE, ids::MAC_DNS_FLUSH, ids::MAC_DISK_VERIFY, ids::MAC_SPOTLIGHT_REBUILD]);
+    assert!(reversible(ids::MAC_NETWORK_DSSTORE) && !reversible(ids::MAC_QUICKLOOK));
+    assert!(needs_volume(ids::MAC_SPOTLIGHT_REBUILD) && !needs_volume(ids::MAC_DISK_VERIFY));
+    let (tasks, prohibited) = search("注册表优化", TaskPlatform::Macos);
+    assert!(tasks.is_empty() && prohibited.iter().any(|p| p.id == "registry-optimizer"));
+    let (tasks, _) = search("ds_store", TaskPlatform::Macos);
+    assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), [ids::MAC_NETWORK_DSSTORE]);
+    assert_ne!(catalog_digest(TaskPlatform::Macos), catalog_digest(TaskPlatform::Windows));
+}
+
+/// 14.5: a setting task is planned as a `settings_change` from the observed value; a volume task carries its volume;
+/// a stored action that does not match this build is refused at run time.
+#[test]
+fn macos_plans_carry_setting_values_and_volumes() {
+    let p = TaskPlatform::Macos;
+    let tasks = resolve_tasks(&[ids::MAC_SPOTLIGHT_REBUILD, ids::MAC_NETWORK_DSSTORE, ids::MAC_QUICKLOOK], p).unwrap();
+    let observe = |_: &settings::SettingSpec| Ok::<_, String>("false".to_owned());
+    let plan = build_maintenance_plan_with(&tasks, p, "mp_mac", now(), DIGEST, &PlanInputs { volume: Some("/Volumes/Data"), setting: &observe }).unwrap();
+    validate(&plan.body).unwrap();
+    assert!(plan.body.requires_admin, "the Spotlight rebuild needs an administrator");
+    let kinds: Vec<&str> = plan.body.items.iter().map(|a| a.action_type().as_str()).collect();
+    assert_eq!(kinds, ["maintenance_task", "settings_change", "maintenance_task"], "catalog order");
+    let PlanAction::SettingsChange(sc) = &plan.body.items[1] else { unreachable!() };
+    assert_eq!((sc.setting_id.as_str(), sc.from_value.as_str(), sc.to_value.as_str(), sc.restore_on_exit), ("macos.desktopservices.DSDontWriteNetworkStores", "false", "true", false));
+    assert_eq!(planned_setting(sc, p).unwrap().1.id, ids::MAC_NETWORK_DSSTORE);
+    assert_eq!(planned_setting(&crate::plan::v2::SettingsChangeAction { to_value: "false".into(), ..sc.clone() }, p).unwrap_err().0, "task_version_changed");
+    assert_eq!(planned_setting(sc, TaskPlatform::Windows).unwrap_err().0, "setting_unknown");
+    let PlanAction::MaintenanceTask(rebuild) = &plan.body.items[2] else { unreachable!() };
+    assert_eq!(rebuild.volume.as_deref(), Some("/Volumes/Data"));
+    assert!(planned_task(rebuild, p).is_ok());
+    assert_eq!(planned_task(&MaintenanceTaskAction { volume: None, ..rebuild.clone() }, p).unwrap_err().0, "volume_missing");
+    // The setting's value is part of the digest: another observed value is another plan.
+    let other = |_: &settings::SettingSpec| Ok::<_, String>("absent".to_owned());
+    let plan2 = build_maintenance_plan_with(&tasks, p, "mp_mac", now(), DIGEST, &PlanInputs { volume: Some("/Volumes/Data"), setting: &other }).unwrap();
+    assert_ne!(plan.digest, plan2.digest);
+    // A value of another type, or an unreadable setting, is not planned.
+    let odd = |_: &settings::SettingSpec| Ok::<_, String>("other:integer".to_owned());
+    assert!(build_maintenance_plan_with(&tasks, p, "mp_x", now(), DIGEST, &PlanInputs { volume: Some("/"), setting: &odd }).is_err());
+    assert_eq!(build_maintenance_plan(&tasks, p, "mp_x", now(), DIGEST).unwrap_err().code, "unsupported");
+    for bad in ["relative", "/a/../b", "/./x"] {
+        assert!(check_volume_text(bad).is_err(), "{bad}");
+    }
+    // The recovery plan of a backup reverses it.
+    let b = settings::SettingBackup {
+        backup_id: "setb_1_m0000001".into(),
+        setting_id: sc.setting_id.clone(),
+        location: "com.apple.desktopservices DSDontWriteNetworkStores".into(),
+        prior_value: "false".into(),
+        written_value: "true".into(),
+        created_at: "2027-01-15T08:00:00Z".into(),
+    };
+    let rp = settings::build_settings_recovery_plan(std::slice::from_ref(&b), "rp_1", now(), DIGEST).unwrap();
+    validate(&rp.body).unwrap();
+    let PlanAction::SettingsChange(r) = &rp.body.items[0] else { unreachable!() };
+    assert_eq!((r.action_id.as_str(), r.from_value.as_str(), r.to_value.as_str()), ("setb_1_m0000001", "true", "false"));
+    assert!(settings::build_settings_recovery_plan(&[], "rp_2", now(), DIGEST).is_err());
 }

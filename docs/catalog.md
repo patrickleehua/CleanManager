@@ -1,6 +1,6 @@
 # 清理目录（Windows 第 1、2 波）
 
-状态：变更 `add-mole-parity-suite` 任务 3.1–3.7 的 Windows 部分已实现，任务 3.8（第 2 波）的 Windows 规则已在本机验证（见[第 2 波](#第-2-波-windows-规则)）；macOS 一侧（含 Safari、Xcode DerivedData 等）尚无实测，任务 3.5 的“每条 enabled 规则在 Windows 与 Mac 各有实测记录”在本机无法满足。类目、档位与命令形状以代码与 [CLI 协议](cli-protocol.md) 为准，本页说明“清什么、为什么是这个档位、证据在哪”。
+状态：变更 `add-mole-parity-suite` 任务 3.1–3.7 的 Windows 部分已实现，任务 3.8（第 2 波）的 Windows 规则已在本机验证（见[第 2 波](#第-2-波-windows-规则)）；macOS 一侧（含 Safari、Xcode DerivedData 等）尚无实测，任务 3.5 的“每条 enabled 规则在 Windows 与 Mac 各有实测记录”在本机无法满足；macOS 第 1、2 波规则已编写，全部为 experimental（见 [macOS 第 2 波](#macos-第-2-波规则全部-experimental)）。类目、档位与命令形状以代码与 [CLI 协议](cli-protocol.md) 为准，本页说明“清什么、为什么是这个档位、证据在哪”。
 
 默认关闭（设计 D15）：清理目录尚未通过门禁 G1，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -189,6 +189,48 @@ tier = min(规则上限, 实测登记, 保护, 证据)；任一占用探测为 i
 - **占用探测**（`crates/cm-platform/src/macos/probes.rs`）：`owner_process` 用 libproc 进程快照，按所属应用包名（可执行路径中的 `Google Chrome.app` 等路径组件，含包内 helper）或命令行工具名（`cargo`、`go`、`pnpm`、`uv`）判断；`open_file_handle`/`open_database_handle`/`incomplete_download_handle` 用各进程打开的 vnode 索引，只要有进程的描述符不可读（其他用户或受保护进程，普通用户总会遇到）且未发现持有者，结果就是 `unknown`（跳过）；`elevated_token` 只有以 root 运行时为 `not_in_use`（本构建在 macOS 上没有提权路径）。
 - **`--volume`**：只接受 `/Volumes/NAME` 本身，它必须是挂载点（`/Volumes/Macintosh HD` 这类指向 `/` 的链接被拒）、`statfs` 带 `MNT_LOCAL` 且不带 `MNT_ROOTFS`。
 - **夹具**：`rules/macos/fixtures/wave1.json` 以登记条目 `fixtures` 的形状给出每条规则的正反例（`home:`/`temp:`/`downloads:`/`volume:` 前缀的相对路径）。`resolve/tests.rs` 在 macOS 上用真实 `mac.posix` 扫描夹具树，经 `CM_RESOLVE_*` 同样的覆盖解析，断言每条规则的候选恰为其正例、反例不命中；Safari 规则断言为 `permission_required`。夹具不是登记证据。
+
+## macOS 第 2 波规则（全部 experimental）
+
+范围同 Windows 第 2 波（design D4 G2，任务 3.8 的代码部分）：通讯/设计/媒体/游戏缓存、云与办公、虚拟化、模拟器运行时、包管理器缓存、需管理员的系统日志。约束与第 1 波相同：**没有真机实测登记**，26 条规则全部 `experimental`、`max_tier = review_only`、无 `tested_registry_ref` 与运行记录；常规分析不产生候选，`clean` 不预选，app_caches、cloud_office、virtualization 类目在 macOS 上为 `unverified`。只清缓存与日志：消息数据库、会话与登录态、同步内容、凭据（ANA-03）不是任何规则的目标，`tests/macos_rule_pack.rs` 检查规则名、扩展名与正例路径都不落入默认保护类。
+
+| 类目 | 规则 | 解析根 | 匹配 |
+| --- | --- | --- | --- |
+| app_caches | `slack.{code,gpu}-cache`、`discord.{code,gpu}-cache` | `~/Library/Application Support/{Slack,discord}` | `Code Cache`、`GPUCache` |
+| app_caches | `microsoft.teams.cache`（新版 Teams） | `~/Library/Containers/com.microsoft.teams2/Data/Library/Caches`（TCC） | 其下各项 |
+| app_caches | `tencent.wechat.cache` | `~/Library/Containers/com.tencent.xinWeChat/Data/Library/Caches`（TCC） | 其下各项；`Documents/xwechat_files` 与 Application Support 中的聊天数据不在根下 |
+| app_caches | `bytedance.feishu.code-cache` | `~/Library/Application Support/LarkShell` | `CodeCache` |
+| logs | `bytedance.feishu.logs`（7 天） | `LarkShell/sdk_storage/log` | `*.alaudalog`（深度 1） |
+| logs | `zoom.logs`（7 天） | `~/Library/Logs/zoom.us` | `*.log`（深度 1） |
+| app_caches | `figma.code-cache` | `~/Library/Application Support/Figma` | 两层内的 `Code Cache` |
+| app_caches | `spotify.stream-cache`（需联网重下） | `~/Library/Caches/com.spotify.client` | `Data`；离线下载（`Application Support/Spotify/PersistentCache`）不匹配 |
+| app_caches | `valve.steam.web-code-cache` | `~/Library/Application Support/Steam` | `config/htmlcache` 下一层内的 `Code Cache`；`steamapps`、`userdata` 不匹配 |
+| app_caches | `epicgames.launcher.webcache`（需联网重下） | `~/Library/Application Support/Epic/EpicGamesLauncher/Saved` | `webcache*` |
+| cloud_office | `microsoft.onedrive.logs`（7 天） | `~/Library/Logs/OneDrive` | `*.odl/*.odlgz/*.aodl/*.loggz/*.log`（深度 2）；`general.keystore` 不匹配 |
+| cloud_office | `google.drive.logs`（7 天） | `~/Library/Application Support/Google/DriveFS/Logs` | `*.txt/*.log`；`content_cache`（可能含待上传文件）与元数据库不在根下 |
+| cloud_office | `microsoft.office.cache` | Word、Excel、PowerPoint 的 `~/Library/Containers/com.microsoft.*/Data/Library/Caches`（TCC） | 其下各项；Outlook（邮件）不覆盖 |
+| virtualization | `docker.desktop.{code,gpu}-cache` | `~/Library/Application Support/Docker Desktop` | `Code Cache`、`GPUCache` |
+| logs | `docker.desktop.logs`（7 天） | `~/Library/Containers/com.docker.docker/Data/log` | `*.log`（深度 1）；引擎磁盘 `Data/vms/*/data/Docker.raw` 不在根下 |
+| developer | `apple.xcode.ios-device-support` | `~/Library/Developer/Xcode` | `iOS DeviceSupport/*`（再次连接设备时由 Xcode 重新复制） |
+| developer | `apple.coresimulator.caches` | `~/Library/Developer/CoreSimulator` | `Caches/*`；`Devices`（模拟器设备与数据）不匹配 |
+| developer | `homebrew.downloads`（依赖存储） | `~/Library/Caches/Homebrew`（`HOMEBREW_CACHE`） | `downloads/*`；`api` 缓存不匹配 |
+| developer | `cocoapods.cache`（依赖存储） | `~/Library/Caches/CocoaPods` | `Pods`；`~/.cocoapods/repos` 不在根下 |
+| developer | `carthage.cache`（依赖存储） | `~/Library/Caches/org.carthage.CarthageKit` | 其下各目录 |
+| logs | `macos.diagnostic-reports.system`（7 天，需管理员） | `/Library/Logs` | `DiagnosticReports` 下 `*.ips/*.crash/*.diag/*.hang/*.spin`（深度 1，含 `Retired`） |
+| logs | `macos.system-logs.rotated`（7 天，需管理员） | `/private/var/log` | 已轮转的 `*.gz/*.bz2`（深度 1）；正在写入的日志不匹配 |
+
+- **TCC 容器**：macOS 14 起其他应用的容器（`~/Library/Containers/<bundle id>`）受“App 数据”隐私保护。Teams、微信、Office 规则与 Safari 一样不打开、不列举，只在位置存在时报告 `permission_required`（`permission_cause=undetermined`）。Docker Desktop 不是沙盒应用，它在 `Containers` 下的日志按普通位置解析，若被拒绝同样报告 `permission_required`。
+- **需管理员项**：只有 `system_logs` 解析器的两条规则 `requires_admin`，且必须声明 `elevated_token`；本构建在 macOS 上没有特权 helper，非 root 时该探测恒为 `unknown`，候选 `skip_reason=probe_unknown`、从不预选（`resolve/tests.rs` 的 `administrator_rules_are_skipped_without_root`）。
+- **系统根重定向**：`CM_RESOLVE_SYSTEM` 指定代替 `/` 的夹具根（`/Library/Logs`、`/private/var/log` 在其下解析），并报告 `resolver_override`；设置 `CM_RESOLVE_HOME` 而未设置它时，系统位置不解析，夹具家目录不会触及真实系统日志。
+- **夹具**：`rules/macos/fixtures/wave2.json` 与第 1 波同形，另加 `system:` 前缀。`resolve/tests.rs` 合并两波清单在同一夹具树上检查每条规则恰好命中正例；`tests/macos_rule_pack.rs` 检查两波清单恰好覆盖全部规则且互不重复；`tests/mac_catalog_flow.rs` 经二进制预览 Slack、Homebrew、微信（`permission_required`）与系统诊断报告规则。
+- **所属进程**：`probes.rs` 为声明 `owner_process` 的新所属方加入应用包名（`Slack.app`、`Discord.app`、`Docker.app`、等）或可执行文件名（Steam 数据目录内的 `steam_osx`、CoreSimulator 服务、`carthage`）；Homebrew 与 CocoaPods 经解释器运行，无法按进程识别，它们的规则只声明 `open_file_handle`。
+
+### macOS 第 2 波未纳入的项
+
+- **Dropbox**：唯一的缓存 `.dropbox.cache` 位于同步文件夹（或 File Provider 域 `~/Library/CloudStorage`）内，不作为目标；Dropbox 的数据库与登录态受保护。
+- **Maven `~/.m2/repository`**：包存储而非缓存（与 Windows 相同，有意保留）；NuGet、Cargo `registry/src` 与 `git` 同理。
+- **Docker 引擎数据（`Docker.raw`）、模拟器设备与运行时**：大项或所属工具（`docker system prune`、`xcrun simctl delete unavailable`）范围，不是文件规则。
+- **Outlook、微信/飞书/Teams 的消息存储、Zoom 的 `Application Support/zoom.us/data`**：属消息数据库（ANA-03），任何规则都不匹配。
 
 ## 命令
 

@@ -7,6 +7,9 @@
 //! - `apps update --app ID[,ID...]` creates one `update` plan pending review for the verifiable package-manager updates
 //!   and lists where the others go (Store, the app itself, the official page). `plan review` approves it; `plan apply`
 //!   verifies each downloaded package's signer against the installed app before upgrading, item by item.
+//! - macOS: `apps updates` asks Homebrew (`brew outdated --json=v2`, auto-update off) and fetches each https Sparkle
+//!   feed; App Store and Electron apps are reported from local files. `apps update` plans only Homebrew upgrades
+//!   (`brew upgrade --cask|--formula`); App Store and Sparkle/Electron apps are routed to the store or the app.
 
 use std::process::ExitCode;
 
@@ -20,7 +23,7 @@ fn store(req: &str, p: &Parsed) -> Result<std::path::PathBuf, ExitCode> {
     crate::commands::store_dir(p).ok_or_else(|| fail(req, ErrorCode::InvalidArgument, "no store directory; pass --store or set CM_STORE_DIR", p.format))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn emit_list(req: &str, p: &Parsed, r: &cm_app::updates::CheckReport) -> ExitCode {
     crate::emit(&cm_core::protocol::record("app_update_list", req, crate::commands::fields(r.to_wire())), p.format);
     ExitCode::SUCCESS
@@ -50,6 +53,36 @@ pub fn updates_show(req: &str, p: &Parsed) -> ExitCode {
     }
 }
 
+/// The inventory locations (`CM_UNINSTALL_TEST_ROOT`/`HOME` redirect them in tests).
+#[cfg(target_os = "macos")]
+fn mac_env(req: &str, p: &Parsed) -> Result<cm_platform::macos::apps::AppsEnv, ExitCode> {
+    cm_platform::macos::apps::AppsEnv::from_process().map_err(|e| fail(req, ErrorCode::InvalidArgument, &e, p.format))
+}
+
+/// `apps updates` on macOS: check now (when enabled).
+#[cfg(target_os = "macos")]
+pub fn updates_check(req: &str, p: &Parsed) -> ExitCode {
+    let (dir, env) = match (store(req, p), mac_env(req, p)) {
+        (Ok(d), Ok(e)) => (d, e),
+        (Err(c), _) | (_, Err(c)) => return c,
+    };
+    let apps = cm_app::updates::mac_apps(&env);
+    let ch = cm_app::updates::MacChannels::new(env);
+    match cm_app::updates::check(&dir, &apps, &ch, &cm_core::time::now_utc()) {
+        Ok(r) => emit_list(req, p, &r),
+        Err(e) => fail(req, ErrorCode::IoError, &e.to_string(), p.format),
+    }
+}
+
+/// `apps updates show` on macOS: cached results only, never a check.
+#[cfg(target_os = "macos")]
+pub fn updates_show(req: &str, p: &Parsed) -> ExitCode {
+    match (store(req, p), mac_env(req, p)) {
+        (Ok(dir), Ok(env)) => emit_list(req, p, &cm_app::updates::cached(&dir, &cm_app::updates::mac_apps(&env))),
+        (Err(c), _) | (_, Err(c)) => c,
+    }
+}
+
 /// `apps updates config [--checks on|off]`.
 pub fn updates_config(req: &str, p: &Parsed) -> ExitCode {
     let dir = match store(req, p) {
@@ -72,7 +105,7 @@ pub fn updates_config(req: &str, p: &Parsed) -> ExitCode {
 }
 
 /// `apps update --app ID[,ID...]`: one `update` plan pending review, plus where the other apps go.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn update_plan(req: &str, p: &Parsed) -> ExitCode {
     let Some(list) = p.option("app") else { return fail(req, ErrorCode::InvalidArgument, "apps update needs --app ID[,ID...] from apps updates", p.format) };
     let ids: Vec<String> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect();
@@ -87,9 +120,21 @@ pub fn update_plan(req: &str, p: &Parsed) -> ExitCode {
     if cache.results.is_empty() {
         return fail(req, ErrorCode::InvalidArgument, "no update check results yet; run apps updates first", p.format);
     }
-    let apps = cm_app::updates::windows_apps();
-    let (winget, scoop) = cm_app::updates::windows_tools(&apps);
-    let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids: &ids, winget, scoop, installed_signer: &cm_platform::windows::updates::installed_signer };
+    #[cfg(windows)]
+    let (apps, winget, scoop, homebrew, signer) = {
+        let apps = cm_app::updates::windows_apps();
+        let (winget, scoop) = cm_app::updates::windows_tools(&apps);
+        (apps, winget, scoop, None, cm_platform::windows::updates::installed_signer)
+    };
+    #[cfg(target_os = "macos")]
+    let (apps, winget, scoop, homebrew, signer) = {
+        let env = match mac_env(req, p) {
+            Ok(e) => e,
+            Err(c) => return c,
+        };
+        (cm_app::updates::mac_apps(&env), None, None, cm_app::updates::mac_brew_tool(&env), cm_platform::macos::updates::installed_signer)
+    };
+    let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids: &ids, winget, scoop, homebrew, installed_signer: &signer };
     let plan_id = format!("up_{}", &req[4..]);
     let pdigest = crate::plan_cmd::current_policy_digest(&stores);
     let (plan, routed) = match cm_app::updates::plan_updates(&inputs, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
@@ -115,23 +160,24 @@ pub fn update_plan(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn updates_check(req: &str, p: &Parsed) -> ExitCode {
     fail(req, ErrorCode::Unsupported, "app update checks are not implemented on this platform yet", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn updates_show(req: &str, p: &Parsed) -> ExitCode {
     fail(req, ErrorCode::Unsupported, "app update checks are not implemented on this platform yet", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn update_plan(req: &str, p: &Parsed) -> ExitCode {
     fail(req, ErrorCode::Unsupported, "app updates are not implemented on this platform yet", p.format)
 }
 
-/// Seam for `plan apply` (plan/v2 backends): the `update` plans' channel steps on macOS. `None` = unsupported here.
+/// Seam for `plan apply` (plan/v2 backends): the `update` plans' channel steps on macOS (only Homebrew's fixed
+/// `brew upgrade` runs). `None` when the inventory redirection is misconfigured.
 #[cfg(target_os = "macos")]
 pub(crate) fn mac_update_backend() -> Option<Box<dyn cm_core::updates::UpdateBackend>> {
-    None
+    cm_platform::macos::updates::MacUpdates::from_process().ok().map(|b| Box::new(b) as Box<dyn cm_core::updates::UpdateBackend>)
 }

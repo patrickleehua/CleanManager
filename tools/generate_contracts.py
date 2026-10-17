@@ -205,6 +205,8 @@ def main():
     defs["action_registry_restore"]["properties"].update({"value_name": STR, "backup_sha256": HASH})
     # UNI-06: a leftover key delete binds the key's observed content; anything changed since planning is skipped.
     defs["action_registry_backup_delete"]["properties"]["observed_sha256"] = HASH
+    # Parity 14.5: a volume task (Spotlight rebuild) binds the mount point chosen when planning.
+    defs["action_maintenance_task"]["properties"]["volume"] = STR
     kind_actions = {
         "cleanup": ["fs_trash", "fs_quarantine", "fs_delete", "tool_adapter"],
         "manual_selection": ["fs_trash", "fs_delete"],
@@ -395,7 +397,7 @@ def main():
     defs["startup_item"] = obj({"startup_item_id": STR, "name": STR, "source": action_props["startup_toggle"]["source"],
         "definition": STR, "target": nullable(ref("path")), "publisher": nullable(STR),
         "publisher_evidence": enum("authenticode", "package_identity", "code_signature", "none"), "scope": enum("user", "system"),
-        "state": enum("enabled", "disabled", "broken", "target_unreachable"), "toggle_capability": capability_state,
+        "state": enum("enabled", "disabled", "broken", "target_unreachable", "unknown"), "toggle_capability": capability_state,
         "protected": {"type": "boolean"}, "reason": nullable(STR)})
     defs["startup_list"] = record("startup_list", {"items": arr(ref("startup_item")), "issues": arr(ref("issue"))})
     # Manual trash (MTR-02/04/05): index facts only (nothing opened or hydrated), path data instead of a shell reveal.
@@ -414,11 +416,11 @@ def main():
     defs["maintenance_task_info"] = obj({"task_id": STR, "task_version": STR, "platform": enum("windows", "macos"), "title": STR,
         "problem": STR, "impact": STR, "requires_admin": {"type": "boolean"}, "applies_when": STR, "estimated_seconds": COUNT,
         "applicability": enum("applicable", "not_needed", "not_applicable", "unknown"), "applicability_reason": nullable(STR),
-        "user_protected": {"type": "boolean"}, "reversible": {"const": False}})
+        "user_protected": {"type": "boolean"}, "reversible": {"type": "boolean"}})
     # MNT-05: what is deliberately not offered, with the reason (a search for it finds no task).
     defs["maintenance_catalog"] = record("maintenance_catalog", {"platform": enum("windows", "macos"), "query": nullable(STR),
         "items": arr(ref("maintenance_task_info")), "prohibited": arr(obj({"id": STR, "title": STR, "reason": STR})),
-        "elevation": enum("already_elevated", "one_prompt_per_run")})
+        "elevation": enum("already_elevated", "one_prompt_per_run", "unavailable")})
     outcome = enum("applied", "unchanged", "skipped", "unavailable", "attention", "failed")
     # MNT-03/04/07: per-task outcome with reason, how admin tasks were elevated, who ran it; never undone.
     defs["maintenance_task_run"] = obj({"task_id": STR, "task_version": STR, "requires_admin": {"type": "boolean"}, "outcome": outcome,
@@ -533,7 +535,7 @@ def main():
         "signature": ref("signature"), "owner_app": nullable(STR), "identified": BOOL, "purpose": nullable(STR), "unidentified_reason": nullable(STR),
         "ai_diagnosis": nullable(obj({"available": {"const": True}, "hint": STR})), "pinned": BOOL,
         "end_capability": obj({"state": enum("available", "unsupported"),
-            "protection": nullable(enum("critical_system", "os_critical", "clean_manager", "security_software")), "reason": STR}),
+            "protection": nullable(enum("critical_system", "os_critical", "clean_manager", "security_software", "other_user")), "reason": STR}),
         "notes": arr(STR)})
     # STS-04: an unidentified process always carries the AI-diagnosis entry; an identified one always has a purpose.
     defs["process_row"]["allOf"] = [

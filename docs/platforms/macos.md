@@ -226,9 +226,11 @@ macOS 后端的自动化测试与 Windows 使用同名的环境变量重定向�
 | `CM_STORE_DIR` | 索引、审计、隔离区与设置所在目录 | 同名 |
 | `CM_RULES_DIR` | 规则包目录（测试用夹具规则） | 同名 |
 | `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` | 规则根解析使用的家目录（`~/Library/Caches`、`~/Library/Logs`、`~/.Trash` 等都相对它）、临时目录与下载目录；设置 `CM_RESOLVE_HOME` 时 `trash list`/`trash purge` 只列出 `$CM_RESOLVE_HOME/.Trash`，不列 `/Volumes` 下的废纸篓 | `CM_RESOLVE_USERPROFILE` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` |
+| `CM_RESOLVE_SYSTEM` | 代替 `/` 的夹具根：需管理员的系统日志规则（`/Library/Logs`、`/private/var/log`）在其下解析；设置 `CM_RESOLVE_HOME` 而未设置它时，系统位置不解析 | `CM_RESOLVE_PROGRAMDATA` |
 | `CM_UNINSTALL_TEST_ROOT` + `CM_UNINSTALL_TEST_HOME` | 卸载清单与残留扫描的假根：`ROOT` 下放 `Applications/`、`opt/homebrew/Caskroom/`（及 `Cellar/`）、`Library/`，`HOME` 下放用户 `Library/`；路径一律以该前缀解析，不读真实 `/Applications` 或 Homebrew | 同名（注册表根与家目录） |
 | `CM_STARTUP_TEST_ROOT` / `CM_STARTUP_TEST_FOLDER` | 启动项清单与启停的假根：launchd plist 目录（`Library/LaunchAgents`、`Library/LaunchDaemons`）在其下解析；计划中的位置记录该根，换根的计划不能作用于真实域 | 同名（测试注册表键与启动文件夹） |
-| `CM_MAINTENANCE_TEST_SCRIPT` / `CM_MAINTENANCE_TEST_ELEVATION` | 维护任务以脚本结果代替真实执行；`ELEVATION` 只模拟“拒绝/直接”两种提权结果 | 同名 |
+| `CM_MAINTENANCE_TEST_SCRIPT` / `CM_MAINTENANCE_TEST_ELEVATION` | 维护任务以脚本结果代替真实执行；`ELEVATION` 只模拟“拒绝/直接”两种提权结果（macOS 没有提权路径，`ELEVATION` 不起作用） | 同名 |
+| `CM_MAINTENANCE_TEST_PREFS_DIR` | 维护设置变更（`macos.network-dsstore-off`）读写 `<目录>/com.apple.desktopservices` 这个绝对路径偏好域，而不是当前用户的偏好域；报告类维护任务读的家目录由 `CM_RESOLVE_HOME` 重定向 | 无 |
 | `CM_ALLOW_DMG_TESTS=1` | 允许挂载一次性磁盘映像的测试（已有） | `CM_ALLOW_VHD_TESTS=1` |
 | `CM_ALLOW_MAC_DEVICE_TESTS=1` | 允许触碰本机真实状态的测试：用户真实废纸篓、LaunchServices 注册、电源断言（保持亮屏）等。未设置且不在 `GITHUB_ACTIONS=true` 的托管 runner 上时，这些测试打印 `skipped` 并通过 | 无（Windows 对应测试只在 CI 或显式变量下运行） |
 

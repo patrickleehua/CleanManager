@@ -2950,6 +2950,10 @@
         },
         "requires_admin": {
           "type": "boolean"
+        },
+        "volume": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -7434,7 +7438,8 @@
             "enabled",
             "disabled",
             "broken",
-            "target_unreachable"
+            "target_unreachable",
+            "unknown"
           ]
         },
         "toggle_capability": {
@@ -7922,7 +7927,7 @@
           "type": "boolean"
         },
         "reversible": {
-          "const": false
+          "type": "boolean"
         }
       },
       "required": [
@@ -8009,7 +8014,8 @@
         "elevation": {
           "enum": [
             "already_elevated",
-            "one_prompt_per_run"
+            "one_prompt_per_run",
+            "unavailable"
           ]
         }
       },
@@ -10400,7 +10406,8 @@
                     "critical_system",
                     "os_critical",
                     "clean_manager",
-                    "security_software"
+                    "security_software",
+                    "other_user"
                   ]
                 },
                 {

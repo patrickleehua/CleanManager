@@ -14,7 +14,6 @@ use crate::args::Parsed;
 use crate::fail;
 
 /// Window over which CPU and I/O rates are measured.
-#[cfg(windows)]
 const WINDOW_MS: u64 = 1000;
 
 #[cfg(windows)]
@@ -22,7 +21,6 @@ fn apps_map() -> Vec<(String, String)> {
     cm_platform::windows::apps::inventory().0.into_iter().filter_map(|a| a.install_location.map(|l| (a.name, l.display()))).collect()
 }
 
-#[cfg(windows)]
 fn store_dir(p: &Parsed) -> Option<std::path::PathBuf> {
     crate::commands::store_dir(p)
 }
@@ -36,16 +34,24 @@ fn views(p: &Parsed, verify: bool) -> Result<(Vec<cm_core::process::ProcessView>
     Ok((rows, sampled_at))
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "macos")]
+fn views(p: &Parsed, verify: bool) -> Result<(Vec<cm_core::process::ProcessView>, String), String> {
+    let pins = store_dir(p).map(|d| cm_app::processes::load_pins(&d)).unwrap_or_default();
+    let rows = cm_platform::macos::processes::views(std::time::Duration::from_millis(WINDOW_MS), verify, &pins)?;
+    Ok((rows, cm_core::time::now_utc()))
+}
+
 fn emit_list(req: &str, p: &Parsed, rows: Vec<cm_core::process::ProcessView>, sampled_at: &str, key: cm_core::process::SortKey, search: Option<&str>, limit: usize) -> ExitCode {
+    #[cfg(windows)]
     use cm_platform::windows::processes::{DISK_NOTE, NETWORK_REASON};
+    #[cfg(target_os = "macos")]
+    use cm_platform::macos::processes::{DISK_NOTE, NETWORK_REASON};
     let body = cm_app::processes::list_wire(rows, key, search, limit, sampled_at, WINDOW_MS, &[DISK_NOTE, NETWORK_REASON]);
     crate::emit(&cm_core::protocol::record("process_list", req, crate::commands::fields(body)), p.format);
     ExitCode::SUCCESS
 }
 
 /// `process list [--by cpu|memory|disk|network|name] [--search TEXT] [--limit N]`
-#[cfg(windows)]
 pub fn process_list(req: &str, p: &Parsed) -> ExitCode {
     let key = match p.option("by").map(cm_core::process::SortKey::parse) {
         None => cm_core::process::SortKey::Cpu,
@@ -63,7 +69,6 @@ pub fn process_list(req: &str, p: &Parsed) -> ExitCode {
 }
 
 /// `process show PID`: one process with its local facts (a `process_list` of one row).
-#[cfg(windows)]
 pub fn process_show(req: &str, p: &Parsed, pid: &str) -> ExitCode {
     let Ok(pid) = pid.parse::<u32>() else { return fail(req, ErrorCode::InvalidArgument, "PID must be a number", p.format) };
     match views(p, true) {
@@ -128,23 +133,38 @@ pub fn process_end(req: &str, p: &Parsed, pid: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(not(windows))]
-pub fn process_list(req: &str, p: &Parsed) -> ExitCode {
-    fail(req, ErrorCode::Unsupported, "the process list is not implemented on this platform yet", p.format)
+/// `process end PID` on macOS: a `process` plan pending review (nothing is ended here). The plan binds the PID, the
+/// start time (microseconds since the epoch), the executable path and its SHA-256.
+#[cfg(target_os = "macos")]
+pub fn process_end(req: &str, p: &Parsed, pid: &str) -> ExitCode {
+    use cm_platform::macos::processes::{file_sha256, view};
+    let Ok(pid) = pid.parse::<u32>() else { return fail(req, ErrorCode::InvalidArgument, "PID must be a number", p.format) };
+    let stores = match crate::commands::open_stores(req, p) {
+        Ok(s) => s,
+        Err(c) => return c,
+    };
+    let row = match view(pid) {
+        Ok(Some(r)) => r,
+        Ok(None) => return fail(req, ErrorCode::InvalidArgument, &format!("no running process {pid}"), p.format),
+        Err(e) => return fail(req, ErrorCode::IoError, &e, p.format),
+    };
+    let plan_id = format!("pp_{}", &req[4..]);
+    let pdigest = crate::plan_cmd::current_policy_digest(&stores);
+    let digest = row.facts.image_path.as_ref().and_then(file_sha256);
+    let plan = match cm_app::processes::end_plan(&row, digest, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+        Ok(pl) => pl,
+        Err(cm_app::processes::EndPlanError::Refused(r @ cm_core::process::EndRefusal::Protected(_))) => return fail(req, ErrorCode::PolicyDenied, &r.to_string(), p.format),
+        Err(e) => return fail(req, ErrorCode::InvalidArgument, &e.to_string(), p.format),
+    };
+    if let Err(e) = stores.audit.save_plan_v2(&plan) {
+        return crate::commands::store_error(req, &e, p.format);
+    }
+    crate::emit(&crate::plan_cmd::v2_plan_record(req, &stores, &plan), p.format);
+    ExitCode::SUCCESS
 }
 
-#[cfg(not(windows))]
-pub fn process_show(req: &str, p: &Parsed, _: &str) -> ExitCode {
-    fail(req, ErrorCode::Unsupported, "the process list is not implemented on this platform yet", p.format)
-}
-
-#[cfg(not(windows))]
-pub fn process_end(req: &str, p: &Parsed, _: &str) -> ExitCode {
-    fail(req, ErrorCode::Unsupported, "ending processes is not implemented on this platform yet", p.format)
-}
-
-/// Seam for `plan apply` (plan/v2 backends): `process_end` re-identification on macOS. `None` = unsupported here.
+/// Seam for `plan apply` (plan/v2 backends): `process_end` re-identification (pid + start time + executable) on macOS.
 #[cfg(target_os = "macos")]
 pub(crate) fn mac_processes() -> Option<Box<dyn cm_core::process::ProcessActions>> {
-    None
+    Some(Box::new(cm_platform::macos::processes::MacProcesses))
 }

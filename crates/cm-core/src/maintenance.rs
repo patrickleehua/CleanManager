@@ -90,7 +90,19 @@ pub mod ids {
     pub const DNS_FLUSH: &str = "windows.dns-flush";
     pub const TRIM: &str = "windows.trim-when-due";
     pub const IMAGE_HEALTH: &str = "windows.image-health-check";
+    pub const MAC_QUICKLOOK: &str = "macos.quicklook-reset";
+    pub const MAC_ICON_CACHE: &str = "macos.icon-cache-rebuild";
+    pub const MAC_DNS_FLUSH: &str = "macos.dns-flush";
+    pub const MAC_SPOTLIGHT_STATUS: &str = "macos.spotlight-status";
+    pub const MAC_BROKEN_PREFS: &str = "macos.broken-preferences";
+    pub const MAC_SAVED_STATE: &str = "macos.stale-saved-state";
+    pub const MAC_DISK_VERIFY: &str = "macos.disk-verify";
+    pub const MAC_LAUNCH_AGENTS: &str = "macos.launch-agents-report";
+    pub const MAC_NETWORK_DSSTORE: &str = "macos.network-dsstore-off";
+    pub const MAC_SPOTLIGHT_REBUILD: &str = "macos.spotlight-rebuild";
 }
+
+pub mod settings;
 
 /// Windows first batch (14.2).
 pub const WINDOWS_TASKS: &[TaskSpec] = &[
@@ -161,9 +173,153 @@ pub const WINDOWS_TASKS: &[TaskSpec] = &[
     },
 ];
 
-/// macOS first batch (14.3/14.5): filled as each task's runner lands in `cm_platform::macos::maintenance`; empty in
-/// this build. Admin tasks are skipped `elevation_unavailable` (no privilege path on macOS in this build).
-pub const MACOS_TASKS: &[TaskSpec] = &[];
+/// macOS first batch (14.3) and second batch (14.5, D16 N15); runners in `cm_platform::macos::maintenance`.
+/// Administrator tasks are listed and planned like any other but are skipped `elevation_unavailable` at run time: this
+/// build has no privilege path on macOS (docs/platforms/macos.md §11). Report-only tasks never change anything.
+pub const MACOS_TASKS: &[TaskSpec] = &[
+    TaskSpec {
+        id: ids::MAC_QUICKLOOK,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Reset Quick Look thumbnail cache",
+        problem: "Quick Look previews or Finder thumbnails are blank, wrong or outdated",
+        impact: "Thumbnails are generated again on next view (`qlmanage -r cache`); files are not touched",
+        requires_admin: false,
+        applies_when: "/usr/bin/qlmanage is present and system-owned",
+        estimated_seconds: 3,
+        timeout_seconds: 60,
+        keywords: &["quick look", "quicklook", "快速预览", "thumbnail", "缩略图", "qlmanage", "preview", "预览", "cache", "缓存"],
+    },
+    TaskSpec {
+        id: ids::MAC_ICON_CACHE,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Rebuild icon services cache",
+        problem: "App or file icons are blank, generic or outdated in Finder and the Dock",
+        impact: "Icons are drawn again after the cache is rebuilt; needs administrator authorization (system cache)",
+        requires_admin: true,
+        applies_when: "The system icon services store exists (/Library/Caches/com.apple.iconservices.store)",
+        estimated_seconds: 30,
+        timeout_seconds: 300,
+        keywords: &["icon", "图标", "iconservices", "dock", "cache", "缓存"],
+    },
+    TaskSpec {
+        id: ids::MAC_DNS_FLUSH,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Flush DNS resolver cache",
+        problem: "Sites resolve to old addresses after a network or DNS change",
+        impact: "The first lookup of each name is slightly slower once; mDNSResponder must be signalled, which needs administrator authorization",
+        requires_admin: true,
+        applies_when: "/usr/bin/dscacheutil and /usr/bin/killall are present and system-owned",
+        estimated_seconds: 2,
+        timeout_seconds: 30,
+        keywords: &["dns", "域名", "解析", "flushdns", "dscacheutil", "mdnsresponder", "network", "网络"],
+    },
+    TaskSpec {
+        id: ids::MAC_SPOTLIGHT_STATUS,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Check Spotlight indexing (read-only)",
+        problem: "Spotlight finds nothing or misses files",
+        impact: "Read-only status of the startup volume's index (`mdutil -s /`); nothing is changed",
+        requires_admin: false,
+        applies_when: "/usr/bin/mdutil is present and system-owned",
+        estimated_seconds: 2,
+        timeout_seconds: 30,
+        keywords: &["spotlight", "聚焦", "mdutil", "index", "索引", "search", "搜索"],
+    },
+    TaskSpec {
+        id: ids::MAC_BROKEN_PREFS,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Find broken preference files (report only)",
+        problem: "An app keeps losing its settings or fails to start because its preference file is damaged",
+        impact: "Reads ~/Library/Preferences (and ByHost) and lists files that do not parse as property lists; nothing is deleted or moved",
+        requires_admin: false,
+        applies_when: "Your ~/Library/Preferences folder exists",
+        estimated_seconds: 5,
+        timeout_seconds: 120,
+        keywords: &["preferences", "偏好", "plist", "corrupt", "损坏", "broken", "settings", "设置"],
+    },
+    TaskSpec {
+        id: ids::MAC_SAVED_STATE,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Find saved app states of removed apps (report only)",
+        problem: "Saved window states of apps that are no longer installed take space",
+        impact: "Lists ~/Library/Saved Application State entries whose app is not installed; nothing is deleted",
+        requires_admin: false,
+        applies_when: "Your ~/Library/Saved Application State folder exists",
+        estimated_seconds: 5,
+        timeout_seconds: 120,
+        keywords: &["saved state", "保存状态", "savedstate", "resume", "窗口恢复", "stale", "过期"],
+    },
+    TaskSpec {
+        id: ids::MAC_DISK_VERIFY,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Verify the startup volume (read-only)",
+        problem: "Disk errors are suspected (crashes, files that cannot be read)",
+        impact: "Read-only verification (`diskutil verifyVolume /`); nothing is repaired. Needs administrator authorization",
+        requires_admin: true,
+        applies_when: "/usr/sbin/diskutil is present and system-owned",
+        estimated_seconds: 120,
+        timeout_seconds: 1800,
+        keywords: &["disk", "磁盘", "verify", "校验", "diskutil", "fsck", "first aid", "急救"],
+    },
+    TaskSpec {
+        id: ids::MAC_LAUNCH_AGENTS,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Find LaunchAgents whose program is gone (report only)",
+        problem: "Leftover background jobs of removed apps fail at every login",
+        impact: "Reads ~/Library/LaunchAgents and lists jobs whose program no longer exists or whose file does not parse; nothing is changed",
+        requires_admin: false,
+        applies_when: "Your ~/Library/LaunchAgents folder exists",
+        estimated_seconds: 2,
+        timeout_seconds: 60,
+        keywords: &["launchagent", "launch agent", "launchd", "login item", "登录项", "startup", "启动项", "stale", "失效"],
+    },
+    TaskSpec {
+        id: ids::MAC_NETWORK_DSSTORE,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Stop writing .DS_Store files on network volumes",
+        problem: "Finder leaves .DS_Store files on shared network folders",
+        impact: "Sets com.apple.desktopservices DSDontWriteNetworkStores to true after backing up the prior value (restorable with `optimize restore`); Finder picks it up after you log out and back in",
+        requires_admin: false,
+        applies_when: "The setting is not already true",
+        estimated_seconds: 1,
+        timeout_seconds: 30,
+        keywords: &[".ds_store", "ds_store", "dsstore", "network", "网络", "smb", "共享", "desktopservices"],
+    },
+    TaskSpec {
+        id: ids::MAC_SPOTLIGHT_REBUILD,
+        version: "1.0.0",
+        platform: TaskPlatform::Macos,
+        title: "Rebuild the Spotlight index of a chosen volume",
+        problem: "Spotlight results stay wrong on one volume after the status check",
+        impact: "Erases and rebuilds that volume's index (`mdutil -E`); searches are incomplete until indexing finishes. Needs administrator authorization",
+        requires_admin: true,
+        applies_when: "A mounted volume chosen with --volume when planning",
+        estimated_seconds: 5,
+        timeout_seconds: 120,
+        keywords: &["spotlight", "聚焦", "rebuild", "重建", "reindex", "mdutil", "索引"],
+    },
+];
+
+/// Tasks that act on one volume chosen when planning (`MaintenanceTaskAction::volume`).
+pub const VOLUME_TASKS: &[&str] = &[ids::MAC_SPOTLIGHT_REBUILD];
+
+pub fn needs_volume(task_id: &str) -> bool {
+    VOLUME_TASKS.contains(&task_id)
+}
+
+/// A setting task is reversible (its prior value is backed up and restorable); every other task is not (MNT-07).
+pub fn reversible(task_id: &str) -> bool {
+    settings::for_task(task_id).is_some()
+}
 
 /// The catalog of a platform.
 pub fn catalog(platform: TaskPlatform) -> &'static [TaskSpec] {
@@ -489,8 +645,31 @@ pub fn resolve_tasks(task_ids: &[&str], platform: TaskPlatform) -> Result<Vec<&'
     Ok(out)
 }
 
-/// Freeze tasks into a `maintenance` plan pending review (D1/D10). Order follows the catalog.
+/// What a plan needs beyond the task list: the chosen volume of a volume task and the current value of each setting
+/// task's setting (`true`/`false`/`absent`, or `other:<type>`).
+pub struct PlanInputs<'a> {
+    pub volume: Option<&'a str>,
+    pub setting: &'a dyn Fn(&settings::SettingSpec) -> Result<String, String>,
+}
+
+/// A volume named for a volume task: an absolute, plain path (the platform checks it is a mount point).
+pub fn check_volume_text(v: &str) -> Result<(), Refusal> {
+    let plain = v.starts_with('/') && v.len() <= 1024 && !v.contains('\0') && !v.split('/').any(|c| c == ".." || c == ".");
+    if plain { Ok(()) } else { Err(refuse("invalid_argument", format!("--volume must be the absolute mount point of a volume, not {v:?}"))) }
+}
+
+/// Freeze tasks into a `maintenance` plan pending review (D1/D10). Order follows the catalog. Plans without setting or
+/// volume tasks; see [`build_maintenance_plan_with`].
 pub fn build_maintenance_plan(tasks: &[&'static TaskSpec], platform: TaskPlatform, plan_id: &str, created_unix: i64, policy_digest: &str) -> Result<PlanV2, Refusal> {
+    let no_setting = |_: &settings::SettingSpec| -> Result<String, String> { Err("settings cannot be read here".into()) };
+    build_maintenance_plan_with(tasks, platform, plan_id, created_unix, policy_digest, &PlanInputs { volume: None, setting: &no_setting })
+}
+
+/// Freeze tasks into a `maintenance` plan: a setting task becomes a `settings_change` action from the value observed
+/// now (14.5); a volume task carries the chosen volume. Order follows the catalog.
+pub fn build_maintenance_plan_with(
+    tasks: &[&'static TaskSpec], platform: TaskPlatform, plan_id: &str, created_unix: i64, policy_digest: &str, inputs: &PlanInputs<'_>,
+) -> Result<PlanV2, Refusal> {
     if tasks.is_empty() {
         return Err(refuse("invalid_argument", "no task to plan"));
     }
@@ -500,18 +679,27 @@ pub fn build_maintenance_plan(tasks: &[&'static TaskSpec], platform: TaskPlatfor
     if ordered.len() != tasks.len() {
         return Err(refuse("invalid_argument", "tasks must be distinct catalog tasks of this platform"));
     }
-    let items = ordered
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            PlanAction::MaintenanceTask(MaintenanceTaskAction {
-                action_id: format!("m{i:07}"),
-                task_id: t.id.into(),
-                task_version: t.version.into(),
-                requires_admin: t.requires_admin,
-            })
-        })
-        .collect();
+    if let Some(v) = inputs.volume {
+        check_volume_text(v)?;
+        if !ordered.iter().any(|t| needs_volume(t.id)) {
+            return Err(refuse("invalid_argument", format!("--volume applies only to {}", VOLUME_TASKS.join(", "))));
+        }
+    }
+    let mut items = Vec::with_capacity(ordered.len());
+    for (i, t) in ordered.iter().enumerate() {
+        let action_id = format!("m{i:07}");
+        if let Some(spec) = settings::for_task(t.id) {
+            let observed = (inputs.setting)(spec).map_err(|e| refuse("unsupported", format!("{}: the current value cannot be read ({e}); not planned", t.id)))?;
+            items.push(settings::change_action(spec, action_id, &observed)?);
+            continue;
+        }
+        let volume = if needs_volume(t.id) {
+            Some(inputs.volume.ok_or_else(|| refuse("invalid_argument", format!("task {} acts on one volume; name it with --volume MOUNT_POINT", t.id)))?.to_owned())
+        } else {
+            None
+        };
+        items.push(PlanAction::MaintenanceTask(MaintenanceTaskAction { action_id, task_id: t.id.into(), task_version: t.version.into(), requires_admin: t.requires_admin, volume }));
+    }
     let meta = ordered.iter().map(|t| ActionMeta { note: Some(t.title.into()), ..Default::default() }).collect();
     let header = HeaderInput { plan_id, plan_kind: PlanKind::Maintenance, created_unix, scope_id: None, scan_id: None, scan_revision: None, rule_set_digest: &digest, policy_digest };
     crate::plan::v2::build(&header, items, meta).map_err(|e| refuse("internal_error", e.to_string()))
@@ -525,8 +713,24 @@ pub fn planned_task(a: &MaintenanceTaskAction, platform: TaskPlatform) -> Result
         Some(t) if t.version != a.task_version || t.requires_admin != a.requires_admin => {
             Err(("task_version_changed", format!("the plan was made for {}@{}; this build has {}@{}; create a new plan", a.task_id, a.task_version, t.id, t.version)))
         }
+        Some(t) if needs_volume(t.id) && a.volume.as_deref().is_none_or(|v| check_volume_text(v).is_err()) => {
+            Err(("volume_missing", format!("task {} needs the volume chosen when planning; create a new plan with --volume", t.id)))
+        }
+        Some(t) if !needs_volume(t.id) && a.volume.is_some() => Err(("task_version_changed", format!("task {} takes no volume; create a new plan", t.id))),
+        Some(t) if reversible(t.id) => Err(("task_version_changed", format!("task {} is planned as a settings_change action; create a new plan", t.id))),
         Some(t) => Ok(t),
     }
+}
+
+/// The setting of a stored maintenance plan's `settings_change` action, checked against this build: a known setting of
+/// a catalog task of this platform, writing exactly that task's target from a value this build understands.
+pub fn planned_setting(a: &crate::plan::v2::SettingsChangeAction, platform: TaskPlatform) -> Result<(&'static settings::SettingSpec, &'static TaskSpec), (&'static str, String)> {
+    let spec = settings::by_id(&a.setting_id).filter(|s| s.platform == platform).ok_or_else(|| ("setting_unknown", format!("setting {} is not changed by this build", a.setting_id)))?;
+    let task = catalog(platform).iter().find(|t| t.id == spec.task_id).ok_or_else(|| ("task_unknown", format!("task {} is not in this build's catalog", spec.task_id)))?;
+    if a.to_value != spec.target || !settings::is_known_value(&a.from_value) || a.restore_on_exit {
+        return Err(("task_version_changed", format!("the plan changes {} in a way this build does not; create a new plan", spec.id)));
+    }
+    Ok((spec, task))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

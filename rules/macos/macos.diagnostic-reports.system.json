@@ -1,0 +1,61 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "macos.diagnostic-reports.system",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "logs",
+  "max_tier": "review_only",
+  "rebuild_class": "not_rebuildable",
+  "owner": {
+    "kind": "system",
+    "id": "macos.library-logs"
+  },
+  "root_resolver": "system_logs",
+  "match": {
+    "object_type": "file",
+    "relative_components": [
+      "DiagnosticReports"
+    ],
+    "name_glob": null,
+    "extensions": [
+      "ips",
+      "crash",
+      "diag",
+      "hang",
+      "spin"
+    ],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 1
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle",
+    "elevated_token"
+  ],
+  "thresholds": {
+    "min_age_days": 7,
+    "age_basis": "modified_time",
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": true,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "System-wide crash, hang and diagnostic reports (/Library/Logs/DiagnosticReports, *.ips/*.crash/*.diag/*.hang/*.spin) older than 7 days. Administrator only.",
+    "regeneration": "Not regenerated: each report is a record of a past crash or hang.",
+    "offline_effect": "The reports are no longer available for troubleshooting. Skipped unless this tool runs as root (this build has no privileged helper on macOS)."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

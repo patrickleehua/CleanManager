@@ -813,6 +813,32 @@ impl AuditStore {
     }
 }
 
+/// Prior values of maintenance setting changes (parity 14.5, MNT-07), in the same durable backup table, stored before
+/// the write they back up.
+impl AuditStore {
+    pub fn save_setting_backup(&self, operation_id: &str, action_id: &str, plan_id: &str, b: &cm_core::maintenance::settings::SettingBackup) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO registry_backups(backup_id,operation_id,action_id,plan_id,record_json,record_sha256,state,created_at) VALUES(?1,?2,?3,?4,?5,?6,'recorded',?7)",
+            params![b.backup_id, operation_id, action_id, plan_id, serde_json::to_string(b).expect("backup serializes"), b.sha256(), b.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// A stored setting backup, verified against the hash recorded with it: (record, state).
+    pub fn setting_backup(&self, backup_id: &str) -> Result<(cm_core::maintenance::settings::SettingBackup, String)> {
+        let (json, sha, state): (String, String, String) = self
+            .conn
+            .query_row("SELECT record_json, record_sha256, state FROM registry_backups WHERE backup_id=?1", [backup_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(backup_id.into()))?;
+        let b: cm_core::maintenance::settings::SettingBackup = serde_json::from_str(&json).map_err(|e| StoreError::AuditUnavailable(e.to_string()))?;
+        if b.sha256() != sha || b.backup_id != backup_id {
+            return Err(StoreError::AuditUnavailable(format!("backup {backup_id} does not match its recorded hash")));
+        }
+        Ok((b, state))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

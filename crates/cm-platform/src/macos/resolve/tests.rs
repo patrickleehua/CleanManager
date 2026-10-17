@@ -48,6 +48,7 @@ fn resolvers_only_map_fixed_locations() {
         downloads: Some(PathBuf::from("/U/Downloads")),
         tool_env: [("GOCACHE".to_string(), PathBuf::from("/gocache")), ("XDG_CACHE_HOME".to_string(), PathBuf::from("/xdg"))].into(),
         removable_volume: None,
+        system: Some(PathBuf::from("/")),
     };
     let r = |resolver, owner: &str| targets(&rule_like(resolver, owner), &env);
     let p = |s: &str| vec![Target { path: PathBuf::from(s), tcc_protected: false }];
@@ -69,6 +70,30 @@ fn resolvers_only_map_fixed_locations() {
     assert!(r(RootResolver::ApplicationCache, "unknown.owner").is_empty(), "no mapping, no root");
     assert!(r(RootResolver::UserLogs, "microsoft.vscode").is_empty(), "a mapping is per resolver kind");
     assert!(r(RootResolver::SystemLogs, "macos").is_empty());
+    // Wave 2.
+    assert_eq!(r(RootResolver::ApplicationCache, "slack"), p("/U/Library/Application Support/Slack"));
+    assert_eq!(r(RootResolver::ApplicationCache, "spotify"), p("/U/Library/Caches/com.spotify.client"));
+    assert_eq!(r(RootResolver::ApplicationCache, "apple.coresimulator"), p("/U/Library/Developer/CoreSimulator"));
+    assert_eq!(r(RootResolver::UserLogs, "docker.desktop"), p("/U/Library/Containers/com.docker.docker/Data/log"));
+    assert_eq!(r(RootResolver::ApplicationCache, "docker.desktop"), p("/U/Library/Application Support/Docker Desktop"));
+    assert_eq!(r(RootResolver::UserLogs, "bytedance.feishu"), p("/U/Library/Application Support/LarkShell/sdk_storage/log"));
+    assert_eq!(r(RootResolver::UserLogs, "google.drive"), p("/U/Library/Application Support/Google/DriveFS/Logs"));
+    assert!(r(RootResolver::ApplicationCache, "google.drive").is_empty(), "never Drive's content cache");
+    assert_eq!(r(RootResolver::PackageManagerCache, "homebrew"), p("/U/Library/Caches/Homebrew"));
+    assert_eq!(r(RootResolver::PackageManagerCache, "cocoapods"), p("/U/Library/Caches/CocoaPods"));
+    assert_eq!(r(RootResolver::PackageManagerCache, "carthage"), p("/U/Library/Caches/org.carthage.CarthageKit"));
+    assert!(r(RootResolver::PackageManagerCache, "maven").is_empty(), "~/.m2/repository is a package store, not a cache");
+    let tcc = |s: &str| Target { path: PathBuf::from(s), tcc_protected: true };
+    assert_eq!(r(RootResolver::AppContainer, "tencent.wechat"), vec![tcc("/U/Library/Containers/com.tencent.xinWeChat/Data/Library/Caches")]);
+    assert_eq!(r(RootResolver::AppContainer, "microsoft.teams"), vec![tcc("/U/Library/Containers/com.microsoft.teams2/Data/Library/Caches")]);
+    assert_eq!(r(RootResolver::AppContainer, "microsoft.office").len(), 3, "Word, Excel and PowerPoint");
+    assert!(r(RootResolver::AppContainer, "microsoft.office").iter().all(|t| t.tcc_protected && !t.path.display().to_string().contains("Outlook")));
+    assert_eq!(r(RootResolver::SystemLogs, "macos.library-logs"), p("/Library/Logs"));
+    assert_eq!(r(RootResolver::SystemLogs, "macos.var-log"), p("/private/var/log"));
+    let brew = ResolverEnv { tool_env: [("HOMEBREW_CACHE".to_string(), PathBuf::from("/brewcache"))].into(), ..env.clone() };
+    assert_eq!(targets(&rule_like(RootResolver::PackageManagerCache, "homebrew"), &brew), p("/brewcache"));
+    let systemless = ResolverEnv { system: None, ..env.clone() };
+    assert!(targets(&rule_like(RootResolver::SystemLogs, "macos.var-log"), &systemless).is_empty());
     let homeless = ResolverEnv { home: None, ..env.clone() };
     assert!(targets(&rule_like(RootResolver::PackageManagerCache, "npm"), &homeless).is_empty());
     assert_eq!(targets(&rule_like(RootResolver::PackageManagerCache, "go"), &homeless), p("/gocache"));
@@ -87,10 +112,16 @@ fn fixture_overrides_replace_the_real_locations_and_are_reported() {
     assert_eq!(env.downloads.as_deref(), Some(Path::new("/fx/home/Downloads")), "Downloads follows the fixture home");
     assert_eq!(env.temp, real.temp);
     assert!(env.tool_env.is_empty(), "a fixture home never reaches the real user's tool caches");
+    assert_eq!(real.system.as_deref(), Some(Path::new("/")));
+    assert_eq!(env.system, None, "a fixture home never reaches the real system logs");
+    let (env, used) = real.clone().with_overrides(vars(&[("CM_RESOLVE_HOME", Path::new("/fx/home")), ("CM_RESOLVE_SYSTEM", Path::new("/fx/root"))]));
+    assert_eq!(used, ["CM_RESOLVE_HOME", "CM_RESOLVE_SYSTEM"]);
+    assert_eq!(env.system.as_deref(), Some(Path::new("/fx/root")), "the system stand-in applies after the home override");
     let (env, used) = real.with_overrides(vars(&[("CM_RESOLVE_DOWNLOADS", Path::new("/fx/dl")), ("CM_RESOLVE_TEMP", Path::new("/fx/t"))]));
     assert_eq!(used, ["CM_RESOLVE_TEMP", "CM_RESOLVE_DOWNLOADS"]);
     assert_eq!((env.temp.as_deref(), env.downloads.as_deref()), (Some(Path::new("/fx/t")), Some(Path::new("/fx/dl"))));
     assert!(!env.tool_env.is_empty(), "without a home override the tools' own variables still apply");
+    assert_eq!(env.system.as_deref(), Some(Path::new("/")));
 }
 
 /// Every rule of the shipped macOS pack has a fixed location for its owner (otherwise it could never apply).
@@ -102,6 +133,7 @@ fn every_shipped_macos_rule_has_a_resolver_mapping() {
         downloads: Some(PathBuf::from("/U/Downloads")),
         tool_env: BTreeMap::new(),
         removable_volume: Some(PathBuf::from("/Volumes/X")),
+        system: Some(PathBuf::from("/")),
     };
     let rules = mac_rules();
     for rule in &rules {
@@ -111,7 +143,7 @@ fn every_shipped_macos_rule_has_a_resolver_mapping() {
         }
         assert!(!targets(rule, &env).is_empty(), "{} ({:?}, owner {}) has no location", rule.rule_id, rule.root_resolver, rule.owner.id);
     }
-    assert!(rules.len() >= 30, "the pack was read ({} rules)", rules.len());
+    assert!(rules.len() >= 55, "the pack (waves 1 and 2) was read ({} rules)", rules.len());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -168,10 +200,27 @@ fn scanned(root: &Path) -> MemView {
     v
 }
 
+/// Fixture bases: `CM_RESOLVE_HOME`, `CM_RESOLVE_TEMP`, `CM_RESOLVE_DOWNLOADS`, the selected volume and
+/// `CM_RESOLVE_SYSTEM` (the stand-in for `/`).
+const BASES: [&str; 5] = ["home", "temp", "downloads", "volume", "system"];
+
+/// The fixture manifests of every wave, merged (a rule is listed in exactly one).
+fn manifest() -> Value {
+    let mut rules = serde_json::Map::new();
+    for wave in ["wave1", "wave2"] {
+        let m: Value = serde_json::from_str(&std::fs::read_to_string(repo(&format!("rules/macos/fixtures/{wave}.json"))).unwrap()).unwrap();
+        assert_eq!(m["schema"], "cleanmanager.mac-rule-fixtures/1", "{wave}");
+        for (id, e) in m["rules"].as_object().unwrap() {
+            assert!(rules.insert(id.clone(), e.clone()).is_none(), "{id} is listed in two waves");
+        }
+    }
+    serde_json::json!({ "rules": rules })
+}
+
 /// `<base>:<relative>` of the fixture manifest → absolute path (trailing `/` dropped) and whether it is a directory.
 fn fixture_path(root: &Path, spec: &str) -> (PathBuf, bool) {
     let (base, rel) = spec.split_once(':').unwrap_or_else(|| panic!("fixture {spec} has no base"));
-    assert!(["home", "temp", "downloads", "volume"].contains(&base), "unknown fixture base in {spec}");
+    assert!(BASES.contains(&base), "unknown fixture base in {spec}");
     assert!(!rel.split('/').any(|c| c == ".."), "{spec} escapes its base");
     (root.join(base).join(rel.trim_end_matches('/')), rel.ends_with('/'))
 }
@@ -182,7 +231,7 @@ fn set_mtime(p: &Path, t: SystemTime) {
 
 /// Write every rule's fixtures (directories get one payload file); all are 30 days old except the rule's `fresh` ones.
 fn build_fixtures(root: &Path, manifest: &Value) {
-    for base in ["home", "temp", "downloads", "volume"] {
+    for base in BASES {
         std::fs::create_dir_all(root.join(base)).unwrap();
     }
     let mut aged = Vec::new();
@@ -211,7 +260,7 @@ fn build_fixtures(root: &Path, manifest: &Value) {
 
 #[test]
 fn with_cm_resolve_home_every_rule_resolves_to_its_fixtures_and_negatives_do_not_match() {
-    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(repo("rules/macos/fixtures/wave1.json")).unwrap()).unwrap();
+    let manifest = manifest();
     let rules = mac_rules();
     let fx = Fixture::new("catalog");
     let root = fx.path();
@@ -221,6 +270,7 @@ fn with_cm_resolve_home_every_rule_resolves_to_its_fixtures_and_negatives_do_not
         ("CM_RESOLVE_HOME", root.join("home").as_path()),
         ("CM_RESOLVE_TEMP", root.join("temp").as_path()),
         ("CM_RESOLVE_DOWNLOADS", root.join("downloads").as_path()),
+        ("CM_RESOLVE_SYSTEM", root.join("system").as_path()),
     ]));
     assert_eq!(used, OVERRIDE_VARS);
     env.removable_volume = Some(root.join("volume"));
@@ -377,4 +427,37 @@ fn bundle_versions_need_the_owner_identifier() {
     assert_eq!(bundle_version(&bundle, "com.microsoft.edgemac"), None, "another app's bundle never answers");
     std::fs::write(app.join("Info.plist"), plist("com.google.Chrome", "beta build")).unwrap();
     assert_eq!(bundle_version(&bundle, "com.google.Chrome"), None, "unparseable versions are unknown");
+}
+
+/// Administrator-only system logs (catalog wave 2): only `system_logs` rules are `requires_admin`, they declare
+/// `elevated_token`, and without root (this build has no privileged helper on macOS) every candidate is skipped as
+/// `probe_unknown`, so nothing of theirs is ever preselected or planned.
+#[test]
+fn administrator_rules_are_skipped_without_root() {
+    use cm_core::catalog::{ProbeState, SkipReason, TierInputs, compute_tier};
+    use crate::macos::probes::{ProcessSnapshot, probe_candidate};
+    let rules = mac_rules();
+    let admin: Vec<&Rule> = rules.iter().filter(|r| r.requires_admin).collect();
+    assert_eq!(admin.len(), 2, "/Library/Logs and /private/var/log");
+    for r in &rules {
+        assert_eq!(r.requires_admin, r.root_resolver == RootResolver::SystemLogs, "{}: system-wide locations, and only they, need administrator rights", r.rule_id);
+    }
+    let fx = Fixture::new("admin");
+    let dir = fx.mkdir("system/private/var/log");
+    let path = RawPath::unix(dir.as_os_str().as_bytes().to_vec()).unwrap();
+    // SAFETY: plain query of this process's effective user.
+    let root = unsafe { libc::geteuid() } == 0;
+    for r in admin {
+        assert!(r.probes.iter().any(|p| p == "elevated_token"), "{}", r.rule_id);
+        assert_ne!(r.max_tier, Tier::DefaultSelected, "{}", r.rule_id);
+        let probes = probe_candidate(&path, &r.probes, Some(&r.owner.id), &ProcessSnapshot::fixed(Ok(&[])));
+        let elevated = probes.iter().find(|p| p.probe == "elevated_token").unwrap();
+        assert_eq!(elevated.state, if root { ProbeState::NotInUse } else { ProbeState::Unknown }, "{}: {}", r.rule_id, elevated.detail);
+        let decision = compute_tier(&TierInputs { rule_max: r.max_tier, probes: vec![elevated.clone()], ..TierInputs::default() });
+        assert_ne!(decision.tier, Tier::DefaultSelected, "{}: never preselected", r.rule_id);
+        if !root {
+            assert_eq!(decision.skip, Some(SkipReason::ProbeUnknown), "{}: skipped without a helper", r.rule_id);
+            assert!(decision.reasons.iter().any(|x| x == "probe:elevated_token:unknown"), "{}: {:?}", r.rule_id, decision.reasons);
+        }
+    }
 }

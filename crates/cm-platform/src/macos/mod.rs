@@ -15,6 +15,7 @@ pub mod hard_deny;
 pub mod insights;
 pub mod installer;
 pub mod maintenance;
+pub mod maintenance_diag;
 pub mod posix;
 pub mod probes;
 pub mod processes;

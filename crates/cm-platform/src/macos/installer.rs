@@ -175,12 +175,17 @@ pub fn pkg_signer(p: &Path) -> Option<String> {
 
 /// `(st_dev, st_ino)` of every image file attached now, from `hdiutil info -plist` (read-only).
 pub fn attached_images() -> Result<Vec<(u64, u64)>, String> {
+    Ok(attached_image_paths()?.iter().filter_map(|p| std::fs::metadata(p).ok()).map(|m| (m.dev(), m.ino())).collect())
+}
+
+/// Paths of every image file attached now, from `hdiutil info -plist` (read-only).
+pub fn attached_image_paths() -> Result<Vec<PathBuf>, String> {
     let out = Tool::new(HDIUTIL).args(["info", "-plist"]).timeout(Duration::from_secs(20)).output_caps(4 << 20, 16 << 10).run().map_err(|e| e.to_string())?;
     if !out.success() || out.stdout_truncated {
         return Err(format!("hdiutil info failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
     let (plist, _) = plist_from_bytes(&out.stdout)?;
-    Ok(image_paths(&plist).iter().filter_map(|p| std::fs::metadata(p).ok()).map(|m| (m.dev(), m.ino())).collect())
+    Ok(image_paths(&plist))
 }
 
 /// `images[].image-path` of an `hdiutil info -plist` reply.

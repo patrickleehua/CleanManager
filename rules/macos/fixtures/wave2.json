@@ -1,0 +1,357 @@
+{
+  "schema": "cleanmanager.mac-rule-fixtures/1",
+  "description": "Positive/negative fixtures of the macOS catalog rules (wave 2), in the same shape as wave1.json. Each string is `<base>:<relative path>`; base is home (CM_RESOLVE_HOME), temp (CM_RESOLVE_TEMP), downloads (CM_RESOLVE_DOWNLOADS), volume (a selected volume root) or system (CM_RESOLVE_SYSTEM, standing in for `/` below which /Library/Logs and /private/var/log are resolved); a trailing `/` makes a directory. Every fixture is written 30 days old except those in `fresh`. With the overrides pointing at the fixture tree, a rule's candidates must be exactly its positive fixtures; `expect: permission_required` marks a privacy-protected (TCC) app container that the resolver reports instead of reading. Fixtures are not registry evidence: no rule here is registered and every rule stays experimental until it is tested on a real Mac.",
+  "rules": {
+    "slack.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Slack/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Slack/Code Cache.old/",
+          "home:Library/Application Support/Slack/Local Storage/",
+          "home:Library/Application Support/Slack/IndexedDB/"
+        ]
+      }
+    },
+    "slack.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Slack/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Slack/GPUCache.old/",
+          "home:Library/Application Support/Slack/Local Storage/",
+          "home:Library/Application Support/Slack/IndexedDB/"
+        ]
+      }
+    },
+    "discord.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/discord/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/discord/Code Cache.old/",
+          "home:Library/Application Support/discord/Local Storage/",
+          "home:Library/Application Support/discord/IndexedDB/"
+        ]
+      }
+    },
+    "discord.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/discord/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/discord/GPUCache.old/",
+          "home:Library/Application Support/discord/Local Storage/",
+          "home:Library/Application Support/discord/IndexedDB/"
+        ]
+      }
+    },
+    "microsoft.teams.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Containers/com.microsoft.teams2/Data/Library/Caches/com.microsoft.teams2/"
+        ],
+        "negative": [
+          "home:Library/Containers/com.microsoft.teams2/Data/Library/Application Support/com.microsoft.teams2/",
+          "home:Library/Group Containers/UBF8T346G9.com.microsoft.teams/"
+        ]
+      },
+      "expect": "permission_required"
+    },
+    "zoom.logs": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Logs/zoom.us/zoom_stdout_stderr.log",
+          "home:Library/Logs/zoom.us/zMonitor/zMonitor.log"
+        ],
+        "negative": [
+          "home:Library/Logs/zoom.us/recent.log",
+          "home:Library/Logs/zoom.us/crash/report.dmp",
+          "home:Library/Application Support/zoom.us/data/zoomus.db"
+        ]
+      },
+      "fresh": [
+        "home:Library/Logs/zoom.us/recent.log"
+      ]
+    },
+    "bytedance.feishu.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/LarkShell/CodeCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/LarkShell/sdk_storage/",
+          "home:Library/Application Support/LarkShell/CodeCache.bak/",
+          "home:Library/Application Support/LarkShell/aha/"
+        ]
+      }
+    },
+    "bytedance.feishu.logs": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/LarkShell/sdk_storage/log/2026-09-01.alaudalog",
+          "home:Library/Application Support/LarkShell/sdk_storage/log/rust/sdk.alaudalog"
+        ],
+        "negative": [
+          "home:Library/Application Support/LarkShell/sdk_storage/log/today.alaudalog",
+          "home:Library/Application Support/LarkShell/sdk_storage/log/settings.json",
+          "home:Library/Application Support/LarkShell/sdk_storage/messages.db"
+        ]
+      },
+      "fresh": [
+        "home:Library/Application Support/LarkShell/sdk_storage/log/today.alaudalog"
+      ]
+    },
+    "tencent.wechat.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Containers/com.tencent.xinWeChat/Data/Library/Caches/com.tencent.xinWeChat/"
+        ],
+        "negative": [
+          "home:Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/",
+          "home:Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/"
+        ]
+      },
+      "expect": "permission_required"
+    },
+    "figma.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Figma/Code Cache/",
+          "home:Library/Application Support/Figma/DesktopProfile/v38/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Figma/DesktopProfile/v38/Local Storage/",
+          "home:Library/Application Support/Figma/a/b/c/Code Cache/",
+          "home:Library/Application Support/Figma/settings.json"
+        ]
+      }
+    },
+    "spotify.stream-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/com.spotify.client/Data/"
+        ],
+        "negative": [
+          "home:Library/Caches/com.spotify.client/Browser/",
+          "home:Library/Application Support/Spotify/PersistentCache/Storage/",
+          "home:Library/Caches/com.spotify.client/Data.old/"
+        ]
+      }
+    },
+    "valve.steam.web-code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Steam/config/htmlcache/Code Cache/",
+          "home:Library/Application Support/Steam/config/htmlcache/Default/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Steam/steamapps/common/Game/Code Cache/",
+          "home:Library/Application Support/Steam/userdata/1/",
+          "home:Library/Application Support/Steam/config/htmlcache/Cookies"
+        ]
+      }
+    },
+    "epicgames.launcher.webcache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Epic/EpicGamesLauncher/Saved/webcache/",
+          "home:Library/Application Support/Epic/EpicGamesLauncher/Saved/webcache_4430/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Epic/EpicGamesLauncher/Saved/Config/",
+          "home:Library/Application Support/Epic/EpicGamesLauncher/Saved/Logs/",
+          "home:Library/Application Support/Epic/EpicGamesLauncher/Saved/Data/Manifests/"
+        ]
+      }
+    },
+    "microsoft.onedrive.logs": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Logs/OneDrive/Personal/SyncEngine-2026-09-01.odlgz",
+          "home:Library/Logs/OneDrive/Common/telemetry.aodl"
+        ],
+        "negative": [
+          "home:Library/Logs/OneDrive/Personal/general.keystore",
+          "home:Library/Logs/OneDrive/Personal/SyncEngine-current.odl",
+          "home:Library/CloudStorage/OneDrive-Personal/report.log"
+        ]
+      },
+      "fresh": [
+        "home:Library/Logs/OneDrive/Personal/SyncEngine-current.odl"
+      ]
+    },
+    "google.drive.logs": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Google/DriveFS/Logs/drive_fs_1.txt"
+        ],
+        "negative": [
+          "home:Library/Application Support/Google/DriveFS/Logs/drive_fs.txt",
+          "home:Library/Application Support/Google/DriveFS/1234567890/content_cache/",
+          "home:Library/Application Support/Google/DriveFS/1234567890/metadata_sqlite_db",
+          "home:Library/Application Support/Google/DriveFS/Logs/crash/x.txt"
+        ]
+      },
+      "fresh": [
+        "home:Library/Application Support/Google/DriveFS/Logs/drive_fs.txt"
+      ]
+    },
+    "microsoft.office.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Containers/com.microsoft.Word/Data/Library/Caches/com.microsoft.Word/",
+          "home:Library/Containers/com.microsoft.Excel/Data/Library/Caches/com.microsoft.Excel/"
+        ],
+        "negative": [
+          "home:Library/Containers/com.microsoft.Word/Data/Library/Preferences/AutoRecovery/",
+          "home:Library/Containers/com.microsoft.Outlook/Data/Library/Caches/x/",
+          "home:Library/Group Containers/UBF8T346G9.Office/"
+        ]
+      },
+      "expect": "permission_required"
+    },
+    "docker.desktop.code-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Docker Desktop/Code Cache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Docker Desktop/Code Cache.old/",
+          "home:Library/Application Support/Docker Desktop/Local Storage/",
+          "home:Library/Application Support/Docker Desktop/IndexedDB/"
+        ]
+      }
+    },
+    "docker.desktop.gpu-cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Application Support/Docker Desktop/GPUCache/"
+        ],
+        "negative": [
+          "home:Library/Application Support/Docker Desktop/GPUCache.old/",
+          "home:Library/Application Support/Docker Desktop/Local Storage/",
+          "home:Library/Application Support/Docker Desktop/IndexedDB/"
+        ]
+      }
+    },
+    "docker.desktop.logs": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Containers/com.docker.docker/Data/log/host/com.docker.backend.log",
+          "home:Library/Containers/com.docker.docker/Data/log/vm/console.log"
+        ],
+        "negative": [
+          "home:Library/Containers/com.docker.docker/Data/log/host/electron.log",
+          "home:Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+          "home:Library/Containers/com.docker.docker/Data/log/host/old/nested.log"
+        ]
+      },
+      "fresh": [
+        "home:Library/Containers/com.docker.docker/Data/log/host/electron.log"
+      ]
+    },
+    "apple.xcode.ios-device-support": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Developer/Xcode/iOS DeviceSupport/iPhone15,2 18.6 (22G86)/",
+          "home:Library/Developer/Xcode/iOS DeviceSupport/17.5 (21F79)/"
+        ],
+        "negative": [
+          "home:Library/Developer/Xcode/Archives/2026-09-01/",
+          "home:Library/Developer/Xcode/watchOS DeviceSupport/11.0/",
+          "home:Library/Developer/Xcode/iOS DeviceSupport.old/x/"
+        ]
+      }
+    },
+    "apple.coresimulator.caches": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Developer/CoreSimulator/Caches/dyld/",
+          "home:Library/Developer/CoreSimulator/Caches/com.apple.CoreSimulator.SimDevice.cache"
+        ],
+        "negative": [
+          "home:Library/Developer/CoreSimulator/Devices/0A1B2C3D/data/",
+          "home:Library/Developer/CoreSimulator/Devices/device_set.plist",
+          "home:Library/Developer/Xcode/UserData/"
+        ]
+      }
+    },
+    "homebrew.downloads": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/Homebrew/downloads/0123abcd--wget-1.24.5.arm64_sequoia.bottle.tar.gz",
+          "home:Library/Caches/Homebrew/downloads/4567cdef--Firefox 131.0.dmg"
+        ],
+        "negative": [
+          "home:Library/Caches/Homebrew/api/formula.jws.json",
+          "home:Library/Caches/Homebrew/Cask/firefox--131.0.dmg",
+          "home:.cache/Homebrew/downloads/x.tar.gz"
+        ]
+      }
+    },
+    "cocoapods.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/CocoaPods/Pods/"
+        ],
+        "negative": [
+          "home:Library/Caches/CocoaPods/search_index.json",
+          "home:Library/Caches/CocoaPods/Pods.old/",
+          "home:.cocoapods/repos/trunk/"
+        ]
+      }
+    },
+    "carthage.cache": {
+      "fixtures": {
+        "positive": [
+          "home:Library/Caches/org.carthage.CarthageKit/dependencies/",
+          "home:Library/Caches/org.carthage.CarthageKit/binaries/",
+          "home:Library/Caches/org.carthage.CarthageKit/DerivedData/"
+        ],
+        "negative": [
+          "home:Library/Caches/org.carthage.CarthageKit/carthage.lock",
+          "home:Projects/App/Carthage/Build/",
+          "home:Library/Caches/org.carthage.CarthageKit.old/"
+        ]
+      }
+    },
+    "macos.diagnostic-reports.system": {
+      "fixtures": {
+        "positive": [
+          "system:Library/Logs/DiagnosticReports/kernel-2026-09-01.panic.ips",
+          "system:Library/Logs/DiagnosticReports/Retired/old.crash"
+        ],
+        "negative": [
+          "system:Library/Logs/DiagnosticReports/fresh.ips",
+          "system:Library/Logs/DiagnosticReports/shutdown.log",
+          "system:Library/Logs/Install.log"
+        ]
+      },
+      "fresh": [
+        "system:Library/Logs/DiagnosticReports/fresh.ips"
+      ]
+    },
+    "macos.system-logs.rotated": {
+      "fixtures": {
+        "positive": [
+          "system:private/var/log/system.log.0.gz",
+          "system:private/var/log/wifi/wifi.log.1.bz2"
+        ],
+        "negative": [
+          "system:private/var/log/system.log",
+          "system:private/var/log/install.log",
+          "system:private/var/log/fresh.log.0.gz",
+          "system:private/var/log/asl/2026.09.01.U0.asl"
+        ]
+      },
+      "fresh": [
+        "system:private/var/log/fresh.log.0.gz"
+      ]
+    }
+  }
+}

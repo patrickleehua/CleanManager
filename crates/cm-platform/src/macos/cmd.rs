@@ -5,6 +5,12 @@
 //!   directories that are root-owned and neither group- nor world-writable all the way up; a
 //!   less privileged user could otherwise swap what runs. Only an explicit test override relaxes
 //!   this (`cfg(test)`, or a set `CM_*_TEST_*` redirection variable named by the caller).
+//! - User-installed package managers (Homebrew: `/opt/homebrew` belongs to the user who installed
+//!   it, not root, by Homebrew's design) opt in to [`Tool::owned_by_user_or_root`]: the binary and
+//!   every directory above it must be owned by root or by this process's user, and writable by
+//!   nobody else, except that group write is accepted for the `admin` group (gid 80) and `wheel`
+//!   (gid 0), which Homebrew's installer grants and whose members can already act as root through
+//!   `sudo`. Running such a tool is then exactly as trusted as running the user's own files.
 //! - A fixed argument vector, no shell. The environment is cleared and rebuilt as `LANG=C`,
 //!   `LC_ALL=C`, a minimal system `PATH` plus what the caller adds explicitly; stdin is
 //!   `/dev/null`, the working directory `/` unless set.
@@ -43,6 +49,8 @@ const POLL: Duration = Duration::from_millis(10);
 enum Trust {
     /// Root-owned binary in root-only directories (the only production policy).
     RootOnly,
+    /// Owned by root or the current user, writable only by them (and the admin/wheel group).
+    OwnerOrRoot,
     /// Ownership checks skipped while the named `CM_*_TEST_*` variable is set.
     WhenTestVar(&'static str),
     #[cfg(test)]
@@ -129,6 +137,42 @@ pub(crate) fn trusted_program(program: &Path) -> Result<PathBuf, ToolError> {
         root_only(dir, &m)?;
     }
     Ok(real)
+}
+
+/// `admin` and `wheel`: groups whose members can already become root (`sudo`).
+const PRIVILEGED_GROUPS: [u32; 2] = [80, 0];
+
+/// [`trusted_program`] for a tool the current user installed: the binary and its directories must
+/// be owned by root or `uid` and not writable by anyone else (group write only for admin/wheel).
+pub(crate) fn trusted_user_program(program: &Path, uid: u32) -> Result<PathBuf, ToolError> {
+    if !program.is_absolute() {
+        return Err(ToolError::NotAbsolute(program.to_path_buf()));
+    }
+    let real = std::fs::canonicalize(program).map_err(|e| ToolError::Untrusted(format!("{} cannot be resolved: {e}", program.display())))?;
+    let meta = std::fs::symlink_metadata(&real).map_err(|e| ToolError::Untrusted(format!("{}: {e}", real.display())))?;
+    if !meta.file_type().is_file() {
+        return Err(ToolError::Untrusted(format!("{} is not a regular file", real.display())));
+    }
+    if meta.permissions().mode() & 0o111 == 0 {
+        return Err(ToolError::Untrusted(format!("{} is not executable", real.display())));
+    }
+    owner_or_root(&real, &meta, uid)?;
+    for dir in real.ancestors().skip(1) {
+        let m = std::fs::symlink_metadata(dir).map_err(|e| ToolError::Untrusted(format!("{}: {e}", dir.display())))?;
+        owner_or_root(dir, &m, uid)?;
+    }
+    Ok(real)
+}
+
+fn owner_or_root(path: &Path, meta: &std::fs::Metadata, uid: u32) -> Result<(), ToolError> {
+    if meta.uid() != 0 && meta.uid() != uid {
+        return Err(ToolError::Untrusted(format!("{} is owned by uid {}, not root or the current user (uid {uid})", path.display(), meta.uid())));
+    }
+    let mode = meta.mode();
+    if mode & 0o002 != 0 || (mode & 0o020 != 0 && !PRIVILEGED_GROUPS.contains(&meta.gid())) {
+        return Err(ToolError::Untrusted(format!("{} is writable by others (mode {:o}, group {})", path.display(), mode & 0o7777, meta.gid())));
+    }
+    Ok(())
 }
 
 fn root_only(path: &Path, meta: &std::fs::Metadata) -> Result<(), ToolError> {
@@ -259,6 +303,13 @@ impl Tool {
         self
     }
 
+    /// Accept a binary owned by the current user (a user-installed package manager such as
+    /// Homebrew) under the [`trusted_user_program`] rules instead of root-only ownership.
+    pub(crate) fn owned_by_user_or_root(mut self) -> Tool {
+        self.trust = Trust::OwnerOrRoot;
+        self
+    }
+
     /// Skip the ownership checks while `var` is set to a non-empty value. `var` must be a
     /// `CM_*_TEST_*` redirection that placed a stand-in tool; any other name is ignored.
     pub(crate) fn untrusted_when_test_var(mut self, var: &'static str) -> Tool {
@@ -278,6 +329,8 @@ impl Tool {
     fn resolve(&self) -> Result<PathBuf, ToolError> {
         let relaxed = match &self.trust {
             Trust::RootOnly => false,
+            // SAFETY: geteuid has no preconditions and cannot fail.
+            Trust::OwnerOrRoot => return trusted_user_program(&self.program, unsafe { libc::geteuid() }),
             Trust::WhenTestVar(var) => std::env::var_os(var).is_some_and(|v| !v.is_empty()),
             #[cfg(test)]
             Trust::Test => true,

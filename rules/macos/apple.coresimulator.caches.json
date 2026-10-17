@@ -1,0 +1,55 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "apple.coresimulator.caches",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "apple.coresimulator"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "any",
+    "relative_components": [
+      "Caches"
+    ],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Simulator caches (~/Library/Developer/CoreSimulator/Caches/*, such as the per-runtime dyld shared caches); never simulator devices or their data.",
+    "regeneration": "The simulator rebuilds the caches the next time a device of that runtime boots (the first boot is slower).",
+    "offline_effect": "None expected: simulator devices, their apps and data (CoreSimulator/Devices) and installed runtimes are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

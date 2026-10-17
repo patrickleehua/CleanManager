@@ -1,0 +1,54 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "cocoapods.cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "developer",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "tool",
+    "id": "cocoapods"
+  },
+  "root_resolver": "package_manager_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "Pods"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "CocoaPods download cache (~/Library/Caches/CocoaPods/Pods): released and external pod sources fetched for `pod install`.",
+    "regeneration": "CocoaPods downloads the pods again on the next `pod install`.",
+    "offline_effect": "Installing pods without the network is no longer possible. The spec repositories (~/.cocoapods/repos) and projects' Pods folders are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

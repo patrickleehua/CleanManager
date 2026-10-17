@@ -1,0 +1,53 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "tencent.wechat.cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "app_caches",
+  "max_tier": "review_only",
+  "rebuild_class": "network_redownload",
+  "owner": {
+    "kind": "app",
+    "id": "tencent.wechat"
+  },
+  "root_resolver": "app_container",
+  "match": {
+    "object_type": "any",
+    "relative_components": [],
+    "name_glob": "*",
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "WeChat cache (~/Library/Containers/com.tencent.xinWeChat/Data/Library/Caches/*); never the message databases. The app container is protected by macOS privacy controls.",
+    "regeneration": "WeChat rebuilds its caches and fetches images again when they are viewed.",
+    "offline_effect": "Cached images and mini-program data must be downloaded again. Chat history and files (Documents/xwechat_files, Application Support) are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

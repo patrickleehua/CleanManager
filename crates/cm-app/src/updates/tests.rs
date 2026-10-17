@@ -119,7 +119,7 @@ fn plans_hold_verifiable_package_updates_and_route_the_rest() {
     let r = check(&store, &apps, &ch, "t").unwrap();
     let ids: Vec<String> = apps.iter().map(|a| a.instance_id.clone()).collect();
     let signer = |a: &AppInstance| (a.name != "Gamma").then(|| "Vendor Inc.".to_owned());
-    let inputs = PlanInputs { results: &r.items, apps: &apps, ids: &ids, winget: Some(tool()), scoop: None, installed_signer: &signer };
+    let inputs = PlanInputs { results: &r.items, apps: &apps, ids: &ids, winget: Some(tool()), scoop: None, homebrew: None, installed_signer: &signer };
     let (plan, routed) = plan_updates(&inputs, "up_1", T0, NO_RULES_DIGEST).unwrap();
     let plan = plan.unwrap();
     assert_eq!(plan.body.plan_kind, PlanKind::Update);
@@ -209,7 +209,7 @@ fn batch_reports_each_item_and_one_failure_does_not_stop_the_rest() {
     let r = check(&store, &apps, &ch, "t").unwrap();
     let ids: Vec<String> = apps[..3].iter().map(|a| a.instance_id.clone()).collect();
     let signer = |_: &AppInstance| Some("Vendor Inc.".to_owned());
-    let (plan, _) = plan_updates(&PlanInputs { results: &r.items, apps: &apps, ids: &ids, winget: Some(tool()), scoop: None, installed_signer: &signer }, "up_batch", T0, NO_RULES_DIGEST).unwrap();
+    let (plan, _) = plan_updates(&PlanInputs { results: &r.items, apps: &apps, ids: &ids, winget: Some(tool()), scoop: None, homebrew: None, installed_signer: &signer }, "up_batch", T0, NO_RULES_DIGEST).unwrap();
     let plan = plan.unwrap();
     assert_eq!(plan.body.items.len(), 3);
     stores.audit.save_plan_v2(&plan).unwrap();
@@ -240,5 +240,100 @@ fn batch_reports_each_item_and_one_failure_does_not_stop_the_rest() {
     assert!(report.items[1].message.contains("1603"), "{}", report.items[1].message);
     assert_eq!(*backend.upgraded.borrow(), ["Vendor.Alpha", "Vendor.Gamma"]);
     drop(stores);
+    let _ = std::fs::remove_dir_all(&store);
+}
+
+/// macOS-shaped channels through `platform_detect` (portable: synthetic probes, no tool, no network).
+struct MacLike {
+    passes: Cell<u32>,
+    fetches: Cell<u32>,
+}
+
+fn mac_app(name: &str, source: AppSource) -> AppInstance {
+    let mut a = AppInstance::new(name.into(), source, RawPath::unix(format!("/Applications/{name}.app").into_bytes()).ok());
+    a.version = Some("1.0".into());
+    a
+}
+
+fn mac_apps_fixture() -> Vec<AppInstance> {
+    use cm_core::apps::HomebrewKind;
+    let mut ff = mac_app("Firefox", AppSource::Homebrew { token: "firefox".into(), kind: HomebrewKind::Cask });
+    ff.publisher = Some("Mozilla Corporation (43AQ936H96)".into());
+    vec![
+        ff,
+        mac_app("wget", AppSource::Homebrew { token: "wget".into(), kind: HomebrewKind::Formula }),
+        mac_app("Pages", AppSource::AppStore { bundle_id: "com.apple.iWork.Pages".into(), path: "/Applications/Pages.app".into() }),
+        mac_app("Sparkly", AppSource::AppBundle { bundle_id: "com.example.sparkly".into(), path: "/Applications/Sparkly.app".into() }),
+        mac_app("Plain", AppSource::AppBundle { bundle_id: "com.example.plain".into(), path: "/Applications/Plain.app".into() }),
+    ]
+}
+
+impl UpdateChannels for MacLike {
+    fn winget_list(&self) -> Result<String, String> {
+        panic!("winget is never asked on macOS")
+    }
+    fn scoop_apps(&self) -> Vec<ScoopApp> {
+        panic!("Scoop is never read on macOS")
+    }
+    fn self_updater(&self, _: &AppInstance) -> Option<SelfUpdaterProbe> {
+        None
+    }
+    fn platform_detect(&self, apps: &[AppInstance], checked_at: &str) -> Option<Vec<UpdateCheck>> {
+        use cm_core::updates::mac::{AppcastItem, MacDetectInput, MacProbe, SparkleFeed, mac_detect, parse_brew_outdated};
+        self.passes.set(self.passes.get() + 1);
+        let probe = |a: &AppInstance| match a.name.as_str() {
+            "Sparkly" => MacProbe {
+                sparkle: Some(SparkleFeed { feed_url: Some("https://u.example.test/a.xml".into()), public_ed_key: true, bundle_version: Some("100".into()), short_version: Some("1.0".into()) }),
+                ..MacProbe::default()
+            },
+            _ => MacProbe::default(),
+        };
+        let fetch = |_: &str| {
+            self.fetches.set(self.fetches.get() + 1);
+            Ok(vec![AppcastItem { version: Some("120".into()), short_version: Some("1.2".into()), ed_signature: true, ..AppcastItem::default() }])
+        };
+        let brew = parse_brew_outdated(r#"{"formulae":[],"casks":[{"name":"firefox","installed_versions":["130.0"],"current_version":"131.0.2"}]}"#);
+        Some(mac_detect(&MacDetectInput { apps, homebrew: Some(brew), probe: &probe, fetch_appcast: &fetch, os_version: Some("15.6"), checked_at }))
+    }
+}
+
+#[test]
+fn macos_channels_check_plan_homebrew_and_route_the_rest() {
+    let store = dir("mac");
+    let apps = mac_apps_fixture();
+    let ch = MacLike { passes: Cell::new(0), fetches: Cell::new(0) };
+    let r = check(&store, &apps, &ch, "2026-10-17T08:00:00Z").unwrap();
+    assert_eq!((ch.passes.get(), ch.fetches.get()), (1, 1));
+    let by = |n: &str| r.items.iter().find(|c| c.name == n).unwrap();
+    assert_eq!(by("Firefox").state, UpdateState::UpdateAvailable);
+    assert_eq!(by("wget").state, UpdateState::UpToDate);
+    assert_eq!(by("Sparkly").state, UpdateState::UpdateAvailable);
+    assert_eq!(by("Plain").state, UpdateState::CannotCheck, "no channel is never up to date");
+    let w = r.to_wire();
+    let pages = w["items"].as_array().unwrap().iter().find(|i| i["name"] == "Pages").unwrap();
+    assert_eq!((pages["channel"].as_str(), pages["official_url"].as_str()), (Some("mac_app_store"), Some(cm_core::updates::mac::MAC_APP_STORE_UPDATES_URI)));
+
+    let brew = UpdateTool { exe: RawPath::unix(b"/opt/homebrew/bin/brew".to_vec()).unwrap(), sha256: "b".repeat(64) };
+    let ids: Vec<String> = apps.iter().map(|a| a.instance_id.clone()).collect();
+    let signer = |a: &AppInstance| a.publisher.clone();
+    let inputs = PlanInputs { results: &r.items, apps: &apps, ids: &ids, winget: None, scoop: None, homebrew: Some(brew), installed_signer: &signer };
+    let (plan, routed) = plan_updates(&inputs, "up_mac", T0, NO_RULES_DIGEST).unwrap();
+    let plan = plan.expect("the Homebrew upgrade is planned");
+    assert_eq!(plan.body.items.len(), 1);
+    let PlanAction::ToolAdapter(t) = &plan.body.items[0] else { panic!() };
+    assert_eq!((t.adapter_id.as_str(), t.argv.clone()), (cm_core::updates::HOMEBREW_ADAPTER, vec!["upgrade".to_owned(), "--cask".into(), "firefox".into()]));
+    assert!(describe(t, &plan.meta[0]).contains("Homebrew verifies"));
+    let route_of = |n: &str| routed.iter().find(|r| r.name == n).map(|r| (r.route, r.url.clone()));
+    assert_eq!(route_of("Pages"), Some((Route::OpenStore, Some(cm_core::updates::mac::MAC_APP_STORE_UPDATES_URI.into()))));
+    assert_eq!(route_of("Sparkly").map(|r| r.0), Some(Route::OpenApp));
+    assert_eq!(route_of("Plain").map(|r| r.0), Some(Route::None));
+    // No brew on this Mac: the Homebrew update goes to the official page instead of a plan.
+    let (none, routed) = plan_updates(&PlanInputs { homebrew: None, ..inputs }, "up_mac2", T0, NO_RULES_DIGEST).unwrap();
+    assert!(none.is_none());
+    assert_eq!(routed.iter().find(|r| r.name == "Firefox").map(|r| r.route), Some(Route::OpenOfficialPage));
+    // Checks off: no detection pass, so no brew run and no appcast request.
+    set_checks(&store, false).unwrap();
+    let off = check(&store, &apps, &ch, "2026-10-18T08:00:00Z").unwrap();
+    assert_eq!((ch.passes.get(), ch.fetches.get(), off.checked), (1, 1, false));
     let _ = std::fs::remove_dir_all(&store);
 }

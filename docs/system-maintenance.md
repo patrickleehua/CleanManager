@@ -1,6 +1,6 @@
 # 系统维护
 
-对应 `add-mole-parity-suite` 的 MNT-01..07、PRT-06 与任务 14.1/14.2/14.4（Windows）。14.1、14.2、14.4 已勾选：五项 Windows 任务都有 Windows 11 真机执行记录（见文末“实测记录”）。整体未通过 G3 门禁（任务 18.3），没有发布。macOS 首批任务（14.3）尚未实现：本构建在 macOS 上目录为空，`optimize plan create` 无可选任务。
+对应 `add-mole-parity-suite` 的 MNT-01..07、PRT-06 与任务 14.1/14.2/14.4（Windows）、14.3/14.5（macOS）。14.1、14.2、14.4 已勾选：五项 Windows 任务都有 Windows 11 真机执行记录（见文末“实测记录”）。macOS 首批与第二批任务（14.3/14.5）已实现，只在托管 CI runner 上运行过，没有真 Mac 记录，所以未勾选。整体未通过 G3 门禁（任务 18.3），没有发布。
 
 默认关闭（设计 D15）：系统维护尚未通过门禁 G3，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -16,6 +16,8 @@ cleanmanager plan review PLAN_ID                             # 终端审阅；�
 cleanmanager plan apply PLAN_ID                              # 结果为 maintenance_report
 cleanmanager optimize diagnose --window 3                    # 只读性能诊断
 cleanmanager optimize history                                # 维护运行记录（无撤销）
+cleanmanager optimize plan create --tasks macos.spotlight-rebuild --volume /Volumes/Data   # 卷任务必须点名卷（挂载点）
+cleanmanager optimize restore --operation OP_ID              # 设置变更（settings_change）的恢复计划，审阅后 plan apply
 ```
 
 - 一次运行就是一个 `maintenance` 种类的 `plan/v2` 计划（D1/D10）：摘要覆盖任务 ID、版本与是否需管理员；授权只来自对这份计划的交互审阅，预授权策略永远不匹配维护计划。
@@ -33,6 +35,31 @@ cleanmanager optimize history                                # 维护运行记�
 | `windows.image-health-check@1.0.0` | 更新/功能安装失败，怀疑组件存储损坏 | DISM API `DismCheckImageHealth`（不扫描，等价 `/CheckHealth`），只读，从不自动修复 | 是 | DISM API 存在 |
 
 失效启动项按 D10 交给 [启动项](startup-items.md)，不在维护目录中重复。
+
+## 任务目录（macOS，14.3 首批 + 14.5 第二批）
+
+**本构建在 macOS 上没有提权路径**（[macOS 平台说明](platforms/macos.md) §11）：没有特权 helper，从不用 `osascript` 的管理员权限，也不用 `AuthorizationExecuteWithPrivileges`。需要管理员的任务照常列出、可以进入计划，但每次执行都记为 skipped（`elevation_unavailable`），其余任务照常执行；`optimize list` 的 `elevation` 为 `unavailable`。外部工具一律以系统拥有的绝对路径、固定参数、无 shell、带超时与输出上限运行。
+
+| 任务 ID@版本 | 解决的问题 | 动作 | 管理员 | 适用性探测（只读） |
+| --- | --- | --- | --- | --- |
+| `macos.quicklook-reset@1.0.0` | 快速预览/Finder 缩略图空白或过期 | `/usr/bin/qlmanage -r cache`（本用户的缩略图缓存） | 否 | 工具存在且为系统所有 |
+| `macos.icon-cache-rebuild@1.0.0` | 图标空白或过期 | 重建系统图标服务缓存（系统缓存，需 root） | 是 → 恒为 skipped | `/Library/Caches/com.apple.iconservices.store` 是否存在（不存在为 unchanged） |
+| `macos.dns-flush@1.0.0` | DNS 变更后仍解析到旧地址 | `dscacheutil -flushcache` 加 `killall -HUP mDNSResponder`；后者需要 root，所以整个任务需管理员 | 是 → 恒为 skipped | 两个工具存在且为系统所有 |
+| `macos.spotlight-status@1.0.0` | Spotlight 搜不到文件 | `/usr/bin/mdutil -s /`，只读；索引关闭、Spotlight 服务关闭或状态未知为 attention，并给出系统设置入口 | 否 | 工具存在 |
+| `macos.broken-preferences@1.0.0` | 应用丢设置或启动失败（偏好文件损坏） | 用 CFPropertyList 解析 `~/Library/Preferences/*.plist` 与 `ByHost/*.plist`（不跟随链接）；无法解析或空文件列为 attention。**只报告**，从不删除、移动或改写 | 否 | 偏好文件夹存在 |
+| `macos.stale-saved-state@1.0.0` | 已卸载应用的窗口保存状态 | 列出 `~/Library/Saved Application State/<bundle id>.savedState` 中 LaunchServices（`NSWorkspace URLForApplicationWithBundleIdentifier:`）找不到已安装应用的条目，attention。**只报告**，不删除 | 否 | 文件夹存在；查询失败为 skipped `state_unknown`（不猜测） |
+| `macos.disk-verify@1.0.0` | 怀疑磁盘错误 | `diskutil verifyVolume /`，只读，不修复 | 是 → 恒为 skipped | 工具存在 |
+| `macos.launch-agents-report@1.0.0` | 已删应用遗留的后台作业每次登录都失败 | 读 `~/Library/LaunchAgents/*.plist`：`Program`/`ProgramArguments[0]` 是已不存在的绝对路径，或文件无法解析，列为 attention；相对路径与 `BundleProgram` 不判定。**只报告**，处理入口是 `startup list` | 否 | 文件夹存在 |
+| `macos.network-dsstore-off@1.0.0`（14.5） | Finder 在网络共享上留下 `.DS_Store` | 设置变更：`com.apple.desktopservices` 的 `DSDontWriteNetworkStores` 设为 true（CFPreferences，当前用户）。计划里是 `settings_change` 动作（冻结审阅时的原值 `from_value`）；执行前先把原值写成备份记录再写入，写后回读确认；审阅后被改过的设置不写（skipped `changed_since_review`）。可恢复（见下） | 否 | 当前值：已为 true → unchanged；false/未设置 → 适用；其他类型的值 → 状态不明，不改 |
+| `macos.spotlight-rebuild@1.0.0`（14.5） | 状态检查后某个卷的 Spotlight 结果仍然不对 | `mdutil -E <卷>`：清除并重建该卷索引。卷在计划时用 `--volume` 点名（必须是挂载点），写进摘要覆盖的动作；批量计划从不自动选它 | 是 → 恒为 skipped | 工具存在 |
+
+D16 N15 中不采用的项（应用私有 SQLite 的 VACUUM、清除旧调优、网络栈/ARP 刷新、用户目录权限修复、手动运行 periodic 脚本、共享文件列表/最近项目重置）不是任务；重建整个 LaunchServices 数据库仍在禁止项中（`rebuild-app-registrations`）。
+
+### 设置变更的恢复（14.5、MNT-07）
+
+- 运行成功写入的设置在 `operations list` 中显示恢复可用性 `in_app_restore`；`cleanmanager optimize restore --operation OP_ID` 把该次运行记录的备份冻结成 `recovery` 计划（每个备份一个 `settings_change` 动作，动作 ID 即备份 ID，从写入值改回原值；原值为“未设置”时删除该键）。
+- 恢复计划同样只能由交互审阅批准；执行时只有设置仍是当时写入的值才改回，期间被用户改过则 skipped（`changed_since`），已是原值记为成功且不写。恢复后备份标为 `restored`，不能再次恢复。
+- 其余维护任务仍没有撤销；`maintenance_report.undo` 恒为 `unavailable`。
 
 ## 六种结果（MNT-03）
 
@@ -86,9 +113,11 @@ cleanmanager optimize history                                # 维护运行记�
 
 阈值是本产品可调设计值。诊断不更改任何设置，记录中 `read_only` 恒为 true。
 
+macOS 上同一命令读取：本用户进程在窗口内与启动以来的 CPU（libproc，其他用户的进程读不到用量，不参与）、物理内存负载（主机 VM 统计）、访达可见的本地卷可用空间（`getmntinfo`，系统内部 APFS 卷不列出）、launchd 启动项数量（启用/总数）与 `hdiutil info` 列出的已附加磁盘映像。macOS 没有提交上限的概念，所以不报告提交量。
+
 ## 历史（MNT-07）
 
-每次运行写入一条 `maintenance_report`：计划与摘要、入口（cli/desktop）、执行者、提权情况、每项任务的版本、结果、代码、原因、是否在提权上下文执行以及起止时间。`optimize history` 按时间倒序列出；`operations list` 中该操作的 `action` 为 `maintenance`、恢复可用性为 `unavailable`。维护动作没有通用撤销；对可逆设置变更（`settings_change`）的恢复入口属后续任务，本构建不执行 `settings_change` 动作（记为 skipped `unsupported`）。
+每次运行写入一条 `maintenance_report`：计划与摘要、入口（cli/desktop）、执行者、提权情况、每项任务的版本、结果、代码、原因、是否在提权上下文执行以及起止时间。`optimize history` 按时间倒序列出；`operations list` 中该操作的 `action` 为 `maintenance`、恢复可用性为 `unavailable`（运行中有已记录备份的设置变更时为 `in_app_restore`）。维护动作没有通用撤销；可逆设置变更（`settings_change`，目前只有 macOS 的 `macos.network-dsstore-off`）有恢复入口 `optimize restore`。
 
 ## 实测记录
 
@@ -101,3 +130,5 @@ Windows 11 企业版 10.0.26200 x64 上的真实记录见 [维护实测汇总](e
 - `windows.shell-restart`：attention（`did_not_close`）：本机 StartMenuExperienceHost 与 SearchHost 都拒绝 Restart Manager 的无强制关闭，任务没有强制结束它们，提示注销后重新登录。也就是说在这台设备上该任务不能达成目的，只能如实报告；是否允许强制结束这两个系统宿主属于 D10 的取舍，当前不改变。
 - 三项在同一份计划中执行（`run_win_maint_trim`、`run_win_maint_icon_cache`、`run_win_maint_shell_restart`），计划经真实终端审阅批准（在独立控制台中输入审阅码），没有直接写入回执；Shell 已提权，所以 TRIM 在进程内执行，真实 UAC 路径仍没有记录。
 - 自动化测试只在临时目录上执行缓存删除，任务一律脚本化，从不重启真实的 Shell 宿主、不刷新真实缓存、不触发 UAC。
+
+macOS 没有真机记录。托管 CI runner（macos-14 arm64）上的测试（`crates/cm-cli/tests/mac_maintenance_flow.rs`、`crates/cm-platform/src/macos/maintenance/tests.rs`）在夹具上运行真实任务：`CM_RESOLVE_HOME` 指向放有损坏偏好、已卸载应用保存状态与失效 LaunchAgent 的假家目录，`CM_MAINTENANCE_TEST_PREFS_DIR` 让设置变更写入夹具中的绝对路径偏好域（不碰用户的 `com.apple.desktopservices`），再通过审阅过的恢复计划改回；Quick Look 重置与真实偏好域的写入/还原往返只在 `GITHUB_ACTIONS=true` 或 `CM_ALLOW_MAC_DEVICE_TESTS=1` 时运行。runner 不是参考设备，这些结果不写入任何验收记录。

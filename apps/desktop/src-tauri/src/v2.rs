@@ -647,7 +647,7 @@ mod tests {
         let plan = build(&header(PlanKind::Process), vec![p], vec![ActionMeta::default()]).unwrap();
         let row = &item_rows(&plan)[0];
         assert_eq!((row.name.as_str(), row.item_kind.as_str()), ("code.exe (PID 4242)", "process"));
-        let t = PlanAction::MaintenanceTask(MaintenanceTaskAction { action_id: "m01".into(), task_id: "windows.dns-flush".into(), task_version: "1.0.0".into(), requires_admin: false });
+        let t = PlanAction::MaintenanceTask(MaintenanceTaskAction { action_id: "m01".into(), task_id: "windows.dns-flush".into(), task_version: "1.0.0".into(), requires_admin: false, volume: None });
         let plan = build(&header(PlanKind::Maintenance), vec![t], vec![ActionMeta::default()]).unwrap();
         let row = &item_rows(&plan)[0];
         assert_eq!((row.path_display.as_str(), row.item_kind.as_str(), row.scope.as_deref()), ("windows.dns-flush@1.0.0", "maintenance_task", Some("user")));

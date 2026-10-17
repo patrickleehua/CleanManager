@@ -156,8 +156,10 @@ unsafe extern "C" {
     fn CFPropertyListCreateData(alloc: CFAllocatorRef, plist: CFTypeRef, format: CFIndex, options: CFOptionFlags, error: *mut CFTypeRef) -> CFTypeRef;
 
     // CFPreferences.h
-    /// `CFPropertyListRef CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID);`
-    fn CFPreferencesCopyAppValue(key: CFTypeRef, app: CFTypeRef) -> CFTypeRef;
+    /// `CFPropertyListRef CFPreferencesCopyValue(CFStringRef key, CFStringRef applicationID, CFStringRef userName, CFStringRef hostName);`
+    fn CFPreferencesCopyValue(key: CFTypeRef, app: CFTypeRef, user: CFTypeRef, host: CFTypeRef) -> CFTypeRef;
+    static kCFPreferencesCurrentUser: CFTypeRef;
+    static kCFPreferencesAnyHost: CFTypeRef;
     /// `void CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID);`
     fn CFPreferencesSetAppValue(key: CFTypeRef, value: CFTypeRef, app: CFTypeRef);
     /// `Boolean CFPreferencesAppSynchronize(CFStringRef applicationID);`
@@ -548,10 +550,14 @@ pub(crate) fn plist_to_bytes(value: &Plist, format: PlistFormat) -> Result<Vec<u
 
 /// Current user's value of `key` in preference domain `domain` (an application ID such as
 /// `com.apple.dock`, or an absolute plist path without `.plist`). `Ok(None)` when unset.
+///
+/// Reads the (current user, any host) layer that [`pref_set`] writes. `CFPreferencesCopyAppValue` is not used: after
+/// this process removes a key another process wrote, it keeps returning the old value in this process while
+/// `cfprefsd`, `defaults` and the file already show the key gone (seen on macOS 27.0.1).
 pub(crate) fn pref_get(domain: &str, key: &str) -> Result<Option<Plist>, String> {
     let (d, k) = (string(domain).ok_or("bad domain")?, string(key).ok_or("bad key")?);
-    // SAFETY: live CFStrings; Copy rule.
-    let value = unsafe { CfRef::from_create(CFPreferencesCopyAppValue(k.as_ptr(), d.as_ptr())) };
+    // SAFETY: live CFStrings and CoreFoundation's constant user/host names; Copy rule.
+    let value = unsafe { CfRef::from_create(CFPreferencesCopyValue(k.as_ptr(), d.as_ptr(), kCFPreferencesCurrentUser, kCFPreferencesAnyHost)) };
     // SAFETY: live property list object.
     value.map(|v| unsafe { to_plist(v.as_ptr()) }).transpose()
 }

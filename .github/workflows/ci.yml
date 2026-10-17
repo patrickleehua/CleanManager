@@ -159,6 +159,14 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+      # On Windows the host is the shipped desktop app: its tests and lints run too, so a change in a shared crate that
+      # breaks a Windows-only host path fails here rather than on the next desktop build.
+      - name: Desktop host tests and lints (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+
       - name: CI changed no tracked file (and no acceptance record)
         if: always()
         run: |

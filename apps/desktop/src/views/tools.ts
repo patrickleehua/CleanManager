@@ -40,6 +40,7 @@ const STATE_WORD: Record<string, [string, Tone]> = {
   disabled: ['已停用', 'muted'],
   broken: ['目标缺失', 'warn'],
   target_unreachable: ['目标暂不可达', 'warn'],
+  unknown: ['状态未知', 'muted'],
 };
 
 export class StartupPage implements PageLike {

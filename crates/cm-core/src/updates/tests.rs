@@ -304,3 +304,41 @@ fn macos_channels_have_their_wire_names() {
     let names = [Channel::Sparkle, Channel::MacAppStore, Channel::Homebrew, Channel::Electron].map(|c| serde_json::to_value(c).unwrap());
     assert_eq!(names, ["sparkle", "mac_app_store", "homebrew", "electron"].map(serde_json::Value::from));
 }
+
+fn brew_target() -> UpdateTarget {
+    UpdateTarget {
+        app_instance_id: "app_ff".into(),
+        name: "Firefox".into(),
+        channel: Channel::Homebrew,
+        package_id: "cask:firefox".into(),
+        from_version: Some("1.2.0".into()),
+        to_version: "1.3.0".into(),
+        installed_signer: Some("Mozilla Corporation (43AQ936H96)".into()),
+        install_location: Some("/Applications/Firefox.app".into()),
+        official_url: None,
+    }
+}
+
+/// D8: Homebrew verifies its own download (checksum from its index), so only the fixed `brew upgrade` runs.
+#[test]
+fn homebrew_runs_only_the_fixed_upgrade() {
+    let t = brew_target();
+    let f = Fake::new(Some("Mozilla Corporation (43AQ936H96)"));
+    assert_eq!(execute(&f, &action(&t), Some(&note(&t))), UpdateOutcome::Updated { to_version: "1.3.0".into() });
+    assert_eq!(*f.calls.borrow(), vec![vec!["upgrade".to_owned(), "--cask".into(), "firefox".into()]]);
+    // A formula has no Developer ID signer; it still upgrades through Homebrew.
+    let mut formula = brew_target();
+    formula.package_id = "formula:wget".into();
+    formula.installed_signer = None;
+    let f = Fake::new(None);
+    assert_eq!(execute(&f, &action(&formula), Some(&note(&formula))), UpdateOutcome::Updated { to_version: "1.3.0".into() });
+    assert_eq!(f.calls.borrow()[0], ["upgrade", "--formula", "wget"]);
+    // Running app: skipped before brew runs.
+    let mut running = Fake::new(None);
+    running.running = Some(true);
+    assert!(matches!(execute(&running, &action(&t), Some(&note(&t))), UpdateOutcome::Skipped { code: "app_running", .. }));
+    assert!(running.calls.borrow().is_empty());
+    // The upgraded bundle is signed by someone else: reported as failed.
+    let f = Fake::new(Some("Someone Else (ZZZZZZZZZZ)"));
+    assert!(matches!(execute(&f, &action(&t), Some(&note(&t))), UpdateOutcome::Failed { code, .. } if code == "signature_changed"));
+}

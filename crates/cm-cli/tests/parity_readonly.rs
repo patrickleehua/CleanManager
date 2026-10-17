@@ -188,13 +188,5 @@ fn apps_list_uninstall_capability_matches_the_uninstall_route() {
     assert!(seen > 0 && matched > 0, "seen {seen}, matched {matched}");
 }
 
-#[cfg(not(windows))]
-#[test]
-fn parity_commands_are_unsupported_off_windows() {
-    // `insights` is implemented on macOS (parity 7.2; covered by mac_insights_flow).
-    for args in [vec!["startup", "list", "--json"], vec!["status", "--json"]] {
-        let (code, out) = run(&args);
-        assert_eq!(code, 7);
-        assert_eq!(single(&out)["code"], "unsupported");
-    }
-}
+// macOS implements these read-only parity commands too: `insights` (parity 7.2; mac_insights_flow), `status` and
+// `process` (parity 12.1/12.3; mac_status_process_flow) and `startup list` (parity 11.1; mac_startup_flow).

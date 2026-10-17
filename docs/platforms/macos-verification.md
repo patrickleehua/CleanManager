@@ -14,7 +14,7 @@
 | 构建产物、安装包清理 | 已实现（`unverified`，实验） | CLI `purge roots list`、`installer locations` |
 | 空间洞察（本地快照数、虚拟机与容器磁盘、iPhone 备份、交换与可清除空间估计、旧下载） | 已实现（`unverified`，实验，只读） | CLI `insights overview` |
 | 已安装应用列表 | 已实现（`unverified`，实验，只读） | CLI `apps list` |
-| 系统状态与进程、启动项列表、更新检测、维护任务、规则第 2 批 | 第 4 批；合入 main 前 `status`、`startup list` 报告 `unsupported`，`optimize list` 返回空任务目录 | CLI `status`、`startup list`、`optimize list` |
+| 系统状态与进程、启动项列表、更新检测、维护任务（含性能诊断）、规则第 2 批（26 条） | 已实现（`unverified`，实验；第 4 批已合入 main）。启动项只读，启停为 `unsupported`；需要管理员的维护任务一律 `skipped`（`elevation_unavailable`）；温度与风扇为不可用并说明原因 | CLI `status --count 1`、`process list`、`startup list`、`apps updates`、`optimize list`、`optimize diagnose --window 2`；网络卷 `.DS_Store` 设置可用 `optimize restore` 改回 |
 | 卸载、常驻工具 | 未实现（第 5、6 批） | CLI 应报告 `unsupported`，不应崩溃或误报可用 |
 | 特权 helper、风扇与电池控制、Touch ID | 本次不做（需要签名或真机） | 应一直报告 `unsupported` |
 | 桌面应用 | 未在 macOS 上构建过 | `--desktop` 构建前端与 Tauri 宿主测试 |

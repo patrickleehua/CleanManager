@@ -287,6 +287,9 @@ pub struct MaintenanceTaskAction {
     pub task_id: String,
     pub task_version: String,
     pub requires_admin: bool,
+    /// The volume a volume task acts on (mount point chosen when planning, e.g. Spotlight rebuild); digest-covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

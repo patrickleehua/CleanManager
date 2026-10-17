@@ -1,0 +1,55 @@
+{
+  "schema_version": "2.0",
+  "rule_id": "docker.desktop.code-cache",
+  "version": "1.0.0",
+  "status": "experimental",
+  "platforms": [
+    "macos"
+  ],
+  "category": "virtualization",
+  "max_tier": "review_only",
+  "rebuild_class": "local_rebuild",
+  "owner": {
+    "kind": "app",
+    "id": "docker.desktop"
+  },
+  "root_resolver": "application_cache",
+  "match": {
+    "object_type": "directory",
+    "relative_components": [
+      "Code Cache"
+    ],
+    "name_glob": null,
+    "extensions": [],
+    "require_cachedir_tag": false,
+    "archive_payload": false,
+    "max_depth": 0
+  },
+  "exclude": [],
+  "probes": [
+    "owner_process",
+    "open_file_handle"
+  ],
+  "thresholds": {
+    "min_age_days": null,
+    "age_basis": null,
+    "min_size_bytes": null,
+    "retention_days": null
+  },
+  "action_kind": "filesystem",
+  "adapter_ref": null,
+  "allowed_modes": [
+    "trash",
+    "quarantine"
+  ],
+  "requires_admin": false,
+  "protect_descendants": true,
+  "follow_links": false,
+  "impact": {
+    "summary": "Docker Desktop desktop (Electron) V8 code cache (~/Library/Application Support/Docker Desktop/Code Cache).",
+    "regeneration": "Rebuilt when Docker Desktop runs again; the first start after removal may be slightly slower.",
+    "offline_effect": "None expected: sign-in, settings and local data of Docker Desktop are not inside and are never matched."
+  },
+  "tested_registry_ref": null,
+  "evidence_refs": []
+}

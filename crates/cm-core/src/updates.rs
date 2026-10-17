@@ -6,7 +6,9 @@
 //! - UPD-02: updates run only as fixed package-manager argv (`tool_adapter`) after the downloaded package's signer was
 //!   checked against the installed app's signer ([`publisher_consistent`]); a mismatch or an unverifiable package
 //!   refuses the update before anything is installed and points to the official page instead. Store apps are routed
-//!   to the Store; self-updating (Squirrel/Electron) apps to the app itself.
+//!   to the Store; self-updating (Squirrel/Electron) apps to the app itself. On macOS ([`mac`]) Homebrew upgrades are
+//!   the fixed `brew upgrade --cask|--formula <name>` (Homebrew verifies the download's checksum, D8); Sparkle, App
+//!   Store and Electron results are status only and route to the app or the App Store.
 //! - UPD-03: a running app is not updated (the user is asked to close it and apply again); batch results are per item.
 //! - UPD-04: detection only runs when checks are enabled; when off, nothing is executed and the last results (with
 //!   their time) or `not_checked` are shown. Checks send only what the channel needs (the package manager's own query).
@@ -14,6 +16,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::apps::{AppInstance, AppSource};
+
+pub mod mac;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +63,22 @@ pub enum Route {
 
 pub const STORE_UPDATES_URI: &str = "ms-windows-store://downloadsandupdates";
 
+/// The store page an `open_store` route opens: the Mac App Store's Updates page for its apps, else Microsoft Store's.
+pub fn store_updates_uri(channel: Option<Channel>) -> &'static str {
+    if channel == Some(Channel::MacAppStore) { mac::MAC_APP_STORE_UPDATES_URI } else { STORE_UPDATES_URI }
+}
+
+/// Channels that never answer a version question themselves (detection only): they cannot be `up_to_date`.
+fn detection_only(channel: Option<Channel>) -> bool {
+    matches!(channel, Some(Channel::SelfUpdater | Channel::Electron | Channel::MacAppStore))
+}
+
+/// Channels whose package manager verifies the download itself before installing (Homebrew checks the artifact's
+/// SHA-256 against the cask/formula from its package index), so no separate download-and-signer step runs (D8).
+pub fn verified_by_channel(channel: Channel) -> bool {
+    channel == Channel::Homebrew
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateCheck {
     pub app_instance_id: String,
@@ -96,10 +116,11 @@ impl UpdateCheck {
             official_url: None,
         };
         let answered = matches!(c.state, UpdateState::UpToDate | UpdateState::UpdateAvailable);
-        if answered && (c.channel.is_none() || c.checked_at.is_none() || c.channel == Some(Channel::SelfUpdater)) {
+        if answered && (c.channel.is_none() || c.checked_at.is_none() || detection_only(c.channel)) {
+            let mac = matches!(c.channel, Some(Channel::Electron | Channel::MacAppStore));
             c.state = UpdateState::CannotCheck;
             c.available_version = None;
-            c.reason = Some(NO_CHANNEL.into());
+            c.reason = Some(if mac { mac::MAC_NO_CHANNEL } else { NO_CHANNEL }.into());
             c.route = Route::None;
         }
         if c.state != UpdateState::UpdateAvailable && c.route == Route::PackageManager {
@@ -445,6 +466,16 @@ pub mod argv {
     pub fn scoop_update(app: &str) -> Vec<String> {
         ["update", app].map(str::to_owned).to_vec()
     }
+
+    /// `brew upgrade --cask <token>` / `brew upgrade --formula <name>` (the kind flag keeps a same-named cask and
+    /// formula apart). Homebrew installs its index's current version and verifies the download's checksum.
+    pub fn brew_upgrade(kind: crate::apps::HomebrewKind, name: &str) -> Vec<String> {
+        let flag = match kind {
+            crate::apps::HomebrewKind::Cask => "--cask",
+            crate::apps::HomebrewKind::Formula => "--formula",
+        };
+        ["upgrade", flag, name].map(str::to_owned).to_vec()
+    }
 }
 
 /// Outcome of one external step.
@@ -474,6 +505,7 @@ pub trait UpdateBackend {
 
 pub const WINGET_ADAPTER: &str = "winget.upgrade";
 pub const SCOOP_ADAPTER: &str = "scoop.update";
+pub const HOMEBREW_ADAPTER: &str = "homebrew.upgrade";
 pub const ADAPTER_VERSION: &str = "1";
 
 /// The fixed upgrade argv for a target (what a plan's `tool_adapter` action must carry).
@@ -481,7 +513,9 @@ pub fn upgrade_argv(t: &UpdateTarget) -> Option<(&'static str, Vec<String>)> {
     match t.channel {
         Channel::Winget => Some((WINGET_ADAPTER, argv::winget_upgrade(&t.package_id, &t.to_version))),
         Channel::Scoop => Some((SCOOP_ADAPTER, argv::scoop_update(&t.package_id))),
-        Channel::MicrosoftStore | Channel::SelfUpdater | Channel::Sparkle | Channel::MacAppStore | Channel::Homebrew | Channel::Electron => None,
+        Channel::Homebrew => mac::parse_homebrew_package_id(&t.package_id).map(|(kind, name)| (HOMEBREW_ADAPTER, argv::brew_upgrade(kind, name))),
+        // Status only: the App Store and Sparkle/Electron apps update themselves (D8).
+        Channel::MicrosoftStore | Channel::SelfUpdater | Channel::Sparkle | Channel::MacAppStore | Channel::Electron => None,
     }
 }
 
@@ -511,7 +545,9 @@ fn official(t: &UpdateTarget) -> String {
 
 /// UPD-02/03: execute one `update` tool action. Order: bound target and argv, tool identity, running app, verified
 /// download (signer must equal the installed signer), then the upgrade, then the installed version. Anything that
-/// fails before the upgrade leaves the app untouched (`Skipped`).
+/// fails before the upgrade leaves the app untouched (`Skipped`). Homebrew ([`verified_by_channel`]) has no separate
+/// download step: `brew upgrade` verifies the artifact's checksum itself; a cask whose bundle signer changed is
+/// reported as failed afterwards.
 pub fn execute(b: &dyn UpdateBackend, a: &crate::plan::v2::ToolAdapterAction, note: Option<&str>) -> UpdateOutcome {
     let skip = |code: &'static str, message: String| UpdateOutcome::Skipped { code, message };
     let Some(t) = note.and_then(|n| serde_json::from_str::<UpdateTarget>(n).ok()) else {
@@ -533,34 +569,10 @@ pub fn execute(b: &dyn UpdateBackend, a: &crate::plan::v2::ToolAdapterAction, no
         Some(true) => return skip("app_running", format!("{} is running; close it and apply the plan again (CleanManager does not close apps to update them)", t.name)),
         None => return skip("running_unknown", format!("could not tell whether {} is running; close it and apply the plan again", t.name)),
     }
-    let Some(installed_signer) = t.installed_signer.clone() else {
-        return skip("unverifiable", format!("the installed {} has no verifiable signer, so a new package cannot be checked against it{}", t.name, official(&t)));
-    };
-    let dir = match b.scratch_dir(&a.action_id) {
-        Ok(d) => d,
-        Err(e) => return UpdateOutcome::Failed { code: "download_failed".into(), message: e },
-    };
-    let download = match t.channel {
-        Channel::Winget => argv::winget_download(&t.package_id, &t.to_version, &dir),
-        _ => argv::scoop_download(&t.package_id),
-    };
-    match b.run(&exe, &download, a.timeout_seconds) {
-        Ok(o) if o.exit_code == Some(0) && !o.timed_out => {}
-        Ok(o) => return skip("download_failed", format!("the package could not be downloaded for verification (exit {:?}): {}", o.exit_code, tail(&o.output, 300))),
-        Err(e) => return skip("download_failed", format!("the package could not be downloaded for verification: {e}")),
-    }
-    let files = b.downloaded(&t, &dir);
-    if files.is_empty() {
-        return skip("unverifiable", format!("no downloaded package was found to verify{}", official(&t)));
-    }
-    for f in &files {
-        match b.signer(f) {
-            None => return skip("unverifiable", format!("the downloaded package is unsigned or its signature does not verify{}", official(&t))),
-            Some(s) if !publisher_consistent(&installed_signer, &s) => {
-                return skip("signature_mismatch", format!("the package is signed by \"{s}\" but the installed app by \"{installed_signer}\"; update refused, the app was not changed"));
-            }
-            Some(_) => {}
-        }
+    if !verified_by_channel(t.channel)
+        && let Err(skipped) = verify_download(b, a, &t, &exe)
+    {
+        return skipped;
     }
     match b.run(&exe, &a.argv, a.timeout_seconds) {
         Ok(o) if o.timed_out => return UpdateOutcome::Unknown { message: format!("the package manager did not finish within {} s", a.timeout_seconds) },
@@ -571,11 +583,58 @@ pub fn execute(b: &dyn UpdateBackend, a: &crate::plan::v2::ToolAdapterAction, no
         Ok(_) => {}
         Err(e) => return UpdateOutcome::Failed { code: "tool_failed".into(), message: e },
     }
+    // Homebrew casks: the new bundle must still carry the installed signer (reported; the upgrade already ran).
+    if verified_by_channel(t.channel)
+        && let (Some(before), Some(loc)) = (&t.installed_signer, &t.install_location)
+        && let Some(after) = b.signer(loc)
+        && !publisher_consistent(before, &after)
+    {
+        return UpdateOutcome::Failed {
+            code: "signature_changed".into(),
+            message: format!("Homebrew installed the update, but the app is now signed by \"{after}\" instead of \"{before}\"; check the app before opening it"),
+        };
+    }
     match b.installed_version(&t) {
         Some(v) if v == t.to_version => UpdateOutcome::Updated { to_version: v },
         Some(v) => UpdateOutcome::Unknown { message: format!("the package manager reported success but the installed version is {v}, not {}", t.to_version) },
         None => UpdateOutcome::Unknown { message: "the installed version could not be read after the update".into() },
     }
+}
+
+/// UPD-02: download the exact package into a fresh directory and require its verified signer to be the installed
+/// app's signer. `Err` carries the outcome when the update must not run (the app is untouched).
+fn verify_download(b: &dyn UpdateBackend, a: &crate::plan::v2::ToolAdapterAction, t: &UpdateTarget, exe: &str) -> Result<(), UpdateOutcome> {
+    let skip = |code: &'static str, message: String| Err(UpdateOutcome::Skipped { code, message });
+    let Some(installed_signer) = t.installed_signer.clone() else {
+        return skip("unverifiable", format!("the installed {} has no verifiable signer, so a new package cannot be checked against it{}", t.name, official(t)));
+    };
+    let dir = match b.scratch_dir(&a.action_id) {
+        Ok(d) => d,
+        Err(e) => return Err(UpdateOutcome::Failed { code: "download_failed".into(), message: e }),
+    };
+    let download = match t.channel {
+        Channel::Winget => argv::winget_download(&t.package_id, &t.to_version, &dir),
+        _ => argv::scoop_download(&t.package_id),
+    };
+    match b.run(exe, &download, a.timeout_seconds) {
+        Ok(o) if o.exit_code == Some(0) && !o.timed_out => {}
+        Ok(o) => return skip("download_failed", format!("the package could not be downloaded for verification (exit {:?}): {}", o.exit_code, tail(&o.output, 300))),
+        Err(e) => return skip("download_failed", format!("the package could not be downloaded for verification: {e}")),
+    }
+    let files = b.downloaded(t, &dir);
+    if files.is_empty() {
+        return skip("unverifiable", format!("no downloaded package was found to verify{}", official(t)));
+    }
+    for f in &files {
+        match b.signer(f) {
+            None => return skip("unverifiable", format!("the downloaded package is unsigned or its signature does not verify{}", official(t))),
+            Some(s) if !publisher_consistent(&installed_signer, &s) => {
+                return skip("signature_mismatch", format!("the package is signed by \"{s}\" but the installed app by \"{installed_signer}\"; update refused, the app was not changed"));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
