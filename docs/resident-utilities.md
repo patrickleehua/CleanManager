@@ -1,6 +1,6 @@
-# 常驻工具（Windows）
+# 常驻工具（Windows 与 macOS）
 
-最近更新：2026-10-15。对应变更 `add-mole-parity-suite` 任务 15.1、15.2（RES-01..04、RES-07）。风扇、充电上限、网络低延迟（15.3，RES-05）与 Touch ID（15.4，RES-06）不在本轮；Windows 上在页面“此平台不提供”中说明原因。实机记录见 [evidence/resident-windows.json](evidence/resident-windows.json)。
+最近更新：2026-10-17。macOS 的实现与限制见文末 [macOS](#macos) 一节。对应变更 `add-mole-parity-suite` 任务 15.1、15.2（RES-01..04、RES-07）。风扇、充电上限、网络低延迟（15.3，RES-05）与 Touch ID（15.4，RES-06）不在本轮；Windows 上在页面“此平台不提供”中说明原因。实机记录见 [evidence/resident-windows.json](evidence/resident-windows.json)。
 
 默认关闭（设计 D15）：常驻工具尚未通过门禁 G4，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -70,3 +70,51 @@
 事件：`resident-navigate`（托盘快捷入口，页面只接受白名单中的四个页面）、`resident-changed`（托盘菜单关闭了常驻组件）、`resident-alert`（低电量提醒）。
 
 桌面依赖：启用 `tauri` 的 `tray-icon` 特性（`tray-icon` 与 `muda` 已在桌面锁文件中，未新增 crate）；`cm-platform` 的 `windows-sys` 新增 `Win32_Devices_Properties` 特性（只读设备属性），测试专用 `Win32_UI_Input_KeyboardAndMouse`（注入 Esc）。
+
+## macOS
+
+对应同一任务 15.2 在 macOS 上的部分（RES-02、RES-03、RES-04，以及 RES-01/07 的登录项）。代码：`crates/cm-platform/src/macos/resident.rs`（及 `resident/tests.rs`）、桌面宿主 `apps/desktop/src-tauri/src/resident.rs` 的 macOS 分支与 `mac_screen` 模块。门禁与 Windows 相同（D15、`resident.utilities`、G4）：实验功能关闭时命令被拒绝，已在运行的托盘、提醒与保持亮屏随之停止。能力行：`resident.utilities` 为 `unverified`（只在托管 runner 上测试过，不是真机），`resident.login_item` 为 `unsupported`。
+
+**验证范围：**下列读数与断言在 GitHub 托管的 `macos-14` arm64 runner（macOS 14.8，虚拟机：没有摄像头、电池和蓝牙设备，只有虚拟声卡）上由 `cargo test` 实际调用；桌面宿主在 CI 上只编译（`cargo check`）；清洁屏幕另在同一 runner 的图形会话里用一次性的临时钩子运行过一次（未提交）：窗口覆盖整个 1920×1080 显示器并获得焦点，截图中程序坞与菜单栏都已隐藏、底部显示提示与倒计时，6 秒超时在约 6.3 秒时以 `timeout` 结束，向页面派发的合成 Esc 按下在约 2 秒后以 `esc_held` 结束。菜单栏状态项没有运行过；没有用真实键盘、多显示器或在任何真机 Mac 上验证。真机证据仍是门禁 G4 的前提。
+
+### 菜单栏（RES-01）
+
+- 与 Windows 共用托盘代码：开启后菜单栏出现 CleanManager 状态项，菜单内容、白名单入口、5 秒采样（macOS 状态采样器 `macos::status::Sampler`）、关闭即停止并 join 采样线程都相同。托盘开启时关闭主窗口只隐藏窗口；点程序坞图标（`RunEvent::Reopen`）或菜单中的页面入口会再显示。
+- **登录时启动：不支持。**`SMAppService.mainApp` 只能为签名（并公证）的 app bundle 注册登录项，本构建未签名；CleanManager 也不会改写成隐藏的 `~/Library/LaunchAgents` 作业。`resident_save` 在保存任何内容之前以 `unsupported` 拒绝 `start_at_login`，原因原样显示；启动时若设置文件里有它，按关闭处理并保存。页面的“此平台不提供”列出 `start_at_login_macos`。
+
+### 保持亮屏（RES-02）
+
+- `IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn, "CleanManager: keep the screen on")`；显示器保持开启期间系统也不会因空闲睡眠。到时、点“结束”、托盘“退出”或 `RunEvent::Exit` 时由专用线程 `IOPMAssertionRelease`；进程意外结束时 powerd 自动撤销。不修改“节能/电池”设置。
+- 状态里的 `keep_awake.assertion` 写出当前断言（类型、ID、名称），与 `pmset -g assertions` 的“Listed by owning process”一致。
+- 测试（runner）：创建后 `IOPMCopyAssertionsByProcess` 在本进程下列出该名称的断言，释放、到时与 drop 后都不再列出。
+
+### 清洁屏幕（RES-02）
+
+- 每个显示器一个无边框、置顶、黑色背景的 webview 窗口（空白页 `about:blank#cm-clean-screen`，不授予任何 IPC 权限；不用单纯的 `about:blank`，因为 Tauri 对它不发起加载，脚本也就不会执行），页面脚本吞掉按键、点击、滚轮并隐藏指针；按住 **Esc 2 秒**时页面导航到 `cm-clean-screen://esc-held`，由窗口的导航处理器拦截并结束。主显示器底部显示暗灰色提示与倒计时。到达超时（5–300 秒）、用 Command-W 关闭任一窗口时也结束；结束时销毁全部窗口。
+- 运行期间本应用设置 `NSApplicationPresentationOptions`：隐藏程序坞与菜单栏、禁用 Command-Tab 切换应用与 Command-H 隐藏（只在主线程、且应用原本是默认展示选项时设置，结束时恢复默认）。**强制退出（Option-Command-Esc）、电源键与锁屏始终可用**，与 Windows 的 Ctrl+Alt+Del 对应。
+- **macOS 上 webview 做不到的：**输入只在 CleanManager 是活跃应用时被吞掉——没有辅助功能（Accessibility）权限，任何应用都不能拦截其他应用或系统的输入，本产品也不申请该权限；系统先处理的按键（亮度、音量、调度中心、聚焦搜索、截屏、触控板手势）仍然生效；开始前已按住的键在松开前被忽略；Command-Q 是否被页面吞掉取决于 WebKit，若退出了应用，窗口与展示选项随进程一起消失。这些限制没有在真机上逐项验证（runner 上只验证了覆盖、隐藏程序坞与菜单栏、超时与合成 Esc）。
+
+### 摄像头与麦克风提示（RES-03）
+
+- 摄像头：CoreMediaIO 列出 `kCMIOHardwarePropertyDevices`，逐个读 `kCMIODevicePropertyDeviceIsRunningSomewhere`。任一为真即“正在使用”。**没有公开接口说明是哪个应用在用摄像头**，因此显示为“未知应用（macOS 只报告设备正在使用，不提供应用名称）”，从不猜测。
+- 麦克风：CoreAudio 列出 `kAudioHardwarePropertyDevices` 中有输入流（`kAudioDevicePropertyStreams`，输入范围）的设备，读 `kAudioDevicePropertyDeviceIsRunningSomewhere`。macOS 14 起还读 CoreAudio 进程对象（`kAudioHardwarePropertyProcessObjectList`、`kAudioProcessPropertyIsRunningInput`、`kAudioProcessPropertyPID`、`kAudioProcessPropertyBundleID`），只有它们能说明“哪个应用在读输入”，名称取自进程的 `.app` 名或进程名。同时有输入和输出的设备（例如 USB 耳麦）在播放声音时也是“运行中”，此时由进程对象判定；没有进程对象（macOS 13 及更早）时状态为“未知”并说明原因。
+- 任一属性读不出时，该项为“未知”并带原因（`OSStatus` 四字符码），整个提示显示为不可用，原因里同时写出另一项的已知状态——不会把读不出的状态显示成“未在使用”。只读，不保存、不上传。
+- 测试（runner）：没有摄像头时摄像头为确定的“未在使用”；虚拟声卡空闲时麦克风为“未在使用”；macOS 14 的进程对象可读。纯逻辑测试覆盖耳麦、无进程对象、属性不可读与命名规则。
+
+### 电量（RES-04）
+
+- 本机电池：`IOPSCopyPowerSourcesInfo` 中 `Type = InternalBattery` 的电源（`Current Capacity` / `Max Capacity`，`Is Charging` 或 `Power Source State = AC Power` 视为充电/接电源）。没有内置电池（台式机、虚拟机）或电池不在位时不显示，从不显示 0%。
+- 外设：遍历 I/O Registry 中 Apple HID 外设驱动发布 `BatteryPercent` 的条目（`AppleDeviceManagementHIDEventService`，以及旧版的 `AppleBluetoothHIDKeyboard`、`BNBMouseDevice`、`BNBTrackpadDevice`），名称取 `Product`，ID 取 `DeviceAddress`（其次 `SerialNumber`、注册表条目 ID）。`Transport` 为蓝牙的 `IOHIDDevice` 若没有对应的 `BatteryPercent`，列入 `unavailable_devices` 并说明“不估计”；数值不在 0–100 的同样列为不可用。耳机等非 HID 蓝牙设备不在 I/O Registry 中公开电量（读取已配对设备需要蓝牙隐私授权），因此不列出。
+- 低电量提醒与 Windows 共用 `BatteryAlerts`（阈值、只提醒一次、回升 5 个百分点后重新计算）。
+- 测试（runner）：虚拟机没有电池和蓝牙外设，本机电池为空、外设列表为空；夹具测试覆盖同一设备多处条目的合并、地址写法归一、无电量设备与越界数值。
+
+### macOS 上不提供
+
+| 功能 | 原因 |
+| --- | --- |
+| 登录时启动菜单栏 | `SMAppService.mainApp` 需要签名的 app bundle；本构建未签名，且不写隐藏的 LaunchAgents 作业 |
+| 风扇控制、电池充电上限 | 需要经签名的特权 helper（D12）访问 SMC，本构建不安装 helper；风扇转速也不读取 |
+| 网络低延迟 | 需要特权 helper，本构建不安装 |
+| Touch ID 管理员认证 | RES-06（任务 15.4）未实现；不修改 `/etc/pam.d` |
+
+宿主命令与 Windows 相同；macOS 上 `resident_status.supported` 为 `true`，`not_here` 使用带 `_macos` 后缀的 ID（原因与 Windows 不同），`resident_batteries` 多出 `unavailable_devices`。桌面页面的部分文字（“登录 Windows 时只启动托盘”“Ctrl+Alt+Del 始终可用”“读取 Windows 的使用记录”）仍按 Windows 书写，需要页面按 `platform` 区分后才适用于 macOS。

@@ -96,6 +96,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c(&["apps", "uninstall", "leftovers"], None, &["store", "operation"], &[], "Grouped leftovers after an uninstall operation (read-only)", "卸载操作后的分组残留（只读）"),
     w(&["apps", "uninstall", "leftovers", "plan", "create"], None, &["store", "operation", "items", "exclude"], &[], "Plan removing leftovers: caches/logs (minus --exclude) plus --items IDs (review required)", "生成残留清理计划：缓存/日志（去掉 --exclude）及 --items 指定对象（需审阅）"),
     c(&["apps", "uninstall", "orphans"], None, &[], &[], "Leftovers of apps removed earlier (review_only, read-only)", "早先移除应用的孤立残留（仅审阅，只读）"),
+    w(&["apps", "uninstall", "orphans", "plan", "create"], None, &["store", "items"], &[], "Plan moving named orphaned leftovers to the Trash (macOS; review required)", "生成把指定孤立残留移入废纸篓的计划（macOS；需审阅）"),
     w(&["apps", "uninstall", "restore"], None, &["store", "operation"], &[], "Plan restoring registry keys and startup values a leftovers operation removed", "生成恢复残留操作删除的注册表键与启动值的计划"),
     c(&["startup", "list"], None, &[], &[], "Startup and background items (read-only)", "启动项与后台项（只读）"),
     w(&["startup", "disable"], ID, &["store"], &[], "Plan disabling a startup item (review required)", "生成停用启动项的计划（需审阅）"),

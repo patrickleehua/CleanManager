@@ -109,6 +109,10 @@ pub struct UninstallRecord {
     /// Id of a known AI command-line tool ([`AI_CLIS`]).
     pub ai_tool: Option<String>,
     pub protected_class: Option<ProtectedReason>,
+    /// macOS facts (bundle ID, Team ID, Homebrew kind, bundle identity, writability). Absent on Windows, so Windows
+    /// records serialize, and digest, exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<mac::MacRecord>,
 }
 
 impl UninstallRecord {
@@ -228,6 +232,8 @@ pub struct AdapterEnv {
     pub node: Option<(String, String)>,
     /// `AppxManifest.xml` of the instance's package.
     pub msix_manifest: Option<String>,
+    /// macOS: Homebrew's `brew`, resolved and accepted by the user-owned trust policy (never `PATH`).
+    pub brew: Option<String>,
 }
 
 /// The fixed invocation a stage-1 plan binds.
@@ -263,6 +269,9 @@ fn refuse(code: &'static str, message: impl Into<String>, settings: bool) -> Ref
 
 /// UNI-10: classes that never get an uninstall entry, with the official route.
 pub fn protected_refusal(rec: &UninstallRecord) -> Option<Refusal> {
+    if rec.mac.is_some() {
+        return mac::protected_refusal(rec);
+    }
     let lname = rec.name.to_lowercase();
     if lname.contains("cleanmanager") || rec.install_location.as_deref().is_some_and(|l| l.to_lowercase().ends_with("\\cleanmanager")) {
         return Some(refuse("policy_denied", "CleanManager is removed by its own installer, never by itself", true));
@@ -318,6 +327,8 @@ pub fn select_adapter(rec: &UninstallRecord, env: &AdapterEnv, exists: &dyn Fn(&
         kind, program, argv, raw_args: false, publisher_required: None, microsoft_signed: false, display, keeps_own_ui: true,
     };
     match rec.source {
+        // macOS npm-global records carry the prefix they were found in; their route names it explicitly.
+        RecordSource::NpmGlobal if rec.mac.is_some() => return mac::select(rec, env),
         RecordSource::NpmGlobal => {
             let pkg = rec.package_name.as_deref().filter(|p| safe_package_name(p)).ok_or_else(|| refuse("unsupported", "npm package name is not recognized", false))?;
             let (node, npm) = env.node.clone().ok_or_else(|| refuse("unsupported", "Node.js/npm was not found in its install location; uninstall the tool with the package manager that installed it", false))?;
@@ -340,10 +351,8 @@ pub fn select_adapter(rec: &UninstallRecord, env: &AdapterEnv, exists: &dyn Fn(&
             let manifest = env.msix_manifest.clone().ok_or_else(|| refuse("unsupported", "the package manifest could not be found; remove it in Settings", true))?;
             return Ok(choice(AdapterKind::Msix, manifest, vec!["remove".into(), full.to_owned()], format!("remove package {full} (Windows package manager, current user)")));
         }
-        // macOS records are routed by the macOS uninstall module, never by the Windows registry adapters below.
-        RecordSource::AppBundle | RecordSource::Homebrew | RecordSource::AppStore => {
-            return Err(refuse("unsupported", "macOS application uninstall is not implemented in this build", false));
-        }
+        // macOS records have their own routes (bundle to the Trash, Homebrew), never the Windows registry adapters below.
+        RecordSource::AppBundle | RecordSource::Homebrew | RecordSource::AppStore => return mac::select(rec, env),
         _ => {}
     }
     if let Some(w) = &rec.winget {
@@ -477,16 +486,25 @@ pub const PARTIAL_CODES: &[&str] = &["leftovers_remain", "restart_required"];
 
 /// One uninstaller run as recorded: exit code and duration, then the rescan.
 pub fn uninstaller_outcome(kind: AdapterKind, exit: Option<i32>, duration_ms: u64, rescan: Rescan) -> (StepStatus, &'static str, String) {
-    let ran = match exit {
-        Some(c) => format!("uninstaller exited with code {c} after {duration_ms} ms"),
-        None => format!("uninstaller did not report an exit code after {duration_ms} ms"),
+    let ran = match (kind, exit) {
+        (AdapterKind::MacTrashAppBundle, Some(0)) => format!("moved to the Trash in {duration_ms} ms (Finder › Put Back restores it)"),
+        (AdapterKind::HomebrewCask | AdapterKind::HomebrewFormula, Some(c)) => format!("brew exited with code {c} after {duration_ms} ms"),
+        (_, Some(c)) => format!("uninstaller exited with code {c} after {duration_ms} ms"),
+        (_, None) => format!("uninstaller did not report an exit code after {duration_ms} ms"),
     };
-    let remains: Vec<&str> = [(rescan.install_dir_present, "the install folder"), (rescan.registration_present, "the uninstall registration")]
+    let (folder, registration, gone) = match kind {
+        // A bundle has no registration of its own: the macOS backend reports it as gone (`Some(false)`).
+        AdapterKind::MacTrashAppBundle => ("the app bundle", "a registration", "the app bundle is gone"),
+        AdapterKind::HomebrewCask => ("the app bundle", "the Homebrew Caskroom record", "the app bundle and the Homebrew Caskroom record are gone"),
+        AdapterKind::HomebrewFormula => ("the Homebrew keg", "the Homebrew Cellar record", "the Homebrew keg and its Cellar record are gone"),
+        _ => ("the install folder", "the uninstall registration", "install folder and registration are gone"),
+    };
+    let remains: Vec<&str> = [(rescan.install_dir_present, folder), (rescan.registration_present, registration)]
         .iter()
         .filter(|(p, _)| *p != Some(false))
         .map(|(p, what)| if p.is_some() { *what } else { "an unverifiable location" })
         .collect();
-    let rest = if remains.is_empty() { "rescan: install folder and registration are gone".to_owned() } else { format!("rescan: {} still present", remains.join(" and ")) };
+    let rest = if remains.is_empty() { format!("rescan: {gone}") } else { format!("rescan: {} still present", remains.join(" and ")) };
     let next = "review leftovers with `cleanmanager apps uninstall leftovers --operation <this operation>`";
     match exit.map(|c| classify_exit(kind, c)) {
         Some(ExitClass::CancelledByUser) => (StepStatus::Skipped, "cancelled_by_user", format!("{ran}: cancelled in the uninstaller; {rest}")),
@@ -678,6 +696,12 @@ pub trait UninstallActions {
     fn verify(&self, rec: &UninstallRecord, choice: &AdapterChoice, sha256: &str, signer: Option<&str>) -> Result<(), (String, String)>;
     /// Run the bound invocation; (exit code, duration in ms) or an error before it started.
     fn run(&self, choice: &AdapterChoice, timeout_seconds: u32) -> Result<(Option<i32>, u64), String>;
+    /// [`run`](Self::run) with the step's own result when it did not complete normally: `Err((status, code, message))`.
+    /// The default reports any error as `start_failed` (nothing ran); a macOS Trash move reports the Trash's own codes
+    /// (`access_denied`, `trash_unavailable`, `identity_changed`, an unconfirmed move as `unknown`...).
+    fn run_step(&self, choice: &AdapterChoice, timeout_seconds: u32) -> Result<(Option<i32>, u64), (StepStatus, String, String)> {
+        self.run(choice, timeout_seconds).map_err(|e| (StepStatus::Failed, "start_failed".to_owned(), format!("{e}; nothing was run")))
+    }
     fn rescan(&self, identity: &AppIdentity) -> Rescan;
     fn read_key(&self, loc: &RegLocation) -> Result<Option<KeyTree>, String>;
     fn delete_key(&self, loc: &RegLocation) -> Result<(), (String, String)>;
@@ -1103,6 +1127,8 @@ pub fn orphan_leftovers(refs: &[BrokenReference], data_dirs: &[DirEntryInfo], in
     }
     out
 }
+
+pub mod mac;
 
 #[cfg(test)]
 mod tests;

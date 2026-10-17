@@ -10,6 +10,12 @@
 //!
 //! The tray only shows the compact status (CPU, memory, free space on the system disk, camera/microphone use)
 //! and opens app pages from a fixed list; it never cleans, uninstalls or runs maintenance.
+//!
+//! macOS (same commands; `cm_platform::macos::resident`): the tray is a menu-bar status item; keep-awake holds an
+//! `IOPMAssertion` (PreventUserIdleDisplaySleep) released the same way; clean screen is one borderless, always-on-top
+//! black webview window per display plus this app's presentation options (Dock and menu bar hidden, Command-Tab and
+//! Command-H disabled), see `mac_screen`; start at login is refused as unsupported (SMAppService.mainApp needs a
+//! signed bundle) and nothing is written instead.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +23,10 @@ use std::sync::{Arc, Mutex};
 
 use cm_core::error::ErrorCode;
 use cm_core::resident::{BatteryAlert, DeviceBattery, PrivacySnapshot, ResidentLoop, ResidentSettings, StartupState, StartupStore, TraySummary, TurnOffReport};
+#[cfg(target_os = "macos")]
+use cm_platform::macos::{resident as plat, status as plat_status};
+#[cfg(windows)]
+use cm_platform::windows::{resident as plat, status as plat_status};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -61,9 +71,7 @@ pub struct Resident {
     pub seen: Arc<Mutex<Seen>>,
     /// "Quit" was chosen: the next window close really exits instead of hiding to the tray.
     pub quitting: AtomicBool,
-    #[cfg(windows)]
-    keep_awake: Mutex<Option<cm_platform::windows::resident::KeepAwake>>,
-    #[cfg(windows)]
+    keep_awake: Mutex<Option<plat::KeepAwake>>,
     alerts: Mutex<cm_core::resident::BatteryAlerts>,
 }
 
@@ -95,20 +103,19 @@ impl Resident {
             exe,
             seen: Arc::new(Mutex::new(Seen::default())),
             quitting: AtomicBool::new(false),
-            #[cfg(windows)]
             keep_awake: Mutex::new(None),
-            #[cfg(windows)]
             alerts: Mutex::new(Default::default()),
         }
     }
 
-    /// The real per-user store, or none off Windows.
+    /// The real per-user store: the `Run` value on Windows; on macOS the login-item store, which reports start at
+    /// login unsupported in this unsigned build and writes nothing.
     pub fn for_this_platform(store_dir: Option<&Path>) -> Resident {
         let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
         #[cfg(windows)]
-        let store: Box<dyn StartupStore> = Box::new(cm_platform::windows::resident::RunValue::real());
-        #[cfg(not(windows))]
-        let store: Box<dyn StartupStore> = Box::new(NoStartup);
+        let store: Box<dyn StartupStore> = Box::new(plat::RunValue::real());
+        #[cfg(target_os = "macos")]
+        let store: Box<dyn StartupStore> = Box::new(plat::LoginItem);
         Resident::new(store_dir, store, exe)
     }
 
@@ -150,7 +157,6 @@ impl Resident {
         if let Some(mut l) = lock(&self.sampling).take() {
             l.stop();
         }
-        #[cfg(windows)]
         if let Some(mut k) = lock(&self.keep_awake).take() {
             k.release();
         }
@@ -170,7 +176,6 @@ impl Resident {
     pub fn stop_all(&self) -> Result<TurnOffReport, String> {
         let off = ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, ..lock(&self.settings).clone() };
         let report = self.apply(off, || Err("not starting".into()))?.unwrap_or(TurnOffReport { sampling_stopped: false, startup_value_removed: false, startup_error: None });
-        #[cfg(windows)]
         if let Some(mut k) = lock(&self.keep_awake).take() {
             k.release();
         }
@@ -188,26 +193,10 @@ pub fn turn_off_all(app: &AppHandle, r: &Resident) -> Result<(), String> {
     }
 }
 
-#[cfg(not(windows))]
-struct NoStartup;
-
-#[cfg(not(windows))]
-impl StartupStore for NoStartup {
-    fn read(&self) -> Result<Option<String>, String> {
-        Ok(None)
-    }
-    fn write(&self, _: &str) -> Result<(), String> {
-        Err("start at login is implemented on Windows only in this build".into())
-    }
-    fn remove(&self) -> Result<bool, String> {
-        Ok(false)
-    }
-}
-
 pub(crate) type Rs<'a> = State<'a, Arc<Resident>>;
 
 // ---------------------------------------------------------------------------------------------
-// Tray (Windows notification area; the same code serves the macOS menu bar once verified there)
+// Tray (Windows notification area; macOS menu-bar status item)
 
 /// Create (or re-create) the tray icon and return its sampling loop. Called through [`Resident::apply`], which
 /// starts it only when no loop is running.
@@ -255,41 +244,29 @@ pub fn start_tray(app: &AppHandle, r: &Arc<Resident>) -> Result<ResidentLoop, St
     let seen = r.seen.clone();
     // Weak: the loop is owned by the Resident it reports to.
     let res = Arc::downgrade(r);
-    ResidentLoop::start_with(
-            "cm-resident",
-            cm_core::resident::TRAY_INTERVAL,
-            || {
-                #[cfg(windows)]
-                return cm_platform::windows::status::Sampler::new();
-            },
-            move |_sampler| {
-                #[cfg(windows)]
-                {
-                    let summary = TraySummary::of(&_sampler.sample());
-                    let privacy = cm_platform::windows::resident::privacy_snapshot();
-                    let [c, m, d] = summary.lines();
-                    for (item, text) in lines.iter().zip([c, m, d, privacy_line(&privacy)]) {
-                        let _ = item.set_text(text);
-                    }
-                    if let Some(t) = app2.tray_by_id(TRAY_ID) {
-                        let _ = t.set_tooltip(Some(summary.tooltip()));
-                    }
-                    let raised = res.upgrade().map(|r| battery_check(&r)).unwrap_or_default();
-                    let mut s = lock(&seen);
-                    s.summary = Some(summary);
-                    s.privacy = Some(privacy);
-                    if !raised.is_empty() {
-                        s.alerts.splice(0..0, raised.iter().cloned());
-                        s.alerts.truncate(10);
-                        let _ = app2.emit(EVENT_ALERT, &raised);
-                    }
-                }
-            },
-        )
-        .map_err(|e| e.to_string())
+    ResidentLoop::start_with("cm-resident", cm_core::resident::TRAY_INTERVAL, plat_status::Sampler::new, move |sampler| {
+        let summary = TraySummary::of(&sampler.sample());
+        let privacy = plat::privacy_snapshot();
+        let [c, m, d] = summary.lines();
+        for (item, text) in lines.iter().zip([c, m, d, privacy_line(&privacy)]) {
+            let _ = item.set_text(text);
+        }
+        if let Some(t) = app2.tray_by_id(TRAY_ID) {
+            let _ = t.set_tooltip(Some(summary.tooltip()));
+        }
+        let raised = res.upgrade().map(|r| battery_check(&r)).unwrap_or_default();
+        let mut s = lock(&seen);
+        s.summary = Some(summary);
+        s.privacy = Some(privacy);
+        if !raised.is_empty() {
+            s.alerts.splice(0..0, raised.iter().cloned());
+            s.alerts.truncate(10);
+            let _ = app2.emit(EVENT_ALERT, &raised);
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
-#[cfg(windows)]
 fn privacy_line(p: &PrivacySnapshot) -> String {
     if !p.supported {
         return "摄像头和麦克风 不可用".into();
@@ -302,14 +279,13 @@ fn privacy_line(p: &PrivacySnapshot) -> String {
 }
 
 /// RES-04: one alert per device below the threshold (only when the person turned alerts on).
-#[cfg(windows)]
 fn battery_check(r: &Resident) -> Vec<BatteryAlert> {
     let s = lock(&r.settings).clone();
     if !s.battery_alerts {
         return Vec::new();
     }
-    let mut devices: Vec<DeviceBattery> = cm_platform::windows::resident::system_battery().into_iter().collect();
-    if let Ok(scan) = cm_platform::windows::resident::device_batteries() {
+    let mut devices: Vec<DeviceBattery> = plat::system_battery().into_iter().collect();
+    if let Ok(scan) = plat::device_batteries() {
         devices.extend(scan.devices);
     }
     lock(&r.alerts).observe(s.battery_threshold, &devices)
@@ -376,8 +352,12 @@ pub fn setup(app: &AppHandle, r: &Arc<Resident>) {
         show_main(app);
         return;
     }
-    let _ = r.reconcile_startup();
     let settings = lock(&r.settings).clone();
+    // macOS: start at login cannot be on in this build (a hand-edited settings file is corrected and saved by `apply`).
+    #[cfg(target_os = "macos")]
+    let settings = ResidentSettings { start_at_login: false, ..settings };
+    *lock(&r.settings) = settings.clone();
+    let _ = r.reconcile_startup();
     let tray_ok = settings.tray && r.apply(settings, || start_tray(app, r)).is_ok() && r.sampling_running();
     let tray_only = std::env::args().any(|a| a == cm_core::resident::RESIDENT_ARG);
     if !(tray_only && tray_ok) {
@@ -408,6 +388,9 @@ pub struct KeepAwakeDto {
     pub active: bool,
     /// Seconds left; `None` while it lasts until turned off or CleanManager exits.
     pub remaining_seconds: Option<u64>,
+    /// The active system request as the system lists it (macOS: the IOPMAssertion type, id and name; `None` on
+    /// Windows, whose per-thread request has no id).
+    pub assertion: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -438,33 +421,57 @@ pub struct ResidentStatusDto {
     pub not_here: Vec<NotHereDto>,
 }
 
-fn keep_awake_dto(_r: &Resident) -> KeepAwakeDto {
-    #[cfg(windows)]
-    {
-        let mut k = lock(&_r.keep_awake);
-        if k.as_ref().is_some_and(|x| !x.is_active()) {
-            *k = None;
-        }
-        if let Some(x) = k.as_ref() {
-            return KeepAwakeDto { active: true, remaining_seconds: x.remaining().map(|d| d.as_secs() + u64::from(d.subsec_nanos() > 0)) };
-        }
+fn keep_awake_dto(r: &Resident) -> KeepAwakeDto {
+    let mut k = lock(&r.keep_awake);
+    if k.as_ref().is_some_and(|x| !x.is_active()) {
+        *k = None;
     }
-    KeepAwakeDto { active: false, remaining_seconds: None }
+    match k.as_ref() {
+        Some(x) => KeepAwakeDto {
+            active: true,
+            remaining_seconds: x.remaining().map(|d| d.as_secs() + u64::from(d.subsec_nanos() > 0)),
+            #[cfg(target_os = "macos")]
+            assertion: Some(x.describe()),
+            #[cfg(windows)]
+            assertion: None,
+        },
+        None => KeepAwakeDto { active: false, remaining_seconds: None, assertion: None },
+    }
+}
+
+/// Resident features this platform does not offer, with the reason (RES-05/06; on macOS also start at login).
+fn not_here() -> Vec<NotHereDto> {
+    #[cfg(windows)]
+    return vec![
+        NotHereDto { id: "fan_control", reason: "Windows has no documented interface for fan control; vendor tools write the embedded controller directly" },
+        NotHereDto { id: "charge_limit", reason: "Windows has no common interface for a battery charge limit; it is set in vendor tools or firmware" },
+        NotHereDto { id: "low_latency_network", reason: "needs the privileged helper, which this build does not install" },
+        NotHereDto { id: "touch_id_sudo", reason: "Touch ID for administrator prompts exists on macOS only" },
+    ];
+    // Ids differ from the Windows ones because the reasons differ (the page words the Windows ids itself).
+    #[cfg(target_os = "macos")]
+    return vec![
+        NotHereDto { id: "start_at_login_macos", reason: plat::LOGIN_ITEM_REASON },
+        NotHereDto { id: "fan_control_macos", reason: "fan control needs the SMC through the signed privileged helper (D12), which this build does not install; fan speeds are not read either" },
+        NotHereDto { id: "charge_limit_macos", reason: "a battery charge limit needs the SMC through the signed privileged helper (D12), which this build does not install; macOS's own Optimized Battery Charging is unaffected" },
+        NotHereDto { id: "low_latency_network_macos", reason: "needs the signed privileged helper (D12), which this build does not install" },
+        NotHereDto { id: "touch_id_sudo_macos", reason: "Touch ID for sudo (RES-06, task 15.4) is not implemented in this build; /etc/pam.d is never changed" },
+    ];
 }
 
 pub fn status_of(app: Option<&AppHandle>, r: &Resident) -> ResidentStatusDto {
     let settings = lock(&r.settings).clone();
     let command = r.startup_entry();
     #[cfg(windows)]
-    let location = cm_platform::windows::resident::RunValue::real().display();
-    #[cfg(not(windows))]
-    let location = String::new();
+    let location = plat::RunValue::real().display();
+    #[cfg(target_os = "macos")]
+    let location = plat::LOGIN_ITEM_LOCATION.to_owned();
     #[cfg(windows)]
     let running = cm_platform::windows::resident_screen::is_running();
-    #[cfg(not(windows))]
-    let running = false;
+    #[cfg(target_os = "macos")]
+    let running = mac_screen::is_running();
     ResidentStatusDto {
-        supported: cfg!(windows),
+        supported: true,
         platform: if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "other" },
         tray: TrayDto {
             enabled: settings.tray,
@@ -485,16 +492,7 @@ pub fn status_of(app: Option<&AppHandle>, r: &Resident) -> ResidentStatusDto {
             default_seconds: cm_core::resident::CLEAN_SCREEN_DEFAULT_SECS,
             esc_hold_ms: cm_core::resident::ESC_HOLD.as_millis() as u64,
         },
-        not_here: if cfg!(windows) {
-            vec![
-                NotHereDto { id: "fan_control", reason: "Windows has no documented interface for fan control; vendor tools write the embedded controller directly" },
-                NotHereDto { id: "charge_limit", reason: "Windows has no common interface for a battery charge limit; it is set in vendor tools or firmware" },
-                NotHereDto { id: "low_latency_network", reason: "needs the privileged helper, which this build does not install" },
-                NotHereDto { id: "touch_id_sudo", reason: "Touch ID for administrator prompts exists on macOS only" },
-            ]
-        } else {
-            Vec::new()
-        },
+        not_here: not_here(),
         settings,
     }
 }
@@ -510,8 +508,10 @@ pub async fn resident_save(app: AppHandle, state: Rs<'_>, settings: ResidentSett
     let r = state.inner().clone();
     blocking(move || {
         settings.validate().map_err(bad)?;
-        if !cfg!(windows) && settings.tray {
-            return Err(IpcError::new(ErrorCode::Unsupported, "unsupported", "the tray component is implemented on Windows only in this build"));
+        // Refused before anything is saved, so the settings never claim a login item that cannot exist.
+        #[cfg(target_os = "macos")]
+        if settings.start_at_login {
+            return Err(IpcError::new(ErrorCode::Unsupported, "unsupported", plat::LOGIN_ITEM_REASON));
         }
         let off = r.apply(settings, || start_tray(&app, &r)).map_err(internal)?;
         if let Some(report) = off {
@@ -531,20 +531,14 @@ pub async fn resident_keep_awake(state: Rs<'_>, on: bool, minutes: Option<u32>) 
     let r = state.inner().clone();
     blocking(move || {
         let duration = cm_core::resident::KeepAwakeRequest { minutes }.validate().map_err(bad)?;
-        #[cfg(windows)]
         {
             let mut k = lock(&r.keep_awake);
             if let Some(mut old) = k.take() {
                 old.release();
             }
             if on {
-                *k = Some(cm_platform::windows::resident::KeepAwake::start(duration).map_err(internal)?);
+                *k = Some(plat::KeepAwake::start(duration).map_err(internal)?);
             }
-        }
-        #[cfg(not(windows))]
-        if on {
-            let _ = duration;
-            return Err(IpcError::new(ErrorCode::Unsupported, "unsupported", "keeping the screen on is implemented on Windows only in this build"));
         }
         Ok(keep_awake_dto(&r))
     })
@@ -552,29 +546,32 @@ pub async fn resident_keep_awake(state: Rs<'_>, on: bool, minutes: Option<u32>) 
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn resident_clean_screen(timeout_secs: u32) -> IpcResult<cm_core::resident::CleanScreenExit> {
+pub async fn resident_clean_screen(app: AppHandle, timeout_secs: u32) -> IpcResult<cm_core::resident::CleanScreenExit> {
     blocking(move || {
         let timeout = cm_core::resident::CleanScreenOptions { timeout_secs }.validate().map_err(bad)?;
         #[cfg(windows)]
-        return cm_platform::windows::resident_screen::run(timeout).map_err(|e| IpcError::new(ErrorCode::Conflict, "conflict", e));
-        #[cfg(not(windows))]
         {
-            let _ = timeout;
-            Err(IpcError::new(ErrorCode::Unsupported, "unsupported", "clean-screen mode is implemented on Windows only in this build"))
+            let _ = app;
+            cm_platform::windows::resident_screen::run(timeout).map_err(|e| IpcError::new(ErrorCode::Conflict, "conflict", e))
         }
+        #[cfg(target_os = "macos")]
+        mac_screen::run(&app, timeout).map_err(|e| IpcError::new(ErrorCode::Conflict, "conflict", e))
     })
     .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn resident_privacy() -> IpcResult<PrivacySnapshot> {
-    blocking(|| {
-        #[cfg(windows)]
-        return Ok(cm_platform::windows::resident::privacy_snapshot());
-        #[cfg(not(windows))]
-        Ok(PrivacySnapshot { supported: false, in_use: Vec::new(), unavailable_reason: Some("implemented on Windows only in this build".into()), source: "" })
-    })
-    .await
+    blocking(|| Ok(plat::privacy_snapshot())).await
+}
+
+/// A device the system lists without a usable battery level (shown as unavailable, never as 0%).
+#[derive(Debug, Serialize)]
+pub struct UnavailableDeviceDto {
+    pub device_id: String,
+    pub name: String,
+    pub kind: &'static str,
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -585,27 +582,250 @@ pub struct BatteriesDto {
     pub bluetooth_devices: usize,
     /// Why device levels cannot be read (the list could not be read at all).
     pub devices_unavailable: Option<String>,
+    /// Devices listed without a level (macOS: Bluetooth HID devices without `BatteryPercent`; empty on Windows, which
+    /// only counts them in `bluetooth_devices`).
+    pub unavailable_devices: Vec<UnavailableDeviceDto>,
     pub source: &'static str,
 }
 
 #[cfg(windows)]
-fn batteries_now() -> BatteriesDto {
-    let source = "GetSystemPowerStatus; device property {104EA319-6EE2-4701-BD47-8DDBF425BBE5},2 set by the Windows Bluetooth stack";
-    let system = cm_platform::windows::resident::system_battery();
-    match cm_platform::windows::resident::device_batteries() {
-        Ok(scan) => BatteriesDto { supported: true, system, devices: scan.devices, bluetooth_devices: scan.bluetooth_devices, devices_unavailable: None, source },
-        Err(e) => BatteriesDto { supported: true, system, devices: Vec::new(), bluetooth_devices: 0, devices_unavailable: Some(e), source },
-    }
-}
+const BATTERY_SOURCE: &str = "GetSystemPowerStatus; device property {104EA319-6EE2-4701-BD47-8DDBF425BBE5},2 set by the Windows Bluetooth stack";
+#[cfg(target_os = "macos")]
+const BATTERY_SOURCE: &str = "IOPSCopyPowerSourcesInfo (internal battery); I/O Registry BatteryPercent of Apple HID peripheral drivers \
+     (AppleDeviceManagementHIDEventService and the older Bluetooth HID classes)";
 
-#[cfg(not(windows))]
 fn batteries_now() -> BatteriesDto {
-    BatteriesDto { supported: false, system: None, devices: Vec::new(), bluetooth_devices: 0, devices_unavailable: Some("implemented on Windows only in this build".into()), source: "" }
+    let system = plat::system_battery();
+    match plat::device_batteries() {
+        Ok(scan) => {
+            #[cfg(target_os = "macos")]
+            let unavailable_devices = scan.unavailable.into_iter().map(|u| UnavailableDeviceDto { device_id: u.device_id, name: u.name, kind: u.kind, reason: u.reason }).collect();
+            #[cfg(windows)]
+            let unavailable_devices = Vec::new();
+            BatteriesDto { supported: true, system, devices: scan.devices, bluetooth_devices: scan.bluetooth_devices, devices_unavailable: None, unavailable_devices, source: BATTERY_SOURCE }
+        }
+        Err(e) => BatteriesDto { supported: true, system, devices: Vec::new(), bluetooth_devices: 0, devices_unavailable: Some(e), unavailable_devices: Vec::new(), source: BATTERY_SOURCE },
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn resident_batteries() -> IpcResult<BatteriesDto> {
     blocking(|| Ok(batteries_now())).await
+}
+
+/// Label prefix of the macOS clean-screen windows (one per display). Windows draws its own native window instead.
+pub const CLEAN_SCREEN_LABEL_PREFIX: &str = "cm-clean-screen-";
+
+/// A clean-screen window: the main window's close handling (hide to the tray, safe exit) does not apply to it.
+pub fn is_clean_screen_window(label: &str) -> bool {
+    label.starts_with(CLEAN_SCREEN_LABEL_PREFIX)
+}
+
+/// Clean-screen mode on macOS (RES-02): one borderless, always-on-top, black webview window per display, showing
+/// a blank page (`about:blank#cm-clean-screen`) with a small script that swallows keys, clicks and scrolling, hides the pointer and reports a 2-second
+/// Esc hold by navigating to the `cm-clean-screen:` scheme, which the window's navigation handler
+/// intercepts (the windows get no IPC permission). While it runs this app hides the Dock and menu bar and disables
+/// Command-Tab and Command-H (`NSApplicationPresentationOptions`); Force Quit (Option-Command-Esc), the power button and
+/// screen lock stay available. It ends when Esc is held, at the timeout, or when a window is closed (Command-W).
+///
+/// Limits: input is captured only while CleanManager is the active app (macOS gives an app no way to block other apps'
+/// input without Accessibility permission); system keys handled before any app (brightness, volume, Mission Control,
+/// Spotlight, screenshots) still work; a key already held when the mode starts is ignored until it is released.
+#[cfg(target_os = "macos")]
+pub mod mac_screen {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    use cm_core::resident::{CleanScreenExit, ESC_HOLD};
+    use cm_platform::macos::resident::{begin_clean_presentation, end_clean_presentation};
+    use tauri::webview::PageLoadEvent;
+    use tauri::{AppHandle, LogicalPosition, LogicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+
+    use super::CLEAN_SCREEN_LABEL_PREFIX;
+
+    /// The page's only way to report: a navigation to this scheme, cancelled by the navigation handler.
+    pub const SIGNAL_SCHEME: &str = "cm-clean-screen";
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    /// The page each window shows. Not plain `about:blank`: Tauri leaves a webview with exactly that URL unloaded, and
+    /// WebKit runs evaluated scripts only after a navigation commits.
+    const BLANK_PAGE: &str = "about:blank#cm-clean-screen";
+    /// Session number: each session's windows get fresh labels (a destroyed window may linger briefly under its label).
+    static SESSION: AtomicU64 = AtomicU64::new(0);
+    /// How often the page script is re-applied while the mode runs (it is idempotent; this covers a document that was
+    /// replaced after the first evaluation, for example when `about:blank` finished loading).
+    const REAPPLY: Duration = Duration::from_millis(250);
+
+    pub fn is_running() -> bool {
+        RUNNING.load(Ordering::SeqCst)
+    }
+
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNNING.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// The page script: idempotent per document (it may run before and after `about:blank` finishes loading).
+    pub fn script(hold_ms: u64, deadline_epoch_ms: u64, hint: bool) -> String {
+        format!(
+            r#"(function () {{
+  var root = document.documentElement;
+  if (!root || root.getAttribute('data-cm-clean')) return;
+  root.setAttribute('data-cm-clean', '1');
+  root.style.cssText = 'background:#000;cursor:none;height:100%;margin:0;overflow:hidden';
+  if (document.body) document.body.style.cssText = 'background:#000;cursor:none;margin:0;height:100%';
+  var HOLD = {hold_ms}, END = {deadline_epoch_ms}, timer = null, done = false;
+  function eat(e) {{ e.preventDefault(); e.stopImmediatePropagation(); }}
+  function isEsc(e) {{ return e.key === 'Escape' || e.keyCode === 27; }}
+  document.addEventListener('keydown', function (e) {{
+    eat(e);
+    if (isEsc(e) && !e.repeat && timer === null) {{
+      timer = setTimeout(function () {{ if (!done) {{ done = true; location.href = '{scheme}://esc-held'; }} }}, HOLD);
+    }}
+  }}, true);
+  document.addEventListener('keyup', function (e) {{ eat(e); if (isEsc(e) && timer !== null) {{ clearTimeout(timer); timer = null; }} }}, true);
+  ['keypress', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu', 'wheel', 'dragstart', 'selectstart'].forEach(function (t) {{
+    document.addEventListener(t, eat, {{ capture: true, passive: false }});
+  }});
+  if ({hint}) {{
+    var p = document.createElement('div');
+    p.style.cssText = 'position:fixed;left:0;right:0;bottom:24px;text-align:center;color:#4a4a4a;font:13px -apple-system,sans-serif;user-select:none';
+    (document.body || root).appendChild(p);
+    var tick = function () {{
+      var left = Math.max(0, Math.ceil((END - Date.now()) / 1000));
+      p.textContent = '清洁屏幕：按住 Esc ' + Math.round(HOLD / 1000) + ' 秒退出 · ' + left + ' 秒后自动退出 · 强制退出（Option-Command-Esc）始终可用';
+    }};
+    tick();
+    setInterval(tick, 1000);
+  }}
+}})();"#,
+            scheme = SIGNAL_SCHEME,
+        )
+    }
+
+    /// Run `f` on the main thread and wait for its result.
+    fn on_main<T: Send + 'static>(app: &AppHandle, f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+        let (tx, rx) = channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(f());
+        })
+        .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "the main thread did not answer".to_string())
+    }
+
+    fn close_all(windows: &mut Vec<(WebviewWindow, String)>) {
+        for (w, _) in windows.drain(..) {
+            let _ = w.destroy();
+        }
+    }
+
+    /// Show the clean-screen windows until Esc is held, the timeout passes or a window is closed. Blocks the caller
+    /// (a worker thread; window creation is dispatched to the main thread).
+    pub fn run(app: &AppHandle, timeout: Duration) -> Result<CleanScreenExit, String> {
+        if RUNNING.swap(true, Ordering::SeqCst) {
+            return Err("clean-screen mode is already running".into());
+        }
+        let _running = Running;
+        let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+        if monitors.is_empty() {
+            return Err("no display was found".into());
+        }
+        let primary = app.primary_monitor().ok().flatten();
+        let deadline = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| (d + timeout).as_millis() as u64).unwrap_or(0);
+        let hold_ms = ESC_HOLD.as_millis() as u64;
+        // Hide the Dock and menu bar first, so the windows can cover each whole display.
+        let presented = on_main(app, begin_clean_presentation).and_then(|r| r);
+        let session = SESSION.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = channel::<CleanScreenExit>();
+        let mut windows: Vec<(WebviewWindow, String)> = Vec::new();
+        let mut focus: Option<usize> = None;
+        for (i, m) in monitors.iter().enumerate() {
+            let scale = m.scale_factor();
+            let pos: LogicalPosition<f64> = m.position().to_logical(scale);
+            let size: LogicalSize<f64> = m.size().to_logical(scale);
+            let is_primary = primary.as_ref().map_or(i == 0, |p| p.position() == m.position() && p.size() == m.size());
+            let js = script(hold_ms, deadline, is_primary);
+            let on_load = js.clone();
+            let nav_tx = tx.clone();
+            let built = WebviewWindowBuilder::new(app, format!("{CLEAN_SCREEN_LABEL_PREFIX}{session}-{i}"), WebviewUrl::External(BLANK_PAGE.parse().map_err(|e| format!("{e}"))?))
+                .title("CleanManager 清洁屏幕")
+                .decorations(false)
+                .resizable(false)
+                .shadow(false)
+                .always_on_top(true)
+                .visible_on_all_workspaces(true)
+                .skip_taskbar(true)
+                .position(pos.x, pos.y)
+                .inner_size(size.width, size.height)
+                .background_color(tauri::window::Color(0, 0, 0, 255))
+                .focused(is_primary)
+                .on_navigation(move |url| {
+                    if url.scheme() == SIGNAL_SCHEME {
+                        let _ = nav_tx.send(CleanScreenExit::EscHeld);
+                        return false;
+                    }
+                    true
+                })
+                .on_page_load(move |w, payload| {
+                    if payload.event() == PageLoadEvent::Finished {
+                        let _ = w.eval(on_load.as_str());
+                    }
+                })
+                .build();
+            match built {
+                Ok(w) => {
+                    let closed = tx.clone();
+                    w.on_window_event(move |e| {
+                        if let WindowEvent::Destroyed = e {
+                            let _ = closed.send(CleanScreenExit::Closed);
+                        }
+                    });
+                    // Re-apply the frame in case AppKit constrained it while the window was created.
+                    let _ = w.set_position(pos);
+                    let _ = w.set_size(size);
+                    let _ = w.eval(js.as_str());
+                    if is_primary {
+                        focus = Some(windows.len());
+                    }
+                    windows.push((w, js));
+                }
+                Err(e) => {
+                    close_all(&mut windows);
+                    if matches!(presented, Ok(true)) {
+                        let _ = on_main(app, end_clean_presentation);
+                    }
+                    return Err(format!("cannot open the clean-screen window: {e}"));
+                }
+            }
+        }
+        drop(tx);
+        if let Some((w, _)) = windows.get(focus.unwrap_or(0)) {
+            let _ = w.set_focus();
+        }
+        let end = Instant::now() + timeout;
+        let exit = loop {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break CleanScreenExit::Timeout;
+            }
+            match rx.recv_timeout(left.min(REAPPLY)) {
+                Ok(e) => break e,
+                Err(RecvTimeoutError::Disconnected) => break CleanScreenExit::Closed,
+                Err(RecvTimeoutError::Timeout) => {
+                    for (w, js) in &windows {
+                        let _ = w.eval(js.as_str());
+                    }
+                }
+            }
+        };
+        close_all(&mut windows);
+        if matches!(presented, Ok(true)) {
+            let _ = on_main(app, end_clean_presentation);
+        }
+        Ok(exit)
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
-//! End to end over the real Windows backend, stores and actions: what the desktop does from a
-//! published scan to a reviewed plan, its application, the report, quarantine and a reviewed
-//! restore. Only files under a temporary directory are touched.
+//! End to end over the real platform backend, stores and actions (Windows, or macOS through the same `crate::plat`
+//! backends as the CLI): what the desktop does from a published scan to a reviewed plan, its application, the report,
+//! quarantine and a reviewed restore. Only files under a temporary directory are touched.
 
 use std::sync::atomic::AtomicBool;
 
@@ -12,6 +12,15 @@ use cm_store::index::{EntryQuery, Filter, KindFilter, Sort};
 
 use crate::host::AppState;
 use crate::{cleanup, ops};
+
+/// The temporary directory; canonical on macOS (`/var` is a link to `/private/var`, and the quarantine's
+/// trusted-namespace gate walks the real parent chain).
+fn temp_base(tag: &str) -> std::path::PathBuf {
+    let tmp = std::env::temp_dir();
+    #[cfg(target_os = "macos")]
+    let tmp = std::fs::canonicalize(&tmp).unwrap();
+    tmp.join(format!("cm-desktop-{tag}-{}", std::process::id()))
+}
 
 fn candidate_set(scan_id: &str, entry_id: u64, path: &cm_core::path::RawPath, bytes: u64, digest: &str) -> cm_core::analysis::CandidateSet {
     serde_json::from_value(serde_json::json!({
@@ -36,7 +45,7 @@ fn candidate_set(scan_id: &str, entry_id: u64, path: &cm_core::path::RawPath, by
 
 #[test]
 fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
-    let base = std::env::temp_dir().join(format!("cm-desktop-flow-{}", std::process::id()));
+    let base = temp_base("flow");
     let _ = std::fs::remove_dir_all(&base);
     let root = base.join("root");
     let store = base.join("store");
@@ -165,22 +174,21 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
 }
 
 fn cm_core_scan(stores: &Stores, request: &ScanRequest) {
-    let backend = cm_platform::windows::directory::DirectoryBackend;
-    let out = run_scan(&stores.index, &backend, request, &cm_core::scan::ScanOptions::default()).unwrap();
+    let out = run_scan(&stores.index, crate::plat::scan_backend().as_ref(), request, &cm_core::scan::ScanOptions::default()).unwrap();
     assert_eq!(out.state, cm_core::model::ScanState::Completed);
 }
 
-/// A manual Recycle Bin plan (plan/v2) goes through the same review page: detail with a review token, every item,
-/// approval with the typed digest prefix, precheck, plan list and revocation. Nothing is applied here, so the real
-/// Recycle Bin is never touched.
+/// A manual Recycle Bin / Trash plan (plan/v2) goes through the same review page: detail with a review token, every
+/// item, approval with the typed digest prefix, precheck, plan list and revocation. Nothing is applied here, so the real
+/// bin is never touched. Windows moves the folder; macOS moves single verified files and refuses the folder up front.
 #[test]
 fn manual_trash_plan_is_reviewed_like_any_plan() {
-    let base = std::env::temp_dir().join(format!("cm-desktop-mtr-{}", std::process::id()));
+    let base = temp_base("mtr");
     let _ = std::fs::remove_dir_all(&base);
     let root = base.join("root");
     let store = base.join("store");
-    std::fs::create_dir_all(root.join("old")).unwrap();
-    std::fs::write(root.join("old").join("a.bin"), vec![1u8; 300]).unwrap();
+    std::fs::create_dir_all(root.join("trash-me")).unwrap();
+    std::fs::write(root.join("trash-me").join("a.bin"), vec![1u8; 300]).unwrap();
     std::fs::write(root.join("keep.txt"), b"keep").unwrap();
     let stores = Stores::open(&store).unwrap();
     let request = ScanRequest {
@@ -190,25 +198,38 @@ fn manual_trash_plan_is_reviewed_like_any_plan() {
         host: cm_platform::host::OsHostProbe.current("desktop"),
     };
     cm_core_scan(&stores, &request);
-    let entry: u64 = stores
-        .index
-        .list_entries(&EntryQuery {
-            scan_id: "s_mtr".into(),
-            sort: Sort::NameAsc,
-            filter: Filter { kind: KindFilter::Directory, name_contains: Some("old".into()), parent_entry_id: None },
-            page_size: 5,
-            cursor: None,
-        })
-        .unwrap()
-        .items[0]
-        .entry_id
-        .parse()
-        .unwrap();
+    let find = |kind: KindFilter, name: &str| -> u64 {
+        stores
+            .index
+            .list_entries(&EntryQuery {
+                scan_id: "s_mtr".into(),
+                sort: Sort::NameAsc,
+                filter: Filter { kind, name_contains: Some(name.into()), parent_entry_id: None },
+                page_size: 5,
+                cursor: None,
+            })
+            .unwrap()
+            .items[0]
+            .entry_id
+            .parse()
+            .unwrap()
+    };
+    // Not a name the temporary path contains (macOS: `/private/var/folders/…` holds "old").
+    let folder = find(KindFilter::Directory, "trash-me");
     let s = AppState::with_store(Some(store.clone()), None, None);
-    let ins = crate::suite::win::trash_inspect(&s, "s_mtr", entry).unwrap();
+    let (entry, name, kind) = if cfg!(windows) {
+        (folder, "trash-me", "directory")
+    } else {
+        // macOS: a folder is refused before anything is planned (its contents cannot be verified as one object).
+        let ins = crate::suite::imp::trash_inspect(&s, "s_mtr", folder).unwrap();
+        assert!(!ins.trashable && ins.refusal.as_ref().is_some_and(|r| r.reason == "folder_move_unavailable"), "{:?}", ins.refusal);
+        assert_eq!(crate::suite::imp::trash_plan(&s, "s_mtr", &[folder]).unwrap_err().reason, "folder_move_unavailable");
+        (find(KindFilter::File, "a.bin"), "a.bin", "file")
+    };
+    let ins = crate::suite::imp::trash_inspect(&s, "s_mtr", entry).unwrap();
     assert!(ins.trashable, "{:?}", ins.refusal);
-    assert_eq!((ins.name.as_str(), ins.files, ins.logical_bytes.as_deref()), ("old", 1, Some("300")));
-    let plan_id = crate::suite::win::trash_plan(&s, "s_mtr", &[entry]).unwrap().plan_id;
+    assert_eq!((ins.name.as_str(), ins.files, ins.logical_bytes.as_deref()), (name, 1, Some("300")));
+    let plan_id = crate::suite::imp::trash_plan(&s, "s_mtr", &[entry]).unwrap().plan_id;
     // D15: approving or applying a manual_selection plan needs trash.manual on (experimental features, off by default).
     let off = crate::gate::require_plan(&s, &plan_id).unwrap_err();
     assert_eq!((off.code, off.reason), (cm_core::error::ErrorCode::Unsupported, "experimental_off"));
@@ -222,7 +243,7 @@ fn manual_trash_plan_is_reviewed_like_any_plan() {
         let token = d.review_token.clone().expect("review token");
         let items = cleanup::items(st, &plan_id, 50, None)?;
         let i = &items.items[0];
-        assert_eq!((i.name.as_str(), i.item_kind.as_str(), i.action_type.as_deref(), i.logical_bytes.as_str()), ("old", "directory", Some("fs_trash"), "300"));
+        assert_eq!((i.name.as_str(), i.item_kind.as_str(), i.action_type.as_deref(), i.logical_bytes.as_str()), (name, kind, Some("fs_trash"), "300"));
 
         assert_eq!(ops::precheck_for_tests(&s, st, &plan_id).unwrap_err().reason, "needs_approval");
         assert_eq!(cleanup::approve(&s, st, &plan_id, &token, "00000000").unwrap_err().reason, "confirmation_mismatch");
@@ -238,7 +259,7 @@ fn manual_trash_plan_is_reviewed_like_any_plan() {
         Ok(())
     })
     .unwrap();
-    assert!(root.join("old").join("a.bin").exists(), "creating, approving and revoking touch nothing");
+    assert!(root.join("trash-me").join("a.bin").exists(), "creating, approving and revoking touch nothing");
     drop(stores);
     drop(s);
     let _ = std::fs::remove_dir_all(&base);

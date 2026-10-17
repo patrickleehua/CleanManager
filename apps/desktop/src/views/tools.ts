@@ -8,7 +8,8 @@ import { formatBytes, groupDigits } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
-import { words } from '../lib/platform';
+import { notOnThisPlatform, platform, words } from '../lib/platform';
+import { metricReason } from '../lib/suiteWords';
 import { DEFAULT_PREFS, PANEL_LABEL, REFRESH_SECONDS, type StatusPanel, type StatusPrefs, layoutRows, loadPrefs, movePanel, sanitize, savePrefs, setShown } from '../lib/statusPrefs';
 import type { CpuAlert, Insight, InsightsList, IpcError, NetworkTotals, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
 import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
@@ -43,6 +44,65 @@ const STATE_WORD: Record<string, [string, Tone]> = {
   unknown: ['状态未知', 'muted'],
 };
 
+/** System Settings › General › Login Items & Extensions (macOS 13+): where Service Management items are reviewed. */
+export const LOGIN_ITEMS_URI = 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension';
+
+/** How one startup row reads (STA-01..04). macOS rows are read-only in this build; the host says so per row. */
+export interface StartupRowView {
+  name: string;
+  state: [string, Tone];
+  /** Why the change button is unavailable (null: it can be planned). */
+  why: string | null;
+  /** The host's reason without what the page already says. */
+  reason: string | null;
+  /** macOS `unknown`: the state is not guessed. */
+  stateNote: string | null;
+  /** The Service Management row: it opens System Settings instead of a change plan. */
+  settingsLink: boolean;
+  /** Show the disable/enable button (macOS: only for a row the host says can change; none can in this build). */
+  showAction: boolean;
+}
+
+export function startupRow(i: StartupItem, mac = platform() === 'macos'): StartupRowView {
+  const state = STATE_WORD[i.state] ?? [i.state, 'muted' as Tone];
+  const why = i.protected
+    ? '受保护：只读'
+    : i.toggle_capability === 'permission_required'
+      ? `需要${words().admin}`
+      : i.toggle_capability === 'unsupported'
+        ? '没有可验证的修改方式'
+        : i.toggle_capability === 'unverified'
+          ? '修改方式未经验证'
+          : null;
+  if (!mac) return { name: i.name, state, why, reason: i.reason, stateNote: null, settingsLink: false, showAction: true };
+  // Service Management login and background items have no public listing API: one honest row points to System Settings.
+  if (!i.target && (i.source === 'sm_background_item' || i.source === 'sm_login_item' || i.definition === LOGIN_ITEMS_URI)) {
+    return {
+      name: '登录项与后台项目（Service Management）',
+      state,
+      why: null,
+      reason: 'macOS 没有公开接口列出通过 Service Management 注册的登录项和后台项目，所以这里列不出它们，也不猜测它们的状态。请在“系统设置 › 通用 › 登录项与扩展”中查看和修改。',
+      stateNote: null,
+      settingsLink: true,
+      showAction: false,
+    };
+  }
+  // The host appends the platform-wide read-only sentence to every reason; the page says it once instead.
+  const rest = (i.reason ?? '')
+    .split('. ')
+    .filter((x) => x && !x.startsWith('Read-only on macOS in this build'))
+    .join('. ');
+  return {
+    name: i.name,
+    state,
+    why: i.protected ? '受保护：只读' : i.toggle_capability === 'unsupported' ? '只读：在应用自己的设置或系统设置中修改' : why,
+    reason: rest || null,
+    stateNote: i.state === 'unknown' ? 'launchd 没有把它列为已加载：可能已在“登录项与扩展”中关闭，或只在其他会话中运行。不会显示为已启用或已停用。' : null,
+    settingsLink: false,
+    showAction: i.toggle_capability !== 'unsupported' && !i.protected,
+  };
+}
+
 export class StartupPage implements PageLike {
   el: HTMLElement;
   private body: HTMLElement;
@@ -52,6 +112,7 @@ export class StartupPage implements PageLike {
   private busy: string | null = null;
   private gate = new RequestGate();
   private loading = false;
+  private settingsError: string | null = null;
 
   constructor(private app: App) {
     this.body = h('div', { class: 'startup-body' });
@@ -105,8 +166,9 @@ export class StartupPage implements PageLike {
     const refresh = h('button', { type: 'button', id: 'startup-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在读取…' : '重新读取');
     refresh.addEventListener('click', () => void this.load());
     const w = words();
+    const mac = platform() === 'macos';
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'startup-title', title: '启动项' }), emptyState('此平台暂不提供', '启动项清单目前只在 Windows 上实现。', null));
+      replace(this.body, pageHead({ id: 'startup-title', title: '启动项' }), emptyState('此平台暂不提供', notOnThisPlatform('启动项清单目前只在 Windows 上实现。'), null));
       return;
     }
     replace(
@@ -117,21 +179,34 @@ export class StartupPage implements PageLike {
         meta: d ? [`${groupDigits(d.items.length)} 项`, d.is_admin ? `以${w.admin}运行` : '以当前用户运行', '只读清单'] : ['只读清单'],
         actions: [refresh],
       }),
-      d && !d.is_admin ? noticeLine(`没有${w.admin}：所有用户共用的启动项只能查看。CleanManager 不会自动提权。`, 'warn') : null,
+      mac
+        ? noticeLine(`这一版在 macOS 上只读：不停用、启用或删除任何启动项。登录项请在“${w.startupSettings}”中修改。`)
+        : d && !d.is_admin
+          ? noticeLine(`没有${w.admin}：所有用户共用的启动项只能查看。CleanManager 不会自动提权。`, 'warn')
+          : null,
       errorLine(this.error),
       d
         ? h(
             'div',
             { class: 'work-layout' },
             h('div', { class: 'work-main' }, h('section', { class: 'panel', 'aria-labelledby': 'startup-list-title' }, h('h2', { id: 'startup-list-title' }, '登录时启动的程序'), this.table(d.items), this.issues(d))),
-            h(
-              'aside',
-              { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
-              h('h2', { id: 'startup-how' }, '怎样修改'),
-              h('p', { class: 'small' }, `停用和启用只改系统的启用记录（与${w.startupSettings}相同），不删除程序或它的设置。`),
-              h('p', { class: 'small' }, '每次修改都先生成计划，由你审阅批准后执行；执行前记录原来的状态，可在“活动”中生成还原计划。'),
-              h('p', { class: 'muted small' }, '安全软件和系统组件只读显示。'),
-            ),
+            mac
+              ? h(
+                  'aside',
+                  { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
+                  h('h2', { id: 'startup-how' }, '怎样修改'),
+                  h('p', { class: 'small' }, `这一版只列出启动项，不修改。登录项和后台项目在“${w.startupSettings}”中开关；LaunchAgent 和 LaunchDaemon 由安装它们的应用管理。`),
+                  this.settingsButton('startup-open-settings'),
+                  h('p', { class: 'muted small' }, '状态来自 launchd：没有加载的作业显示为“状态未知”，不会被猜成已启用或已停用。macOS 自带的作业只读显示。'),
+                )
+              : h(
+                  'aside',
+                  { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
+                  h('h2', { id: 'startup-how' }, '怎样修改'),
+                  h('p', { class: 'small' }, `停用和启用只改系统的启用记录（与${w.startupSettings}相同），不删除程序或它的设置。`),
+                  h('p', { class: 'small' }, '每次修改都先生成计划，由你审阅批准后执行；执行前记录原来的状态，可在“活动”中生成还原计划。'),
+                  h('p', { class: 'muted small' }, '安全软件和系统组件只读显示。'),
+                ),
           )
         : !this.error
           ? h('p', { class: 'muted', role: 'status' }, '正在读取启动项…')
@@ -142,20 +217,17 @@ export class StartupPage implements PageLike {
   private table(items: StartupItem[]): HTMLElement {
     if (!items.length) return h('p', { class: 'muted' }, '没有找到启动项。');
     const rows = items.map((i) => {
-      const [word, tone] = STATE_WORD[i.state] ?? [i.state, 'muted' as Tone];
+      const v = startupRow(i);
+      const [word, tone] = v.state;
       const id = `st-${i.startup_item_id}`;
       const op: 'disable' | 'enable' = i.state === 'disabled' ? 'enable' : 'disable';
-      const why = i.protected
-        ? '受保护：只读'
-        : i.toggle_capability === 'permission_required'
-          ? `需要${words().admin}`
-          : i.toggle_capability === 'unsupported'
-            ? '没有可验证的修改方式'
-            : i.toggle_capability === 'unverified'
-              ? '修改方式未经验证'
-              : null;
-      const act = h('button', { type: 'button', class: 'quiet', id: `${id}-act`, disabled: !!why || this.busy !== null || i.state === 'broken' }, op === 'disable' ? '停用…' : '启用…');
-      act.addEventListener('click', () => void this.plan(i, op));
+      const why = v.why;
+      let act: HTMLElement | null = null;
+      if (v.settingsLink) act = this.settingsButton(`${id}-settings`);
+      else if (v.showAction) {
+        act = h('button', { type: 'button', class: 'quiet', id: `${id}-act`, disabled: !!why || this.busy !== null || i.state === 'broken' }, op === 'disable' ? '停用…' : '启用…');
+        act.addEventListener('click', () => void this.plan(i, op));
+      }
       const err = this.rowError.get(i.startup_item_id);
       return h(
         'tr',
@@ -163,13 +235,13 @@ export class StartupPage implements PageLike {
         h(
           'td',
           { class: 'col-object' },
-          h('span', { class: 'obj-name' }, i.name),
-          h('span', { class: 'obj-path path' }, i.target?.display ?? i.definition),
+          h('span', { class: 'obj-name' }, v.name),
+          v.settingsLink ? null : h('span', { class: 'obj-path path' }, i.target?.display ?? i.definition),
           h('span', { class: 'obj-reason muted' }, `${SOURCE_WORD[i.source] ?? i.source} · ${i.scope === 'user' ? '当前用户' : '所有用户'}${i.publisher ? ` · ${i.publisher}` : ' · 发布者未验证'}`),
-          i.reason ? h('span', { class: 'why-not' }, i.reason) : null,
+          v.reason ? h('span', { class: v.settingsLink ? 'obj-reason' : 'why-not' }, v.reason) : null,
           err ? h('span', { class: 'form-error', role: 'alert' }, err.message) : null,
         ),
-        h('td', { class: 'col-flags' }, pill(word, tone)),
+        h('td', { class: 'col-flags' }, pill(word, tone), v.stateNote ? h('span', { class: 'small muted block' }, v.stateNote) : null),
         h('td', { class: 'col-status' }, act, why ? h('span', { class: 'why-not' }, why) : null),
       );
     });
@@ -184,6 +256,23 @@ export class StartupPage implements PageLike {
         h('tbody', {}, ...rows),
       ),
     );
+  }
+
+  /** macOS: open System Settings › General › Login Items & Extensions (the host opens only that fixed page). */
+  private settingsButton(id: string): HTMLElement {
+    const b = h('button', { type: 'button', class: 'quiet', id }, icon('external'), '打开登录项设置');
+    b.addEventListener('click', () => void this.openLoginItems());
+    return h('span', { class: 'block' }, b, this.settingsError ? h('span', { class: 'form-error', role: 'alert' }, this.settingsError) : null);
+  }
+
+  private async openLoginItems(): Promise<void> {
+    this.settingsError = null;
+    try {
+      if (!(await this.app.backend.openSystemPage('login_items'))) throw new Error('not opened');
+    } catch {
+      this.settingsError = `无法打开系统设置。请手动打开“${words().startupSettings}”。`;
+    }
+    this.update();
   }
 
   private issues(d: StartupList): HTMLElement | null {
@@ -374,7 +463,7 @@ export class InsightsPage implements PageLike {
       this.body,
       pageHead({ id: 'insights-title', title: '空间洞察', meta: d ? [`观测于 ${formatTime(d.observed_at)}`, '系统对象只读说明，没有删除入口'] : ['系统对象只读说明，没有删除入口'], actions: [refresh] }),
       errorLine(this.error),
-      d && !d.supported ? emptyState('此平台暂不提供', '空间洞察目前只在 Windows 上实现。', null) : null,
+      d && !d.supported ? emptyState('此平台暂不提供', notOnThisPlatform('空间洞察目前只在 Windows 上实现。'), null) : null,
       d && d.supported
         ? h(
             'div',
@@ -527,9 +616,52 @@ function valueText(m: StatusMetric | undefined): string {
       return `${formatBytes(BigInt(Math.round(m.value)))}/s`;
     case 'celsius':
       return `${m.value.toFixed(0)} °C`;
+    case 'rpm':
+      return `${Math.round(m.value)} 转/分`;
     default:
       return String(m.value);
   }
+}
+
+/** One tile of the metrics panel: a value, or "不可用" with the reason (never 0). */
+export interface MetricTile {
+  label: string;
+  value: string;
+  note: string;
+  available: boolean;
+}
+
+/**
+ * STS-01 tiles. Windows: the eight shared tiles. macOS adds fans (unavailable with the reason: SMC is private) and the
+ * process count with zombies, and the battery's cycle count; its reasons are put in words.
+ */
+export function metricTiles(s: StatusSnapshot, mac = platform() === 'macos'): MetricTile[] {
+  const tile = (label: string, name: string, extra?: string | null): MetricTile => {
+    const m = metric(s, name);
+    const available = !!m && m.availability === 'available';
+    return { label, value: valueText(m), note: m && !available ? metricReason(m.reason ?? '不可用') : (extra ?? ''), available };
+  };
+  const memTotal = metric(s, 'memory.total_bytes');
+  const diskTotal = metric(s, 'disk.system.total_bytes');
+  const cycles = metric(s, 'battery.cycle_count');
+  const tiles = [
+    tile('处理器', 'cpu.total_percent', metric(s, 'cpu.logical_count') ? `${metric(s, 'cpu.logical_count')!.value} 个逻辑处理器` : null),
+    tile('内存已用', 'memory.used_percent', memTotal?.value ? `共 ${valueText(memTotal)}，可用 ${valueText(metric(s, 'memory.available_bytes'))}` : null),
+    tile('系统盘可用', 'disk.system.free_bytes', diskTotal?.value ? `${valueText(metric(s, 'disk.system.free_percent'))}，共 ${valueText(diskTotal)}` : null),
+    tile('磁盘繁忙', 'disk.busy_percent', `读 ${valueText(metric(s, 'disk.read_bytes_per_sec'))} · 写 ${valueText(metric(s, 'disk.write_bytes_per_sec'))}`),
+    tile('最高温度', 'thermal.max_zone_celsius'),
+    tile('显卡温度', 'gpu.temperature_celsius'),
+    tile('电量', 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? '正在使用电源' : '使用电池'),
+    tile('电池健康', 'battery.health_percent', mac && cycles?.availability === 'available' && cycles.value !== null ? `相对设计容量，已循环 ${cycles.value} 次` : '相对设计容量'),
+  ];
+  if (!mac) return tiles;
+  const zombies = metric(s, 'process.zombie_count');
+  const z = zombies?.availability === 'available' ? zombies.value : null;
+  tiles.push(
+    tile('风扇', 'fan.rpm'),
+    tile('进程', 'process.count', z === null ? (zombies?.reason ? metricReason(zombies.reason) : null) : z > 0 ? `其中 ${z} 个僵尸进程（已退出、等待父进程回收，不占用处理器和内存）` : '没有僵尸进程'),
+  );
+  return tiles;
 }
 
 const DIMENSION_LABEL: Record<string, string> = { cpu: '处理器', memory: '内存', disk: '系统盘空间', thermal: '温度', io: '磁盘繁忙' };
@@ -637,7 +769,7 @@ export class StatusPage implements PageLike {
       this.update();
     });
     if (s && !s.supported) {
-      replace(this.body, pageHead({ id: 'status-title', title: '系统状态' }), emptyState('此平台暂不提供', '状态采样目前只在 Windows 上实现。', null));
+      replace(this.body, pageHead({ id: 'status-title', title: '系统状态' }), emptyState('此平台暂不提供', notOnThisPlatform('状态采样目前只在 Windows 上实现。'), null));
       return;
     }
     replace(
@@ -757,12 +889,6 @@ export class StatusPage implements PageLike {
   }
 
   private metricsPanel(s: StatusSnapshot): HTMLElement {
-    const tile = (label: string, name: string, extra?: string | null) => {
-      const m = metric(s, name);
-      return h('li', { class: 'mtile', 'data-available': m && m.availability === 'available' ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, label), h('span', { class: 'mtile-value num' }, valueText(m)), h('span', { class: 'mtile-note muted' }, m && m.availability !== 'available' ? (m.reason ?? '不可用') : (extra ?? '')));
-    };
-    const memTotal = metric(s, 'memory.total_bytes');
-    const diskTotal = metric(s, 'disk.system.total_bytes');
     return h(
       'section',
       { class: 'panel metrics', 'aria-labelledby': 'metrics-title' },
@@ -770,14 +896,9 @@ export class StatusPage implements PageLike {
       h(
         'ul',
         { class: 'mtiles' },
-        tile('处理器', 'cpu.total_percent', metric(s, 'cpu.logical_count') ? `${metric(s, 'cpu.logical_count')!.value} 个逻辑处理器` : null),
-        tile('内存已用', 'memory.used_percent', memTotal?.value ? `共 ${valueText(memTotal)}，可用 ${valueText(metric(s, 'memory.available_bytes'))}` : null),
-        tile('系统盘可用', 'disk.system.free_bytes', diskTotal?.value ? `${valueText(metric(s, 'disk.system.free_percent'))}，共 ${valueText(diskTotal)}` : null),
-        tile('磁盘繁忙', 'disk.busy_percent', `读 ${valueText(metric(s, 'disk.read_bytes_per_sec'))} · 写 ${valueText(metric(s, 'disk.write_bytes_per_sec'))}`),
-        tile('最高温度', 'thermal.max_zone_celsius'),
-        tile('显卡温度', 'gpu.temperature_celsius'),
-        tile('电量', 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? '正在使用电源' : '使用电池'),
-        tile('电池健康', 'battery.health_percent', '相对设计容量'),
+        ...metricTiles(s).map((t) =>
+          h('li', { class: 'mtile', 'data-available': t.available ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, t.label), h('span', { class: 'mtile-value num' }, t.value), h('span', { class: 'mtile-note muted' }, t.note)),
+        ),
       ),
       h('p', { class: 'muted small' }, '不可用的指标会写明原因，从不显示为 0。'),
     );
@@ -852,9 +973,9 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'agent', Capabi
         gate: 'cli_only',
         spec: 'MTR-01..05',
         gateName: 'G1',
-        does: [`列出你的${w().bin}中的项目，显示原位置、删除时间和大小。`, `把选中的项目冻结成“永久删除”计划；审阅时需要额外确认不可恢复。`, `在“分析 › 磁盘”中选择对象，生成“${w().moveToBin}”计划。`],
+        does: [w().binListDoes, `把选中的项目冻结成“永久删除”计划；审阅时需要额外确认不可恢复。`, `在“分析 › 磁盘”中选择对象，生成“${w().moveToBin}”计划。`],
         why: `手选${w().moveToBin}已经可用：在“分析 › 磁盘”选中对象后点“${w().moveToBin}…”。浏览和永久删除${w().bin}项目目前只在命令行提供，因为它需要一次单独的不可恢复确认，桌面版的确认界面还在开发。`,
-        safety: ['只按扫描中的条目编号选择对象，界面从不传递路径。', `目标卷没有可用的${w().bin}时计划失败，绝不改为永久删除。`, '受保护的子项会被列出并阻止整个文件夹进入计划。'],
+        safety: ['只按扫描中的条目编号选择对象，界面从不传递路径。', `目标卷没有可用的${w().bin}时计划失败，绝不改为永久删除。`, '受保护的子项会被列出并阻止整个文件夹进入计划。', ...(w().binPutBack ? [w().binPutBack!] : [])],
         cli: [
           { label: `列出${w().bin}`, command: 'cleanmanager trash list' },
           { label: '生成永久删除计划', command: 'cleanmanager trash purge --item ID' },

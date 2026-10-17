@@ -21,6 +21,12 @@ export interface UninstallApp {
   adapter: { adapter_id: string; display: string; package_manager: boolean } | null;
   reason: string | null;
   settings_uri: string | null;
+  /**
+   * The refusal code behind a state other than `available`, when the host sends it: on macOS `permission_required`
+   * (App Store apps and bundles this user cannot move; this build has no administrator path), `unsupported`,
+   * `policy_denied`. Older hosts leave it out.
+   */
+  refusal_code?: string | null;
 }
 
 export interface UninstallRun {

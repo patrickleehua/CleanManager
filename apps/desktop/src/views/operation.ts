@@ -14,6 +14,7 @@ import { AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL,
 import { copyField, emptyState, errorLine, pageHead, pill, segBar, statusWord } from './parts';
 import type { MaintenanceReport } from '../lib/suiteTypes';
 import { ELEVATION_WORD, TASK_WORDS } from '../lib/suiteWords';
+import { platform, words } from '../lib/platform';
 import { outcomeMark, outcomeTally, type Outcome } from './kit';
 import { allDone, taskReason } from './maintenance';
 import { APP_OUTCOME, leftoversReviewable, outcomeReason } from './uninstallBatch';
@@ -334,7 +335,7 @@ export class OperationPage {
         'div',
         { class: 'next-block' },
         h('h3', {}, '下一步：审阅残留'),
-        h('p', { class: 'small' }, '卸载程序已经运行。重新检查后，确实留下的文件、注册表项和启动项在单独的第 2 步审阅；什么都不会自动删除。'),
+        h('p', { class: 'small' }, `卸载程序已经运行。重新检查后，确实留下的${words().leftoverKinds}在单独的第 2 步审阅；什么都不会自动删除。`),
         batch ? h('p', { class: 'small muted' }, '残留按应用分组审阅；卸载没有完成的应用仍然安装着，它的任何对象都不会出现在审阅中。') : null,
         h('button', { type: 'button', class: 'primary wide', id: 'op-leftovers', onclick: () => this.app.store.set({ leftoversOp: op.operation_id, page: 'uninstall' }) }, '审阅残留'),
       );
@@ -358,7 +359,7 @@ export class OperationPage {
   private async restore(op: Operation): Promise<void> {
     this.restoreError = null;
     try {
-      const r = await this.app.backend.uninstallRestorePlan(op.operation_id);
+      const r = op.plan_kind === 'maintenance' ? await this.app.backend.maintenanceRestorePlan(op.operation_id) : await this.app.backend.uninstallRestorePlan(op.operation_id);
       this.app.announce('还原计划已生成，尚未执行。请审阅后批准');
       this.app.openPlan(r.plan_id, 'operation');
     } catch (e) {
@@ -371,17 +372,27 @@ export class OperationPage {
     if (op.counts.succeeded === 0 && !op.needs_reconcile) return null;
     const plain = (text: string, ...extra: (HTMLElement | null)[]) => h('div', { class: 'recovery-line' }, h('h3', {}, '如何恢复'), h('p', { class: 'small' }, text), ...extra);
     if (!op.needs_reconcile) {
-      if (op.plan_kind === 'uninstall') return plain('卸载无法由 CleanManager 撤销；需要时重新安装这个应用。');
+      if (op.plan_kind === 'uninstall') return plain(words().uninstallUndo);
       if (op.plan_kind === 'update') return plain('更新无法由 CleanManager 撤销；需要旧版本时请从发布者处获取。');
       if (op.plan_kind === 'process') return plain('结束进程无法撤销；需要时重新打开该程序。');
-      if (op.plan_kind === 'maintenance') return plain('维护操作没有通用撤销；每项结果和原因都记录在“优化 › 维护任务”的运行记录中。');
+      if (op.plan_kind === 'maintenance')
+        return platform() === 'macos'
+          ? plain(
+              '维护操作没有通用撤销；只有可还原的设置变更（例如网络卷不写 .DS_Store）在执行前备份了原值，可以生成还原计划，同样先审阅再执行。',
+              h('button', { type: 'button', class: 'quiet', id: 'op-restore', onclick: () => void this.restore(op) }, '生成还原计划'),
+              errorLine(this.restoreError),
+            )
+          : plain('维护操作没有通用撤销；每项结果和原因都记录在“优化 › 维护任务”的运行记录中。');
       if (op.plan_kind === 'uninstall_restore') return plain('这是一次还原；它本身不再生成新的还原。');
+      // macOS leftovers only ever go to the Trash: Put Back restores them, there is no backup to restore from.
       if (op.plan_kind === 'uninstall_leftovers')
-        return plain(
-          `文件与文件夹${AVAILABILITY_LABEL.system_recycle_bin}。注册表项与启动项可以从执行时保存的备份放回，同样先审阅再执行。`,
-          h('button', { type: 'button', class: 'quiet', id: 'op-restore', onclick: () => void this.restore(op) }, '生成还原计划'),
-          errorLine(this.restoreError),
-        );
+        return words().leftoversUndo
+          ? plain(
+              `文件与文件夹${AVAILABILITY_LABEL.system_recycle_bin}。${words().leftoversUndo}`,
+              h('button', { type: 'button', class: 'quiet', id: 'op-restore', onclick: () => void this.restore(op) }, '生成还原计划'),
+              errorLine(this.restoreError),
+            )
+          : plain(`文件与文件夹${AVAILABILITY_LABEL.system_recycle_bin}：${words().restoreFromBin}。`);
     }
     if ((op.plan_kind === 'startup' || op.plan_kind === 'startup_restore') && !op.needs_reconcile)
       return h('div', { class: 'recovery-line' }, h('h3', {}, '如何恢复'), h('p', { class: 'small' }, op.plan_kind === 'startup' ? '执行前记录了每一项原来的状态。需要时用下面的命令生成还原计划，同样先审阅再执行。' : '这是一次还原；它本身不再生成新的还原。'), op.plan_kind === 'startup' ? copyField('生成还原计划', `cleanmanager startup restore --operation ${op.operation_id}`) : null);

@@ -7,6 +7,7 @@
 import type { AppOutcome, AppOutcomeStatus, Leftovers, UninstallApp } from '../lib/suiteTypes';
 import type { KindDetail, OperationItem, PlanItem } from '../lib/types';
 import { explainCode } from '../lib/words';
+import { words } from '../lib/platform';
 import type { Tone } from './parts';
 
 /** Most applications in one uninstall plan (the core's limit). */
@@ -85,7 +86,7 @@ export function leftoverSections(l: Leftovers): LeftoverSection[] {
       name: a.app.name,
       reviewable: a.leftovers_reviewable,
       status: a.status,
-      reason: a.leftovers_reviewable ? outcomeReason(a) : `${outcomeReason(a)} 这个应用仍然安装着，它的文件、注册表项和启动项全部保留，不进入残留计划。`,
+      reason: a.leftovers_reviewable ? outcomeReason(a) : `${outcomeReason(a)} 这个应用仍然安装着，它的${words().leftoverKinds}全部保留，不进入残留计划。`,
       objects: ids.length,
       object_ids: ids,
     };

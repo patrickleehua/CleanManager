@@ -59,8 +59,9 @@ fn main() {
         "readiness",
         "reveal_entry",
         // Software, maintenance, processes and space insights (ids only; uninstall, update, maintenance, process-end
-        // and old-download changes are stored plans reviewed like the others; settings are CleanManager's own files;
-        // open_system_page opens one of two fixed system pages).
+        // and old-download changes are stored plans reviewed like the others, as is putting back a maintenance run's
+        // setting changes; settings are CleanManager's own files; open_system_page opens one of a few fixed system
+        // pages).
         "uninstall_list",
         "uninstall_plan",
         "uninstall_leftovers",
@@ -77,6 +78,7 @@ fn main() {
         "maintenance_plan",
         "maintenance_history",
         "maintenance_diagnose",
+        "maintenance_restore_plan",
         "process_list",
         "process_pin",
         "process_end_plan",

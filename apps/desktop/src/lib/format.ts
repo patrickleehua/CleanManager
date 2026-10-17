@@ -1,6 +1,7 @@
 // User-facing wording for states, kinds and times. One vocabulary across pages.
 
 import type { Entry, ScanState } from './types';
+import { onPlatform, words } from './platform';
 
 export const STATE_LABEL: Record<ScanState, string> = {
   created: '准备中',
@@ -161,3 +162,8 @@ export function taskTitle(s: ScanState): string {
       return `扫描${STATE_LABEL[s]}`;
   }
 }
+
+// GUI-12: the bin's name follows the platform (the reason code is the same everywhere).
+onPlatform(() => {
+  ERROR_HINT.recycle_bin_unavailable = `所在的卷没有可用的${words().bin}。不会改为永久删除。`;
+});

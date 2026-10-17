@@ -13,7 +13,10 @@
 //! - Maintenance runs (`apply_maintenance`) list the administrator tasks before any task runs and ask Windows once
 //!   (UAC) to start the short-lived worker; declining or an unavailable worker skips only those tasks (MNT-04).
 //!   The worker is this executable started with the hidden worker argument (`worker_main`), serving only the
-//!   granted tasks of one plan digest to the parent that started it, exactly as the CLI's worker does.
+//!   granted tasks of one plan digest to the parent that started it, exactly as the CLI's worker does. macOS has no
+//!   privilege path: administrator tasks are skipped. `maintenance_restore_plan` (`optimize restore`) freezes the
+//!   backed-up prior values of a run's setting changes into a recovery plan pending the same review.
+//! - The backends are the CLI's, per platform (`crate::plat`).
 
 use cm_core::error::ErrorCode;
 use cm_core::path::RawPath;
@@ -192,53 +195,22 @@ pub fn run_maintenance(
     serde_json::from_str(&json).map_err(|e| cm_app::execute::ApplyError::Store(cm_store::StoreError::InvalidState(e.to_string())))
 }
 
-#[cfg(windows)]
-mod elevation {
-    use std::path::PathBuf;
-    use std::time::Duration;
-
-    use cm_app::maintenance::{ElevatedSession, Elevation, ElevationRefused};
-    use cm_core::maintenance::{TaskRun, TaskSpec, WorkerGrant};
-    use cm_platform::windows::elevation::{StartError, UacLauncher, WorkerConfig, WorkerConnection, start_worker};
-
-    /// One short-lived worker per run, started through one UAC prompt (the CLI's `WorkerElevation`).
-    pub struct WorkerElevation {
-        pub exe: PathBuf,
-    }
-
-    struct Session(WorkerConnection);
-
-    impl ElevatedSession for Session {
-        fn run(&mut self, task: &TaskSpec) -> Result<TaskRun, String> {
-            self.0.run(task)
-        }
-        fn close(self: Box<Self>) {
-            self.0.close();
-        }
-    }
-
-    impl Elevation for WorkerElevation {
-        fn start(&self, grant: &WorkerGrant) -> Result<Box<dyn ElevatedSession + '_>, ElevationRefused> {
-            let cfg = WorkerConfig { exe: self.exe.clone(), connect_timeout: Duration::from_secs(60), idle_seconds: cm_platform::windows::elevation::DEFAULT_IDLE_SECONDS };
-            match start_worker(&UacLauncher, &cfg, grant) {
-                Ok(c) => Ok(Box::new(Session(c))),
-                Err(StartError::Declined) => Err(ElevationRefused::Declined("the Windows administrator prompt was declined".into())),
-                Err(StartError::Unavailable(e)) => Err(ElevationRefused::Unavailable(e)),
-            }
-        }
-    }
-}
-
-/// Apply a stored maintenance plan from the operation thread (real tasks; one UAC prompt for administrator tasks).
-#[cfg(windows)]
+/// Apply a stored maintenance plan from the operation thread (real tasks). Windows asks once (UAC) for the
+/// administrator tasks of the run; macOS has no privilege path, so they are skipped `elevation_unavailable`.
 pub fn apply_maintenance(stores: &cm_store::Stores, plan_id: &str, cancel: &dyn Fn() -> bool) -> Result<cm_app::execute::OperationReport, cm_app::execute::ApplyError> {
     use cm_core::host::HostProbe;
-    let tasks = cm_platform::windows::maintenance::WindowsTasks::real();
-    let is_admin = tasks.is_admin;
-    let exe = std::env::current_exe().map_err(|e| cm_app::execute::ApplyError::Store(cm_store::StoreError::InvalidArgument(format!("own executable unknown: {e}"))))?;
-    let elevation = elevation::WorkerElevation { exe };
+    let (tasks, is_admin) = crate::plat::maintenance_tasks();
+    let elevation = crate::plat::maintenance_elevation().map_err(|e| cm_app::execute::ApplyError::Store(cm_store::StoreError::InvalidArgument(e)))?;
     let protect = task_protection(Some(&stores.dir));
-    let b = cm_app::maintenance::MaintenanceBackends { platform: cm_core::maintenance::TaskPlatform::Windows, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect, settings: None };
+    let settings = crate::plat::settings_backend();
+    let b = cm_app::maintenance::MaintenanceBackends {
+        platform: cm_core::maintenance::TaskPlatform::current(),
+        tasks: tasks.as_ref(),
+        elevation: elevation.as_ref(),
+        is_admin,
+        protect_task: &protect,
+        settings: settings.as_deref(),
+    };
     let host = cm_platform::host::OsHostProbe.current("desktop");
     run_maintenance(stores, &b, plan_id, cancel, &host)
 }
@@ -262,10 +234,9 @@ pub fn worker_main() -> Option<i32> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Windows
+// Platform work (backends from `crate::plat`, as the CLI's commands choose them)
 
-#[cfg(windows)]
-mod win {
+mod imp {
     use std::time::Duration;
 
     use cm_core::host::HostProbe;
@@ -273,13 +244,14 @@ mod win {
 
     use super::*;
     use crate::cleanup::{new_id, now_unix};
+    use crate::plat::os;
 
     // ---- insights ------------------------------------------------------------------------------
 
     pub fn overview(s: &AppState, days: u32) -> OverviewDto {
-        let known = cm_platform::windows::insights::list();
-        let downloads = cm_platform::windows::insights::old_downloads(days);
-        let dirs = cm_platform::windows::insights::card_dirs();
+        let known = os::insights::list();
+        let downloads = os::insights::old_downloads(days);
+        let dirs = os::insights::card_dirs();
         let at = cm_core::time::now_utc();
         let wire = cm_app::insights::overview_wire(&known, &downloads, &dirs, &at);
         let (dto, cache) = downloads_dto(&downloads, DOWNLOADS_SHOWN);
@@ -288,7 +260,8 @@ mod win {
     }
 
     pub fn downloads_plan(s: &AppState, ids: &[String]) -> IpcResult<CreatedPlanDto> {
-        use cm_core::manual_trash::{ManualInput, SelectionGuard, build_trash_plan};
+        use cm_core::analysis::IndexView;
+        use cm_core::manual_trash::{ManualError, ManualInput, SelectionGuard, build_trash_plan, inspect};
         let _busy = crate::suite::claim(s)?;
         let cache = lock(&s.suite).downloads.clone().ok_or_else(|| ipc(ErrorCode::InvalidArgument, "not_reviewed", "Review old downloads again; the list is no longer available"))?;
         let root = cache.root.clone().ok_or_else(|| ipc(ErrorCode::InvalidArgument, "no_downloads", "No Downloads folder was found"))?;
@@ -299,8 +272,8 @@ mod win {
             };
             targets.push(p.clone());
         }
-        // MTR-03: a volume without a usable recycle bin fails the plan; nothing is ever deleted instead.
-        if let Err(why) = cm_platform::windows::actions::recycle_bin_ready(&root) {
+        // MTR-03: a volume without a usable recycle bin (Trash) fails the plan; nothing is ever deleted instead.
+        if let Err(why) = crate::plat::bin_ready(&root) {
             return Err(ipc(ErrorCode::Unsupported, "recycle_bin_unavailable", format!("{}: {why}; there is no permanent-delete alternative", root.display())));
         }
         let stores = crate::suite::own_stores(s)?;
@@ -312,7 +285,7 @@ mod win {
             root: root.clone(),
             host: cm_platform::host::OsHostProbe.current("desktop"),
         };
-        cm_app::scan::run_scan(&stores.index, &cm_platform::windows::directory::DirectoryBackend, &request, &cm_core::scan::ScanOptions::default())
+        cm_app::scan::run_scan(&stores.index, crate::plat::scan_backend().as_ref(), &request, &cm_core::scan::ScanOptions::default())
             .map_err(|e| ipc(ErrorCode::IoError, "scan_failed", format!("{}: {e}", root.display())))?;
         let status = stores.index.scan_status(&scan_id)?;
         let view = stores.index.view(&scan_id)?;
@@ -327,6 +300,16 @@ mod win {
         let user = cm_platform::protection::load(&stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
+        // Objects the platform's trash action cannot take (macOS: folders) are refused before anything is planned.
+        for &e in entries.iter().filter(|&&e| crate::plat::trash_may_refuse(view.info(e).kind)) {
+            let ins = inspect(&view, e, &guard);
+            if ins.refusal.is_none()
+                && let Some(r) = crate::plat::trash_refusal(&ins)
+            {
+                let err = ManualError::Refused { entry_id: e.to_string(), path: ins.path.display(), refusal: Box::new(r), protected: vec![], gaps: vec![] };
+                return Err(IpcError::new(err.code(), "plan_refused", err.to_string()));
+            }
+        }
         let plan_id = new_id("mp");
         let pdigest = crate::cleanup::policy_digest(&stores);
         let observed_at = status.finished_at.clone().unwrap_or_else(|| status.started_at.clone());
@@ -348,11 +331,11 @@ mod win {
 
     pub fn catalog(s: &AppState) -> Value {
         let platform = TaskPlatform::current();
-        let tasks = cm_platform::windows::maintenance::WindowsTasks::real();
-        let is_admin = tasks.is_admin;
+        let (tasks, is_admin) = crate::plat::maintenance_tasks();
         let protect = task_protection(s.store_dir.as_deref());
         let elevation = cm_app::maintenance::NoElevation("catalog view only");
-        let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: &tasks, elevation: &elevation, is_admin, protect_task: &protect, settings: None };
+        let settings = crate::plat::settings_backend();
+        let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: tasks.as_ref(), elevation: &elevation, is_admin, protect_task: &protect, settings: settings.as_deref() };
         let items = cm_app::maintenance::catalog_view(&b);
         let defaults: Vec<&str> = cm_app::maintenance::default_selection(&b).iter().map(|t| t.id).collect();
         json!({
@@ -362,24 +345,25 @@ mod win {
             "default_selection": defaults,
             "prohibited": cm_core::maintenance::PROHIBITED,
             "is_admin": is_admin,
-            "elevation": if is_admin { "already_elevated" } else { "one_prompt_per_run" },
+            "elevation": crate::plat::elevation_word(is_admin),
             "observed_at": cm_core::time::now_utc(),
         })
+    }
+
+    fn refusal(r: cm_core::maintenance::Refusal) -> IpcError {
+        let code = match r.code {
+            "policy_denied" => ErrorCode::PolicyDenied,
+            "unsupported" => ErrorCode::Unsupported,
+            "internal_error" => ErrorCode::InternalError,
+            _ => ErrorCode::InvalidArgument,
+        };
+        IpcError::new(code, "refused", r.message)
     }
 
     pub fn plan(s: &AppState, ids: &[String]) -> IpcResult<CreatedPlanDto> {
         let platform = TaskPlatform::current();
         let stores = crate::suite::own_stores(s)?;
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-        let refusal = |r: cm_core::maintenance::Refusal| {
-            let code = match r.code {
-                "policy_denied" => ErrorCode::PolicyDenied,
-                "unsupported" => ErrorCode::Unsupported,
-                "internal_error" => ErrorCode::InternalError,
-                _ => ErrorCode::InvalidArgument,
-            };
-            IpcError::new(code, "refused", r.message)
-        };
         let tasks = cm_core::maintenance::resolve_tasks(&refs, platform).map_err(refusal)?;
         let protect = task_protection(Some(&stores.dir));
         // PRT-06: a protected task named explicitly is refused here; it would only be skipped later.
@@ -388,13 +372,29 @@ mod win {
         }
         let plan_id = new_id("mt");
         let pdigest = crate::cleanup::policy_digest(&stores);
-        let plan = cm_core::maintenance::build_maintenance_plan(&tasks, platform, &plan_id, now_unix(), &pdigest).map_err(refusal)?;
+        // 14.5: a setting task freezes the value observed now, so the change can be put back later (macOS).
+        let settings = crate::plat::settings_backend();
+        let observe = |spec: &cm_core::maintenance::settings::SettingSpec| -> Result<String, String> {
+            settings.as_deref().ok_or_else(|| "settings cannot be read here".to_owned())?.read(spec)
+        };
+        let inputs = cm_core::maintenance::PlanInputs { volume: None, setting: &observe };
+        let plan = cm_core::maintenance::build_maintenance_plan_with(&tasks, platform, &plan_id, now_unix(), &pdigest, &inputs).map_err(refusal)?;
         stores.audit.save_plan_v2(&plan)?;
         Ok(CreatedPlanDto::new(plan_id))
     }
 
+    /// `optimize restore --operation OP`: a recovery plan putting back the prior values a run's setting changes backed
+    /// up (14.5); review and apply it like any plan. A setting changed since is left as is.
+    pub fn restore_plan(s: &AppState, operation_id: &str) -> IpcResult<CreatedPlanDto> {
+        let stores = crate::suite::own_stores(s)?;
+        let plan_id = new_id("rp");
+        let pdigest = crate::cleanup::policy_digest(&stores);
+        let plan = cm_app::plans::create_settings_restore_plan(&stores, operation_id, &plan_id, now_unix(), &pdigest).map_err(|e| IpcError::new(e.code(), "refused", e.to_string()))?;
+        Ok(CreatedPlanDto::new(plan.body.plan_id))
+    }
+
     pub fn diagnose() -> Value {
-        let input = cm_platform::windows::maintenance_diag::sample(Duration::from_secs(2));
+        let input = os::maintenance_diag::sample(Duration::from_secs(2));
         let findings = cm_core::maintenance::diagnose(&input);
         let mut ps: Vec<_> = input.processes.iter().filter(|x| x.pid != 0).collect();
         ps.sort_by(|a, b| b.window_core_percent.total_cmp(&a.window_core_percent));
@@ -419,10 +419,6 @@ mod win {
 
     const WINDOW_MS: u64 = 1000;
 
-    fn apps_map() -> Vec<(String, String)> {
-        cm_platform::windows::apps::inventory().0.into_iter().filter_map(|a| a.install_location.map(|l| (a.name, l.display()))).collect()
-    }
-
     /// `image_path` as display text (the page never sees a raw path object).
     pub(super) fn display_paths(body: &mut Value) {
         if let Some(items) = body["items"].as_array_mut() {
@@ -434,10 +430,9 @@ mod win {
     }
 
     pub fn processes(s: &AppState, key: cm_core::process::SortKey, search: Option<&str>, limit: usize) -> IpcResult<Value> {
-        use cm_platform::windows::processes::{DISK_NOTE, NETWORK_REASON, list_with, windows_dir};
-        let facts = list_with(Duration::from_millis(WINDOW_MS), true).map_err(|e| ipc(ErrorCode::IoError, "io_error", e))?;
+        use os::processes::{DISK_NOTE, NETWORK_REASON};
         let pins = s.store_dir.as_deref().map(cm_app::processes::load_pins).unwrap_or_default();
-        let rows = cm_core::process::explain(facts, std::process::id(), &windows_dir(), &apps_map(), &pins);
+        let rows = crate::plat::process_views(Duration::from_millis(WINDOW_MS), &pins).map_err(|e| ipc(ErrorCode::IoError, "io_error", e))?;
         let mut body = cm_app::processes::list_wire(rows, key, search, limit, &cm_core::time::now_utc(), WINDOW_MS, &[DISK_NOTE, NETWORK_REASON]);
         display_paths(&mut body);
         body["supported"] = Value::Bool(true);
@@ -446,20 +441,13 @@ mod win {
     }
 
     pub fn end_plan(s: &AppState, pid: u32) -> IpcResult<CreatedPlanDto> {
-        use cm_platform::windows::processes::{file_sha256, list_with, signature_of, windows_dir};
         let stores = crate::suite::own_stores(s)?;
-        let facts = list_with(Duration::from_millis(200), false).map_err(|e| ipc(ErrorCode::IoError, "io_error", e))?;
-        let Some(mut f) = facts.into_iter().find(|f| f.pid == pid) else {
+        let Some((row, digest)) = crate::plat::process_for_end(pid).map_err(|e| ipc(ErrorCode::IoError, "io_error", e))? else {
             return Err(ipc(ErrorCode::InvalidArgument, "not_running", format!("process {pid} is no longer running; refresh the list")));
         };
-        let image = f.image_path.as_ref().map(RawPath::display);
-        if let Some(i) = &image {
-            f.signature = signature_of(i);
-        }
-        let row = cm_core::process::explain(vec![f], std::process::id(), &windows_dir(), &apps_map(), &[]).remove(0);
         let plan_id = new_id("pp");
         let pdigest = crate::cleanup::policy_digest(&stores);
-        let plan = match cm_app::processes::end_plan(&row, image.as_deref().and_then(file_sha256), &plan_id, now_unix(), &pdigest) {
+        let plan = match cm_app::processes::end_plan(&row, digest, &plan_id, now_unix(), &pdigest) {
             Ok(p) => p,
             Err(cm_app::processes::EndPlanError::Refused(r @ cm_core::process::EndRefusal::Protected(_))) => return Err(ipc(ErrorCode::PolicyDenied, "protected", r.to_string())),
             Err(e) => return Err(ipc(ErrorCode::InvalidArgument, "refused", e.to_string())),
@@ -468,11 +456,6 @@ mod win {
         crate::software::note_plan(s, &plan_id, json!({"pid": pid, "name": row.facts.name, "purpose": row.purpose, "unidentified_reason": row.unidentified_reason}));
         Ok(CreatedPlanDto::new(plan_id))
     }
-}
-
-#[cfg(not(windows))]
-fn unsupported(what: &str) -> IpcError {
-    ipc(ErrorCode::Unsupported, "unsupported", format!("{what} is implemented on Windows only in this build"))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -486,13 +469,7 @@ pub async fn insights_overview(state: St<'_>, older_than_days: Option<u32>) -> I
         if !(1..=3650).contains(&days) {
             return Err(ipc(ErrorCode::InvalidArgument, "invalid_argument", "older_than_days must be 1..=3650"));
         }
-        #[cfg(windows)]
-        return Ok(win::overview(&s, days));
-        #[cfg(not(windows))]
-        {
-            let _ = (s, days);
-            Ok(OverviewDto { supported: false, generated_at: cm_core::time::now_utc(), cards: vec![], downloads: None })
-        }
+        Ok(imp::overview(&s, days))
     })
     .await
 }
@@ -502,13 +479,7 @@ pub async fn downloads_trash_plan(state: St<'_>, item_ids: Vec<String>) -> IpcRe
     let s = state.inner().clone();
     blocking(move || {
         let ids = args::record_ids("download", &item_ids, MAX_DOWNLOADS)?;
-        #[cfg(windows)]
-        return win::downloads_plan(&s, &ids);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, ids);
-            Err(unsupported("manual trash"))
-        }
+        imp::downloads_plan(&s, &ids)
     })
     .await
 }
@@ -516,16 +487,7 @@ pub async fn downloads_trash_plan(state: St<'_>, item_ids: Vec<String>) -> IpcRe
 #[tauri::command(rename_all = "snake_case")]
 pub async fn maintenance_catalog(state: St<'_>) -> IpcResult<Value> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return Ok(win::catalog(&s));
-        #[cfg(not(windows))]
-        {
-            let _ = s;
-            Ok(json!({"supported": false, "items": [], "default_selection": [], "prohibited": cm_core::maintenance::PROHIBITED, "is_admin": false, "elevation": "unavailable"}))
-        }
-    })
-    .await
+    blocking(move || Ok(imp::catalog(&s))).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -545,13 +507,7 @@ pub async fn maintenance_plan(state: St<'_>, task_ids: Vec<String>) -> IpcResult
     let s = state.inner().clone();
     blocking(move || {
         let ids = args::record_ids("task", &task_ids, 32)?;
-        #[cfg(windows)]
-        return win::plan(&s, &ids);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, ids);
-            Err(unsupported("maintenance tasks"))
-        }
+        imp::plan(&s, &ids)
     })
     .await
 }
@@ -569,11 +525,17 @@ pub async fn maintenance_history(state: St<'_>, limit: Option<u32>) -> IpcResult
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn maintenance_diagnose() -> IpcResult<Value> {
+    blocking(move || Ok(imp::diagnose())).await
+}
+
+/// `optimize restore`: a recovery plan putting back the setting changes a maintenance run backed up (14.5). It only
+/// creates the plan; review and apply go through the shared flow. Only setting tasks (macOS) back anything up.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maintenance_restore_plan(state: St<'_>, operation_id: String) -> IpcResult<CreatedPlanDto> {
+    let s = state.inner().clone();
     blocking(move || {
-        #[cfg(windows)]
-        return Ok(win::diagnose());
-        #[cfg(not(windows))]
-        Ok(json!({"supported": false, "findings": [], "top_processes": [], "read_only": true}))
+        let op = args::record_id("operation", &operation_id)?;
+        imp::restore_plan(&s, &op)
     })
     .await
 }
@@ -585,13 +547,7 @@ pub async fn process_list(state: St<'_>, sort: String, search: Option<String>, l
         let key = cm_core::process::SortKey::parse(&sort).ok_or_else(|| ipc(ErrorCode::InvalidArgument, "invalid_argument", "sort must be cpu, memory, disk, network or name"))?;
         let search = args::name_filter(search.as_deref())?;
         let limit = limit.unwrap_or(200).clamp(1, 500) as usize;
-        #[cfg(windows)]
-        return win::processes(&s, key, search.as_deref(), limit);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, key, search, limit);
-            Ok(json!({"supported": false, "items": [], "pins": []}))
-        }
+        imp::processes(&s, key, search.as_deref(), limit)
     })
     .await
 }
@@ -612,16 +568,7 @@ pub async fn process_pin(state: St<'_>, name: String, pinned: bool) -> IpcResult
 #[tauri::command(rename_all = "snake_case")]
 pub async fn process_end_plan(state: St<'_>, pid: u32) -> IpcResult<CreatedPlanDto> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::end_plan(&s, pid);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, pid);
-            Err(unsupported("ending processes"))
-        }
-    })
-    .await
+    blocking(move || imp::end_plan(&s, pid)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -709,18 +656,23 @@ mod tests {
 
     /// MNT-04 wiring of the desktop: a reviewed maintenance plan runs user tasks, and administrator tasks are skipped
     /// (never run unelevated) when no elevated worker is available; the shared operation report records it.
-    #[cfg(windows)]
     #[test]
     fn maintenance_runs_reviewed_plans_and_skips_admin_tasks_without_a_worker() {
         use cm_core::maintenance::{TaskPlatform, build_maintenance_plan, ids, resolve_tasks};
+        // One user task, then one administrator task, in catalog order.
+        #[cfg(windows)]
+        let pick = [ids::DNS_FLUSH, ids::IMAGE_HEALTH];
+        #[cfg(target_os = "macos")]
+        let pick = [ids::MAC_QUICKLOOK, ids::MAC_DNS_FLUSH];
+        let platform = TaskPlatform::current();
         let dir = temp("maint");
         let stores = cm_store::Stores::open(&dir).unwrap();
-        let tasks = resolve_tasks(&[ids::DNS_FLUSH, ids::IMAGE_HEALTH], TaskPlatform::Windows).unwrap();
-        let plan = build_maintenance_plan(&tasks, TaskPlatform::Windows, "mt_test", crate::cleanup::now_unix(), "pd").unwrap();
+        let tasks = resolve_tasks(&pick, platform).unwrap();
+        let plan = build_maintenance_plan(&tasks, platform, "mt_test", crate::cleanup::now_unix(), "pd").unwrap();
         stores.audit.save_plan_v2(&plan).unwrap();
         let elevation = cm_app::maintenance::NoElevation("no worker in this test");
         let host = cm_core::host::HostProbe::current(&cm_platform::host::OsHostProbe, "desktop");
-        let b = cm_app::maintenance::MaintenanceBackends { platform: TaskPlatform::Windows, tasks: &Scripted, elevation: &elevation, is_admin: false, protect_task: &|_| Ok(()), settings: None };
+        let b = cm_app::maintenance::MaintenanceBackends { platform, tasks: &Scripted, elevation: &elevation, is_admin: false, protect_task: &|_| Ok(()), settings: None };
         // Not reviewed yet: refused before anything runs.
         assert!(matches!(run_maintenance(&stores, &b, "mt_test", &|| false, &host), Err(cm_app::execute::ApplyError::NeedsApproval(_))));
         stores
@@ -742,7 +694,6 @@ mod tests {
     }
 
     /// Old downloads are bound through a fresh scan of their folder: a nested file is found by its path.
-    #[cfg(windows)]
     #[test]
     fn a_reviewed_download_is_found_in_a_scan_of_its_folder() {
         use cm_core::host::HostProbe;
@@ -754,7 +705,7 @@ mod tests {
         let stores = cm_store::Stores::open(&dir.join("store")).unwrap();
         let raw = cm_platform::paths::raw_path(root.as_os_str()).unwrap();
         let request = cm_app::scan::ScanRequest { scan_id: "s_dl_test".into(), scope_id: "scope_dl".into(), root: raw.clone(), host: cm_platform::host::OsHostProbe.current("desktop") };
-        cm_app::scan::run_scan(&stores.index, &cm_platform::windows::directory::DirectoryBackend, &request, &cm_core::scan::ScanOptions::default()).unwrap();
+        cm_app::scan::run_scan(&stores.index, crate::plat::scan_backend().as_ref(), &request, &cm_core::scan::ScanOptions::default()).unwrap();
         let view = stores.index.view("s_dl_test").unwrap();
         let target = cm_platform::paths::raw_path(root.join("sub folder").join("setup.exe").as_os_str()).unwrap();
         let e = find_entry(&view, &target).expect("found case-insensitively");
@@ -767,11 +718,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(windows)]
     #[test]
     fn process_image_paths_become_text() {
         let mut body = json!({"items": [{"image_path": p(r"C:\Windows\explorer.exe")}, {"image_path": null}]});
-        win::display_paths(&mut body);
+        imp::display_paths(&mut body);
         assert_eq!(body["items"][0]["image_path"], r"C:\Windows\explorer.exe");
         assert!(body["items"][1]["image_path"].is_null());
     }

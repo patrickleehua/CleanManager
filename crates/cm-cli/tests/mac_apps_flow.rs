@@ -205,7 +205,8 @@ fn apps_list_reports_redirected_bundles_in_the_contract_shape() {
         assert_eq!(evidence(e, "location_identity").len(), 1, "{e:#}");
         assert_eq!(e["protected_class"], false);
         assert_eq!(e["update_status"], "not_checked");
-        assert_eq!(e["uninstall_capability"]["state"], "unsupported");
+        // UNI-01: a user-writable bundle is moved to the Trash by `apps uninstall` (the same decision as its route).
+        assert_eq!(e["uninstall_capability"]["state"], "available", "{e:#}");
         assert_eq!(e["location"]["platform"], "macos");
         assert_eq!(e["location"]["raw_encoding"], "unix_bytes_base64");
     }

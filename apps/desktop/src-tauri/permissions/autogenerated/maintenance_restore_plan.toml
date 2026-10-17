@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-maintenance-restore-plan"
+description = "Enables the maintenance_restore_plan command without any pre-configured scope."
+commands.allow = ["maintenance_restore_plan"]
+
+[[permission]]
+identifier = "deny-maintenance-restore-plan"
+description = "Denies the maintenance_restore_plan command without any pre-configured scope."
+commands.deny = ["maintenance_restore_plan"]

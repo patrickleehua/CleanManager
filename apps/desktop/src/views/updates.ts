@@ -14,6 +14,7 @@ import { CHANNEL_WORD, ROUTE_WORD, UPDATE_STATE, updateReason } from '../lib/sui
 import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, selectionBar, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, pageHead, pill } from './parts';
+import { notOnThisPlatform, words } from '../lib/platform';
 
 type Filter = 'all' | 'update_available' | 'cannot_check' | 'up_to_date';
 
@@ -66,7 +67,7 @@ export class UpdatesPage {
     if (check) {
       if (this.checking) return;
       this.checking = true;
-      this.progress.start('正在询问各更新通道（winget 访问它自己配置的源；Scoop 只读本地目录）…');
+      this.progress.start(words().updatesProgress);
       this.app.announce('开始检查更新');
     }
     this.error = null;
@@ -136,7 +137,7 @@ export class UpdatesPage {
   private render(): void {
     const d = this.data;
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'updates-title', title: '更新' }), emptyState('此平台暂不提供', '更新检查目前只在 Windows 上实现。', null));
+      replace(this.body, pageHead({ id: 'updates-title', title: '更新' }), emptyState('此平台暂不提供', notOnThisPlatform('更新检查目前只在 Windows 上实现。'), null));
       return;
     }
     const check = h('button', { type: 'button', class: 'primary', id: 'updates-check', disabled: this.checking || !d?.checks_enabled }, icon('refresh'), this.checking ? '正在检查…' : '检查更新');
@@ -206,7 +207,7 @@ export class UpdatesPage {
             : '当前版本未知';
       const channel = c.channel ? `${CHANNEL_WORD[c.channel]}${c.channel_id ? `：${c.channel_id}` : ''}` : '没有更新通道';
       let go: HTMLElement | null = null;
-      if (c.route === 'open_store') go = h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), '打开商店的更新页');
+      if (c.route === 'open_store') go = h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), words().openStoreUpdates);
       else if (!can && state === 'update_available') go = h('span', { class: 'small muted' }, ROUTE_WORD[c.route]);
       else if (c.route === 'open_app') go = h('span', { class: 'small muted' }, ROUTE_WORD.open_app);
       return h(
@@ -219,7 +220,7 @@ export class UpdatesPage {
           h('label', { for: `${id}-check`, class: 'obj-name' }, c.name),
           h('span', { class: 'obj-path num' }, versions),
           c.reason ? h('span', { class: state === 'cannot_check' ? 'why-not' : 'obj-reason muted' }, updateReason(c.reason)) : null,
-          c.official_url && !can ? h('span', { class: 'obj-reason muted path' }, `官方页面：${c.official_url}`) : null,
+          c.official_url && !can && !c.official_url.startsWith('macappstore:') ? h('span', { class: 'obj-reason muted path' }, `官方页面：${c.official_url}`) : null,
         ),
         h('td', { class: 'col-source' }, h('span', { class: 'small' }, channel), c.checked_at ? h('span', { class: 'small muted block' }, formatTime(c.checked_at)) : null),
         h('td', { class: 'col-status' }, pill(st.label, st.tone), go),
@@ -256,7 +257,7 @@ export class UpdatesPage {
             h('span', { class: 'run-main' }, h('b', {}, r.name), h('span', { class: 'muted small' }, updateReason(r.reason))),
             h('span', { class: 'small' }, ROUTE_WORD[r.route]),
             r.route === 'open_store'
-              ? h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), '打开商店')
+              ? h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), words().openStore)
               : r.url
                 ? copyField('官方页面', r.url)
                 : h('span', {}),
@@ -286,7 +287,7 @@ export class UpdatesPage {
         h('li', {}, h('span', {}, UPDATE_STATE.up_to_date.label), h('b', { class: 'num' }, groupDigits(counts.up_to_date ?? 0))),
         counts.not_checked ? h('li', {}, h('span', {}, UPDATE_STATE.not_checked.label), h('b', { class: 'num' }, groupDigits(counts.not_checked))) : null,
       ),
-      h('p', { class: 'small' }, '计划中的每个应用会单独执行：先下载这个确切版本，验证安装包签名者与已安装的应用一致，再升级并回读版本。'),
+      h('p', { class: 'small' }, words().updatesPlanNote),
       h('p', { class: 'small' }, '正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。'),
       errorLine(this.createError),
       create,

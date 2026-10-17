@@ -227,13 +227,13 @@ export function readinessWords(forOp?: ReadinessOp): Record<string, CheckWords> 
           : op === 'startup'
             ? '没有管理员权限：所有用户共用的启动项只能查看，不能停用或启用。'
             : op === 'maintenance'
-              ? '没有管理员权限：需要管理员的任务会在开始前请 Windows 询问你一次；拒绝只跳过这些任务，其余任务照常运行。'
+              ? w.maintAdminMissing
               : op === 'uninstall'
-                ? '没有管理员权限：所有用户共用位置（HKLM、ProgramData）中的残留只能查看，不能放入计划。'
+                ? w.uninstallAdminMissing
                 : op === 'process'
                   ? '没有管理员权限：其他用户或系统的进程在执行时会被跳过并说明原因。'
                   : '没有管理员权限：需要管理员的项目会在执行时被跳过并说明原因。',
-      fix: forOp === 'maintenance' ? 'Windows 的管理员提示只出现一次，并且只授权这份计划中列出的任务。' : `CleanManager 不会自动提权。需要时请关闭后以${w.admin}重新启动。`,
+      fix: forOp === 'maintenance' ? w.maintAdminFix : `CleanManager 不会自动提权。需要时请关闭后以${w.admin}重新启动。`,
     },
     bypass_privileges: {
       title: '备份/还原特权',

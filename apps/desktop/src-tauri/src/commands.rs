@@ -58,7 +58,7 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         interrupted_at_startup: s.startup.interrupted.clone(),
         operations_to_reconcile: s.startup.operations_to_reconcile.clone(),
         write_commands: true,
-        file_actions_verified: cfg!(windows),
+        file_actions_verified: true,
         rules_dir_display: s.rules_dir.as_deref().map(display_of),
         rules_problem: rules.as_ref().err().cloned(),
         rule_count: rules.as_ref().ok().map(|r| r.rules.len()),
@@ -473,9 +473,8 @@ mod tests {
         assert_eq!(d.known_logical_bytes, (2 * u128::from(u64::MAX)).to_string());
     }
 
-    /// End to end over the real Windows backend and index: what the WebView receives for a
+    /// End to end over the real platform backend and index: what the WebView receives for a
     /// scanned tree (status, treemap layer with remainder, revision-bound paging).
-    #[cfg(windows)]
     #[test]
     fn real_scan_feeds_status_treemap_and_pages() {
         use cm_app::scan::{ScanRequest, run_scan};
@@ -499,8 +498,8 @@ mod tests {
             root: cm_platform::paths::raw_path(root.as_os_str()).unwrap(),
             host: cm_platform::host::OsHostProbe.current("desktop"),
         };
-        let backend = cm_platform::windows::directory::DirectoryBackend;
-        let outcome = run_scan(&stores.index, &backend, &request, &cm_core::scan::ScanOptions::default()).unwrap();
+        let backend = crate::plat::scan_backend();
+        let outcome = run_scan(&stores.index, backend.as_ref(), &request, &cm_core::scan::ScanOptions::default()).unwrap();
         assert_eq!(outcome.state, cm_core::model::ScanState::Completed);
 
         let s = AppState::with_store(Some(store.clone()), None, None);

@@ -268,6 +268,7 @@ fn registry_record(env: &UninstallEnv, k: &RegKey, key_name: &str, hive: Hive, v
         winget,
         package_name: None,
         ai_tool: None,
+        mac: None,
     })
 }
 
@@ -317,7 +318,7 @@ fn read_packages(out: &mut Vec<UninstallRecord>) {
             instance_id: instance_id_of(&source, root.as_deref().and_then(raw).as_ref()),
             name, version: clean_text(parts[1]), publisher: None, source: RecordSource::Msix, key: None, key_name: None, product_code: None,
             package_full_name: Some(full.clone()), package_family: Some(family), uninstall_string: None, quiet_uninstall_string: None, install_location: root,
-            system_component: false, winget: None, package_name: None, ai_tool: None, protected_class: protected,
+            system_component: false, winget: None, package_name: None, ai_tool: None, protected_class: protected, mac: None,
         });
     }
 }
@@ -346,7 +347,7 @@ fn read_tools(env: &UninstallEnv, out: &mut Vec<UninstallRecord>) {
                 instance_id: tool_instance_id(RecordSource::Scoop, &name), version: json_field(&e.path().join(r"current\manifest.json"), "version"),
                 name: name.clone(), publisher: None, source: RecordSource::Scoop, key: None, key_name: None, product_code: None, package_full_name: None,
                 package_family: None, uninstall_string: None, quiet_uninstall_string: None, install_location: Some(loc), system_component: false, winget: None,
-                package_name: Some(name), ai_tool: None, protected_class: None,
+                package_name: Some(name), ai_tool: None, protected_class: None, mac: None,
             });
         }
     }
@@ -360,7 +361,7 @@ fn read_tools(env: &UninstallEnv, out: &mut Vec<UninstallRecord>) {
             instance_id: tool_instance_id(RecordSource::NpmGlobal, t.npm_package), name: t.name.into(), version: json_field(&manifest, "version"), publisher: None,
             source: RecordSource::NpmGlobal, key: None, key_name: None, product_code: None, package_full_name: None, package_family: None, uninstall_string: None,
             quiet_uninstall_string: None, install_location: Some(dir.to_string_lossy().into_owned()), system_component: false, winget: None,
-            package_name: Some(t.npm_package.into()), ai_tool: Some(t.id.into()), protected_class: None,
+            package_name: Some(t.npm_package.into()), ai_tool: Some(t.id.into()), protected_class: None, mac: None,
         });
     }
 }
@@ -434,6 +435,7 @@ pub fn adapter_env(env: &UninstallEnv, rec: &UninstallRecord) -> AdapterEnv {
         winget_exe: if rec.winget.is_some() && !env.is_redirected() { winget_exe() } else { None },
         node,
         msix_manifest: if rec.source == RecordSource::Msix { msix_manifest(rec) } else { None },
+        brew: None,
     }
 }
 

@@ -79,7 +79,7 @@ mod plat {
     use cm_core::model::ObjectKind;
     use cm_core::path::RawPath;
     use cm_core::protocol::{ErrorDetails, error_record};
-    use cm_platform::macos::actions::trash::{ListError, TrashListing, list_trash_dir, open_holders, trash_ready, volume_trash_dirs};
+    use cm_platform::macos::actions::trash::{ListError, TrashListing, folder_refusal, list_trash_dir, open_holders, trash_ready, volume_trash_dirs};
     use serde_json::{Value, json};
 
     use crate::args::Parsed;
@@ -109,11 +109,7 @@ mod plat {
 
     /// The macOS trash action moves single verified files; a folder cannot be verified as one object in this build.
     pub fn refusal(ins: &Inspection) -> Option<TrashRefusal> {
-        (ins.kind == ObjectKind::Directory).then(|| TrashRefusal {
-            code: "unsupported",
-            reason: "folder_move_unavailable",
-            message: "moving a whole folder to the Trash is not available on macOS in this build (its contents cannot be verified as one object); select the files inside instead".into(),
-        })
+        folder_refusal(ins)
     }
 
     fn limit_note(uninspected: usize) -> Option<String> {
@@ -128,20 +124,6 @@ mod plat {
             }
             Err(e) => (None, Some(e)),
         }
-    }
-
-    /// The `plan apply` seam: holder names, with the other-users limit as the last entry when something was found.
-    pub fn apply_holders(paths: &[RawPath]) -> Option<Vec<String>> {
-        let h = open_holders(paths).ok()?;
-        if h.holders.is_empty() {
-            // Nothing visible: "unknown" (some processes may be uninspectable), never "free".
-            return None;
-        }
-        let mut out = h.holders;
-        if h.uninspected > 0 {
-            out.push(format!("possibly others among {} process(es) of other users that could not be inspected", h.uninspected));
-        }
-        Some(out)
     }
 
     pub fn put_back_hint() -> Option<&'static str> {
@@ -501,5 +483,5 @@ pub fn trash_purge(req: &str, p: &Parsed) -> ExitCode {
 #[cfg(target_os = "macos")]
 #[allow(clippy::type_complexity)]
 pub(crate) fn mac_holders() -> Option<Box<dyn Fn(&[cm_core::path::RawPath]) -> Option<Vec<String>>>> {
-    Some(Box::new(plat::apply_holders))
+    Some(Box::new(cm_platform::macos::actions::trash::apply_holders))
 }

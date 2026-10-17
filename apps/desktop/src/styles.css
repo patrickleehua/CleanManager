@@ -1201,6 +1201,10 @@ th.col-num-s { text-align: right; }
 .res-batt li[data-low='yes'] .res-meter-fill { background: var(--warn); }
 .res-batt li[data-low='yes'] .res-batt-pct { color: var(--warn); }
 .res-batt-pct { text-align: right; font-weight: 600; }
+/* A device without a reading has no track at all: an empty bar would read as 0%. */
+.res-batt li[data-available='no'] .res-meter { height: 0; background: none; box-shadow: none; border-radius: 0; border-top: 1px dashed var(--line); }
+.res-batt li[data-available='no'] .res-batt-pct { font-weight: 500; white-space: nowrap; }
+.res-assertion code { overflow-wrap: anywhere; }
 .res-alerts { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .res-nothere { margin-top: 16px; }
 .res-nothere h2 { margin-bottom: 12px; }
@@ -1336,6 +1340,7 @@ th.col-num-s { text-align: right; }
   .selection-bar, .mtile, .icard, .tier-summary > div { border: 1px solid CanvasText; }
   .tp-menu, .tp-icon, .res-meter { forced-color-adjust: none; border: 1px solid CanvasText; }
   .res-meter-fill { forced-color-adjust: none; background: Highlight; }
+  .res-batt li[data-available='no'] .res-meter { border: 0; border-top: 1px dashed CanvasText; }
   .omark-shape, .step-num, .unid-mark { forced-color-adjust: none; border: 1px solid CanvasText; }
   .stage-steps li[data-state='current'] { outline: 2px solid Highlight; outline-offset: -2px; }
   .dim-fill { forced-color-adjust: none; background: Highlight; }

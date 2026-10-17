@@ -15,11 +15,13 @@
 //!   request and uninstaller (its uninstaller waits only for its own close request), its own outcome
 //!   ([`app_outcomes`]) and its own leftover review; one that fails, is skipped or went stale stops nothing else, and
 //!   its leftovers are never reviewed or removed. Protected classes are refused per application, as for one.
+//! - macOS (module `mac`): the same plans and rules on the macOS routes (bundle to the Trash, Homebrew cask/formula) with
+//!   `~/Library` leftovers; the shared executor code here is platform-neutral.
 
 use cm_core::plan::v2::{ActionMeta, AppQuitAction, HeaderInput, NO_RULES_DIGEST, PlanAction, PlanKind, PlanV2, QuitForce, RegistryRestoreAction};
 use cm_core::time::utc_from_unix;
 use cm_core::uninstall::{
-    AppIdentity, KEY_BACKUP_PREFIX, KeyBackup, RunningState, StepStatus, UninstallActions, UninstallMeta, end_refusal, key_digest, uninstaller_outcome,
+    AppIdentity, KEY_BACKUP_PREFIX, KeyBackup, RunningState, StepStatus, UninstallActions, UninstallMeta, key_digest, uninstaller_outcome,
 };
 use cm_store::Stores;
 
@@ -79,20 +81,14 @@ pub fn run_action(ua: Option<&dyn UninstallActions>, s: &Step<'_>) -> ActionResu
             if let Err((code, message)) = ua.verify(record, adapter, &t.executable.sha256, signer.as_deref()) {
                 return res(id, ActionStatus::Skipped, &code, message);
             }
-            let (exit, ms) = match ua.run(adapter, t.timeout_seconds) {
+            let (exit, ms) = match ua.run_step(adapter, t.timeout_seconds) {
                 Ok(r) => r,
-                Err(e) => return res(id, ActionStatus::Failed, "start_failed", format!("{e}; nothing was run")),
+                Err((status, code, message)) => return res(id, action_status(status), &code, message),
             };
             let rescan = ua.rescan(identity);
             let (status, code, message) = uninstaller_outcome(adapter.kind, exit, ms, rescan);
             let message = message.replace("<this operation>", s.operation_id);
-            let status = match status {
-                StepStatus::Succeeded => ActionStatus::Succeeded,
-                StepStatus::Skipped => ActionStatus::Skipped,
-                StepStatus::Failed => ActionStatus::Failed,
-                StepStatus::Unknown => ActionStatus::Unknown,
-            };
-            res(id, status, code, message)
+            res(id, action_status(status), code, message)
         }
         (PlanAction::RegistryBackupDelete(r), Some(UninstallMeta::RegistryKey { location })) => {
             if location.hive == cm_core::plan::v2::Hive::Hklm && !ua.is_admin() {
@@ -143,6 +139,27 @@ pub fn run_action(ua: Option<&dyn UninstallActions>, s: &Step<'_>) -> ActionResu
     }
 }
 
+fn action_status(s: StepStatus) -> ActionStatus {
+    match s {
+        StepStatus::Succeeded => ActionStatus::Succeeded,
+        StepStatus::Skipped => ActionStatus::Skipped,
+        StepStatus::Failed => ActionStatus::Failed,
+        StepStatus::Unknown => ActionStatus::Unknown,
+    }
+}
+
+/// Why this platform never ends a process (critical, part of the OS, CleanManager itself); `None` = may be ended.
+#[cfg(target_os = "macos")]
+fn never_end(p: &cm_core::uninstall::RunningProcess) -> Option<&'static str> {
+    cm_core::uninstall::mac::end_refusal(p, std::process::id())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn never_end(p: &cm_core::uninstall::RunningProcess) -> Option<&'static str> {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    cm_core::uninstall::end_refusal(p, std::process::id(), &root)
+}
+
 /// UNI-02: close request with a bounded wait; a forced end only in a plan reviewed for it and after a person confirmed it.
 fn quit(ua: &dyn UninstallActions, id: &str, q: &AppQuitAction, identity: &AppIdentity) -> ActionResult {
     let processes = match ua.running(identity) {
@@ -157,8 +174,7 @@ fn quit(ua: &dyn UninstallActions, id: &str, q: &AppQuitAction, identity: &AppId
         return res(id, ActionStatus::Succeeded, "closed", format!("{} closed after a close request", identity.name));
     }
     let names: Vec<String> = still.iter().map(|p| p.describe()).collect();
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    let protected: Vec<String> = still.iter().filter_map(|p| end_refusal(p, std::process::id(), &root).map(|why| format!("{} ({why})", p.describe()))).collect();
+    let protected: Vec<String> = still.iter().filter_map(|p| never_end(p).map(|why| format!("{} ({why})", p.describe()))).collect();
     if q.force == QuitForce::Never || !protected.is_empty() {
         let hint = if q.force == QuitForce::Never {
             format!("close it yourself and apply again, or create a separately reviewed plan that may end it: cleanmanager apps uninstall plan create --instance {} --end-running", q.app_instance_id)
@@ -371,6 +387,13 @@ pub fn create_restore_plan(stores: &Stores, operation_id: &str, plan_id: &str, n
 
 #[cfg(windows)]
 pub use win::*;
+
+#[cfg(target_os = "macos")]
+pub use mac::*;
+
+/// macOS stage 1 and 2 (bundle to the Trash, Homebrew adapters, `~/Library` leftovers).
+#[cfg(target_os = "macos")]
+mod mac;
 
 #[cfg(windows)]
 mod win {

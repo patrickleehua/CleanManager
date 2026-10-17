@@ -34,7 +34,9 @@ import { UNINSTALL_STEPS } from './uninstall';
 import { rowsByApp } from './uninstallBatch';
 
 const STARTUP_EXPLAIN = {
-  effect: '只修改系统的启用记录（与任务管理器中的“启动应用”相同），不删除程序、快捷方式或它的设置。',
+  get effect(): string {
+    return words().startupEffect;
+  },
   space: '不影响磁盘空间。',
   recovery: '执行前记录每一项原来的状态；之后可以在“活动”中为这次执行生成还原计划。',
 };
@@ -65,9 +67,9 @@ function kindVerb(d: PlanDetail, items: PlanItem[]): { verb: string; run: string
     case 'uninstall': {
       const apps = d.kind_detail?.apps ?? [];
       if (apps.length > 1)
-        return { verb: `卸载 ${apps.length} 个应用：逐个先请它退出，再运行它自己的卸载程序`, run: `执行：卸载 ${apps.length} 个应用`, permanent: false };
+        return { verb: `卸载 ${apps.length} 个应用：逐个先请它退出，${words().uninstallRuns}`, run: `执行：卸载 ${apps.length} 个应用`, permanent: false };
       const name = d.kind_detail?.app?.name ?? items[0]?.name ?? '应用';
-      return { verb: `卸载“${name}”：先请它退出，再运行它自己的卸载程序`, run: `执行：卸载 ${name}`, permanent: false };
+      return { verb: `卸载“${name}”：先请它退出，${words().uninstallRuns}`, run: `执行：卸载 ${name}`, permanent: false };
     }
     case 'uninstall_leftovers': {
       const name = d.kind_detail?.noted?.app_name;
@@ -378,7 +380,7 @@ export class PlanPage {
             ? MODE_EXPLAIN.delete
             : d.kind === 'restore' || d.kind === 'purge'
               ? RECOVERY_EXPLAIN[d.kind]
-              : (KIND_EXPLAIN[d.kind] ?? null);
+              : (words().kindExplain[d.kind] ?? KIND_EXPLAIN[d.kind] ?? null);
     const kind = permanent ? 'delete' : d.kind === 'uninstall_leftovers' ? 'trash' : d.kind === 'uninstall' || d.kind === 'update' || d.kind === 'maintenance' ? 'review' : (d.mode ?? 'restore');
     return h(
       'div',
@@ -407,7 +409,7 @@ export class PlanPage {
       fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}；按条目编号选择，不按路径`));
     }
     if (d.kind === 'maintenance' && d.kind_detail?.admin_tasks)
-      fact('权限', `${d.kind_detail.admin_tasks} 项需要${words().admin}`, h('small', {}, d.kind_detail.is_admin ? 'CleanManager 已以管理员身份运行，这些任务直接执行。' : '执行开始、任何任务运行之前，Windows 会询问一次；只授权这份计划中的这些任务。拒绝只跳过它们，其余照常运行。'));
+      fact('权限', `${d.kind_detail.admin_tasks} 项需要${words().admin}`, h('small', {}, d.kind_detail.is_admin ? 'CleanManager 已以管理员身份运行，这些任务直接执行。' : words().maintAdminReview));
     else if (d.requires_admin) fact('权限', `需要${words().admin}`, h('small', {}, 'CleanManager 不会自动提权；没有管理员权限时执行会被拒绝，不会部分修改。'));
     const kd = d.kind_detail;
     const batch = d.kind === 'uninstall' && (kd?.apps?.length ?? 0) > 1 ? kd!.apps! : null;
@@ -470,7 +472,7 @@ export class PlanPage {
       lines.push('不包含程序文件、快捷方式、计划任务本身或应用设置；只改启用记录。');
       lines.push('执行前再次读取该项；状态在此期间被改变时跳过，不覆盖。');
     } else if (d.kind === 'uninstall') {
-      lines.push('不包含任何残留：卸载后留下的文件、注册表项和启动项在第 2 步单独审阅，单独批准。');
+      lines.push(`不包含任何残留：卸载后留下的${words().leftoverKinds}在第 2 步单独审阅，单独批准。`);
       lines.push('不会强制结束应用。应用没有退出时，卸载程序不运行，也不删除任何东西。');
       lines.push('执行前再次核对卸载登记、程序文件的摘要和签名者；有任何变化就跳过。');
       if ((d.kind_detail?.apps?.length ?? 0) > 1) lines.push('一个应用没有退出、卸载失败或已变化时只跳过它自己；其余应用照常执行，结果逐个报告。卸载没有完成的应用，它的残留不会进入第 2 步。');
@@ -481,7 +483,7 @@ export class PlanPage {
       lines.push('文件夹只移走其中的内容，空文件夹保留；对象已变化、正被占用或受保护时跳过。');
     } else if (d.kind === 'update') {
       const routed = d.kind_detail?.noted?.routed ?? [];
-      lines.push('只包含能用包管理器验证的更新；商店、自带更新器和无法验证签名的应用不在其中。');
+      lines.push(words().updatesPlanScope);
       if (routed.length) lines.push(`另有 ${routed.length} 个应用不在计划中：${routed.map((r) => `${r.name}（${ROUTE_WORD[r.route]}）`).join('、')}。`);
       lines.push('正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。');
     } else if (d.kind === 'process') {
@@ -512,9 +514,10 @@ export class PlanPage {
       process_end: '结束这个进程',
     };
     const actionText = (i: PlanItem): string | null => {
-      if (i.item_kind === 'uninstaller') return '运行它自己的卸载程序，记录退出码，再重新检查';
+      if (i.item_kind === 'uninstaller') return words().uninstallerAction;
       if (i.item_kind === 'app_update') {
         const det = i.detail ?? {};
+        if (det.channel === 'homebrew') return '经 Homebrew 更新；安装前由 Homebrew 校验下载的校验和';
         return `经 ${String(det.channel ?? '包管理器')} 更新；安装包签名者必须是 ${String(det.installed_signer ?? '已安装应用的签名者')}`;
       }
       if (i.item_kind === 'maintenance_task') return i.scope === 'machine' ? `需要${words().admin}` : '以当前用户运行';

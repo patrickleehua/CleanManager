@@ -478,7 +478,7 @@ async function boot(): Promise<void> {
         tool
           ? off
             ? h('span', { class: 'pill gate-pill', title: `这个分区尚未通过发布门禁 ${off.gate}，默认关闭；可在 设置 › 实验功能 中开启`, 'data-tone': 'muted' }, h('span', { class: 'pill-mark' }), `默认关闭 · ${off.gate} 未通过`)
-            : h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：仅 Windows 开发构建，未发布`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
+            : h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：${words().devBuild}`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
           : null,
       );
     }

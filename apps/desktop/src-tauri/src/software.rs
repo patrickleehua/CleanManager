@@ -88,6 +88,9 @@ pub struct UninstallAppDto {
     pub state: &'static str,
     pub adapter: Option<Value>,
     pub reason: Option<String>,
+    /// The CLI's refusal code for this row (`permission_required`, `policy_denied`, `unsupported`...); `None` when the
+    /// app can be uninstalled from here.
+    pub refusal_code: Option<String>,
     pub settings_uri: Option<String>,
 }
 
@@ -347,17 +350,16 @@ pub fn recent_runs(stores: &cm_store::Stores, notes: &HashMap<String, Value>, li
 }
 
 // ---------------------------------------------------------------------------------------------
-// Windows
+// Platform work (the uninstall module of `crate::plat::os`: the same API on Windows and macOS)
 
-#[cfg(windows)]
-mod win {
+mod imp {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use cm_core::host::HostProbe;
-    use cm_platform::windows::uninstall::{UninstallEnv, adapter_env, records};
 
     use super::*;
     use crate::cleanup::{new_id, now_unix};
+    use crate::plat::os::uninstall::{UninstallEnv, ai_last_used, records, route, route_capability};
 
     fn env() -> IpcResult<UninstallEnv> {
         UninstallEnv::from_process().map_err(|e| ipc(ErrorCode::InvalidArgument, "invalid_argument", e))
@@ -373,14 +375,19 @@ mod win {
         let items = recs
             .iter()
             .map(|r| {
-                let route = cm_core::uninstall::select_adapter(r, &adapter_env(&env, r), &|x: &str| std::path::Path::new(x).is_file());
-                let (state, adapter, reason, settings) = match &route {
-                    Ok(c) => ("available", Some(json!({"adapter_id": c.kind.adapter_id(), "display": c.display, "package_manager": c.kind.package_manager()})), None, None),
-                    Err(x) if x.code == "policy_denied" => ("unsupported", None, Some(x.message.clone()), x.settings_uri.map(str::to_owned)),
-                    Err(x) => ("unverified", None, Some(x.message.clone()), x.settings_uri.map(str::to_owned)),
+                // The same decision `apps uninstall list` reports (UNI-01): an adapter, or why there is none.
+                let route = route(&env, r);
+                let state = match route_capability(&route).state {
+                    cm_core::capability::CapabilityState::Available => "available",
+                    cm_core::capability::CapabilityState::Unsupported => "unsupported",
+                    _ => "unverified",
+                };
+                let (adapter, reason, refusal_code, settings) = match &route {
+                    Ok(c) => (Some(json!({"adapter_id": c.kind.adapter_id(), "display": c.display, "package_manager": c.kind.package_manager()})), None, None, None),
+                    Err(x) => (None, Some(x.message.clone()), Some(x.code.to_string()), x.settings_uri.map(str::to_owned)),
                 };
                 // UNI-07: AI CLIs report when they were last used.
-                let last_used = r.ai_tool.as_deref().and_then(|t| cm_platform::windows::uninstall::ai_last_used(&env, t)).map(cm_core::time::utc_from_unix);
+                let last_used = r.ai_tool.as_deref().and_then(|t| ai_last_used(&env, t)).map(cm_core::time::utc_from_unix);
                 UninstallAppDto {
                     app_instance_id: r.instance_id.clone(),
                     name: r.name.clone(),
@@ -393,6 +400,7 @@ mod win {
                     state,
                     adapter,
                     reason,
+                    refusal_code,
                     settings_uri: settings.or_else(|| (state != "available").then(|| cm_core::uninstall::SETTINGS_URI.into())),
                 }
             })
@@ -514,17 +522,48 @@ mod win {
 
     static CHECK_BUSY: AtomicBool = AtomicBool::new(false);
 
+    /// The update inventory of this machine (Windows: installed apps plus Scoop).
+    #[cfg(windows)]
+    fn update_apps() -> IpcResult<Vec<cm_core::apps::AppInstance>> {
+        Ok(cm_app::updates::windows_apps())
+    }
+
+    /// The inventory locations (`CM_UNINSTALL_TEST_ROOT`/`HOME` redirect them in tests).
+    #[cfg(target_os = "macos")]
+    fn mac_env() -> IpcResult<cm_platform::macos::apps::AppsEnv> {
+        cm_platform::macos::apps::AppsEnv::from_process().map_err(|e| ipc(ErrorCode::InvalidArgument, "invalid_argument", e))
+    }
+
+    /// The update inventory of this Mac (bundles plus Homebrew formulae).
+    #[cfg(target_os = "macos")]
+    fn update_apps() -> IpcResult<Vec<cm_core::apps::AppInstance>> {
+        Ok(cm_app::updates::mac_apps(&mac_env()?))
+    }
+
+    /// Run the package managers' own queries (`apps updates`): winget on Windows.
+    #[cfg(windows)]
+    fn run_check(dir: &std::path::Path, apps: &[cm_core::apps::AppInstance]) -> IpcResult<std::io::Result<cm_app::updates::CheckReport>> {
+        let ch = cm_app::updates::WindowsChannels { winget: cm_platform::windows::updates::winget_exe(apps) };
+        Ok(cm_app::updates::check(dir, apps, &ch, &cm_core::time::now_utc()))
+    }
+
+    /// Run the package managers' own queries (`apps updates`): Homebrew and the App Store on macOS.
+    #[cfg(target_os = "macos")]
+    fn run_check(dir: &std::path::Path, apps: &[cm_core::apps::AppInstance]) -> IpcResult<std::io::Result<cm_app::updates::CheckReport>> {
+        let ch = cm_app::updates::MacChannels::new(mac_env()?);
+        Ok(cm_app::updates::check(dir, apps, &ch, &cm_core::time::now_utc()))
+    }
+
     pub fn updates(s: &AppState, check: bool) -> IpcResult<Value> {
         let dir = s.store_dir()?.to_path_buf();
-        let apps = cm_app::updates::windows_apps();
+        let apps = update_apps()?;
         let report = if check {
             if CHECK_BUSY.swap(true, Ordering::AcqRel) {
                 return Err(ipc(ErrorCode::Conflict, "scan_running", "An update check is still running"));
             }
-            let ch = cm_app::updates::WindowsChannels { winget: cm_platform::windows::updates::winget_exe(&apps) };
-            let r = cm_app::updates::check(&dir, &apps, &ch, &cm_core::time::now_utc());
+            let r = run_check(&dir, &apps);
             CHECK_BUSY.store(false, Ordering::Release);
-            r.map_err(|e| ipc(ErrorCode::IoError, "io_error", format!("cannot save update results: {e}")))?
+            r?.map_err(|e| ipc(ErrorCode::IoError, "io_error", format!("cannot save update results: {e}")))?
         } else {
             cm_app::updates::cached(&dir, &apps)
         };
@@ -539,9 +578,18 @@ mod win {
         if cache.results.is_empty() {
             return Err(ipc(ErrorCode::InvalidArgument, "not_checked", "No update check results yet; check for updates first"));
         }
-        let apps = cm_app::updates::windows_apps();
-        let (winget, scoop) = cm_app::updates::windows_tools(&apps);
-        let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids, winget, scoop, homebrew: None, installed_signer: &cm_platform::windows::updates::installed_signer };
+        #[cfg(windows)]
+        let (apps, winget, scoop, homebrew, signer) = {
+            let apps = cm_app::updates::windows_apps();
+            let (winget, scoop) = cm_app::updates::windows_tools(&apps);
+            (apps, winget, scoop, None, cm_platform::windows::updates::installed_signer)
+        };
+        #[cfg(target_os = "macos")]
+        let (apps, winget, scoop, homebrew, signer) = {
+            let env = mac_env()?;
+            (cm_app::updates::mac_apps(&env), None, None, cm_app::updates::mac_brew_tool(&env), cm_platform::macos::updates::installed_signer)
+        };
+        let inputs = cm_app::updates::PlanInputs { results: &cache.results, apps: &apps, ids, winget, scoop, homebrew, installed_signer: &signer };
         let plan_id = new_id("ud");
         let pdigest = crate::cleanup::policy_digest(&st);
         let (plan, routed) = match cm_app::updates::plan_updates(&inputs, &plan_id, now_unix(), &pdigest) {
@@ -556,21 +604,13 @@ mod win {
         Ok(json!({"plan_id": plan.as_ref().map(|p| p.body.plan_id.clone()), "planned": plan.as_ref().map_or(0, |p| p.body.items.len()), "routed": routed}))
     }
 
-    /// Open one of the fixed system pages with File Explorer (no shell, no other target).
+    /// Open one of the fixed system pages (`crate::plat::system_page`; no shell, no other target).
     pub fn open(target: &str) -> IpcResult<bool> {
-        let uri = match target {
-            "apps_features" => cm_core::uninstall::SETTINGS_URI,
-            "store_updates" => cm_core::updates::STORE_UPDATES_URI,
-            other => return Err(ipc(ErrorCode::InvalidArgument, "invalid_argument", format!("unknown system page {other:?}"))),
+        let Some(uri) = crate::plat::system_page(target) else {
+            return Err(ipc(ErrorCode::InvalidArgument, "invalid_argument", format!("unknown system page {target:?}")));
         };
-        let windir = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
-        Ok(std::process::Command::new(windir.join("explorer.exe")).arg(uri).spawn().is_ok())
+        Ok(crate::plat::open_uri(uri))
     }
-}
-
-#[cfg(not(windows))]
-fn unsupported(what: &str) -> IpcError {
-    ipc(ErrorCode::Unsupported, "unsupported", format!("{what} is implemented on Windows only in this build"))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -579,16 +619,7 @@ fn unsupported(what: &str) -> IpcError {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn uninstall_list(state: St<'_>) -> IpcResult<UninstallListDto> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::list(&s);
-        #[cfg(not(windows))]
-        {
-            let _ = s;
-            Ok(UninstallListDto { supported: false, is_admin: false, items: vec![], issues: vec![], recent: vec![] })
-        }
-    })
-    .await
+    blocking(move || imp::list(&s)).await
 }
 
 /// UNI-11: one plan for the selected applications (one or several).
@@ -597,13 +628,7 @@ pub async fn uninstall_plan(state: St<'_>, app_instance_ids: Vec<String>) -> Ipc
     let s = state.inner().clone();
     blocking(move || {
         let ids = args::record_ids("app instance", &app_instance_ids, cm_app::uninstall::MAX_BATCH)?;
-        #[cfg(windows)]
-        return win::plan(&s, &ids);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, ids);
-            Err(unsupported("application uninstall"))
-        }
+        imp::plan(&s, &ids)
     })
     .await
 }
@@ -613,13 +638,7 @@ pub async fn uninstall_leftovers(state: St<'_>, operation_id: String) -> IpcResu
     let s = state.inner().clone();
     blocking(move || {
         let op = args::record_id("operation", &operation_id)?;
-        #[cfg(windows)]
-        return win::leftovers(&s, &op);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, op);
-            Err(unsupported("application uninstall"))
-        }
+        imp::leftovers(&s, &op)
     })
     .await
 }
@@ -630,13 +649,7 @@ pub async fn uninstall_leftovers_plan(state: St<'_>, operation_id: String, objec
     blocking(move || {
         let op = args::record_id("operation", &operation_id)?;
         let ids = args::record_ids("leftover", &object_ids, MAX_LEFTOVERS)?;
-        #[cfg(windows)]
-        return win::leftovers_plan(&s, &op, &ids);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, op, ids);
-            Err(unsupported("application uninstall"))
-        }
+        imp::leftovers_plan(&s, &op, &ids)
     })
     .await
 }
@@ -646,13 +659,7 @@ pub async fn uninstall_restore_plan(state: St<'_>, operation_id: String) -> IpcR
     let s = state.inner().clone();
     blocking(move || {
         let op = args::record_id("operation", &operation_id)?;
-        #[cfg(windows)]
-        return win::restore_plan(&s, &op);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, op);
-            Err(unsupported("application uninstall"))
-        }
+        imp::restore_plan(&s, &op)
     })
     .await
 }
@@ -660,16 +667,7 @@ pub async fn uninstall_restore_plan(state: St<'_>, operation_id: String) -> IpcR
 #[tauri::command(rename_all = "snake_case")]
 pub async fn updates_list(state: St<'_>, check: bool) -> IpcResult<Value> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::updates(&s, check);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, check);
-            Ok(json!({"supported": false, "checks_enabled": false, "checked": false, "checked_at": null, "counts": {}, "items": []}))
-        }
-    })
-    .await
+    blocking(move || imp::updates(&s, check)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -688,29 +686,14 @@ pub async fn updates_plan(state: St<'_>, app_instance_ids: Vec<String>) -> IpcRe
     let s = state.inner().clone();
     blocking(move || {
         let ids = args::record_ids("app instance", &app_instance_ids, MAX_UPDATE_APPS)?;
-        #[cfg(windows)]
-        return win::update_plan(&s, &ids);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, ids);
-            Err(unsupported("app updates"))
-        }
+        imp::update_plan(&s, &ids)
     })
     .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_system_page(target: String) -> IpcResult<bool> {
-    blocking(move || {
-        #[cfg(windows)]
-        return win::open(&target);
-        #[cfg(not(windows))]
-        {
-            let _ = target;
-            Err(unsupported("opening system pages"))
-        }
-    })
-    .await
+    blocking(move || imp::open(&target)).await
 }
 
 #[cfg(test)]

@@ -43,9 +43,6 @@ pub const EVENT_APPLY_FINISHED: &str = "apply-finished";
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(400);
 const MAX_RECOVERY_SELECTION: usize = 500;
 
-/// Whether this build has verified file and recovery actions for the platform.
-const ACTIONS_VERIFIED: bool = cfg!(windows);
-
 pub struct ActiveApply {
     pub plan_id: String,
     pub operation_id: String,
@@ -176,7 +173,6 @@ struct FinishedEvent {
     error: Option<IpcError>,
 }
 
-#[cfg(windows)]
 fn run(stores: &Stores, plan_id: &str, rules_digest: &str, cancel: &AtomicBool) -> Result<OperationReport, ApplyError> {
     let principal = current_principal();
     let host = OsHostProbe.current("desktop");
@@ -184,18 +180,18 @@ fn run(stores: &Stores, plan_id: &str, rules_digest: &str, cancel: &AtomicBool) 
     match stores.audit.plan_contract(plan_id).ok().as_deref() {
         Some(RECOVERY_CONTRACT) => {
             let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &cancelled, fault: &|_, _| false };
-            return cm_app::recovery::apply_recovery_plan(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, plan_id, &ctx);
+            return cm_app::recovery::apply_recovery_plan(stores, &crate::plat::recovery_actions(), plan_id, &ctx);
         }
         Some(PLAN_V2_CONTRACT) => return crate::v2::apply(stores, plan_id, &cancelled),
         _ => {}
     }
-    // Same wiring as `cleanmanager plan apply`: verified Windows actions with the store's
+    // Same wiring as `cleanmanager plan apply`: the platform's verified actions with the store's
     // quarantine, and the protection checker consulted immediately before every action.
     let stored = stores.audit.load_plan(plan_id).ok();
     let rule_refs = stored.as_ref().map(|p| p.rule_refs.clone()).unwrap_or_default();
     let base = cm_platform::protection::checker(&stores.dir, rule_refs);
-    // PUR-03: purge plans re-read version-control state per artifact before acting (other plans pass through).
-    let gate = stored.as_ref().map(cm_platform::windows::purge::vcs_gate);
+    // PUR-03 / INC-04: discovery plans re-check version control (and, on macOS, attached images) per action.
+    let gate = stored.as_ref().and_then(crate::plat::apply_gate);
     let protect = |t: &cm_core::execute::ActionTarget<'_>| base(t).and_then(|()| gate.as_ref().map_or(Ok(()), |g| g(t)));
     let ctx = cm_app::execute::ApplyContext {
         principal: &principal,
@@ -206,20 +202,12 @@ fn run(stores: &Stores, plan_id: &str, rules_digest: &str, cancel: &AtomicBool) 
         fault: &|_, _| false,
         protect: &protect,
     };
-    let actions = cm_platform::windows::actions::WindowsActions::with_store(stores.dir.clone());
+    let actions = crate::plat::file_actions(&stores.dir);
     cm_app::execute::apply_plan(stores, &actions, plan_id, &ctx)
-}
-
-#[cfg(not(windows))]
-fn run(_: &Stores, _: &str, _: &str, _: &AtomicBool) -> Result<OperationReport, ApplyError> {
-    unreachable!("start_apply refuses before running on platforms without verified actions")
 }
 
 /// Start applying a stored, authorized plan on a background thread of this process.
 pub fn start(app: &AppHandle, state: &Arc<AppState>, plan_id: &str) -> IpcResult<ApplyStartDto> {
-    if !ACTIONS_VERIFIED {
-        return Err(ipc(ErrorCode::Unsupported, "unsupported", "File actions are not verified on this platform in this build"));
-    }
     let dir = state.store_dir()?.to_path_buf();
     let (_, _, digest, total) = state.with_stores(|st| plan_kind(st, plan_id))?;
     let operation_id = format!("op_{}", &digest[..16]);
@@ -456,13 +444,9 @@ pub fn operation_items(stores: &Stores, operation_id: &str, filter: &str, page_s
 }
 
 fn reconcile(stores: &Stores, operation_id: &str) -> IpcResult<OperationReport> {
-    if !ACTIONS_VERIFIED {
-        return Err(ipc(ErrorCode::Unsupported, "unsupported", "Reconciliation needs the platform's verified actions"));
-    }
     reconcile_impl(stores, operation_id).map_err(IpcError::from)
 }
 
-#[cfg(windows)]
 fn reconcile_impl(stores: &Stores, operation_id: &str) -> Result<OperationReport, ApplyError> {
     let principal = current_principal();
     let host = OsHostProbe.current("desktop");
@@ -470,7 +454,7 @@ fn reconcile_impl(stores: &Stores, operation_id: &str) -> Result<OperationReport
     match stores.audit.plan_contract(&plan).ok().as_deref() {
         Some(RECOVERY_CONTRACT) => {
             let ctx = cm_app::recovery::RecoveryContext { principal: &principal, host: &host, now: &now_unix, cancel: &|| false, fault: &|_, _| false };
-            return cm_app::recovery::reconcile_recovery_operation(stores, &cm_platform::windows::actions::recovery::WindowsRecovery, operation_id, &ctx);
+            return cm_app::recovery::reconcile_recovery_operation(stores, &crate::plat::recovery_actions(), operation_id, &ctx);
         }
         Some(PLAN_V2_CONTRACT) => return crate::v2::reconcile(stores, operation_id),
         _ => {}
@@ -485,12 +469,7 @@ fn reconcile_impl(stores: &Stores, operation_id: &str) -> Result<OperationReport
         fault: &|_, _| false,
         protect: &|_| Ok(()),
     };
-    cm_app::execute::reconcile_operation(stores, &cm_platform::windows::actions::WindowsActions::with_store(stores.dir.clone()), operation_id, &ctx)
-}
-
-#[cfg(not(windows))]
-fn reconcile_impl(_: &Stores, _: &str) -> Result<OperationReport, ApplyError> {
-    unreachable!("refused above on platforms without verified actions")
+    cm_app::execute::reconcile_operation(stores, &crate::plat::file_actions(&stores.dir), operation_id, &ctx)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -653,42 +632,6 @@ pub struct QuarantinePageDto {
     pub metadata_limits: Vec<&'static str>,
 }
 
-#[cfg(windows)]
-fn recovery_actions() -> impl cm_core::recovery::RecoveryActions {
-    cm_platform::windows::actions::recovery::WindowsRecovery
-}
-
-#[cfg(not(windows))]
-fn recovery_actions() -> impl cm_core::recovery::RecoveryActions {
-    NoRecovery
-}
-
-/// Platforms without verified recovery actions: every object probes as unknown, nothing is touched.
-#[cfg(not(windows))]
-struct NoRecovery;
-
-#[cfg(not(windows))]
-impl cm_core::recovery::RecoveryActions for NoRecovery {
-    fn probe(&self, _: &cm_core::recovery::QuarantinedObject<'_>) -> cm_core::recovery::QuarantineState {
-        cm_core::recovery::QuarantineState::Unknown
-    }
-    fn restore(&self, _: &cm_core::recovery::QuarantinedObject<'_>) -> cm_core::recovery::RecoveryOutcome {
-        cm_core::recovery::RecoveryOutcome::Skipped { code: "unsupported".into(), message: "recovery actions are not verified on this platform".into() }
-    }
-    fn purge(&self, o: &cm_core::recovery::QuarantinedObject<'_>) -> cm_core::recovery::RecoveryOutcome {
-        self.restore(o)
-    }
-    fn reconcile(&self, _: &cm_core::recovery::QuarantinedObject<'_>, _: RecoveryKind) -> cm_core::execute::Reconciled {
-        cm_core::execute::Reconciled::StillUnknown
-    }
-    fn free_space(&self, _: &cm_core::path::RawPath) -> Option<u64> {
-        None
-    }
-    fn metadata_coverage(&self) -> cm_core::recovery::MetadataCoverage {
-        cm_core::recovery::MetadataCoverage { preserved: vec![], limits: vec!["recovery actions are not verified on this platform"] }
-    }
-}
-
 fn held_totals(stores: &Stores) -> IpcResult<(u64, u128)> {
     let mut count = 0u64;
     let mut bytes = 0u128;
@@ -709,7 +652,7 @@ fn held_totals(stores: &Stores) -> IpcResult<(u64, u128)> {
 
 pub fn quarantine(stores: &Stores, page_size: u32, cursor: Option<&str>) -> IpcResult<QuarantinePageDto> {
     use cm_core::recovery::RecoveryActions;
-    let actions = recovery_actions();
+    let actions = crate::plat::recovery_actions();
     let (items, next) = cm_app::recovery::quarantine_page(stores, &actions, page_size, cursor, now_unix())?;
     let totals = if cursor.is_none() { Some(held_totals(stores)?) } else { None };
     let coverage = actions.metadata_coverage();
@@ -730,7 +673,7 @@ pub fn quarantine(stores: &Stores, page_size: u32, cursor: Option<&str>) -> IpcR
                     quarantined_at: v.entry.quarantined_at,
                     reminder_at: v.entry.reminder_at,
                     reminder_due: v.reminder_due,
-                    actionable: ACTIONS_VERIFIED && v.manifest.is_some(),
+                    actionable: crate::plat::RESTORE_VERIFIED && v.manifest.is_some(),
                     state,
                 }
             })
@@ -903,12 +846,12 @@ pub async fn create_recovery_plan(state: St<'_>, kind: String, quarantine_ids: V
     .await
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 pub fn precheck_for_tests(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<()> {
     precheck(s, stores, plan_id)
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 pub fn run_for_tests(stores: &Stores, plan_id: &str, digest: &str, cancel: &AtomicBool) -> Result<OperationReport, ApplyError> {
     run(stores, plan_id, digest, cancel)
 }

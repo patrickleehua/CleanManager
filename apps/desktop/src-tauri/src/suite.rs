@@ -13,11 +13,10 @@
 //! - Every change goes through a stored plan (`create_catalog_plan`, `trash_plan`, `startup_plan` freeze one and
 //!   authorize nothing); `plan_detail` issues the single-use review token, `approve_plan` needs it plus the typed
 //!   digest prefix, and `start_apply` runs the stored plan through the shared executors. There is no direct write.
-//! - `reveal_entry` resolves the path from the published index and starts `explorer.exe /select,` without a shell;
-//!   it opens a window and changes nothing. `status_snapshot`, `insights_list`, `startup_list` and `readiness` are
+//! - `reveal_entry` resolves the path from the published index and starts `explorer.exe /select,` (Windows) or
+//!   `open -R` (macOS) without a shell; it opens a window and changes nothing. `status_snapshot`, `insights_list`, `startup_list` and `readiness` are
 //!   read-only.
 
-#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use cm_core::analysis::{Candidate, CandidateSet, CandidateState};
@@ -25,14 +24,12 @@ use cm_core::error::ErrorCode;
 use cm_core::path::RawPath;
 use cm_core::rules::{Mode, Tier};
 use cm_core::time::now_utc;
-#[cfg(windows)]
 use cm_store::Stores;
 use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::args;
 use crate::cleanup::{CreatedPlanDto, MAX_SELECTION, enum_text};
-#[cfg(windows)]
 use crate::cleanup::{StaleItemDto, new_id, now_unix};
 use crate::commands::{St, blocking};
 use crate::dto::{IpcError, IpcResult, IssueDto, last_component};
@@ -45,14 +42,8 @@ fn ipc(code: ErrorCode, reason: &'static str, message: impl Into<String>) -> Ipc
     IpcError::new(code, reason, message)
 }
 
-#[cfg(windows)]
 fn issue(code: &str, scope: &str, message: impl Into<String>) -> IssueDto {
     IssueDto { code: code.into(), scope_display: scope.into(), message: message.into() }
-}
-
-#[cfg(not(windows))]
-fn unsupported(what: &str) -> IpcError {
-    ipc(ErrorCode::Unsupported, "unsupported", format!("{what} is implemented on Windows only in this build"))
 }
 
 /// Stable opaque id of a configured root: the first 16 hex digits of SHA-256 over the raw path bytes (the same
@@ -62,7 +53,6 @@ pub fn root_id(root: &RawPath) -> String {
     hex.get(..16).unwrap_or_default().to_owned()
 }
 
-#[cfg(windows)]
 /// Own connections for long work, so the shared ones stay free for the UI.
 pub(crate) fn own_stores(s: &AppState) -> IpcResult<Stores> {
     Ok(Stores::open(s.store_dir()?)?)
@@ -71,20 +61,16 @@ pub(crate) fn own_stores(s: &AppState) -> IpcResult<Stores> {
 // ---------------------------------------------------------------------------------------------
 // Busy guard: one catalog discovery at a time, never while a desktop scan or operation runs.
 
-#[cfg(windows)]
 static CATALOG_BUSY: AtomicBool = AtomicBool::new(false);
 
-#[cfg(windows)]
 pub(crate) struct Busy;
 
-#[cfg(windows)]
 impl Drop for Busy {
     fn drop(&mut self) {
         CATALOG_BUSY.store(false, Ordering::Release);
     }
 }
 
-#[cfg(windows)]
 pub(crate) fn claim(s: &AppState) -> IpcResult<Busy> {
     if let Some((id, _)) = s.active_running() {
         return Err(ipc(ErrorCode::Conflict, "scan_running", format!("Scan {id} is still running; wait for it or cancel it first")));
@@ -276,11 +262,7 @@ pub fn purge_item(set_id: &str, c: &Candidate, f: &cm_core::purge::PurgeFacts, r
 
 pub fn installer_item(set_id: &str, c: &Candidate, f: &cm_core::installer::InstallerFacts, fixture: bool) -> CatalogItemDto {
     let mut notes = vec![format!("recognized: {}", f.evidence)];
-    notes.push(match &f.signer {
-        Some(s) => format!("signed by {s}"),
-        None if f.kind.signable() => "no verified Authenticode signer".into(),
-        None => "images carry no Authenticode signer".into(),
-    });
+    notes.push(crate::plat::signer_note(f.kind, f.signer.as_deref()));
     if let Some(h) = &f.installed_hint {
         notes.push(h.clone());
     }
@@ -288,7 +270,7 @@ pub fn installer_item(set_id: &str, c: &Candidate, f: &cm_core::installer::Insta
         notes.push("location from CM_INSTALLER_LOCATIONS (validation fixture), not a declared user folder".into());
     }
     if f.mounted == Some(true) {
-        notes.push("attached: eject it in File Explorer (right-click > Eject) or with Dismount-DiskImage, then scan again".into());
+        notes.push(crate::plat::EJECT_NOTE.into());
     }
     catalog_item(set_id, c, installer_tier_reason(c), Some("network_redownload"), notes, f.source_label.clone())
 }
@@ -379,22 +361,22 @@ impl Catalog {
     }
 }
 
-#[cfg(windows)]
-pub(crate) mod win {
+/// Discovery, manual trash, startup, insights and status over the platform backends of `crate::plat`.
+pub(crate) mod imp {
     use std::path::Path;
 
     use cm_app::scan::{ScanRequest, run_scan};
     use cm_core::analysis::{AnalysisProtection, Candidate, CandidateSet, IndexView, UserList};
     use cm_core::error::ErrorCode;
     use cm_core::host::HostProbe;
-    use cm_core::manual_trash::{Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_trash_plan, inspect};
+    use cm_core::manual_trash::{BIN_NAME, Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_trash_plan, inspect};
     use cm_core::model::{CloudState, ObjectKind};
     use cm_core::path::RawPath;
     use cm_core::purge::{PurgeInput, PurgeSettings, analyze_purge};
     use cm_core::rules::Mode;
     use cm_core::scan::ScanOptions;
     use cm_platform::host::OsHostProbe;
-    use cm_platform::windows::purge::{FsProbe, default_roots, load_settings, os, save_settings};
+    use crate::plat::os::purge::{FsProbe, default_roots, load_settings, os, save_settings};
     use cm_store::Stores;
     use tauri::AppHandle;
     use tauri_plugin_dialog::DialogExt;
@@ -435,7 +417,7 @@ pub(crate) mod win {
         if !path.is_dir() {
             return Err(ipc(ErrorCode::InvalidArgument, "not_directory", "This location is not an existing folder"));
         }
-        let raw = cm_platform::windows::purge::raw(&path).ok_or_else(|| ipc(ErrorCode::InvalidArgument, "invalid_argument", "invalid folder path"))?;
+        let raw = crate::plat::os::purge::raw(&path).ok_or_else(|| ipc(ErrorCode::InvalidArgument, "invalid_argument", "invalid folder path"))?;
         if let Err(r) = cm_core::protect::prefilter(&raw) {
             return Err(ipc(ErrorCode::PolicyDenied, "not_project_root", format!("not a project root: {r}")));
         }
@@ -520,7 +502,7 @@ pub(crate) mod win {
             return Ok(None);
         }
         let request = ScanRequest { scan_id: scan_id.into(), scope_id: scope_for(root), root: root.clone(), host: OsHostProbe.current("desktop") };
-        if let Err(e) = run_scan(&stores.index, &cm_platform::windows::directory::DirectoryBackend, &request, &ScanOptions::default()) {
+        if let Err(e) = run_scan(&stores.index, crate::plat::scan_backend().as_ref(), &request, &ScanOptions::default()) {
             issues.push(issue("scan_failed", &display, e.to_string()));
             return Ok(None);
         }
@@ -562,19 +544,18 @@ pub(crate) mod win {
 
     /// `CM_INSTALLER_LOCATIONS=label=PATH;label=PATH` replaces the declared locations (validation fixtures only).
     fn override_locations() -> Option<Vec<(RawPath, &'static str)>> {
-        use cm_platform::windows::installer::{SOURCE_BROWSER, SOURCE_DESKTOP, SOURCE_DOWNLOADS};
         let v = std::env::var("CM_INSTALLER_LOCATIONS").ok()?;
-        let labels = [SOURCE_DOWNLOADS, SOURCE_DESKTOP, SOURCE_BROWSER];
+        let labels = crate::plat::INSTALLER_LABELS;
         Some(
             v.split(';')
                 .filter_map(|e| e.split_once('='))
-                .filter_map(|(l, p)| labels.iter().find(|x| **x == l).and_then(|l| cm_platform::windows::purge::raw(Path::new(p)).map(|r| (r, *l))))
+                .filter_map(|(l, p)| labels.iter().find(|x| **x == l).and_then(|l| crate::plat::os::purge::raw(Path::new(p)).map(|r| (r, *l))))
                 .collect(),
         )
     }
 
     fn locations() -> Vec<(RawPath, &'static str)> {
-        override_locations().unwrap_or_else(cm_platform::windows::installer::declared_locations)
+        override_locations().unwrap_or_else(crate::plat::os::installer::declared_locations)
     }
 
     pub fn installer_locations() -> InstallerLocationsDto {
@@ -593,7 +574,8 @@ pub(crate) mod win {
         let prot = Protection::load(&stores.dir);
         let mut out = empty_preview("installer", true);
         out.issues.extend(prot.issue());
-        let apps = cm_platform::windows::installer::installed_apps();
+        let apps = crate::plat::os::installer::installed_apps();
+        let probe = crate::plat::installer_probe();
         let mut runs = Vec::new();
         let mut all: Vec<Candidate> = Vec::new();
         for (i, (root, label)) in locations().iter().enumerate() {
@@ -606,7 +588,7 @@ pub(crate) mod win {
                 max_depth: cm_core::installer::DEFAULT_MAX_DEPTH,
                 apps: &apps,
             };
-            let a = cm_core::installer::analyze_installers(&view, &input, &prot.analysis(), &cm_platform::windows::installer::WinInstallerProbe);
+            let a = cm_core::installer::analyze_installers(&view, &input, &prot.analysis(), &probe);
             stores.index.save_candidates(&a.set)?;
             if a.unclassified_placeholders > 0 {
                 out.issues.push(issue("cloud_placeholders", &root.display(), format!("{} cloud-only file(s) were not opened, so they are not classified", a.unclassified_placeholders)));
@@ -705,10 +687,11 @@ pub(crate) mod win {
         if view.facts.contains_key(&e) { Ok(e) } else { Err(ipc(ErrorCode::InvalidArgument, "unknown_entry", format!("entry {e} is not in this scan"))) }
     }
 
-    /// Processes holding the object (or a folder's files) open; never for cloud placeholders.
-    fn holders_of(ins: &Inspection, view: &cm_core::analysis::MemView) -> Option<Vec<String>> {
+    /// Processes holding the object (or a folder's files) open and a note on what could not be seen; never for cloud
+    /// placeholders.
+    fn holders_of(ins: &Inspection, view: &cm_core::analysis::MemView) -> (Option<Vec<String>>, Option<String>) {
         if ins.cloud == CloudState::Placeholder || ins.refusal.as_ref().is_some_and(|r| r.reason == "cloud_placeholder") {
-            return None;
+            return (None, None);
         }
         let mut paths = vec![ins.path.clone()];
         if ins.kind == ObjectKind::Directory {
@@ -726,7 +709,7 @@ pub(crate) mod win {
                 }
             }
         }
-        cm_platform::windows::restart_manager::holders(&paths).ok().map(|h| h.iter().map(|x| x.describe()).collect())
+        crate::plat::holders(&paths)
     }
 
     pub fn trash_inspect(s: &AppState, scan_id: &str, entry: u64) -> IpcResult<TrashInspectionDto> {
@@ -736,14 +719,25 @@ pub(crate) mod win {
         let user = cm_platform::protection::load(&p.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
-        let ins = inspect(&p.view, entry, &guard);
-        let holders = holders_of(&ins, &p.view);
-        let rb = cm_platform::windows::actions::recycle_bin_ready(&ins.path);
-        let guidance = match &ins.refusal {
-            None => "Moving it to the Recycle Bin creates a plan; a person reviews the plan before anything moves.".to_string(),
+        let mut ins = inspect(&p.view, entry, &guard);
+        if ins.refusal.is_none() {
+            ins.refusal = crate::plat::trash_refusal(&ins);
+        }
+        let (holders, holders_note) = holders_of(&ins, &p.view);
+        let rb = crate::plat::bin_ready(&ins.path);
+        let mut guidance = match &ins.refusal {
+            None => format!("Moving it to the {BIN_NAME} creates a plan; a person reviews the plan before anything moves."),
             Some(r) if r.code == "policy_denied" && r.reason == "protected" => VIEW_ONLY_EXPLANATION.to_string(),
             Some(r) => r.message.clone(),
         };
+        if ins.refusal.is_none()
+            && let Some(hint) = crate::plat::PUT_BACK_HINT
+        {
+            guidance = format!("{guidance} {hint}");
+        }
+        if let Some(note) = holders_note {
+            guidance = format!("{guidance} Holders: {note}.");
+        }
         let hit = |h: &cm_core::manual_trash::Hit| PathReasonDto { path_display: h.path.display(), reason: h.reason.clone() };
         let display = ins.path.display();
         Ok(TrashInspectionDto {
@@ -788,7 +782,7 @@ pub(crate) mod win {
         // MTR-03: a volume without a usable recycle bin fails the plan; nothing is ever deleted instead.
         for &e in &selected {
             let path = p.view.path(e);
-            if let Err(why) = cm_platform::windows::actions::recycle_bin_ready(&path) {
+            if let Err(why) = crate::plat::bin_ready(&path) {
                 return Err(ipc(ErrorCode::Unsupported, "recycle_bin_unavailable", format!("{}: {why}; there is no permanent-delete alternative", path.display())));
             }
         }
@@ -796,6 +790,15 @@ pub(crate) mod win {
         let user = cm_platform::protection::load(&p.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
+        // Objects the platform's trash action cannot take (macOS: folders) are refused before anything is planned.
+        for &e in selected.iter().filter(|&&e| crate::plat::trash_may_refuse(p.view.info(e).kind)) {
+            let ins = inspect(&p.view, e, &guard);
+            if ins.refusal.is_none()
+                && let Some(r) = crate::plat::trash_refusal(&ins)
+            {
+                return Err(manual_error(&ManualError::Refused { entry_id: e.to_string(), path: ins.path.display(), refusal: Box::new(r), protected: vec![], gaps: vec![] }));
+            }
+        }
         let plan_id = new_id("mp");
         let pdigest = crate::cleanup::policy_digest(&p.stores);
         let observed_at = p.status.finished_at.clone().unwrap_or_else(|| p.status.started_at.clone());
@@ -816,10 +819,12 @@ pub(crate) mod win {
     // -----------------------------------------------------------------------------------------
     // Startup items
 
+    #[cfg(windows)]
     fn env() -> IpcResult<cm_platform::windows::startup::StartupEnv> {
         cm_platform::windows::startup::StartupEnv::from_process().map_err(|e| ipc(ErrorCode::InvalidArgument, "invalid_argument", e))
     }
 
+    #[cfg(windows)]
     pub fn startup_list() -> IpcResult<StartupListDto> {
         let env = env()?;
         let (items, issues) = cm_platform::windows::startup::inventory_with(&env);
@@ -831,6 +836,7 @@ pub(crate) mod win {
         })
     }
 
+    #[cfg(windows)]
     pub fn startup_plan(stores: &Stores, item_id: &str, operation: cm_core::plan::v2::StartupOperation) -> IpcResult<CreatedPlanDto> {
         use cm_core::startup::StartupActions;
         let env = env()?;
@@ -849,15 +855,45 @@ pub(crate) mod win {
         Ok(CreatedPlanDto::new(plan_id))
     }
 
+    /// macOS: the read-only launchd / Service Management inventory (`startup list`).
+    #[cfg(target_os = "macos")]
+    fn mac_inventory() -> IpcResult<(Vec<cm_core::startup::StartupItem>, Vec<cm_core::apps::InventoryIssue>)> {
+        let env = cm_platform::macos::startup::StartupEnv::from_process().map_err(|e| ipc(ErrorCode::InvalidArgument, "invalid_argument", e))?;
+        Ok(cm_platform::macos::startup::inventory_with(&env))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn startup_list() -> IpcResult<StartupListDto> {
+        let (items, issues) = mac_inventory()?;
+        Ok(StartupListDto {
+            supported: true,
+            is_admin: false,
+            items: items.iter().map(|i| i.to_wire()).collect(),
+            issues: issues.iter().map(|i| issue(&i.code, &i.source, i.message.clone())).collect(),
+        })
+    }
+
+    /// macOS: no item toggles in this build (as `cleanmanager startup disable|enable`). The item is looked up so the
+    /// refusal names the real reason (protected: `policy_denied`; otherwise `unsupported`); no plan is ever created.
+    #[cfg(target_os = "macos")]
+    pub fn startup_plan(_: &Stores, item_id: &str, operation: cm_core::plan::v2::StartupOperation) -> IpcResult<CreatedPlanDto> {
+        let (items, _) = mac_inventory()?;
+        let Some(item) = items.iter().find(|i| i.item_id == item_id) else {
+            return Err(ipc(ErrorCode::InvalidArgument, "unknown_item", "This startup item is no longer listed; reload the list"));
+        };
+        cm_core::startup::change_decision(item, operation, false).map_err(|r| refusal(&r))?;
+        Err(ipc(ErrorCode::Unsupported, "unsupported", cm_platform::macos::startup::TOGGLE_UNSUPPORTED))
+    }
+
     fn refusal(r: &cm_core::startup::Refusal) -> IpcError {
         IpcError::new(refusal_code(r.code), r.code, r.message.clone())
     }
 
     pub fn insights() -> InsightsDto {
-        InsightsDto { supported: true, observed_at: now_utc(), items: cm_platform::windows::insights::list().iter().map(|i| i.to_wire()).collect() }
+        InsightsDto { supported: true, observed_at: now_utc(), items: crate::plat::os::insights::list().iter().map(|i| i.to_wire()).collect() }
     }
 
-    /// The sampler holds PDH handles (not `Send`): it lives on one thread and answers requests over a channel, so
+    /// The sampler (Windows: PDH handles, not `Send`; macOS: the previous readings) lives on one thread and answers requests over a channel, so
     /// CPU and throughput rates cover the interval since the previous snapshot. With sustained-CPU alerts turned on
     /// (STS-05, opt-in) the same thread also samples per-process CPU and runs the alert engine while the status pages
     /// ask for snapshots; alerts raised are returned with the snapshot. With alerts off no process is sampled.
@@ -869,7 +905,7 @@ pub(crate) mod win {
         let tx = SAMPLER.get_or_init(|| {
             let (tx, rx) = channel::<Request>();
             let _ = std::thread::Builder::new().name("cm-status".into()).spawn(move || {
-                let mut sampler = cm_platform::windows::status::Sampler::new();
+                let mut sampler = crate::plat::os::status::Sampler::new();
                 let mut engine: Option<(cm_core::alerts::AlertSettings, cm_core::alerts::AlertEngine)> = None;
                 while let Ok((reply, settings)) = rx.recv() {
                     let mut v = sampler.sample().to_wire();
@@ -879,14 +915,9 @@ pub(crate) mod win {
                     let mut raised = Vec::new();
                     if let Some((_, e)) = engine.as_mut()
                         && e.needs_sampling()
-                        && let Ok(procs) = cm_platform::windows::processes::list_with(std::time::Duration::from_millis(500), false)
+                        && let Some(sample) = crate::plat::process_cpu()
                     {
                         let now = cm_core::plan::parse_utc(&now_utc()).unwrap_or(0);
-                        let sample: Vec<cm_core::alerts::ProcessCpu> = procs
-                            .into_iter()
-                            .filter(|f| f.pid != 0)
-                            .map(|f| cm_core::alerts::ProcessCpu { pid: f.pid, image_path: f.image_path.as_ref().map(|i| i.display()), name: f.name, cpu_percent: f.cpu_percent })
-                            .collect();
                         raised = e.observe(now, &sample).into_iter().filter_map(|a| serde_json::to_value(a).ok()).collect();
                     }
                     if let Some(o) = v.as_object_mut() {
@@ -907,36 +938,15 @@ pub(crate) mod win {
         Ok(v)
     }
 
-    pub fn recycle_bin_for_profile() -> Result<(), String> {
-        let home = std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("SystemDrive").map(|d| {
-                let mut d = d;
-                d.push("\\");
-                d
-            }))
-            .ok_or("no user profile or system drive")?;
-        let raw = cm_platform::paths::raw_path(&home).map_err(|e| e.to_string())?;
-        cm_platform::windows::actions::recycle_bin_ready(&raw)
-    }
-
-    /// Start File Explorer with the entry selected. The path comes from the published index; no shell is involved.
+    /// Show the entry selected in File Explorer (Windows) or the Finder (macOS). The path comes from the published
+    /// index; no shell is involved.
     pub fn reveal(s: &AppState, scan_id: &str, entry: u64) -> IpcResult<bool> {
-        use std::os::windows::process::CommandExt;
         let item = s.with_index(|idx| Ok(idx.get_entry(scan_id, entry)?))?;
         let Some(path) = os(&item.path) else { return Ok(false) };
         if std::fs::symlink_metadata(&path).is_err() {
             return Ok(false);
         }
-        let text = path.as_os_str();
-        // Paths cannot contain quotes on Windows; refuse anything that could break out of the quoted argument.
-        if text.to_string_lossy().contains('"') {
-            return Ok(false);
-        }
-        let mut arg = std::ffi::OsString::from("/select,\"");
-        arg.push(text);
-        arg.push("\"");
-        let windir = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
-        Ok(std::process::Command::new(windir.join("explorer.exe")).raw_arg(arg).spawn().is_ok())
+        Ok(crate::plat::reveal(&path))
     }
 }
 
@@ -1127,7 +1137,7 @@ pub fn assemble(op: ReadyOp, f: &ReadinessFacts) -> Vec<ReadinessCheckDto> {
     out.push(if op.uses_recycle_bin() {
         let mut c = tri("recycle_bin", &f.recycle_bin, false);
         if c.state == "missing" {
-            c.detail = c.detail.map(|d| format!("{d}; moves to the Recycle Bin are refused (never turned into permanent deletes)"));
+            c.detail = c.detail.map(|d| format!("{d}; moves to the {} are refused (never turned into permanent deletes)", cm_core::manual_trash::BIN_NAME));
         }
         c
     } else {
@@ -1141,10 +1151,7 @@ fn readiness_of(s: &AppState, op_word: &str, op: ReadyOp) -> ReadinessDto {
     let store = s.with_stores(|_| Ok(())).map_err(|e| e.message);
     let protection = s.store_dir.as_deref().map(|d| cm_platform::protection::load(d).map(|_| ()).map_err(|e| e.to_string()));
     let is_admin = crate::v2::is_admin();
-    #[cfg(windows)]
-    let recycle_bin = op.uses_recycle_bin().then(win::recycle_bin_for_profile);
-    #[cfg(not(windows))]
-    let recycle_bin = None;
+    let recycle_bin = op.uses_recycle_bin().then(crate::plat::bin_for_profile);
     let facts = ReadinessFacts { store, protection, is_admin, bypass: s.startup.bypass_privileges.clone(), recycle_bin };
     ReadinessDto { platform: enum_text(&cm_platform::host().platform()), operation: op_word.into(), is_admin, checks: assemble(op, &facts) }
 }
@@ -1152,40 +1159,16 @@ fn readiness_of(s: &AppState, op_word: &str, op: ReadyOp) -> ReadinessDto {
 // ---------------------------------------------------------------------------------------------
 // IPC
 
-#[cfg(not(windows))]
-fn empty_roots() -> PurgeRootsDto {
-    let d = cm_core::purge::PurgeSettings::default();
-    PurgeRootsDto { supported: false, roots: vec![], recent_days: d.recent_days, max_depth: d.max_depth }
-}
-
 #[tauri::command(rename_all = "snake_case")]
 pub async fn purge_roots(state: St<'_>) -> IpcResult<PurgeRootsDto> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::purge_roots(&s);
-        #[cfg(not(windows))]
-        {
-            let _ = s;
-            Ok(empty_roots())
-        }
-    })
-    .await
+    blocking(move || imp::purge_roots(&s)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn purge_roots_add(app: AppHandle, state: St<'_>) -> IpcResult<Option<PurgeRootsDto>> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::purge_roots_add(&app, &s);
-        #[cfg(not(windows))]
-        {
-            let _ = (app, s);
-            Err(unsupported("purge"))
-        }
-    })
-    .await
+    blocking(move || imp::purge_roots_add(&app, &s)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1193,13 +1176,7 @@ pub async fn purge_roots_remove(state: St<'_>, root_id: String) -> IpcResult<Pur
     let s = state.inner().clone();
     blocking(move || {
         let id = args::record_id("root", &root_id)?;
-        #[cfg(windows)]
-        return win::purge_roots_remove(&s, &id);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, id);
-            Err(unsupported("purge"))
-        }
+        imp::purge_roots_remove(&s, &id)
     })
     .await
 }
@@ -1207,42 +1184,18 @@ pub async fn purge_roots_remove(state: St<'_>, root_id: String) -> IpcResult<Pur
 #[tauri::command(rename_all = "snake_case")]
 pub async fn purge_scan(state: St<'_>) -> IpcResult<CatalogPreviewDto> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::purge_scan(&s);
-        #[cfg(not(windows))]
-        {
-            let _ = s;
-            Ok(empty_preview("purge", false))
-        }
-    })
-    .await
+    blocking(move || imp::purge_scan(&s)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn installer_locations() -> IpcResult<InstallerLocationsDto> {
-    blocking(move || {
-        #[cfg(windows)]
-        return Ok(win::installer_locations());
-        #[cfg(not(windows))]
-        Ok(InstallerLocationsDto { supported: false, locations: vec![], max_depth: cm_core::installer::DEFAULT_MAX_DEPTH })
-    })
-    .await
+    blocking(move || Ok(imp::installer_locations())).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn installer_scan(state: St<'_>) -> IpcResult<CatalogPreviewDto> {
     let s = state.inner().clone();
-    blocking(move || {
-        #[cfg(windows)]
-        return win::installer_scan(&s);
-        #[cfg(not(windows))]
-        {
-            let _ = s;
-            Ok(empty_preview("installer", false))
-        }
-    })
-    .await
+    blocking(move || imp::installer_scan(&s)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1253,13 +1206,7 @@ pub async fn create_catalog_plan(state: St<'_>, catalog: String, candidate_set_i
         let set = args::record_id("candidate set", &candidate_set_id)?;
         let ids = args::record_ids("candidate", &candidate_ids, MAX_SELECTION)?;
         let mode = args::parse_mode(&mode)?;
-        #[cfg(windows)]
-        return s.with_stores(|st| win::catalog_plan(st, catalog, &set, &ids, mode));
-        #[cfg(not(windows))]
-        {
-            let _ = (s, catalog, set, ids, mode);
-            Err(unsupported("purge and installer cleanup"))
-        }
+        s.with_stores(|st| imp::catalog_plan(st, catalog, &set, &ids, mode))
     })
     .await
 }
@@ -1270,13 +1217,7 @@ pub async fn trash_inspect(state: St<'_>, scan_id: String, entry_id: String) -> 
     blocking(move || {
         let scan = args::scan_id(&scan_id)?;
         let entry = args::entry_id(&entry_id)?;
-        #[cfg(windows)]
-        return win::trash_inspect(&s, &scan, entry);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, scan, entry);
-            Err(unsupported("manual trash"))
-        }
+        imp::trash_inspect(&s, &scan, entry)
     })
     .await
 }
@@ -1296,26 +1237,14 @@ pub async fn trash_plan(state: St<'_>, scan_id: String, entry_ids: Vec<String>) 
                 entries.push(e);
             }
         }
-        #[cfg(windows)]
-        return win::trash_plan(&s, &scan, &entries);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, scan, entries);
-            Err(unsupported("manual trash"))
-        }
+        imp::trash_plan(&s, &scan, &entries)
     })
     .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn startup_list() -> IpcResult<StartupListDto> {
-    blocking(move || {
-        #[cfg(windows)]
-        return win::startup_list();
-        #[cfg(not(windows))]
-        Ok(StartupListDto { supported: false, is_admin: false, items: vec![], issues: vec![] })
-    })
-    .await
+    blocking(imp::startup_list).await
 }
 
 pub fn parse_startup_operation(s: &str) -> IpcResult<cm_core::plan::v2::StartupOperation> {
@@ -1332,26 +1261,14 @@ pub async fn startup_plan(state: St<'_>, item_id: String, operation: String) -> 
     blocking(move || {
         let id = args::record_id("startup item", &item_id)?;
         let op = parse_startup_operation(&operation)?;
-        #[cfg(windows)]
-        return s.with_stores(|st| win::startup_plan(st, &id, op));
-        #[cfg(not(windows))]
-        {
-            let _ = (s, id, op);
-            Err(unsupported("startup changes"))
-        }
+        s.with_stores(|st| imp::startup_plan(st, &id, op))
     })
     .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn insights_list() -> IpcResult<InsightsDto> {
-    blocking(move || {
-        #[cfg(windows)]
-        return Ok(win::insights());
-        #[cfg(not(windows))]
-        Ok(InsightsDto { supported: false, observed_at: now_utc(), items: vec![] })
-    })
-    .await
+    blocking(move || Ok(imp::insights())).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1359,12 +1276,7 @@ pub async fn status_snapshot(state: St<'_>) -> IpcResult<serde_json::Value> {
     let s = state.inner().clone();
     blocking(move || {
         let alerts = s.store_dir.as_deref().map(cm_app::processes::load_alerts).unwrap_or_default();
-        #[cfg(windows)]
-        return win::status(alerts);
-        #[cfg(not(windows))]
-        let _ = alerts;
-        #[cfg(not(windows))]
-        Ok(serde_json::json!({ "supported": false }))
+        imp::status(alerts)
     })
     .await
 }
@@ -1385,13 +1297,7 @@ pub async fn reveal_entry(state: St<'_>, scan_id: String, entry_id: String) -> I
     blocking(move || {
         let scan = args::scan_id(&scan_id)?;
         let entry = args::entry_id(&entry_id)?;
-        #[cfg(windows)]
-        return win::reveal(&s, &scan, entry);
-        #[cfg(not(windows))]
-        {
-            let _ = (s, scan, entry);
-            Err(unsupported("showing a file in the file manager"))
-        }
+        imp::reveal(&s, &scan, entry)
     })
     .await
 }

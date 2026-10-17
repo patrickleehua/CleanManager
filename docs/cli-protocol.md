@@ -62,7 +62,8 @@
 | `apps.uninstall.list` | `apps uninstall list`（已实现 Windows） | app_uninstall_list | 无 |
 | `apps.uninstall.leftovers` | `apps uninstall leftovers --operation OP_ID`（已实现 Windows，第一段完成后） | uninstall_leftovers（另附逐应用的 `apps`；批量时顶层 `app` 为 null）；没有任何应用的卸载程序成功时为 invalid_argument | 无（只读） |
 | `apps.uninstall.leftovers_plan` | `apps uninstall leftovers plan create --operation OP_ID [--items ID,ID]`（已实现 Windows，第二段，单独审阅；批量时包含所有卸载程序成功的应用的残留） | plan（uninstall）；kept/blocked 对象为 policy_denied | 只写计划 |
-| `apps.uninstall.orphans` | `apps uninstall orphans`（已实现 Windows） | uninstall_leftovers（review_only） | 无 |
+| `apps.uninstall.orphans` | `apps uninstall orphans`（已实现 Windows：失效启动项及其同名数据目录；macOS：`~/Library` 中按 bundle ID 无任何已安装应用或安装收据认领的条目） | uninstall_leftovers（review_only，从不预选） | 无 |
+| `apps.uninstall.orphans_plan` | `apps uninstall orphans plan create --items ID,ID`（已实现 macOS，单独审阅；只含点名的孤立残留，移入废纸篓；Windows 为 unsupported，孤立残留只供审阅） | plan（uninstall，`fs_trash`）；kept/blocked 对象为 policy_denied/permission_required，未点名为 invalid_argument | 只写计划 |
 | `apps.uninstall.restore_plan` | `apps uninstall restore --operation OP_ID`（已实现 Windows） | plan（recovery） | 只写计划 |
 | `apps.updates.check` | `apps updates`；`apps updates show` 只读上次结果（已实现 Windows，见 [应用更新](app-updates.md)） | app_update_list | 仅访问更新通道；检查关闭时无任何请求 |
 | `apps.updates.config` | `apps updates config [--checks on\|off]`（已实现） | app_update_settings | 只写本工具设置（`app-updates.json`） |

@@ -135,12 +135,14 @@ export interface Backend extends DiagBackend, ResidentBackend {
   uninstallLeftovers(operationId: string): Promise<Leftovers>;
   uninstallLeftoversPlan(operationId: string, objectIds: string[]): Promise<{ plan_id: string }>;
   uninstallRestorePlan(operationId: string): Promise<{ plan_id: string }>;
+  /** Recovery plan putting back the prior values of a maintenance run's setting changes (`optimize restore`). */
+  maintenanceRestorePlan(operationId: string): Promise<{ plan_id: string }>;
   /** `check: true` runs the package managers' own query (only while checks are on). */
   updatesList(check: boolean): Promise<UpdateList>;
   updatesSetChecks(enabled: boolean): Promise<{ checks_enabled: boolean; last_checked_at: string | null }>;
   updatesPlan(appInstanceIds: string[]): Promise<UpdatePlanCreated>;
-  /** Opens a fixed system page: Settings › Apps or the Store's downloads and updates. */
-  openSystemPage(target: 'apps_features' | 'store_updates'): Promise<boolean>;
+  /** Opens one fixed system page: Settings › Apps / the store's updates; `login_items` (System Settings › General › Login Items & Extensions) and `software_update` exist on macOS only. */
+  openSystemPage(target: SystemPage): Promise<boolean>;
   maintenanceCatalog(): Promise<MaintenanceCatalog>;
   maintenanceSearch(query: string): Promise<MaintenanceSearch>;
   maintenancePlan(taskIds: string[]): Promise<{ plan_id: string }>;
@@ -239,6 +241,7 @@ async function tauriBackend(): Promise<Backend> {
     uninstallLeftovers: (operation_id) => call('uninstall_leftovers', { operation_id }),
     uninstallLeftoversPlan: (operation_id, object_ids) => call('uninstall_leftovers_plan', { operation_id, object_ids }),
     uninstallRestorePlan: (operation_id) => call('uninstall_restore_plan', { operation_id }),
+    maintenanceRestorePlan: (operation_id) => call('maintenance_restore_plan', { operation_id }),
     updatesList: (check) => call('updates_list', { check }),
     updatesSetChecks: (enabled) => call('updates_set_checks', { enabled }),
     updatesPlan: (app_instance_ids) => call('updates_plan', { app_instance_ids }),
@@ -291,6 +294,8 @@ async function tauriBackend(): Promise<Backend> {
     onResidentAlert: (cb) => listen<BatteryAlert[]>('resident-alert', (e) => cb(e.payload)),
   };
 }
+
+export type SystemPage = 'apps_features' | 'store_updates' | 'login_items' | 'software_update';
 
 export async function createBackend(): Promise<Backend> {
   const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

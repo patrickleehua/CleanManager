@@ -12,14 +12,16 @@
 //! - Two kinds of plan need a confirmation only a terminal asks for and are refused here (`needs_cli_confirmation`):
 //!   plans that permanently delete (`fs_delete` of recycled objects) and uninstall plans that may end still-running
 //!   processes after a person types END (`app_quit` with `force: ask_user`, created by `--end-running`).
-//! - Application runs through `cm_app::plans::apply_plan_v2` with the same backends as `cleanmanager plan apply`
-//!   (verified Windows file actions, startup changes through the process' own token, the protection checker before
-//!   every action, process re-identification, signature-verified updates, verified uninstallers). The desktop's
-//!   uninstall backend never confirms ending a process. A plan that needs an administrator is refused before anything
-//!   starts when this process is not elevated; this tool never elevates itself for those.
+//! - Application runs through `cm_app::plans::apply_plan_v2_with_settings` with the same backends as `cleanmanager plan
+//!   apply` (`crate::plat::with_backends`: the platform's file actions, startup changes through the process' own token
+//!   on Windows, the protection checker before every action, process re-identification, signature-verified updates,
+//!   verified uninstallers; on macOS also the settings backend that puts back a maintenance run's setting changes). The
+//!   desktop's uninstall backend never confirms ending a process. A plan that needs an administrator is refused before
+//!   anything starts when this process is not elevated (always on macOS); this tool never elevates itself for those.
 //! - Maintenance plans run through `cm_app::maintenance::apply_maintenance_plan`: administrator tasks are listed
 //!   before any task runs and Windows asks once (UAC) to start the same short-lived, single-grant worker the CLI
-//!   starts (this executable with the hidden worker argument, see `main.rs`); declining skips only those tasks.
+//!   starts (this executable with the hidden worker argument, see `main.rs`); declining skips only those tasks. macOS
+//!   has no privilege path in this build: administrator tasks are skipped `elevation_unavailable`.
 
 use cm_core::authz::{KindReceipt, ReceiptSource, current_principal};
 use cm_core::error::ErrorCode;
@@ -56,11 +58,13 @@ pub fn runs_uninstaller(plan: &PlanV2) -> bool {
 }
 
 /// Desktop name of a plan/v2 plan: `manual_trash`, `manual_purge`, `startup`, `startup_restore`, `uninstall`,
-/// `uninstall_leftovers`, `uninstall_restore`, `update`, `process`, `maintenance`, or the raw kind.
+/// `uninstall_leftovers`, `uninstall_restore`, `update`, `process`, `maintenance`, `maintenance_restore` (setting
+/// changes of a maintenance run put back, 14.5), or the raw kind.
 pub fn kind_name(plan: &PlanV2) -> &'static str {
     match plan.body.plan_kind {
         PlanKind::Uninstall if !runs_uninstaller(plan) => "uninstall_leftovers",
         PlanKind::Recovery if plan.meta.iter().any(|m| m.uninstall.is_some()) => "uninstall_restore",
+        PlanKind::Recovery if plan.body.items.iter().any(|a| matches!(a, PlanAction::SettingsChange(_))) => "maintenance_restore",
         kind => kind_word(kind, has_permanent(plan)),
     }
 }
@@ -156,7 +160,7 @@ fn kind_detail(s: &AppState, plan: &PlanV2) -> Option<serde_json::Value> {
             json!({"admin_tasks": admin, "is_admin": is_admin(), "noted": noted})
         }
         PlanKind::Update | PlanKind::Process => json!({"noted": noted}),
-        PlanKind::Recovery if kind_name(plan) == "uninstall_restore" => json!({"noted": noted}),
+        PlanKind::Recovery if matches!(kind_name(plan), "uninstall_restore" | "maintenance_restore") => json!({"noted": noted}),
         _ => return None,
     };
     Some(v)
@@ -370,7 +374,12 @@ pub fn item_rows(plan: &PlanV2) -> Vec<PlanItemDto> {
                     row.detail = Some(json!({"task_id": t.task_id, "task_version": t.task_version, "requires_admin": t.requires_admin}));
                     row
                 }
-                other => base(other.action_type().as_str().to_owned(), String::new(), "other", None),
+                PlanAction::SettingsChange(c) => {
+                    let name = m.note.clone().unwrap_or_else(|| c.setting_id.clone());
+                    let mut row = base(name, format!("{}: {} → {}", c.setting_id, c.from_value, c.to_value), "setting", Some("user"));
+                    row.detail = Some(json!({"setting_id": c.setting_id, "from_value": c.from_value, "to_value": c.to_value, "restore_on_exit": c.restore_on_exit}));
+                    row
+                }
             }
         })
         .collect()
@@ -420,14 +429,8 @@ pub fn approve(s: &AppState, stores: &Stores, plan_id: &str, token: &str, typed:
 }
 
 /// Whether this process may change machine-wide entries (`None` where not determined).
-#[cfg(windows)]
 pub fn is_admin() -> Option<bool> {
-    cm_platform::windows::startup::StartupEnv::from_process().ok().map(|e| e.is_admin)
-}
-
-#[cfg(not(windows))]
-pub fn is_admin() -> Option<bool> {
-    None
+    crate::plat::is_admin()
 }
 
 /// Refuse early, before a thread starts (the executor repeats every check itself).
@@ -457,51 +460,11 @@ pub fn precheck(stores: &Stores, plan_id: &str) -> IpcResult<()> {
     Ok(())
 }
 
-/// Run `f` with the platform backends of plan/v2 kinds, as `cleanmanager plan apply` builds them.
-#[cfg(windows)]
-fn with_backends<T>(stores: &Stores, f: impl FnOnce(&cm_app::plans::V2Backends<'_>) -> T) -> Result<T, String> {
-    use cm_platform::windows::startup_actions::WindowsStartup;
-    let env = cm_platform::windows::startup::StartupEnv::from_process()?;
-    let startup = WindowsStartup { env };
-    let files = cm_platform::windows::actions::WindowsActions::with_store(stores.dir.clone());
-    let user = cm_platform::protection::load(&stores.dir);
-    let holders = |paths: &[cm_core::path::RawPath]| -> Option<Vec<String>> {
-        cm_platform::windows::restart_manager::holders(paths).ok().map(|h| h.iter().map(|x| x.describe()).collect())
-    };
-    let protect_item = |item_id: &str| -> Result<(), String> {
-        let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
-        match cm_core::protect::evaluate_task(item_id, user) {
-            cm_core::protect::ProtectionDecision::Allowed => Ok(()),
-            denied => Err(format!("{denied:?}")),
-        }
-    };
-    let processes = cm_platform::windows::processes::WindowsProcesses;
-    let updates = cm_platform::windows::updates::WindowsUpdates;
-    // UNI-02: this window never confirms ending a process; such plans are refused before they start (`precheck`), and
-    // if one got here anyway the close request is all that happens.
-    let uninstall = cm_platform::windows::uninstall::WindowsUninstall {
-        env: cm_platform::windows::uninstall::UninstallEnv::from_process()?,
-        confirm: Box::new(|_: &[cm_core::uninstall::RunningProcess]| false),
-    };
-    let b = cm_app::plans::V2Backends {
-        files: &files,
-        startup: Some(&startup),
-        holders: &holders,
-        protect_item: &protect_item,
-        processes: Some(&processes),
-        updates: Some(&updates),
-        uninstall: Some(&uninstall),
-    };
-    Ok(f(&b))
-}
-
-#[cfg(windows)]
 fn backend_error(e: String) -> cm_app::execute::ApplyError {
     cm_app::execute::ApplyError::Store(cm_store::StoreError::InvalidArgument(e))
 }
 
 /// Apply a stored, authorized plan/v2 plan (called on the operation thread).
-#[cfg(windows)]
 pub fn apply(stores: &Stores, plan_id: &str, cancel: &dyn Fn() -> bool) -> Result<cm_app::execute::OperationReport, cm_app::execute::ApplyError> {
     use cm_core::host::HostProbe;
     if stores.audit.load_plan_v2(plan_id)?.body.plan_kind == PlanKind::Maintenance {
@@ -520,11 +483,12 @@ pub fn apply(stores: &Stores, plan_id: &str, cancel: &dyn Fn() -> bool) -> Resul
         fault: &|_, _| false,
         protect: &protect,
     };
-    with_backends(stores, |b| cm_app::plans::apply_plan_v2(stores, b, plan_id, &ctx)).map_err(backend_error)?
+    // Recovery plans may restore maintenance setting changes (14.5) through the settings backend (macOS only).
+    let settings = crate::plat::settings_backend();
+    crate::plat::with_backends(stores, |b| cm_app::plans::apply_plan_v2_with_settings(stores, b, settings.as_deref(), plan_id, &ctx)).map_err(backend_error)?
 }
 
 /// Read-only reconciliation of a plan/v2 operation (never starts an action).
-#[cfg(windows)]
 pub fn reconcile(stores: &Stores, operation_id: &str) -> Result<cm_app::execute::OperationReport, cm_app::execute::ApplyError> {
     use cm_core::host::HostProbe;
     let principal = current_principal();
@@ -538,7 +502,7 @@ pub fn reconcile(stores: &Stores, operation_id: &str) -> Result<cm_app::execute:
         fault: &|_, _| false,
         protect: &|_| Ok(()),
     };
-    with_backends(stores, |b| cm_app::plans::reconcile_operation_v2(stores, b, operation_id, &ctx)).map_err(backend_error)?
+    crate::plat::with_backends(stores, |b| cm_app::plans::reconcile_operation_v2(stores, b, operation_id, &ctx)).map_err(backend_error)?
 }
 
 #[cfg(test)]
@@ -651,6 +615,28 @@ mod tests {
         let plan = build(&header(PlanKind::Maintenance), vec![t], vec![ActionMeta::default()]).unwrap();
         let row = &item_rows(&plan)[0];
         assert_eq!((row.path_display.as_str(), row.item_kind.as_str(), row.scope.as_deref()), ("windows.dns-flush@1.0.0", "maintenance_task", Some("user")));
+    }
+
+    /// 14.5: putting back a maintenance run's setting changes is its own kind on the review page, one row per setting.
+    #[test]
+    fn a_settings_restore_is_named_and_listed_per_setting() {
+        use cm_core::maintenance::settings::{SettingBackup, build_settings_recovery_plan};
+        let b = SettingBackup {
+            backup_id: "setb_0001".into(),
+            setting_id: "macos.desktopservices.DSDontWriteNetworkStores".into(),
+            location: "com.apple.desktopservices DSDontWriteNetworkStores".into(),
+            prior_value: "absent".into(),
+            written_value: "true".into(),
+            created_at: "2026-10-15T00:00:00Z".into(),
+        };
+        let plan = build_settings_recovery_plan(&[b], "rp_test", 1_800_000_000, "pd").unwrap();
+        assert_eq!(kind_name(&plan), "maintenance_restore");
+        assert!(desktop_applies(plan.body.plan_kind));
+        let row = &item_rows(&plan)[0];
+        assert_eq!((row.item_kind.as_str(), row.action_type.as_deref(), row.scope.as_deref()), ("setting", Some("settings_change"), Some("user")));
+        assert_eq!(row.path_display, "macos.desktopservices.DSDontWriteNetworkStores: true → absent");
+        assert!(row.name.starts_with("restore: "), "{}", row.name);
+        assert_eq!(row.detail.as_ref().unwrap()["to_value"], "absent");
     }
 
     #[test]

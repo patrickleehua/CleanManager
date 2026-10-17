@@ -13,9 +13,9 @@ import { groupDigits } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate, SubjectGate } from '../lib/gate';
-import { words } from '../lib/platform';
+import { notOnThisPlatform, onPlatform, words } from '../lib/platform';
 import type { Leftover, Leftovers, UninstallApp, UninstallList } from '../lib/suiteTypes';
-import { LEFTOVER_GROUP, MARKER_WORD, SOURCE_WORD, UNINSTALL_STATE, leftoverAction, leftoverTier, whyNotWord } from '../lib/suiteWords';
+import { LEFTOVER_GROUP, MARKER_WORD, SOURCE_WORD, adapterText, leftoverAction, leftoverTier, uninstallRowWords, whyNotWord } from '../lib/suiteWords';
 import type { IpcError } from '../lib/types';
 import { OPERATION_STATE_LABEL, operationTone } from '../lib/words';
 import { LongProgress, atLeast, ensureReady, selectionBar, stageSteps, sumSizes, tierBadge, toIpcError, type Step } from './kit';
@@ -35,6 +35,14 @@ export const UNINSTALL_STEPS: Step[] = [
   { title: '卸载程序', note: '先请应用退出，再运行它自己的卸载程序，最后重新检查安装目录和登记。' },
   { title: '残留', note: '卸载后单独审阅确实留下的文件、注册表项和启动项。' },
 ];
+
+// GUI-12: the two steps keep their titles; what each does follows the platform (Trash and Homebrew on macOS).
+onPlatform(() => {
+  const w = words();
+  UNINSTALL_STEPS[0].note = w.uninstallStep1;
+  UNINSTALL_STEPS[1].note = w.uninstallStep2;
+  FILTERS[2].label = w.uninstallElsewhereFilter;
+});
 
 function matches(a: UninstallApp, f: Filter, q: string): boolean {
   const inFilter = f === 'all' || (f === 'available' && a.state === 'available') || (f === 'settings' && a.state === 'unverified') || (f === 'protected' && a.state === 'unsupported');
@@ -208,7 +216,7 @@ export class UninstallPage {
     const refresh = h('button', { type: 'button', id: 'uninstall-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在读取…' : '重新读取');
     refresh.addEventListener('click', () => void this.load());
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'uninstall-title', title: '卸载' }), emptyState('此平台暂不提供', '应用卸载目前只在 Windows 上实现。', null));
+      replace(this.body, pageHead({ id: 'uninstall-title', title: '卸载' }), emptyState('此平台暂不提供', notOnThisPlatform('应用卸载目前只在 Windows 上实现。'), null));
       return;
     }
     const available = d?.items.filter((a) => a.state === 'available').length ?? 0;
@@ -296,7 +304,7 @@ export class UninstallPage {
   private appsTable(items: UninstallApp[]): HTMLElement {
     const rows = items.map((a) => {
       const id = `un-${a.app_instance_id}`;
-      const st = UNINSTALL_STATE[a.state] ?? { label: a.state, tone: 'muted' as const };
+      const st = uninstallRowWords(a);
       const err = this.rowError.get(a.app_instance_id);
       const can = batchSelectable(a);
       const check = h('input', {
@@ -310,10 +318,12 @@ export class UninstallPage {
       let action: HTMLElement;
       if (a.state === 'available') {
         action = h('span', { class: 'muted small' }, check.checked ? (this.planning ? '正在核验…' : '已选择') : '勾选后卸载');
-      } else if (a.state === 'unverified') {
+      } else if (st.settingsButton) {
         const btn = h('button', { type: 'button', class: 'quiet', id: `${id}-settings` }, icon('external'), '在设置中卸载');
         btn.addEventListener('click', () => void this.app.backend.openSystemPage('apps_features'));
         action = btn;
+      } else if (st.guidance) {
+        action = h('span', { class: 'muted small' }, st.tone === 'warn' && st.label === '需要管理员' ? '在启动台或访达中删除' : '在访达中处理');
       } else {
         action = h('span', { class: 'muted small' }, '没有卸载入口');
       }
@@ -327,8 +337,9 @@ export class UninstallPage {
           { class: 'col-object' },
           can ? h('label', { for: `${id}-check`, class: 'obj-name' }, a.name) : h('span', { class: 'obj-name' }, a.name),
           h('span', { class: 'obj-path' }, facts),
-          a.adapter ? h('span', { class: 'obj-reason muted' }, '方式：', a.adapter.display) : null,
-          a.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not' }, a.reason) : null,
+          a.adapter ? h('span', { class: 'obj-reason muted' }, '方式：', adapterText(a.adapter)) : null,
+          st.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not' }, st.reason) : null,
+          st.guidance ? h('span', { class: 'obj-reason' }, st.guidance) : null,
           err ? h('span', { class: 'form-error', role: 'alert' }, err.message) : null,
         ),
         h('td', { class: 'col-flags' }, pill(st.label, st.tone)),
@@ -372,14 +383,14 @@ export class UninstallPage {
       'aside',
       { class: 'panel work-aside', 'aria-labelledby': 'uninstall-how' },
       h('h2', { id: 'uninstall-how' }, '卸载怎样进行'),
-      h('p', { class: 'small' }, '每一步都先生成计划，由你审阅并输入摘要前 8 位批准后才执行。卸载程序保留它自己的界面，CleanManager 不添加静默参数。'),
-      h('p', { class: 'small' }, '执行后重新检查安装目录和卸载登记；仍有剩余时结果记为“部分完成”，残留在第 2 步单独审阅。'),
+      h('p', { class: 'small' }, words().uninstallHowReview),
+      h('p', { class: 'small' }, words().uninstallHowRescan),
       h('p', { class: 'small' }, '一次选择多个应用时，它们在同一份计划中依次执行：每个应用单独退出、单独卸载、单独报告结果。一个应用没有退出或卸载失败，不影响其他应用；它的残留也不会进入第 2 步。'),
       h(
         'div',
         { class: 'aside-section' },
         h('h3', {}, '应用还在运行时'),
-        h('p', { class: 'small' }, '只发出退出请求并等待。应用没有退出时，卸载程序不会运行，也不会删除任何东西；这里永远不会强制结束进程。'),
+        h('p', { class: 'small' }, words().uninstallHowRunning),
         h('p', { class: 'muted small' }, '确实需要结束仍在运行的进程时，只能在终端中创建一份单独审阅的计划，执行时还要输入 END 确认：'),
         copyField('在终端中（需要人工确认）', 'cleanmanager apps uninstall plan create --instance <应用编号> --end-running'),
       ),
@@ -387,7 +398,7 @@ export class UninstallPage {
         'div',
         { class: 'aside-section' },
         h('h3', {}, '没有卸载入口的应用'),
-        h('p', { class: 'small' }, '安全软件、系统组件、共享运行库和 CleanManager 自己不能在这里卸载。无法验证卸载方式的应用请在“设置 › 应用 › 已安装的应用”中卸载；CleanManager 从不把删除安装目录当作卸载。'),
+        h('p', { class: 'small' }, `安全软件、系统组件、共享运行库和 CleanManager 自己不能在这里卸载。${words().uninstallManually}`),
       ),
     );
   }
@@ -430,7 +441,7 @@ export class UninstallPage {
               ),
               this.loDraft(l),
             )
-          : h('div', { class: 'panel' }, emptyState('没有残留', '重新检查没有找到与这个应用相关的文件、注册表项或启动项。', h('button', { type: 'button', onclick: back.onClick }, back.label)))
+          : h('div', { class: 'panel' }, emptyState('没有残留', `重新检查没有找到与这个应用相关的${words().leftoverKindsOr}。`, h('button', { type: 'button', onclick: back.onClick }, back.label)))
         : null,
       l ? this.loBar() : null,
     );

@@ -261,15 +261,10 @@ pub struct AppsDto {
     pub supported: bool,
 }
 
-#[cfg(windows)]
+/// The installed-application inventory of this platform (the CLI's `apps list`).
 fn inventory() -> (Vec<cm_core::apps::AppInstance>, Vec<cm_core::apps::InventoryIssue>, bool) {
-    let (a, i) = cm_platform::windows::apps::inventory();
+    let (a, i) = crate::plat::apps_inventory();
     (a, i, true)
-}
-
-#[cfg(not(windows))]
-fn inventory() -> (Vec<cm_core::apps::AppInstance>, Vec<cm_core::apps::InventoryIssue>, bool) {
-    (Vec::new(), Vec::new(), false)
 }
 
 pub fn apps(s: &AppState, scan_id: Option<&str>) -> IpcResult<AppsDto> {
@@ -383,7 +378,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let s = state(&dir);
+        // macOS: the temporary directory lies under /private/var, a hard-deny location that is already protected and
+        // cannot be added again; the protected folder lives under this crate's target directory there.
+        #[cfg(windows)]
         let folder = dir.join("keep-me");
+        #[cfg(target_os = "macos")]
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join(format!("cm-desktop-protect-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let token = lock(&s.roots).offer(folder.clone());
         let list = add(&s, ProtectTarget::Folder { root_token: token }, Some("project".into())).unwrap();
@@ -408,6 +408,7 @@ mod tests {
 
         let list = remove(&s, "u_1", "u_1").unwrap();
         assert!(list.items.iter().all(|i| i.layer != "user"));
+        let _ = std::fs::remove_dir_all(&folder);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -15,9 +15,10 @@
 | 空间洞察（本地快照数、虚拟机与容器磁盘、iPhone 备份、交换与可清除空间估计、旧下载） | 已实现（`unverified`，实验，只读） | CLI `insights overview` |
 | 已安装应用列表 | 已实现（`unverified`，实验，只读） | CLI `apps list` |
 | 系统状态与进程、启动项列表、更新检测、维护任务（含性能诊断）、规则第 2 批（26 条） | 已实现（`unverified`，实验；第 4 批已合入 main）。启动项只读，启停为 `unsupported`；需要管理员的维护任务一律 `skipped`（`elevation_unavailable`）；温度与风扇为不可用并说明原因 | CLI `status --count 1`、`process list`、`startup list`、`apps updates`、`optimize list`、`optimize diagnose --window 2`；网络卷 `.DS_Store` 设置可用 `optimize restore` 改回 |
-| 卸载、常驻工具 | 未实现（第 5、6 批） | CLI 应报告 `unsupported`，不应崩溃或误报可用 |
+| 应用卸载（App 移入废纸篓、Homebrew、AI 命令行工具、孤立残留） | 已实现（`unverified`，实验）。App Store 与 root 拥有的 App 报告需要管理员并给出访达/启动台指引；受保护的 Apple 应用被拒绝 | CLI `apps uninstall list`、`apps uninstall orphans`；只用你愿意卸载的测试 App 实际执行 |
+| 常驻工具（菜单栏图标、保持亮屏、清洁屏幕、摄像头/麦克风使用提示、电量提醒） | 已实现（`unverified`，实验）；开机自启需要签名包，本版为 `unsupported` | 桌面应用“状态 › 常驻工具”；`pmset -g assertions` 可看到保持亮屏的断言 |
 | 特权 helper、风扇与电池控制、Touch ID | 本次不做（需要签名或真机） | 应一直报告 `unsupported` |
-| 桌面应用 | 未在 macOS 上构建过 | `--desktop` 构建前端与 Tauri 宿主测试 |
+| 桌面应用 | 宿主已接入全部 macOS 后端，CI 在 macOS 上跑宿主 clippy 与测试；尚未在真 Mac 上启动过 | `--desktop` 构建前端与 Tauri 宿主测试；再用 `cd apps/desktop && npx tauri dev` 实际打开，检查各页面的 macOS 文案 |
 
 “已实现（`unverified`）”的意思是代码与测试都在，但只在托管 runner 上跑过；真机结果登记前不会改成 `verified`。
 

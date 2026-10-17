@@ -12,6 +12,7 @@ import type { ActivityTab } from '../lib/store';
 import type { HistoryItem, IpcError, PlanRow, QuarantineItem, QuarantinePage } from '../lib/types';
 import { ACTION_LABEL, AUTH_LABEL, AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, QUARANTINE_STATE_LABEL, operationTone } from '../lib/words';
 import { emptyState, errorLine, exactTitle, pageHead, pill, tabList } from './parts';
+import { words } from '../lib/platform';
 
 const PAGE = 50;
 
@@ -263,7 +264,7 @@ export class ActivityPage {
     );
     if (!l.loaded) return h('div', {}, head, h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, '正在读取隔离区…')));
     if (!l.items.length)
-      return h('div', {}, h('div', { class: 'panel' }, emptyState('隔离区是空的', '选择“移入同卷隔离区”执行的文件会出现在这里，可以创建恢复计划送回原位，或创建永久清空计划释放空间。系统回收站中的内容不会被导入。')));
+      return h('div', {}, h('div', { class: 'panel' }, emptyState('隔离区是空的', `选择“移入同卷隔离区”执行的文件会出现在这里，可以创建恢复计划送回原位，或创建永久清空计划释放空间。系统${words().bin}中的内容不会被导入。`)));
     const rows = l.items.map((q) => {
       const check = h('input', { type: 'checkbox', id: `q-${q.quarantine_id}`, disabled: !q.actionable || q.state !== 'recoverable', 'aria-describedby': `q-${q.quarantine_id}-state` }) as HTMLInputElement;
       check.checked = this.qSelected.has(q.quarantine_id);

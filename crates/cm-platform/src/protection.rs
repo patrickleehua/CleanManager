@@ -65,7 +65,9 @@ impl ListLock {
         for _ in 0..60 {
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(_) => return Ok(Some(ListLock(path))),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Windows: a lock file the previous holder just deleted stays "delete pending" for a moment, and
+                // creating it again then fails with access denied instead of "already exists": also a held lock.
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists || (cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied) => {
                     let stale = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > LOCK_STALE));
                     if stale {
                         let _ = std::fs::remove_file(&path);

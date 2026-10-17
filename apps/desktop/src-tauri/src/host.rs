@@ -13,7 +13,7 @@ use std::time::Duration;
 use cm_app::scan::{ScanRequest, run_scan};
 use cm_core::error::ErrorCode;
 use cm_core::host::HostProbe;
-use cm_core::scan::{ScanBackend, ScanOptions};
+use cm_core::scan::ScanOptions;
 use cm_core::time::now_utc;
 use cm_platform::host::OsHostProbe;
 use cm_store::{INDEX_FILE, IndexStore, Stores};
@@ -237,25 +237,13 @@ fn scope_id_for(root: &Path) -> String {
     format!("scope_desk_{h:016x}")
 }
 
-#[cfg(windows)]
-fn backend() -> Option<Box<dyn ScanBackend + Send>> {
-    Some(Box::new(cm_platform::windows::directory::DirectoryBackend))
-}
-
-#[cfg(not(windows))]
-fn backend() -> Option<Box<dyn ScanBackend + Send>> {
-    None
-}
-
 /// Start one scan hosted by this process. Only one desktop-hosted scan runs at a time.
 pub fn start(app: &AppHandle, state: &Arc<AppState>, root: PathBuf) -> IpcResult<(String, String)> {
     let dir = state.store_dir.clone().ok_or_else(no_store)?;
     if let Some(p) = root_problem(&root, Some(&dir)) {
         return Err(p);
     }
-    let Some(backend) = backend() else {
-        return Err(IpcError::new(ErrorCode::Unsupported, "unsupported", "The scan backend for this platform is not available in this build"));
-    };
+    let backend = crate::plat::scan_backend();
     let raw = cm_platform::paths::raw_path(root.as_os_str())
         .map_err(|e| IpcError::new(ErrorCode::InvalidArgument, "invalid_argument", format!("invalid root: {e}")))?;
     let root_display = raw.display();

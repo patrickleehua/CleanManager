@@ -1,7 +1,7 @@
 // Words for 软件 › 卸载 / 更新, 优化 and 状态 › 进程. The host speaks protocol words (and the core's
 // English catalog text); people read these. Unknown values fall back to what the host sent.
 
-import { words } from './platform';
+import { macOverlay, platform, words } from './platform';
 import type { Applicability, LeftoverTier, TaskOutcome, UpdateChannel, UpdateRoute, UpdateState } from './suiteTypes';
 import type { Tier } from './types';
 
@@ -86,8 +86,29 @@ export const ROUTE_WORD: Record<UpdateRoute, string> = {
   none: '无需操作',
 };
 
-/** Update check and routing reasons from the core, in words; anything else is shown as sent. */
+macOverlay(ROUTE_WORD, { open_store: '在 App Store 中更新' });
+
+/** Update check and routing reasons from the core, in words; anything else is shown as sent. The macOS reasons come
+ * first: their prefixes are longer than the Windows ones they share a start with. */
 const UPDATE_REASONS: [string, string][] = [
+  ['No update channel: no Sparkle feed', '没有更新通道：Info.plist 中没有 Sparkle 更新源，不是来自 Mac App Store 或 Homebrew，也没有可识别的更新框架。'],
+  ['The Mac App Store checks its own apps', 'Mac App Store 自行检查它的应用：请打开 App Store 的“更新”页。'],
+  ['Part of macOS', '属于 macOS，随系统在“系统设置 › 通用 › 软件更新”中更新。'],
+  ['Uses Sparkle but its Info.plist declares no SUFeedURL', '使用 Sparkle，但 Info.plist 没有声明更新源（运行时才决定），这里无法检查；请打开应用，用它自己的“检查更新”。'],
+  ['The Sparkle feed is not an https URL', 'Sparkle 更新源不是 https 地址，没有读取；请打开应用，用它自己的“检查更新”。'],
+  ['The Sparkle feed was not fetched', '没有读取 Sparkle 更新源；请打开应用，用它自己的“检查更新”。'],
+  ['The Sparkle feed could not be read', '无法读取 Sparkle 更新源，这次没有结果（不会显示为“已是最新”）；请打开应用，用它自己的“检查更新”。'],
+  ["The app's Info.plist has no CFBundleVersion", '应用的 Info.plist 没有版本号，无法与更新源比较。'],
+  ['The Sparkle feed lists no macOS release', 'Sparkle 更新源中没有带版本号的 macOS 版本。'],
+  ['Sparkle feed offers', 'Sparkle 更新源提供了新版本：应用自己安装更新（打开它并选择“检查更新”）；CleanManager 只报告，不下载也不安装。'],
+  ['Compared with the Sparkle feed', '已与 Sparkle 更新源比较。'],
+  ['Homebrew was not queried', '没有查询 Homebrew。'],
+  ['Homebrew could not be queried', '无法查询 Homebrew，这次没有结果（不会显示为“已是最新”）。'],
+  ['Pinned in Homebrew', '已在 Homebrew 中固定版本（brew unpin 后才能升级）。'],
+  ['Homebrew upgrade available', 'Homebrew 有可用升级；安装前由 Homebrew 校验下载的校验和。'],
+  ['Not outdated in Homebrew', 'Homebrew 报告已是最新。'],
+  ['Updates itself through', '应用通过自带的更新器更新；CleanManager 不读取也不访问它的更新源，请打开应用，用它自己的更新功能。'],
+  ['The cask is marked auto_updates', '这个 cask 标记为自动更新，Homebrew 不跟踪它的版本；应用会自行更新。'],
   ['No update channel', '没有更新通道：不是通过 winget、商店或 Scoop 安装，也没有可验证的更新源。'],
   ['Updates itself', '应用自带更新器，其更新源无法验证：请打开应用，用它自己的更新功能。'],
   ['Microsoft Store checks its own apps', '商店自行检查它的应用：请打开商店的“下载和更新”。'],
@@ -221,3 +242,174 @@ export const PROTECTION_WORD: Record<string, string> = {
 };
 
 export const SORT_WORD: Record<string, string> = { cpu: '处理器', memory: '内存', disk: '磁盘', network: '网络', name: '名称' };
+
+// ---------------------------------------------------------------------------------------------
+// macOS (GUI-12): words for what only the macOS host reports, and macOS readings of shared entries. The Windows
+// entries above stay exactly as written; `macOverlay` swaps the shared ones only while the platform is macOS.
+
+Object.assign(TASK_WORDS, {
+  'macos.quicklook-reset': {
+    title: '重置快速预览缩略图缓存',
+    problem: '快速预览或访达缩略图空白、错误或过期。',
+    impact: '缩略图在下次查看时重新生成（qlmanage -r cache）；不触碰任何文件。',
+    applies: '系统自带的 /usr/bin/qlmanage 存在。',
+  },
+  'macos.icon-cache-rebuild': {
+    title: '重建图标服务缓存',
+    problem: '访达和程序坞中的应用或文件图标空白、变成通用图标或过期。',
+    impact: '缓存重建后重新绘制图标；需要管理员授权（系统缓存）。',
+    applies: '系统图标服务缓存（/Library/Caches/com.apple.iconservices.store）存在。',
+  },
+  'macos.dns-flush': {
+    title: '刷新 DNS 解析缓存',
+    problem: '网络或 DNS 变更后，网站仍解析到旧地址。',
+    impact: '每个域名的第一次解析会稍慢一次；需要向 mDNSResponder 发送信号，这需要管理员授权。',
+    applies: '系统自带的 dscacheutil 和 killall 存在。',
+  },
+  'macos.spotlight-status': {
+    title: '检查聚焦索引（只读）',
+    problem: '聚焦（Spotlight）什么都找不到或漏掉文件。',
+    impact: '只读查看启动磁盘的索引状态（mdutil -s /），不做任何改动。',
+    applies: '系统自带的 /usr/bin/mdutil 存在。',
+  },
+  'macos.broken-preferences': {
+    title: '查找损坏的偏好设置文件（只报告）',
+    problem: '某个应用总是丢失设置，或因偏好设置文件损坏而无法启动。',
+    impact: '读取 ~/Library/Preferences（含 ByHost），列出无法解析的属性列表文件；不删除也不移动。',
+    applies: '你的 ~/Library/Preferences 文件夹存在。',
+  },
+  'macos.stale-saved-state': {
+    title: '查找已删除应用的窗口状态（只报告）',
+    problem: '不再安装的应用留下的窗口状态占用空间。',
+    impact: '列出 ~/Library/Saved Application State 中应用已不在的条目；不删除。',
+    applies: '你的 ~/Library/Saved Application State 文件夹存在。',
+  },
+  'macos.disk-verify': {
+    title: '验证启动磁盘（只读）',
+    problem: '怀疑磁盘有错误（崩溃、文件无法读取）。',
+    impact: '只读验证（diskutil verifyVolume /），不修复任何东西；需要管理员授权。',
+    applies: '系统自带的 /usr/sbin/diskutil 存在。',
+  },
+  'macos.launch-agents-report': {
+    title: '查找程序已不存在的 LaunchAgent（只报告）',
+    problem: '已删除应用留下的后台作业在每次登录时失败。',
+    impact: '读取 ~/Library/LaunchAgents，列出程序已不存在或文件无法解析的作业；不做任何改动。',
+    applies: '你的 ~/Library/LaunchAgents 文件夹存在。',
+  },
+  'macos.network-dsstore-off': {
+    title: '不在网络卷上写入 .DS_Store',
+    problem: '访达在共享的网络文件夹中留下 .DS_Store 文件。',
+    impact: '先备份原来的值，再开启 DSDontWriteNetworkStores（可用 optimize restore 还原）；注销并重新登录后访达才生效。',
+    applies: '这项设置尚未开启。',
+  },
+  'macos.spotlight-rebuild': {
+    title: '重建所选卷的聚焦索引',
+    problem: '检查索引状态后，某个卷的聚焦结果仍然不对。',
+    impact: '清除并重建该卷的索引（mdutil -E）；索引完成前搜索结果不完整。需要管理员授权。',
+    applies: '生成计划时用 --volume 选择的已挂载卷。',
+  },
+});
+
+macOverlay(LEFTOVER_GROUP, {
+  system: { title: '系统级位置', explain: '所有用户共用的位置（/Library）。这一版在 macOS 上没有提权方式，只能查看，并给出手动处理方法。' },
+});
+
+macOverlay(PROHIBITED_WORDS, {
+  'registry-optimizer': { title: '注册表清理 / “优化”', reason: 'macOS 没有注册表；删除或改写系统与应用的设置数据没有可测量的收益，还可能破坏应用，所以没有这项任务。' },
+  'performance-privacy-tweaks': { title: '性能 / 隐私“调优”', reason: '未公开的设置改动效果无法证明、难以撤销；请在“系统设置”中修改。' },
+  'search-indexing-disable': { title: '关闭聚焦（Spotlight）索引', reason: '聚焦、邮件和系统设置的搜索依赖索引；请在“系统设置 › Siri 与聚焦”中把不想索引的位置加入隐私列表。' },
+  'system-debloat': { title: '系统精简 / 移除内置应用', reason: '系统卷是封存的，移除系统组件或内置应用会破坏更新；卸载你自己安装的应用请用“软件 › 卸载”。' },
+  'memory-release': { title: '内存“释放” / 加速', reason: 'macOS 自行管理内存（压缩与交换），强行清理只会让下次使用更慢；诊断会显示真实的内存压力。' },
+  'pagefile-tweak': { title: '调整交换文件 / 虚拟内存', reason: 'macOS 按需创建和回收交换文件，没有可以安全调整的大小设置。' },
+  'rebuild-app-registrations': { title: '重建 LaunchServices 数据库 / 重新注册全部应用', reason: '批量重建可能打乱“打开方式”和默认应用，且无法撤销；单个应用有问题时重新安装它。' },
+});
+
+macOverlay(ELEVATION_WORD, {
+  unavailable: '这一版在 macOS 上没有提权方式，需要管理员的任务已跳过',
+});
+
+macOverlay(TASK_CODE_WORD, {
+  elevation_unavailable: '需要管理员授权：这一版在 macOS 上没有提权方式，也不会弹出密码提示，此任务没有运行。',
+});
+
+macOverlay(PROTECTION_WORD, {
+  os_critical: 'macOS 将它标记为关键进程',
+});
+
+/** Process notes only the macOS host writes, in words; anything else is shown as sent. */
+const PROCESS_NOTES: [string, string][] = [
+  ['Exited and waiting for its parent to collect its status (zombie)', '已退出，正在等待父进程回收（僵尸进程）：不占用处理器和内存，结束它没有意义。'],
+  ['The executable path is withheld or unavailable', 'macOS 没有提供可执行文件的位置。'],
+];
+
+export function processNote(text: string): string {
+  return PROCESS_NOTES.find(([prefix]) => text.startsWith(prefix))?.[1] ?? text;
+}
+
+/** Status reasons only the macOS host writes, in words; anything else is shown as sent. */
+const METRIC_REASONS: [string, string][] = [
+  ['macOS publishes temperatures and fan speeds only through the System Management Controller', 'macOS 只通过系统管理控制器（SMC）和 HID 传感器服务公布温度与风扇转速，它们是 CleanManager 不使用的私有接口。'],
+  ['No IOAccelerator service is registered', '没有注册显卡服务（没有显卡驱动，例如在虚拟机中）。'],
+  ['The GPU driver publishes no utilization', '显卡驱动没有公布使用率。'],
+  ['the battery does not report a cycle count', '电池没有报告循环次数。'],
+  ['the battery does not report its design and full-charge capacity', '电池没有报告设计容量和满充容量。'],
+  ['IOPSCopyPowerSourcesInfo returned no power-source snapshot', '系统没有返回电源信息（这台 Mac 可能没有电池）。'],
+];
+
+export function metricReason(text: string): string {
+  return METRIC_REASONS.find(([prefix]) => text.startsWith(prefix))?.[1] ?? text;
+}
+
+/** Uninstall routes of the macOS host (adapter ids), in words; Windows adapters keep the host's description. */
+export function adapterText(a: { adapter_id: string; display: string }): string {
+  const cmd = a.display.split(' (')[0];
+  switch (a.adapter_id) {
+    case 'macos.trash-app-bundle':
+      return `移到废纸篓（可在访达中“放回原处”，从不删除）${a.display.includes('installer package') ? '；它随安装包一起安装，安装包的其他组件不会移除' : ''}`;
+    case 'homebrew.uninstall-cask':
+      return `Homebrew：${cmd}（从不使用 --zap）`;
+    case 'homebrew.uninstall-formula':
+      return `Homebrew：${cmd}`;
+    default:
+      return a.display;
+  }
+}
+
+/** How one row of 软件 › 卸载 reads: its badge, whether the Settings button applies, and what to do instead. */
+export interface UninstallRowWords {
+  label: string;
+  tone: 'good' | 'warn' | 'muted';
+  /** Windows: "在设置中卸载" opens Settings › Apps. */
+  settingsButton: boolean;
+  /** Where to remove it instead (macOS routes this page does not take). */
+  guidance: string | null;
+  /** The host's reason, shortened when the guidance already says the rest. */
+  reason: string | null;
+}
+
+/**
+ * macOS `permission_required` (UNI-01): App Store apps and bundles this user cannot move need an administrator, and
+ * this build has no privilege path, so the row says where to remove them instead (Launchpad or Finder). The host
+ * names the code in `refusal_code` when it sends one; otherwise its reason text or the App Store source says so.
+ */
+export function uninstallRowWords(a: { state: string; source: string; reason: string | null; refusal_code?: string | null }, mac = platform() === 'macos'): UninstallRowWords {
+  const st = UNINSTALL_STATE[a.state] ?? { label: a.state, tone: 'muted' as const };
+  if (!mac) return { label: st.label, tone: st.tone, settingsButton: a.state === 'unverified', guidance: null, reason: a.reason };
+  const permission =
+    a.state !== 'available' && a.state !== 'unsupported' && (a.refusal_code === 'permission_required' || a.source === 'app_store' || /administrator (rights|path)/.test(a.reason ?? ''));
+  if (permission) {
+    const why = a.reason?.split(': moving it needs')[0];
+    return {
+      label: '需要管理员',
+      tone: 'warn',
+      settingsButton: false,
+      guidance:
+        a.source === 'app_store'
+          ? '这是 App Store 应用，删除需要管理员权限：在启动台中按住 Option 键并点删除按钮，或在访达中移到废纸篓（访达会要求管理员密码）。'
+          : '移动它需要管理员权限：退出应用后在访达中移到废纸篓（访达会要求管理员密码），或使用开发者提供的卸载程序。',
+      reason: a.source === 'app_store' || !why || why === a.reason ? null : why,
+    };
+  }
+  if (a.state === 'unverified') return { label: '需要手动卸载', tone: 'warn', settingsButton: false, guidance: '退出应用后在访达中移到废纸篓，或用安装它的包管理器卸载。', reason: a.reason };
+  return { label: st.label, tone: st.tone, settingsButton: false, guidance: null, reason: a.reason };
+}

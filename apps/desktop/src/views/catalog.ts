@@ -11,6 +11,7 @@ import { RequestGate } from '../lib/gate';
 import type { Catalog, CatalogItem, CatalogPreview, InstallerLocations, IpcError, Mode, PurgeRoots } from '../lib/types';
 import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOptions, noticeLine, selectionBar, sumSizes, tierBadge, toIpcError } from './kit';
 import { confirmInline, emptyState, errorLine, exactTitle, pageHead, sizeText } from './parts';
+import { notOnThisPlatform } from '../lib/platform';
 
 const SOURCE_LABEL: Record<string, string> = {
   downloads: '下载文件夹',
@@ -257,7 +258,7 @@ export class CatalogPage {
       }),
       this.notice ? noticeLine(this.notice, 'info', () => ((this.notice = null), this.update())) : null,
       unsupported
-        ? emptyState('此平台暂不提供', '这项发现目前只在 Windows 上实现并经过验证。', null)
+        ? emptyState('此平台暂不提供', notOnThisPlatform('这项发现目前只在 Windows 上实现并经过验证。'), null)
         : h(
             'div',
             { class: 'work-layout' },

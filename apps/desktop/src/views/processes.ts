@@ -10,11 +10,12 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import type { AlertSettings, ProcessList, ProcessRow, ProcessSort } from '../lib/suiteTypes';
-import { PROTECTION_WORD, SIGNATURE_WORD, SORT_WORD } from '../lib/suiteWords';
+import { PROTECTION_WORD, SIGNATURE_WORD, SORT_WORD, processNote } from '../lib/suiteWords';
 import { PROCESS_SORTS, loadPrefs, updatePrefs } from '../lib/statusPrefs';
 import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
+import { notOnThisPlatform, words } from '../lib/platform';
 
 const SORTS: readonly ProcessSort[] = PROCESS_SORTS;
 
@@ -143,7 +144,7 @@ export class ProcessesPage {
     const refresh = h('button', { type: 'button', id: 'proc-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在读取…' : '刷新');
     refresh.addEventListener('click', () => void this.load());
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'proc-title', title: '进程' }), emptyState('此平台暂不提供', '进程列表目前只在 Windows 上实现。', null));
+      replace(this.body, pageHead({ id: 'proc-title', title: '进程' }), emptyState('此平台暂不提供', notOnThisPlatform('进程列表目前只在 Windows 上实现。'), null));
       return;
     }
     replace(
@@ -241,7 +242,7 @@ export class ProcessesPage {
             ),
           )
         : h('p', { class: 'muted small' }, '没有符合条件的进程。'),
-      h('p', { class: 'muted small' }, '读不到的值显示为“—”，不会写成 0。磁盘是进程的读写传输速率，可能与任务管理器不同；每个进程的网络速率需要管理员跟踪，本版本不采样。'),
+      h('p', { class: 'muted small' }, words().processesFoot),
     );
   }
 
@@ -284,7 +285,7 @@ export class ProcessesPage {
         h('dt', {}, '处理器 / 内存'),
         h('dd', { class: 'num' }, `${cpu(p.cpu_percent)} / ${p.memory_bytes === null ? '—' : formatBytes(p.memory_bytes)}`),
       ),
-      ...p.notes.map((n) => h('p', { class: 'muted small' }, n)),
+      ...p.notes.map((n) => h('p', { class: 'muted small' }, processNote(n))),
       end
         ? h('div', { class: 'aside-section' }, end, h('p', { class: 'muted small' }, '只生成一份针对这一个进程的计划：执行前按 PID、启动时间和程序文件重新核对，不符就跳过。其中未保存的工作会丢失。'), errorLine(this.endError))
         : h('div', { class: 'aside-section' }, pill('没有结束入口', 'muted'), h('p', { class: 'small' }, PROTECTION_WORD[p.end_capability.protection ?? ''] ?? p.end_capability.reason)),

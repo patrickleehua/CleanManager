@@ -2,6 +2,9 @@
 // it on; the page shows exactly what the tray menu contains (readings and links, no write actions), how it starts
 // and how it is removed. Keep-awake, clean screen, the camera/microphone indicator and battery levels sit below.
 // The page reads privacy and battery state only while it is open.
+// macOS (GUI-12): the tray is a menu-bar status item; start at login is not offered by this unsigned build (the host
+// lists it under `not_here`), keep-awake shows the IOPMAssertion the system lists, the camera is reported without an
+// app name (macOS does not give one), and peripherals without a battery reading are listed as unavailable, never 0%.
 
 import type { App } from '../main';
 import { formatBytes } from '../lib/bytes';
@@ -9,6 +12,7 @@ import { appMark, h, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import type { IpcError } from '../lib/types';
+import { notOnThisPlatform, platform, words } from '../lib/platform';
 import type { Batteries, BatteryAlert, CleanScreenExit, DeviceBattery, PrivacySnapshot, ResidentSettings, ResidentStatus, TraySummary } from '../lib/residentTypes';
 import { noticeLine, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
@@ -58,6 +62,50 @@ export const NOT_HERE: Record<string, [string, string]> = {
   low_latency_network: ['网络低延迟', '需要受限的特权 helper，本版本不安装。'],
   touch_id_sudo: ['Touch ID 管理员认证', '只在 macOS 上提供。'],
 };
+
+/** What the macOS host does not offer here (`*_macos` ids: their reasons differ from the Windows ones). */
+export const NOT_HERE_MACOS: Record<string, [string, string]> = {
+  start_at_login_macos: ['登录时启动', '注册登录项（SMAppService）需要签名并公证的应用包；这一版未签名。CleanManager 也不会改为写入隐藏的 ~/Library/LaunchAgents 作业。'],
+  fan_control_macos: ['风扇控制', '需要通过签名的特权 helper 访问系统管理控制器（SMC），本版本不安装；风扇转速也不读取。'],
+  charge_limit_macos: ['电池充电上限', '需要通过签名的特权 helper 访问系统管理控制器（SMC），本版本不安装；macOS 自带的“优化电池充电”不受影响。'],
+  low_latency_network_macos: ['网络低延迟', '需要签名的特权 helper，本版本不安装。'],
+  touch_id_sudo_macos: ['Touch ID 管理员认证', '这一版没有实现用 Touch ID 认证 sudo；从不修改 /etc/pam.d。'],
+  bluetooth_headphones_macos: ['蓝牙耳机电量', 'AirPods 等耳机的电量不在公开的 I/O Registry 中，这里不显示，也不估计。'],
+};
+
+/** A platform gap in words: the known ids of either platform, else the host's id and reason as sent. */
+export function notHereWords(id: string, reason: string): [string, string] {
+  return NOT_HERE[id] ?? NOT_HERE_MACOS[id] ?? [id, reason];
+}
+
+/** Start at login cannot be turned on here (macOS: the host lists it as not offered). */
+export function loginUnsupported(s: Pick<ResidentStatus, 'not_here'>): boolean {
+  return s.not_here.some((n) => n.id === 'start_at_login_macos');
+}
+
+/** Why a device has no level, in words; anything else is shown as sent. */
+export function unavailableReason(reason: string): string {
+  if (reason.startsWith('the device publishes no BatteryPercent')) return '设备没有公布电量，这里不估计。';
+  if (/^BatteryPercent .* is outside 0–100/.test(reason)) return '设备报告的电量超出 0–100，不显示。';
+  if (reason.startsWith('BatteryPercent is not a number')) return '设备报告的电量不是数字，不显示。';
+  return reason;
+}
+
+const KIND_NOTE: Record<string, string> = { bluetooth: '蓝牙设备', peripheral: '外设' };
+
+/** The battery panel's lists: devices with a level, devices without one (never 0%), and the note under them. */
+export function batteryLists(b: Batteries): { devices: DeviceBattery[]; unavailable: { device_id: string; name: string; note: string; reason: string }[]; note: string | null } {
+  const devices = [...(b.system ? [b.system] : []), ...b.devices];
+  const unavailable = (b.unavailable_devices ?? []).map((d) => ({ device_id: d.device_id, name: d.name, note: KIND_NOTE[d.kind] ?? '', reason: unavailableReason(d.reason) }));
+  const note = b.devices_unavailable
+    ? `设备电量不可读：${b.devices_unavailable}`
+    : b.devices.length || unavailable.length
+      ? null
+      : b.bluetooth_devices === 0
+        ? '没有已连接的蓝牙设备。'
+        : `${b.bluetooth_devices} 个蓝牙设备没有向 ${words().os} 报告电量，这里不做估计。`;
+  return { devices, unavailable, note };
+}
 
 const QUICK_LINKS = ['打开系统状态', '打开进程', '打开清理', '常驻工具设置'];
 const AWAKE_CHOICES: [number | null, string][] = [
@@ -192,15 +240,16 @@ export class ResidentPage {
   private render(): void {
     const s = this.status;
     if (s && !s.supported) {
-      replace(this.body, pageHead({ id: 'resident-title', title: '常驻工具' }), emptyState('此平台暂不提供', '托盘、保持亮屏、清洁屏幕、隐私提示与电量目前只在 Windows 上实现。'));
+      replace(this.body, pageHead({ id: 'resident-title', title: '常驻工具' }), emptyState('此平台暂不提供', notOnThisPlatform('托盘、保持亮屏、清洁屏幕、隐私提示与电量目前只在 Windows 上实现。')));
       return;
     }
+    const tray = words().tray;
     replace(
       this.body,
       pageHead({
         id: 'resident-title',
         title: '常驻工具',
-        meta: [s ? (s.tray.enabled ? '托盘已开启' : '托盘已关闭') : '正在读取…', '只显示读数和打开页面，不执行清理、卸载或维护'],
+        meta: [s ? (s.tray.enabled ? `${tray}已开启` : `${tray}已关闭`) : '正在读取…', '只显示读数和打开页面，不执行清理、卸载或维护'],
       }),
       errorLine(this.error),
       ...this.alerts.map((a, i) =>
@@ -227,10 +276,13 @@ export class ResidentPage {
   private trayPanel(s: ResidentStatus): HTMLElement {
     const set = s.settings;
     const busy = this.busy === 'save';
-    const tray = this.switchRow('res-tray', set.tray, busy, '在通知区域显示 CleanManager', `默认关闭。开启后每 ${s.tray.interval_seconds} 秒采样一次处理器、内存和系统盘可用空间；关闭即停止采样、移除图标和登录启动项。`, (v) =>
-      void this.save(v ? { ...set, tray: true } : { ...set, tray: false, start_at_login: false }, v ? '托盘已开启' : '托盘已关闭：已停止采样并移除图标与登录启动项'),
+    const w = words();
+    // macOS: start at login is not offered by this build; the switch stays visible, off and disabled, with the reason.
+    const noLogin = loginUnsupported(s);
+    const tray = this.switchRow('res-tray', set.tray, busy, w.trayShow, w.trayShowNote(s.tray.interval_seconds), (v) =>
+      void this.save(v ? { ...set, tray: true } : { ...set, tray: false, start_at_login: false }, v ? `${w.tray}已开启` : w.trayOffSaid),
     );
-    const login = this.switchRow('res-login', set.start_at_login, busy || !set.tray, '登录 Windows 时只启动托盘', set.tray ? '在当前用户的启动项中写入 CleanManager.Resident，关闭这个开关或托盘时删除。' : '需要先开启托盘。', (v) =>
+    const login = this.switchRow('res-login', set.start_at_login && !noLogin, busy || !set.tray || noLogin, w.loginSwitch, noLogin ? w.loginNote : set.tray ? w.loginNote : `需要先开启${w.tray}。`, (v) =>
       void this.save({ ...set, start_at_login: v }, v ? '已添加登录启动项' : '已删除登录启动项'),
     );
     const t = s.tray;
@@ -240,7 +292,7 @@ export class ResidentPage {
       h(
         'div',
         { class: 'tray-main' },
-        h('h2', { id: 'tray-title' }, '托盘'),
+        h('h2', { id: 'tray-title' }, w.tray),
         h('div', { class: 'switches' }, tray, login),
         errorLine(this.saveError),
         h(
@@ -249,13 +301,15 @@ export class ResidentPage {
           h('dt', {}, '状态'),
           h('dd', {}, t.enabled ? pill(t.sampling ? '已开启，正在采样' : '已开启', 'good') : pill('已关闭，不采样', 'muted')),
           h('dt', {}, '启动方式'),
-          h('dd', {}, t.startup === 'at_login' ? '登录时启动（只显示托盘）' : '打开 CleanManager 时'),
-          h('dt', {}, '登录启动项'),
-          h('dd', {}, h('span', { class: 'path reg-path' }, ...breakable(t.startup_location)), h('small', {}, t.startup_command ? `已创建：${t.startup_command}` : '未创建')),
+          h('dd', {}, t.startup === 'at_login' ? `登录时启动（只显示${w.tray}）` : '打开 CleanManager 时'),
+          h('dt', {}, noLogin ? '登录项' : '登录启动项'),
+          noLogin
+            ? h('dd', {}, '不可用：这一版未签名，无法注册登录项', h('small', {}, '没有创建任何启动项'))
+            : h('dd', {}, h('span', { class: 'path reg-path' }, ...breakable(t.startup_location)), h('small', {}, t.startup_command ? `已创建：${t.startup_command}` : '未创建')),
           h('dt', {}, '版本'),
           h('dd', { class: 'num' }, t.version),
           h('dt', {}, '移除'),
-          h('dd', {}, '关闭托盘即移除图标与登录启动项。卸载 CleanManager（self uninstall）时也会列出并删除这个启动项。'),
+          h('dd', {}, w.trayRemoval),
         ),
       ),
       this.trayPreview(s),
@@ -267,6 +321,9 @@ export class ResidentPage {
     const on = s.tray.enabled;
     const lines = trayLines(on ? s.seen.summary : null);
     const sampled = on && s.seen.summary ? formatTime(s.seen.summary.sampled_at) : null;
+    const menu = words().trayMenu;
+    // The menu bar has no overflow chevron; the notification area does.
+    const mac = platform() === 'macos';
     return h(
       'figure',
       { class: 'tray-preview', 'data-on': on ? 'yes' : 'no', 'aria-labelledby': 'tray-preview-cap' },
@@ -278,8 +335,8 @@ export class ResidentPage {
         h('ul', { class: 'tp-links' }, ...QUICK_LINKS.map((l) => h('li', {}, l))),
         h('ul', { class: 'tp-links' }, h('li', {}, '关闭常驻组件'), h('li', {}, '退出 CleanManager')),
       ),
-      h('div', { class: 'tp-bar', 'aria-hidden': 'true' }, h('span', { class: 'tp-chevron' }), h('span', { class: 'tp-icon' }, appMark(16)), h('span', { class: 'tp-clock num' }, sampled ? sampled.slice(-5) : '')),
-      h('figcaption', { id: 'tray-preview-cap', class: 'muted small' }, on ? `托盘菜单的全部内容：读数和打开页面，没有清理入口。${sampled ? `读数采样于 ${sampled}。` : ''}` : '开启后，托盘菜单只会显示这些内容：读数和打开页面，没有清理入口。'),
+      h('div', { class: 'tp-bar', 'aria-hidden': 'true' }, mac ? null : h('span', { class: 'tp-chevron' }), h('span', { class: 'tp-icon' }, appMark(16)), h('span', { class: 'tp-clock num' }, sampled ? sampled.slice(-5) : '')),
+      h('figcaption', { id: 'tray-preview-cap', class: 'muted small' }, on ? `${menu}的全部内容：读数和打开页面，没有清理入口。${sampled ? `读数采样于 ${sampled}。` : ''}` : `开启后，${menu}只会显示这些内容：读数和打开页面，没有清理入口。`),
     );
   }
 
@@ -311,9 +368,11 @@ export class ResidentPage {
       k.active
         ? h('p', { class: 'res-live', role: 'status' }, h('b', { class: 'num' }, remainingText(k.remaining_seconds)))
         : h('div', { class: 'res-row' }, h('span', { class: 'res-label' }, '时长'), this.seg('awake-len', '保持亮屏的时长', AWAKE_CHOICES, this.awakeChoice, busy, (v) => (this.awakeChoice = v))),
+      // macOS names the request it holds; `pmset -g assertions` lists the same one.
+      k.active && k.assertion ? h('p', { class: 'small muted res-assertion' }, '系统记录的请求：', h('code', { class: 'selectable' }, k.assertion), h('small', { class: 'block' }, '在终端运行 pmset -g assertions 可以看到同一条。')) : null,
       h('div', { class: 'res-actions' }, go),
       errorLine(this.awakeError),
-      h('p', { class: 'muted small res-foot' }, '向系统提出临时请求（与播放视频时相同），不修改电源计划、息屏或睡眠设置。到时、点“结束”或退出 CleanManager 时自动撤销。'),
+      h('p', { class: 'muted small res-foot' }, words().awakeFoot),
     );
   }
 
@@ -322,18 +381,21 @@ export class ResidentPage {
     const go = h('button', { type: 'button', class: 'primary', id: 'clean-go', disabled: running || this.busy !== null }, running ? '清洁屏幕进行中…' : '开始清洁屏幕');
     go.addEventListener('click', () => void this.cleanScreen());
     const hold = Math.round(s.clean_screen.esc_hold_ms / 1000);
+    const w = words();
+    const keys = w.secureKeys.flatMap((k, i) => (i === 0 ? [h('kbd', {}, k)] : [w.secureJoin, h('kbd', {}, k)]));
     return h(
       'section',
       { class: 'panel res-card', 'aria-labelledby': 'clean-title' },
       h('h2', { id: 'clean-title' }, '清洁屏幕'),
       h('p', { class: 'small' }, '所有显示器变黑，键盘按键和鼠标点击暂停，方便擦拭屏幕和键盘。'),
+      w.cleanScreenLimit ? h('p', { class: 'muted small' }, w.cleanScreenLimit) : null,
       h('div', { class: 'res-row' }, h('span', { class: 'res-label' }, '自动退出'), this.seg('clean-len', '多久后自动退出', CLEAN_CHOICES, this.cleanChoice, running, (v) => (this.cleanChoice = v))),
       h(
         'ul',
         { class: 'res-exits' },
         h('li', {}, '按住 ', h('kbd', {}, 'Esc'), ` ${hold} 秒退出`),
         h('li', {}, '到时自动退出并恢复输入'),
-        h('li', {}, h('kbd', {}, 'Ctrl'), '+', h('kbd', {}, 'Alt'), '+', h('kbd', {}, 'Del'), ' 始终可用'),
+        h('li', {}, ...keys, w.secureNote),
       ),
       h('div', { class: 'res-actions' }, go),
       errorLine(this.cleanError),
@@ -351,7 +413,7 @@ export class ResidentPage {
       !p
         ? h('p', { class: 'muted small', role: 'status' }, '正在读取…')
         : !p.supported
-          ? h('p', { class: 'small' }, `无法读取系统的使用记录：${p.unavailable_reason ?? '原因未知'}`)
+          ? h('p', { class: 'small' }, `${words().privacyUnreadable}${p.unavailable_reason ?? '原因未知'}`)
           : p.in_use.length
             ? h(
                 'ul',
@@ -359,7 +421,7 @@ export class ResidentPage {
                 ...p.in_use.map((a) => h('li', {}, h('span', { class: 'res-app-name' }, a.name), h('span', { class: 'res-app-caps' }, ...a.capabilities.map((c) => pill(`正在使用${CAP[c] ?? c}`, 'warn'))))),
               )
             : h('p', { class: 'res-quiet', 'aria-live': 'polite' }, '现在没有应用在使用摄像头或麦克风。'),
-      h('p', { class: 'muted small res-foot' }, `本页打开时每 ${POLL_MS / 1000} 秒读取一次 Windows 的使用记录；托盘开启时随托盘读取。只在本机显示，不保存、不上传。`),
+      h('p', { class: 'muted small res-foot' }, words().privacyFoot(POLL_MS / 1000)),
     );
   }
 
@@ -367,7 +429,7 @@ export class ResidentPage {
     const bar = h('span', { class: 'res-meter' }, h('span', { class: 'res-meter-fill' }));
     (bar.firstChild as HTMLElement).style.width = `${Math.max(0, Math.min(100, d.percent))}%`;
     const low = threshold !== null && d.percent < threshold && d.charging !== true;
-    const note = d.charging === true ? '正在充电或使用电源' : d.charging === false ? '使用电池' : d.kind === 'bluetooth' ? '蓝牙设备' : '';
+    const note = d.charging === true ? '正在充电或使用电源' : d.charging === false ? '使用电池' : (KIND_NOTE[d.kind] ?? '');
     return h('li', { 'data-low': low ? 'yes' : 'no' }, h('span', { class: 'res-batt-name' }, d.name, note ? h('small', { class: 'muted' }, note) : null), bar, h('b', { class: 'num res-batt-pct' }, `${d.percent}%`));
   }
 
@@ -375,7 +437,8 @@ export class ResidentPage {
     const b = this.batteries;
     const set = s.settings;
     const threshold = set.battery_alerts && set.tray ? set.battery_threshold : null;
-    const alerts = this.switchRow('res-batt-alerts', set.battery_alerts && set.tray, this.busy === 'save' || !set.tray, '低电量提醒', set.tray ? `低于阈值时提醒一次，回升 5 个百分点后重新计算；由托盘每 ${s.tray.interval_seconds} 秒检查。` : '需要先开启托盘：关闭托盘时不在后台检查电量。', (v) =>
+    const tray = words().tray;
+    const alerts = this.switchRow('res-batt-alerts', set.battery_alerts && set.tray, this.busy === 'save' || !set.tray, '低电量提醒', set.tray ? `低于阈值时提醒一次，回升 5 个百分点后重新计算；由${tray}每 ${s.tray.interval_seconds} 秒检查。` : `需要先开启${tray}：关闭${tray}时不在后台检查电量。`, (v) =>
       void this.save({ ...set, battery_alerts: v }, v ? '已开启低电量提醒' : '已关闭低电量提醒'),
     );
     const input = h('input', { type: 'number', id: 'res-threshold', min: '5', max: '50', step: '1', value: String(this.threshold ?? set.battery_threshold), class: 'num-input', disabled: !set.battery_alerts || !set.tray || this.busy === 'save' }) as HTMLInputElement;
@@ -389,24 +452,33 @@ export class ResidentPage {
       this.threshold = v;
       void this.save({ ...set, battery_threshold: v }, `提醒阈值已设为 ${v}%`).then(() => (this.threshold = null));
     });
-    const devices = b ? [...(b.system ? [b.system] : []), ...b.devices] : [];
-    const btNote = !b
-      ? null
-      : b.devices_unavailable
-        ? `设备电量不可读：${b.devices_unavailable}`
-        : b.devices.length
-          ? null
-          : b.bluetooth_devices === 0
-            ? '没有已连接的蓝牙设备。'
-            : `${b.bluetooth_devices} 个蓝牙设备没有向 Windows 报告电量，这里不做估计。`;
+    const lists = b ? batteryLists(b) : null;
+    const devices = lists?.devices ?? [];
+    const btNote = lists?.note ?? null;
     return h(
       'section',
       { class: 'panel res-card', 'aria-labelledby': 'battery-title' },
       h('h2', { id: 'battery-title' }, '电量'),
-      !b ? h('p', { class: 'muted small', role: 'status' }, '正在读取…') : devices.length ? h('ul', { class: 'res-batt' }, ...devices.map((d) => this.batteryRow(d, threshold))) : h('p', { class: 'small' }, '这台电脑没有系统电池。'),
+      !b ? h('p', { class: 'muted small', role: 'status' }, '正在读取…') : devices.length ? h('ul', { class: 'res-batt' }, ...devices.map((d) => this.batteryRow(d, threshold))) : h('p', { class: 'small' }, words().noSystemBattery),
+      // Devices without a reading: named, with the reason, and no meter or number (never 0%).
+      lists?.unavailable.length
+        ? h(
+            'ul',
+            { class: 'res-batt res-batt-unavailable', 'aria-label': '没有电量读数的设备' },
+            ...lists.unavailable.map((d) =>
+              h(
+                'li',
+                { 'data-low': 'no', 'data-available': 'no' },
+                h('span', { class: 'res-batt-name' }, d.name, h('small', { class: 'muted' }, [d.note, d.reason].filter(Boolean).join(' · '))),
+                h('span', { class: 'res-meter', 'aria-hidden': 'true' }),
+                h('b', { class: 'res-batt-pct muted' }, '不可用'),
+              ),
+            ),
+          )
+        : null,
       btNote ? h('p', { class: 'small res-bt-note' }, btNote) : null,
       h('div', { class: 'res-alerts' }, alerts, h('label', { class: 'num-field', for: 'res-threshold' }, h('span', {}, '提醒阈值'), h('span', { class: 'num-wrap' }, input, h('span', { class: 'muted small' }, '%')))),
-      h('p', { class: 'muted small res-foot' }, '蓝牙设备电量来自 Windows 蓝牙协议栈为设备记录的电量值（与“设置 › 蓝牙和其他设备”相同）；没有记录的设备不显示数字。'),
+      h('p', { class: 'muted small res-foot' }, words().batteryFoot),
     );
   }
 
@@ -419,7 +491,7 @@ export class ResidentPage {
         'ul',
         { class: 'res-nothere-list' },
         ...s.not_here.map((n) => {
-          const [label, why] = NOT_HERE[n.id] ?? [n.id, n.reason];
+          const [label, why] = notHereWords(n.id, n.reason);
           return h('li', {}, h('span', { class: 'res-nh-name' }, label, pill('此平台不适用', 'muted')), h('span', { class: 'muted small' }, why));
         }),
       ),

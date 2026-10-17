@@ -306,7 +306,7 @@ fn kind(st: &libc::stat) -> libc::mode_t {
     st.st_mode & libc::S_IFMT
 }
 
-fn protected_flags(flags: u32) -> Option<&'static str> {
+pub(crate) fn protected_flags(flags: u32) -> Option<&'static str> {
     if flags & SF_RESTRICTED != 0 {
         Some("protected by System Integrity Protection (restricted)")
     } else if flags & (libc::UF_IMMUTABLE | libc::SF_IMMUTABLE) != 0 {
@@ -345,6 +345,12 @@ pub(crate) fn namespace_gate(st: &libc::stat, mount_flags: u32, euid: u32, acl_o
         Ok(true) => Err("an access control entry lets another principal change a directory".into()),
         Err(e) => Err(e),
     }
+}
+
+/// Whether an ACL entry on `fd` lets another principal add, remove or rename entries (for gates applied outside
+/// [`verify`], such as the app-bundle uninstall).
+pub(crate) fn acl_grants_change(fd: &Fd) -> Result<bool, String> {
+    acl::grants_change(fd)
 }
 
 /// Planned directory checks: identity, kind, cloud state and the namespace gate.

@@ -4,6 +4,7 @@
 
 import type { ActivityTab, Page } from './store';
 import type { GateRow } from './types';
+import { onPlatform, words } from './platform';
 
 export type ToolId = 'clean' | 'software' | 'optimize' | 'analyze' | 'status';
 export type ExtId = 'plans' | 'activity' | 'recovery' | 'agent' | 'diag' | 'settings';
@@ -113,6 +114,15 @@ export const EXTENSIONS: Extension[] = [
   { id: 'diag', label: 'AI 诊断', icon: 'diag', key: '0', page: 'diag' },
   { id: 'settings', label: '设置', icon: 'settings', key: ',', page: 'settings' },
 ];
+
+// GUI-12: the bin keeps its place and its page; only its name follows the platform (回收站 / 废纸篓).
+onPlatform(() => {
+  const bin = words().bin;
+  const clean = TOOLS.find((t) => t.id === 'clean')!;
+  clean.blurb = `缓存、构建产物、安装包与${bin}`;
+  clean.sections.find((s) => s.page === 'recyclebin')!.label = bin;
+  TOOLS.find((t) => t.id === 'analyze')!.blurb = `磁盘占用、空间洞察与手选${bin}`;
+});
 
 /** Where a page sits in the navigation: its tool, or an extension entry. */
 export type NavPlace = { tool: ToolId } | { ext: ExtId } | null;

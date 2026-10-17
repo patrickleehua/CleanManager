@@ -28,6 +28,7 @@ import {
 } from '../lib/diagWords';
 import { emptyState, errorText, pageHead, pill } from './parts';
 import { openPreview } from './diagPreview';
+import { words } from '../lib/platform';
 
 const ORIGIN_LABEL: Record<string, string> = { cleanup: '清理', disk: '磁盘', apps: '应用' };
 const CLAIM_TONE: Record<string, 'good' | 'warn' | 'bad' | 'busy' | 'muted'> = {
@@ -530,7 +531,7 @@ export class DiagPage {
           const mode =
             x.action === 'review_plan' && x.available
               ? (() => {
-                  const sel = h('select', { id: 'next-mode', 'aria-label': '计划的处理方式' }, h('option', { value: 'trash' }, '移入回收站'), h('option', { value: 'quarantine' }, '移入隔离区')) as HTMLSelectElement;
+                  const sel = h('select', { id: 'next-mode', 'aria-label': '计划的处理方式' }, h('option', { value: 'trash' }, `移入${words().bin}`), h('option', { value: 'quarantine' }, '移入隔离区')) as HTMLSelectElement;
                   sel.value = this.planMode;
                   sel.addEventListener('change', () => (this.planMode = sel.value as 'trash' | 'quarantine'));
                   return sel;

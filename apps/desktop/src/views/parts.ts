@@ -4,6 +4,8 @@
 import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
 import { h, icon } from '../lib/dom';
 import { ERROR_HINT } from '../lib/format';
+import { shortcutLabel } from '../lib/nav';
+import { words } from '../lib/platform';
 import type { Counts, Group, IpcError, ItemStatus } from '../lib/types';
 import { GROUP_LABEL, ITEM_STATUS_LABEL, progressSegments } from '../lib/words';
 
@@ -121,7 +123,7 @@ export function copyField(label: string, text: string): HTMLElement {
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
-      done.textContent = '已选中，可按 Ctrl+C 复制';
+      done.textContent = `已选中，可按 ${shortcutLabel('C', words().mod)} 复制`;
     }
     window.setTimeout(() => (done.textContent = ''), 2200);
   });

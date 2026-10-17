@@ -31,7 +31,9 @@ pub fn capability_of(command: &str, catalog: Option<&str>) -> Option<&'static st
         "startup_list" | "startup_plan" => "startup.toggle",
         "status_snapshot" | "alerts_settings" | "alerts_save" => "status.metrics",
         "process_list" | "process_pin" | "process_end_plan" => "process.end",
-        "maintenance_catalog" | "maintenance_search" | "maintenance_plan" | "maintenance_history" | "maintenance_diagnose" => "maintenance.run",
+        "maintenance_catalog" | "maintenance_search" | "maintenance_plan" | "maintenance_history" | "maintenance_diagnose" | "maintenance_restore_plan" => {
+            "maintenance.run"
+        }
         c if c.starts_with("uninstall_") => "apps.uninstall",
         "updates_list" | "updates_set_checks" | "updates_plan" => "apps.updates",
         c if c.starts_with("diag_") => "diag.ai",

@@ -174,6 +174,8 @@ XPC 协议采用固定消息类型、最大条目数与数据量、nonce、deadl
 | pkg/系统扩展/驱动/VPN | 首版识别与说明来源，指向供应商流程 | 不根据 receipt 删除 `/Library` 文件；不绕过系统扩展卸载约束 |
 | 应用容器/App Group | 只读显示已证实归属与共享关系 | 孤立目录名不是已卸载残留的证明；共享容器默认保护 |
 
+**实现状态（卸载，2026-10-17）：**普通 `.app` 退出后移入废纸篓、Homebrew cask/formula 的固定参数 `brew uninstall`（不用 zap）与 `~/Library` 残留的第二段计划已实现，只在托管 runner 上用夹具验证；App Store 与当前用户不能修改的应用包没有提权路径，返回 `permission_required`；`Containers` 只报告、`Group Containers` 共享保留。npm 全局 AI 命令行工具经受信任的 Node.js 执行 `npm uninstall --global`，会话与设置从不预选；孤立残留只按 bundle ID 证据列出（目录名本身不是证明：候选一律不预选、须闲置 30 天、逐个点名后才进入单独审阅的废纸篓计划）。细节见 [应用卸载](../app-uninstall.md) 的“macOS”。
+
 **官方行为：**Apple 建议优先使用应用自身卸载方式；Homebrew 的 uninstall、cleanup 和 cask zap 有不同作用范围，zap 可能删除共享资源。[Apple 卸载指引](https://support.apple.com/en-us/102610)、[Homebrew 手册](https://docs.brew.sh/Manpage)、[Cask Cookbook](https://docs.brew.sh/Cask-Cookbook)
 
 **启动/后台项（拟议）：**

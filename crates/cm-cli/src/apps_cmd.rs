@@ -23,8 +23,12 @@ pub fn apps_list(req: &str, p: &Parsed) -> ExitCode {
     cm_platform::windows::uninstall::apply_uninstall_capability(&cm_platform::windows::uninstall::UninstallEnv::real(), &mut apps);
     // macOS: read-only bundle inventory; `CM_UNINSTALL_TEST_ROOT` + `CM_UNINSTALL_TEST_HOME` redirect it for tests.
     #[cfg(target_os = "macos")]
-    let (mut apps, _issues) = match cm_platform::macos::apps::AppsEnv::from_process() {
-        Ok(env) => cm_platform::macos::apps::inventory(&env),
+    let (mut apps, _issues) = match cm_platform::macos::uninstall::UninstallEnv::from_process() {
+        Ok(env) => {
+            let (mut apps, issues) = cm_platform::macos::apps::inventory(&env.apps);
+            cm_platform::macos::uninstall::apply_uninstall_capability(&env, &mut apps);
+            (apps, issues)
+        }
         Err(e) => return fail(req, ErrorCode::InvalidArgument, &e, p.format),
     };
     apps.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));

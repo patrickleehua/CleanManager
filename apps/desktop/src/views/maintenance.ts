@@ -3,7 +3,8 @@
 // administrator and a read-only applicability probe. Nothing is preselected. A search for something
 // that is not offered (a registry optimizer, a "speed-up") finds no task, only the reason. A run is
 // a maintenance plan reviewed like every other; administrator tasks ask Windows once (UAC) when
-// the run starts, never silently, and declining skips only those tasks. Every run is recorded
+// the run starts, never silently, and declining skips only those tasks (macOS: this build has no
+// privilege path, so they are skipped `elevation_unavailable` and the page says so up front). Every run is recorded
 // with six outcomes per task; there is no undo. The diagnosis only reads.
 
 import type { App } from '../main';
@@ -11,7 +12,7 @@ import { formatBytes, groupDigits } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
-import { words } from '../lib/platform';
+import { notOnThisPlatform, words } from '../lib/platform';
 import type { MaintenanceCatalog, MaintenanceDiagnosis, MaintenanceHistory, MaintenanceReport, MaintenanceSearch, MaintenanceTask, Prohibited } from '../lib/suiteTypes';
 import { APPLICABILITY, ELEVATION_WORD, FINDING_WORD, PROHIBITED_WORDS, TASK_CODE_WORD, TASK_WORDS } from '../lib/suiteWords';
 import type { IpcError } from '../lib/types';
@@ -145,7 +146,7 @@ export class MaintenancePage {
     const refresh = h('button', { type: 'button', id: 'maint-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在探测…' : '重新探测');
     refresh.addEventListener('click', () => void this.load());
     if (c && !c.supported) {
-      replace(this.body, pageHead({ id: 'maint-title', title: '维护任务' }), emptyState('此平台暂不提供', '这一版的维护任务目录只包含 Windows 任务。', null));
+      replace(this.body, pageHead({ id: 'maint-title', title: '维护任务' }), emptyState('此平台暂不提供', notOnThisPlatform('这一版的维护任务目录只包含 Windows 任务。'), null));
       return;
     }
     replace(
@@ -153,7 +154,7 @@ export class MaintenancePage {
       pageHead({
         id: 'maint-title',
         title: '维护任务',
-        meta: c ? [`${groupDigits(c.items.length)} 项任务`, c.is_admin ? `以${words().admin}运行` : '需要管理员的任务会在执行时请求一次授权', '执行前只读探测'] : ['执行前只读探测'],
+        meta: c ? [`${groupDigits(c.items.length)} 项任务`, c.is_admin ? `以${words().admin}运行` : words().maintAdminMeta, '执行前只读探测'] : ['执行前只读探测'],
         actions: [refresh],
       }),
       errorLine(this.error),
@@ -167,7 +168,7 @@ export class MaintenancePage {
   }
 
   private searchPanel(c: MaintenanceCatalog): HTMLElement {
-    const input = h('input', { type: 'search', id: 'maint-search', placeholder: '想做什么？例如：DNS、图标、注册表优化', 'aria-label': '搜索维护任务', 'aria-describedby': 'maint-search-help', value: this.query }) as HTMLInputElement;
+    const input = h('input', { type: 'search', id: 'maint-search', placeholder: words().maintSearchExample, 'aria-label': '搜索维护任务', 'aria-describedby': 'maint-search-help', value: this.query }) as HTMLInputElement;
     input.addEventListener('input', () => this.onSearch(input.value));
     const s = this.search;
     const hits = s ? c.items.filter((t) => s.task_ids.includes(t.task_id)) : [];
@@ -223,7 +224,7 @@ export class MaintenancePage {
           h('label', { for: `${id}-check`, class: 'obj-name' }, taskTitle(t.task_id, t.title)),
           h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '解决：'), w?.problem ?? t.problem),
           h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '影响：'), w?.impact ?? t.impact),
-          h('span', { class: 'obj-path' }, `${t.task_id}@${t.task_version} · 约 ${t.estimated_seconds} 秒 · 不可撤销`),
+          h('span', { class: 'obj-path' }, `${t.task_id}@${t.task_version} · 约 ${t.estimated_seconds} 秒 · ${t.reversible ? '可还原原来的设置' : '不可撤销'}`),
         ),
         h(
           'td',
@@ -323,7 +324,7 @@ export class MaintenancePage {
         ? h('ul', { class: 'draft-list' }, ...chosen.map((t) => h('li', {}, h('span', {}, taskTitle(t.task_id, t.title)), t.requires_admin ? h('span', { class: 'row-tag' }, '管理员') : null)))
         : h('p', { class: 'muted small' }, '勾选要运行的任务。生成计划只记录这份清单，不运行任何东西。'),
       admin && !c.is_admin
-        ? noticeLine(`其中 ${admin} 项需要管理员：执行开始前 Windows 会询问一次，只授权这份计划中的这些任务。拒绝只跳过这些任务，其余照常运行。CleanManager 不会在后台静默提权。`, 'warn')
+        ? noticeLine(words().maintAdminDraft(admin), 'warn')
         : null,
       errorLine(this.createError),
       create,
@@ -396,7 +397,7 @@ export class DiagnosisPage {
       pageHead({ id: 'mdiag-title', title: '性能诊断', meta: [d?.sampled_at ? `采样于 ${formatTime(d.sampled_at)}` : '还没有诊断', '只读：不结束进程，不改任何设置'], actions: [go] }),
       this.progress.el,
       errorLine(this.error),
-      d && !d.supported ? emptyState('此平台暂不提供', '性能诊断目前只在 Windows 上实现。', null) : null,
+      d && !d.supported ? emptyState('此平台暂不提供', notOnThisPlatform('性能诊断目前只在 Windows 上实现。'), null) : null,
       d && d.supported
         ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.findings(d), this.top(d)), this.aside(d))
         : !d && !this.running

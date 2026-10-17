@@ -133,6 +133,7 @@ fn named(id: &str, name: &str) -> UninstallRecord {
         instance_id: id.into(), name: name.into(), version: None, publisher: Some("Contoso".into()), source: RecordSource::RegistryUninstall, key: None,
         key_name: Some(name.into()), product_code: None, package_full_name: None, package_family: None, uninstall_string: Some(format!(r#""C:\{name}\u.exe""#)),
         quiet_uninstall_string: None, install_location: Some(format!(r"C:\{name}")), system_component: false, winget: None, package_name: None, ai_tool: None, protected_class: None,
+        mac: None,
     }
 }
 

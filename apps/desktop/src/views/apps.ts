@@ -10,6 +10,7 @@ import { formatBytes, groupDigits } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import type { AppItem, AppsList, IpcError } from '../lib/types';
 import { emptyState, errorLine, exactTitle, metaRow, pageHead, pill } from './parts';
+import { words } from '../lib/platform';
 
 const SOURCE_LABEL: Record<AppItem['source'], string> = {
   registry_uninstall: '安装程序登记',
@@ -195,7 +196,7 @@ export class AppsPage {
         a.shared_with.length ? h('dt', {}, '共享') : null,
         a.shared_with.length ? h('dd', {}, `与 ${a.shared_with.join('、')} 使用相同或嵌套的位置，空间不归属单个应用。`) : null,
         h('dt', {}, '卸载'),
-        h('dd', {}, '此版本不提供。请使用 Windows 设置或厂商的卸载程序。'),
+        h('dd', {}, words().appsUninstallNote),
       ),
       h('h3', {}, '身份依据'),
       h('ul', { class: 'evidence' }, ...a.evidence.map((e) => h('li', { class: 'path' }, e))),

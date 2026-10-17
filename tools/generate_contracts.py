@@ -318,6 +318,8 @@ def main():
         "apps.uninstall.list": obj({}), "apps.uninstall.leftovers": obj({"operation_id": STR}),
         "apps.uninstall.leftovers_plan": obj({"operation_id": STR, "object_ids": {**arr(STR), "uniqueItems": True}}),
         "apps.uninstall.orphans": obj({}), "apps.uninstall.restore_plan": obj({"operation_id": STR}),
+        # UNI-08 on macOS: the orphaned leftovers a person named, in their own reviewed Trash plan (never preselected).
+        "apps.uninstall.orphans_plan": obj({"object_ids": {**arr(STR, 1), "uniqueItems": True}}),
         "apps.updates.check": obj({"app_instance_ids": arr(STR)}), "apps.updates.plan": obj({"app_instance_ids": arr(STR, 1)}),
         # Parity 10.3 (UPD-04), 12.3/12.4 (STS-04/05), 7.3 (DIN-03/04).
         "apps.updates.config": obj({"checks_enabled": nullable({"type": "boolean"})}),

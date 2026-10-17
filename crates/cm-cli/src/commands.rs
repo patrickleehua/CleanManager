@@ -73,6 +73,7 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["apps", "uninstall", "leftovers"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::leftovers(req, &p)),
         ["apps", "uninstall", "leftovers", "plan", "create"] => p.allow(&["store", "operation", "items", "exclude"], &[]).map(|_| crate::uninstall_cmd::leftovers_plan(req, &p)),
         ["apps", "uninstall", "orphans"] => p.allow(&[], &[]).map(|_| crate::uninstall_cmd::orphans(req, &p)),
+        ["apps", "uninstall", "orphans", "plan", "create"] => p.allow(&["store", "items"], &[]).map(|_| crate::uninstall_cmd::orphans_plan(req, &p)),
         ["apps", "uninstall", "restore"] => p.allow(&["store", "operation"], &[]).map(|_| crate::uninstall_cmd::restore(req, &p)),
         ["startup", "list"] => p.allow(&[], &[]).map(|_| crate::startup_cmd::startup_list(req, &p)),
         ["startup", op @ ("disable" | "enable" | "remove-stale"), id] => p.allow(&["store"], &[]).map(|_| crate::startup_cmd::startup_plan(req, &p, op, id)),

@@ -30,6 +30,7 @@ type SoftwareBackend = Pick<
   | 'uninstallLeftovers'
   | 'uninstallLeftoversPlan'
   | 'uninstallRestorePlan'
+  | 'maintenanceRestorePlan'
   | 'updatesList'
   | 'updatesSetChecks'
   | 'updatesPlan'
@@ -566,6 +567,10 @@ export function mockSoftware(makePlan: MakePlan, seed: Seed): SoftwareBackend {
     async uninstallRestorePlan() {
       await delay(200);
       throw err('invalid_argument', 'invalid_argument', 'the operation recorded no registry backup that can still be restored');
+    },
+    async maintenanceRestorePlan() {
+      await delay(200);
+      throw err('invalid_argument', 'invalid_argument', 'the operation recorded no setting change that can still be restored');
     },
 
     async updatesList(check) {

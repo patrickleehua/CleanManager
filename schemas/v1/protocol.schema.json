@@ -5087,6 +5087,24 @@
       ],
       "additionalProperties": false
     },
+    "params_apps_uninstall_orphans_plan": {
+      "type": "object",
+      "properties": {
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "object_ids"
+      ],
+      "additionalProperties": false
+    },
     "params_apps_updates_check": {
       "type": "object",
       "properties": {
@@ -5664,6 +5682,7 @@
             "apps.uninstall.leftovers_plan",
             "apps.uninstall.orphans",
             "apps.uninstall.restore_plan",
+            "apps.uninstall.orphans_plan",
             "apps.updates.check",
             "apps.updates.plan",
             "apps.updates.config",
@@ -6055,6 +6074,22 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/params_apps_uninstall_restore_plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "apps.uninstall.orphans_plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_apps_uninstall_orphans_plan"
               }
             }
           }

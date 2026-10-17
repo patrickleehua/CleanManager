@@ -96,7 +96,7 @@ pub fn brew_trusted(exe: &Path) -> Result<PathBuf, String> {
     super::cmd::trusted_user_program(exe, unsafe { libc::geteuid() }).map_err(|e| e.to_string())
 }
 
-fn brew_tool(exe: &Path, env: &AppsEnv, argv: &[String], timeout: Duration) -> Tool {
+pub(crate) fn brew_tool(exe: &Path, env: &AppsEnv, argv: &[String], timeout: Duration) -> Tool {
     let mut t = Tool::new(exe)
         .args(argv)
         .owned_by_user_or_root()

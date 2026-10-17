@@ -336,4 +336,6 @@ onPlatform(() => {
   };
   MODE_EXPLAIN.delete = { ...MODE_EXPLAIN.delete, recovery: `无法撤销，没有${w.bin}或隔离副本。` };
   AVAILABILITY_LABEL.system_recycle_bin = `在系统${w.bin}中还原`;
+  PLAN_KIND_LABEL.manual_trash = `手选${w.bin}计划`;
+  PLAN_KIND_LABEL.manual_purge = `永久删除${w.bin}项目计划`;
 });

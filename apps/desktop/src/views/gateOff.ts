@@ -33,7 +33,7 @@ export function titleOf(page: Page): string {
 
 /** What an off section says it does (empty for a page that is not gated). */
 export function offDoes(page: Page): string[] {
-  return DOES[page]?.() ?? [];
+  return words().offDoes[page] ?? DOES[page]?.() ?? [];
 }
 
 /** Bring 设置 › 实验功能 into view with focus on its switch. */

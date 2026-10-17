@@ -4,6 +4,8 @@
 // revisions only, size-desc with unknown last and entry_id tie-break, bounded pages.
 
 import { mockResident } from './mockResident';
+import { mockMac } from './mockMac';
+import { previewPlatform } from './platform';
 import type { Backend } from './api';
 import { mockDiag } from './mockDiag';
 import { mockOps } from './mockOps';
@@ -293,7 +295,11 @@ export function mockBackend(): Backend {
     return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
   });
   const soft = mockSoftware(ops.__plan, ops.__seed);
-  const resident = mockResident();
+  // `?platform=macos` (or a Mac browser): the macOS host's answers where they differ, so the preview shows macOS words.
+  const mac = previewPlatform() === 'macos';
+  const resident = mockResident(mac);
+  const macOverrides = mac ? mockMac(ops.__plan) : {};
+  const suiteStatus = macOverrides.statusSnapshot ?? suite.statusSnapshot;
   let alerted = false;
   return {
     ...ops,
@@ -301,27 +307,32 @@ export function mockBackend(): Backend {
     ...soft,
     ...diag,
     ...resident,
+    ...macOverrides,
     preview: true,
     async statusSnapshot() {
-      const snap = await suite.statusSnapshot();
+      const snap = await suiteStatus();
       // STS-05 preview: with alerts on, one sustained-CPU alert is raised once (then the cooldown holds).
       if (soft.__alertsOn() && !alerted) {
         alerted = true;
         const at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-        snap.alerts = [{ pid: 18872, name: 'node.exe', image_path: 'C:\\Program Files\\nodejs\\node.exe', min_cpu_percent: 86.5, threshold_percent: 80, window_seconds: 120, since: at, raised_at: at, link: 'status.processes?pid=18872' }];
+        snap.alerts = [
+          mac
+            ? { pid: 18872, name: 'node', image_path: '/opt/homebrew/bin/node', min_cpu_percent: 86.5, threshold_percent: 80, window_seconds: 120, since: at, raised_at: at, link: 'status.processes?pid=18872' }
+            : { pid: 18872, name: 'node.exe', image_path: 'C:\\Program Files\\nodejs\\node.exe', min_cpu_percent: 86.5, threshold_percent: 80, window_seconds: 120, since: at, raised_at: at, link: 'status.processes?pid=18872' },
+        ];
       }
       return snap;
     },
     async capabilities() {
       return {
-        platform: 'windows',
+        platform: mac ? 'macos' : 'windows',
         engine_version: '0.1.0',
         schema_version: '1.0',
         capabilities: [
           { name: 'scan.win.directory', state: 'unverified', reason: 'Not verified on a real device in this build' },
           { name: 'execute.trash', state: 'unverified', reason: 'Not verified on a real device in this build' },
         ],
-        store_dir_display: 'C:\\Users\\Lin\\AppData\\Local\\CleanManager\\store',
+        store_dir_display: mac ? '/Users/lin/Library/Application Support/CleanManager/store' : 'C:\\Users\\Lin\\AppData\\Local\\CleanManager\\store',
         store_problem: null,
         bypass_privileges_disabled: true,
         bypass_privileges_note: null,
@@ -329,10 +340,10 @@ export function mockBackend(): Backend {
         operations_to_reconcile: [],
         write_commands: true,
         file_actions_verified: true,
-        rules_dir_display: 'C:\\Program Files\\CleanManager\\rules',
+        rules_dir_display: mac ? '/Applications/CleanManager.app/Contents/Resources/rules' : 'C:\\Program Files\\CleanManager\\rules',
         rules_problem: null,
         rule_count: 3,
-        principal: 'user:DESKTOP\\Lin',
+        principal: mac ? 'user:lin' : 'user:DESKTOP\\Lin',
         experimental_features: experimental,
         gates: gateRows(),
       };

@@ -151,7 +151,15 @@ Windows 用 Ctrl，macOS 用 ⌘；应用内按 `?` 显示同一张表。
 | 还原方式 | 在资源管理器的回收站中还原 | 在访达的废纸篓中“放回原处” |
 | 显示对象 | 在资源管理器中显示 | 在访达中显示 |
 | 快捷键修饰键 | Ctrl | ⌘ |
-| 启动项系统入口 | 任务管理器 › 启动应用 | 系统设置 › 通用 › 登录项 |
+| 启动项系统入口 | 任务管理器 › 启动应用 | 系统设置 › 通用 › 登录项与扩展 |
+| 常驻组件 | 托盘（通知区域） | 菜单栏图标 |
+| 始终可用的按键 | Ctrl+Alt+Del | ⌥⌘Esc（强制退出） |
+| 进程查看器 | 任务管理器 | 活动监视器 |
+| 应用商店 | 商店 | App Store |
+| 需要管理员的任务 | 执行前 Windows 询问一次（UAC） | 这一版没有提权方式：跳过并记为 `elevation_unavailable` |
+| 卸载路径 | 应用自己的卸载程序 / winget / Scoop / MSIX | 移到废纸篓 / Homebrew；App Store 与 root 所有的应用指向启动台或访达 |
+
+规则：Windows 的每一条文字保持此前的原样（`lib/platform.test.ts` 逐字核对）；macOS 文字不得借用 Windows 惯用语。视图不直接写“Windows”“回收站”“Ctrl”，而是取 `words()` 中的条目；只有 macOS 宿主才报告的状态（`*_macos` 不提供项、`unavailable_devices`、Service Management 行、`permission_required` 卸载行、僵尸进程数）在各自视图中按平台渲染。浏览器预览用 `?platform=macos` 查看 macOS 文字（`lib/mockMac.ts`）。
 
 ## 统一选择 / 审阅 / 结果（GUI-09/10）
 

@@ -1,30 +1,50 @@
 // Browser preview of 状态 › 常驻工具. Development fixture only: no tray, power request or window is created.
+// `mac`: the macOS host's answers (menu-bar item, start at login not offered, IOPMAssertion, camera without an app
+// name, peripherals without a level listed as unavailable).
 
 import type { BatteryAlert, Batteries, KeepAwake, PrivacySnapshot, ResidentBackend, ResidentSettings, ResidentStatus } from './residentTypes';
 
 const RUN = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\CleanManager.Resident';
+const LOGIN_ITEM = 'SMAppService.mainApp (login item of the signed CleanManager.app; unavailable in this unsigned build)';
+const LOGIN_ITEM_REASON =
+  'Starting the menu-bar component at login needs SMAppService.mainApp, which registers only a signed and notarized app bundle; this build is unsigned, and CleanManager does not write a hidden ~/Library/LaunchAgents job instead';
 
-export function mockResident(): ResidentBackend {
+export function mockResident(mac = false): ResidentBackend {
   let settings: ResidentSettings = { tray: false, start_at_login: false, battery_alerts: false, battery_threshold: 20 };
   let awakeUntil: number | null = null;
   let awakeOn = false;
   const changed = new Set<() => void>();
-  const privacy = (): PrivacySnapshot => ({
-    supported: true,
-    in_use: [{ name: 'Zoom.exe', capabilities: ['camera', 'microphone'], desktop_app: true }],
-    unavailable_reason: null,
-    source: 'HKCU CapabilityAccessManager ConsentStore (webcam, microphone): LastUsedTimeStart set and LastUsedTimeStop = 0',
-  });
+  const privacy = (): PrivacySnapshot =>
+    mac
+      ? {
+          supported: true,
+          in_use: [
+            { name: 'zoom.us', capabilities: ['microphone'], desktop_app: true },
+            { name: '未知应用（macOS 只报告设备正在使用，不提供应用名称）', capabilities: ['camera'], desktop_app: false },
+          ],
+          unavailable_reason: null,
+          source: 'CoreMediaIO kCMIODevicePropertyDeviceIsRunningSomewhere (cameras); CoreAudio kAudioDevicePropertyDeviceIsRunningSomewhere (input devices) and, on macOS 14 and later, kAudioProcessPropertyIsRunningInput of CoreAudio process objects (microphone app names)',
+        }
+      : {
+          supported: true,
+          in_use: [{ name: 'Zoom.exe', capabilities: ['camera', 'microphone'], desktop_app: true }],
+          unavailable_reason: null,
+          source: 'HKCU CapabilityAccessManager ConsentStore (webcam, microphone): LastUsedTimeStart set and LastUsedTimeStop = 0',
+        };
   const keepAwake = (): KeepAwake => {
     if (awakeOn && awakeUntil !== null && Date.now() >= awakeUntil) {
       awakeOn = false;
       awakeUntil = null;
     }
-    return { active: awakeOn, remaining_seconds: awakeOn && awakeUntil !== null ? Math.ceil((awakeUntil - Date.now()) / 1000) : null };
+    return {
+      active: awakeOn,
+      remaining_seconds: awakeOn && awakeUntil !== null ? Math.ceil((awakeUntil - Date.now()) / 1000) : null,
+      assertion: mac && awakeOn ? 'IOPMAssertion PreventUserIdleDisplaySleep #31337 named "CleanManager: keep the screen on"' : null,
+    };
   };
   const status = (): ResidentStatus => ({
     supported: true,
-    platform: 'windows',
+    platform: mac ? 'macos' : 'windows',
     settings: { ...settings },
     tray: {
       enabled: settings.tray,
@@ -32,7 +52,7 @@ export function mockResident(): ResidentBackend {
       sampling: settings.tray,
       interval_seconds: 5,
       startup: settings.tray && settings.start_at_login ? 'at_login' : 'manual',
-      startup_location: RUN,
+      startup_location: mac ? LOGIN_ITEM : RUN,
       startup_command: settings.tray && settings.start_at_login ? '"C:\\Program Files\\CleanManager\\cleanmanager-desktop.exe" --resident' : null,
       version: '0.1.0',
     },
@@ -41,12 +61,20 @@ export function mockResident(): ResidentBackend {
       : { summary: null, privacy: null, alerts: [] },
     keep_awake: keepAwake(),
     clean_screen: { running: false, min_seconds: 5, max_seconds: 300, default_seconds: 60, esc_hold_ms: 2000 },
-    not_here: [
-      { id: 'fan_control', reason: 'Windows has no documented interface for fan control' },
-      { id: 'charge_limit', reason: 'Windows has no common interface for a battery charge limit' },
-      { id: 'low_latency_network', reason: 'needs the privileged helper, which this build does not install' },
-      { id: 'touch_id_sudo', reason: 'Touch ID for administrator prompts exists on macOS only' },
-    ],
+    not_here: mac
+      ? [
+          { id: 'start_at_login_macos', reason: LOGIN_ITEM_REASON },
+          { id: 'fan_control_macos', reason: 'fan control needs the SMC through the signed privileged helper (D12), which this build does not install; fan speeds are not read either' },
+          { id: 'charge_limit_macos', reason: "a battery charge limit needs the SMC through the signed privileged helper (D12), which this build does not install; macOS's own Optimized Battery Charging is unaffected" },
+          { id: 'low_latency_network_macos', reason: 'needs the signed privileged helper (D12), which this build does not install' },
+          { id: 'touch_id_sudo_macos', reason: 'Touch ID for sudo (RES-06, task 15.4) is not implemented in this build; /etc/pam.d is never changed' },
+        ]
+      : [
+          { id: 'fan_control', reason: 'Windows has no documented interface for fan control' },
+          { id: 'charge_limit', reason: 'Windows has no common interface for a battery charge limit' },
+          { id: 'low_latency_network', reason: 'needs the privileged helper, which this build does not install' },
+          { id: 'touch_id_sudo', reason: 'Touch ID for administrator prompts exists on macOS only' },
+        ],
   });
   return {
     async residentStatus() {
@@ -54,6 +82,7 @@ export function mockResident(): ResidentBackend {
     },
     async residentSave(s) {
       if (s.start_at_login && !s.tray) throw { code: 'invalid_argument', reason: 'invalid_argument', message: 'start_at_login requires the tray component to be on' };
+      if (mac && s.start_at_login) throw { code: 'unsupported', reason: 'unsupported', message: LOGIN_ITEM_REASON };
       settings = { ...s };
       changed.forEach((cb) => cb());
       return status();
@@ -72,6 +101,19 @@ export function mockResident(): ResidentBackend {
       return privacy();
     },
     async residentBatteries(): Promise<Batteries> {
+      if (mac)
+        return {
+          supported: true,
+          system: { device_id: 'system', name: '本机电池', percent: 81, kind: 'system', charging: false },
+          devices: [{ device_id: 'bt:a4-83-e7-12-34-56', name: 'Magic Keyboard', percent: 17, kind: 'bluetooth', charging: null }],
+          bluetooth_devices: 2,
+          devices_unavailable: null,
+          unavailable_devices: [
+            { device_id: 'bt:f0-b3-ec-65-43-21', name: 'AirPods Pro', kind: 'bluetooth', reason: 'the device publishes no BatteryPercent in the I/O Registry; its level is not estimated' },
+            { device_id: 'ioreg:0x100000a2f', name: 'USB Receiver', kind: 'peripheral', reason: 'BatteryPercent is not a number; not shown' },
+          ],
+          source: 'IOPSCopyPowerSourcesInfo (internal battery); I/O Registry BatteryPercent of Apple HID peripheral drivers (AppleDeviceManagementHIDEventService and the older Bluetooth HID classes)',
+        };
       return {
         supported: true,
         system: { device_id: 'system', name: '本机电池', percent: 76, kind: 'system', charging: false },

@@ -11,6 +11,7 @@ import { formatTime } from '../lib/format';
 import type { DiagStatus, ProbeReport, ProviderStatus } from '../lib/diagTypes';
 import { CREDENTIAL_LABEL, PROVIDER_LABEL, SUPPORT_LABEL } from '../lib/diagWords';
 import { errorText, pill } from './parts';
+import { words } from '../lib/platform';
 
 type Form = { kind: 'anthropic' | 'openai_compatible' } | { kind: 'cli' } | null;
 
@@ -72,7 +73,7 @@ export class DiagSettings {
         : st.providers.length
           ? h('ul', { class: 'prov-list' }, ...st.providers.map((p) => this.row(p, st)))
           : h('p', { class: 'small' }, '还没有配置提供方。诊断入口会显示“未配置”，不会发送任何内容。'),
-      st ? h('p', { class: 'small muted' }, `密钥保存在：${st.credential_store === 'windows_credential_manager' ? 'Windows 凭据管理器' : st.credential_store}。设置文件只记录端点、模型和可执行文件位置，不含密钥。`) : null,
+      st ? h('p', { class: 'small muted' }, `密钥保存在：${st.credential_store === 'windows_credential_manager' ? 'Windows 凭据管理器' : st.credential_store === 'macos_keychain' ? '钥匙串（登录钥匙串）' : st.credential_store}。设置文件只记录端点、模型和可执行文件位置，不含密钥。`) : null,
       this.addButtons(),
       this.formView(),
     );
@@ -177,7 +178,7 @@ export class DiagSettings {
         kind,
         h('label', { class: 'diag-label', for: 'diag-cli-model' }, '模型（可留空，使用 CLI 默认）'),
         model,
-        h('p', { class: 'small muted' }, '只接受 .exe；以固定参数运行、不经过 shell、在空的临时目录里、关闭全部工具与文件访问。无法确认能关闭工具的 CLI 不会被启动。是否复用你的订阅额度由 CLI 自己的规则决定。'),
+        h('p', { class: 'small muted' }, words().cliExecutable),
         h('div', { class: 'card-actions' }, go, cancel),
       );
     }
@@ -207,7 +208,7 @@ export class DiagSettings {
         'p',
         { class: 'small muted' },
         '只接受 https://；本机端点可以用 http://127.0.0.1 或 localhost。失败时不会自动改用其他提供方或模型。',
-        anthropic ? ' 密钥不在这里填写：保存后点「保存密钥…」，在 Windows 安全窗口的“密码”栏粘贴。' : ' 本机端点通常不需要密钥。',
+        anthropic ? words().keyPrompt : ' 本机端点通常不需要密钥。',
       ),
       h('div', { class: 'card-actions' }, save, cancel),
     );

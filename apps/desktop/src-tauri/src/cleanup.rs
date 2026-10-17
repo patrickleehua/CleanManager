@@ -402,44 +402,17 @@ fn standing_issues(l: &Loaded) -> Vec<IssueDto> {
     out
 }
 
-#[cfg(windows)]
-fn resolved_roots(rules: &[cm_core::rules::Rule]) -> Vec<cm_core::analysis::ResolvedRoot> {
-    cm_platform::windows::resolve::resolve(rules, &cm_platform::windows::resolve::ResolverEnv::from_os())
-}
-
-#[cfg(not(windows))]
-fn resolved_roots(_: &[cm_core::rules::Rule]) -> Vec<cm_core::analysis::ResolvedRoot> {
-    Vec::new()
-}
-
-#[cfg(windows)]
-fn installed_versions(rules: &[cm_core::rules::Rule]) -> BTreeMap<String, String> {
-    cm_platform::windows::resolve::installed_versions(rules)
-}
-
-#[cfg(not(windows))]
-fn installed_versions(_: &[cm_core::rules::Rule]) -> BTreeMap<String, String> {
-    BTreeMap::new()
-}
-
 /// Live in-use probes once per analysis, as `clean` does (CAT-06); the executor probes each
 /// item again before acting. Blocked and hint rows are not probed (never selectable anyway).
 fn probe_all(candidates: &mut [Candidate], facts: &mut BTreeMap<String, CatalogFacts>) {
-    #[cfg(windows)]
-    let snap = cm_platform::windows::probes::ProcessSnapshot::take();
+    use crate::plat::os::probes::{ProcessSnapshot, probe_candidate};
+    let snap = ProcessSnapshot::take();
     for c in candidates.iter_mut() {
         let Some(f) = facts.get_mut(&c.candidate_id) else { continue };
         if c.state == CandidateState::Blocked || f.is_hint() || c.probes.is_empty() {
             continue;
         }
-        #[cfg(windows)]
-        let results = cm_platform::windows::probes::probe_candidate(&c.path, &c.probes, c.owner_id.as_deref(), &snap);
-        #[cfg(not(windows))]
-        let results: Vec<cm_core::catalog::ProbeResult> = c
-            .probes
-            .iter()
-            .map(|k| cm_core::catalog::ProbeResult::new(k, cm_core::catalog::ProbeState::Unknown, "probes are not available on this platform in this build"))
-            .collect();
+        let results = probe_candidate(&c.path, &c.probes, c.owner_id.as_deref(), &snap);
         apply_probes(c, f, results);
     }
 }
@@ -464,17 +437,19 @@ pub fn analyze(s: &AppState, stores: &Stores, scan_id: &str) -> IpcResult<Candid
         },
         worktrees: &[],
     };
-    let roots = resolved_roots(&rules.rules);
+    // The same rule-root resolution as `cleanmanager analyze`; problems resolving a root are listed with the analysis.
+    let (roots, resolve_issues) = crate::plat::resolve(&rules.rules);
     let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
     // The same catalog analysis as `cleanmanager analyze` / `clean`: tested registry and
     // installed versions decide version verdicts, then live probes may lower tiers.
-    let installed = installed_versions(&rules.rules);
+    let installed = crate::plat::os::resolve::installed_versions(&rules.rules);
     let ctx = CatalogContext { registry: Some(&registry), installed: Some(&installed) };
     let (mut set, mut catalog) = analyze_catalog(&view, &rules, &input, &prot, &ctx);
     probe_all(&mut set.candidates, &mut catalog.facts);
     stores.index.save_candidates(&set)?;
     let loaded = Loaded { set, catalog: Some(catalog) };
     let mut issues = standing_issues(&loaded);
+    issues.extend(resolve_issues.into_iter().map(|(code, scope, message)| issue(&code, &scope, message)));
     if let Some(p) = &problem {
         issues.push(issue("protection_unavailable", cm_platform::protection::PROTECTION_FILE, format!("{p}; every candidate stays unplannable and every write is stopped until the list is repaired")));
     }

@@ -7,6 +7,7 @@ fn rec(name: &str, source: RecordSource) -> UninstallRecord {
         instance_id: "app_test".into(), name: name.into(), version: Some("1.0".into()), publisher: Some("Contoso Ltd.".into()), source, key: None,
         key_name: Some(name.into()), product_code: None, package_full_name: None, package_family: None, uninstall_string: None, quiet_uninstall_string: None,
         install_location: Some(r"C:\Program Files\Contoso\Foo".into()), system_component: false, winget: None, package_name: None, ai_tool: None, protected_class: None,
+        mac: None,
     }
 }
 

@@ -30,7 +30,7 @@ use cm_core::manual_trash::BinItem;
 use cm_core::model::{CloudState, IdentityQuality, ObjectKind};
 use cm_core::path::RawPath;
 
-use super::{AtPath, MacActions, Stop, at_name, no_materialize, protected_flags, verify};
+use super::{AtPath, MacActions, Stop, Verified, at_name, no_materialize, protected_flags, verify};
 use crate::macos::ffi::objc::{AutoreleasePool, Bool, Id, Sel, class, file_url, file_url_path, ns_string_value, sel};
 use crate::macos::ids;
 use crate::macos::procs::FdIndex;
@@ -250,6 +250,31 @@ pub fn open_holders(paths: &[RawPath]) -> Result<OpenHolders, String> {
         }
     }
     Ok(OpenHolders { holders: found.into_values().collect(), uninspected: index.uninspected.len() })
+}
+
+/// The `plan apply` holder seam (plan/v2 backends of the CLI and the desktop): holder names, with the other-users limit
+/// as the last entry when something was found. `None` = no holder could be determined: nothing visible is "unknown"
+/// (some processes may be uninspectable), never "free".
+pub fn apply_holders(paths: &[RawPath]) -> Option<Vec<String>> {
+    let h = open_holders(paths).ok()?;
+    if h.holders.is_empty() {
+        return None;
+    }
+    let mut out = h.holders;
+    if h.uninspected > 0 {
+        out.push(format!("possibly others among {} process(es) of other users that could not be inspected", h.uninspected));
+    }
+    Some(out)
+}
+
+/// Objects the macOS Trash action cannot take beyond the core refusals: it moves single verified files, so a folder
+/// (whose contents cannot be verified as one object in this build) is refused before anything is planned.
+pub fn folder_refusal(ins: &cm_core::manual_trash::Inspection) -> Option<cm_core::manual_trash::TrashRefusal> {
+    (ins.kind == ObjectKind::Directory).then(|| cm_core::manual_trash::TrashRefusal {
+        code: "unsupported",
+        reason: "folder_move_unavailable",
+        message: "moving a whole folder to the Trash is not available on macOS in this build (its contents cannot be verified as one object); select the files inside instead".into(),
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -545,6 +570,15 @@ pub(super) fn trash(actions: &MacActions, t: &ActionTarget<'_>) -> ActionOutcome
     if let Err(stop) = actions.in_use(&v.live) {
         return stop.outcome();
     }
+    let Some(path) = super::unix_bytes(t.path) else { return Stop::Unsupported("not a macOS path".into()).outcome() };
+    move_verified(&v, path)
+}
+
+/// Steps 2 and 3 of a Trash move for an object the caller verified (`v`: its held parent, name and live metadata;
+/// `path` the same object's absolute path): a held event-only descriptor, a last look at the name, the system move,
+/// then the held descriptor must name the resulting item. Used by [`trash`] and by the app-bundle uninstall, which
+/// verifies a bundle directory by its own planned identity.
+pub(crate) fn move_verified(v: &Verified, path: &[u8]) -> ActionOutcome {
     let held = match Held::open(&v.parent, &v.name) {
         Ok(fd) => fd,
         Err(libc::ELOOP) => return Stop::Reparse.outcome(),
@@ -562,7 +596,6 @@ pub(super) fn trash(actions: &MacActions, t: &ActionTarget<'_>) -> ActionOutcome
         AtPath::Missing => return Stop::Missing.outcome(),
         AtPath::Error(e) => return Stop::Error(format!("cannot examine the target: {e}")).outcome(),
     }
-    let Some(path) = super::unix_bytes(t.path) else { return Stop::Unsupported("not a macOS path".into()).outcome() };
     #[cfg(test)]
     super::tests::before_trash();
     let moved = move_to_trash(path);

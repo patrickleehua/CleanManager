@@ -245,7 +245,8 @@ pub struct CapabilitiesDto {
     pub operations_to_reconcile: Vec<String>,
     /// File actions run only for stored, authorized plans (never a path from the WebView).
     pub write_commands: bool,
-    /// Whether this build has verified file actions for the platform (Windows only today).
+    /// Whether this build has file actions for the platform (Windows and macOS; the capability rows say what is
+    /// verified on a reference device).
     pub file_actions_verified: bool,
     pub rules_dir_display: Option<String>,
     /// Why the rule pack cannot be used (analysis and execution stop), if so.

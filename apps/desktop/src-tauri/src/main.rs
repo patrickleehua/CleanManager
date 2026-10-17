@@ -15,6 +15,7 @@ mod dto;
 mod gate;
 mod host;
 mod ops;
+mod plat;
 mod resident;
 mod roots;
 mod rules;
@@ -23,7 +24,7 @@ mod software;
 mod suite;
 mod system;
 mod v2;
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod flow_tests;
 
 use std::sync::Arc;
@@ -77,6 +78,10 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // A macOS clean-screen window closes normally (that ends clean-screen mode).
+                if resident::is_clean_screen_window(window.label()) {
+                    return;
+                }
                 // Tray on: closing the window hides it; the tray's "退出" really quits.
                 if resident::hide_on_close(window.app_handle()) {
                     api.prevent_close();
@@ -153,6 +158,7 @@ fn main() {
             system::maintenance_plan,
             system::maintenance_history,
             system::maintenance_diagnose,
+            system::maintenance_restore_plan,
             system::process_list,
             system::process_pin,
             system::process_end_plan,
@@ -193,6 +199,11 @@ fn main() {
             // Exit: stop the tray's sampling and release any keep-awake request (RES-02).
             if let RunEvent::Exit = event {
                 app.state::<Arc<resident::Resident>>().shutdown();
+            }
+            // macOS: clicking the Dock icon brings back a window hidden to the menu bar.
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { has_visible_windows: false, .. } = event {
+                resident::show_main(app);
             }
         });
 }

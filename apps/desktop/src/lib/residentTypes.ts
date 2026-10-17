@@ -33,8 +33,17 @@ export interface DeviceBattery {
   device_id: string;
   name: string;
   percent: number;
-  kind: 'system' | 'bluetooth';
+  /** `peripheral`: a wired or other non-Bluetooth accessory (macOS). */
+  kind: 'system' | 'bluetooth' | 'peripheral';
   charging: boolean | null;
+}
+
+/** A device the system lists without a usable battery level: shown as unavailable, never as 0%. */
+export interface UnavailableDevice {
+  device_id: string;
+  name: string;
+  kind: 'bluetooth' | 'peripheral' | string;
+  reason: string;
 }
 
 export interface BatteryAlert {
@@ -67,6 +76,8 @@ export interface ResidentStatus {
 export interface KeepAwake {
   active: boolean;
   remaining_seconds: number | null;
+  /** The active system request as the system lists it (macOS: the IOPMAssertion type, id and name); null on Windows. */
+  assertion?: string | null;
 }
 
 export type CleanScreenExit = 'esc_held' | 'timeout' | 'closed';
@@ -77,6 +88,8 @@ export interface Batteries {
   devices: DeviceBattery[];
   bluetooth_devices: number;
   devices_unavailable: string | null;
+  /** Devices listed without a level (macOS); empty on Windows, which only counts them in `bluetooth_devices`. */
+  unavailable_devices?: UnavailableDevice[];
   source: string;
 }
 

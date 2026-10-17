@@ -9,10 +9,17 @@
 //!   non-interactive callers.
 //! - `apps uninstall leftovers --operation OP` (read-only grouped preview) and `apps uninstall leftovers plan create
 //!   --operation OP [--items ID,…]`: stage 2, only caches/logs by default plus objects named by id.
-//! - `apps uninstall orphans` (read-only, review_only) and `apps uninstall restore --operation OP` (recovery plan).
+//! - `apps uninstall orphans` (read-only, review_only) and `apps uninstall restore --operation OP` (recovery plan). On
+//!   macOS `apps uninstall orphans plan create --items ID,…` plans moving the named orphans to the Trash (reviewed on
+//!   its own; nothing is preselected); on Windows orphans are listed for review only.
 //!
 //! Nothing here runs an uninstaller or deletes anything: `plan review` approves and `plan apply` executes. Tests
-//! redirect the registry and home folder with `CM_UNINSTALL_TEST_ROOT` / `CM_UNINSTALL_TEST_HOME`.
+//! redirect the registry and home folder with `CM_UNINSTALL_TEST_ROOT` / `CM_UNINSTALL_TEST_HOME` (on macOS: a fake `/`
+//! and home, see `cm_platform::macos::uninstall`).
+//!
+//! The same command bodies serve Windows and macOS (`plat` names the platform module); macOS routes are the bundle to
+//! the Trash, the Homebrew adapters and `npm uninstall --global` for AI command-line tools; orphans are startup-entry
+//! based on Windows and `~/Library` bundle-ID based on macOS.
 
 use std::process::ExitCode;
 
@@ -59,12 +66,16 @@ fn grouped(items: &[cm_core::uninstall::Leftover]) -> Value {
     Value::Array(groups.into_iter().map(|(g, items)| json!({"group": g, "items": items})).collect())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod imp {
     use super::*;
     use crate::commands::fields;
     use cm_core::protocol::record;
-    use cm_platform::windows::uninstall::{UninstallEnv, records, route, route_capability};
+    #[cfg(target_os = "macos")]
+    use cm_platform::macos::uninstall as plat;
+    #[cfg(windows)]
+    use cm_platform::windows::uninstall as plat;
+    use plat::{UninstallEnv, records, route, route_capability};
 
     fn env(req: &str, p: &Parsed) -> Result<UninstallEnv, ExitCode> {
         UninstallEnv::from_process().map_err(|e| fail(req, ErrorCode::InvalidArgument, &e, p.format))
@@ -87,7 +98,7 @@ mod imp {
                     Err(x) => (None, Some(x.message.clone()), x.settings_uri),
                 };
                 // UNI-07: AI CLIs report when they were last used (newest entry of their data folder).
-                let last_used = r.ai_tool.as_deref().and_then(|t| cm_platform::windows::uninstall::ai_last_used(&env, t)).map(cm_core::time::utc_from_unix);
+                let last_used = r.ai_tool.as_deref().and_then(|t| plat::ai_last_used(&env, t)).map(cm_core::time::utc_from_unix);
                 json!({
                     "app_instance_id": r.instance_id, "name": r.name, "version": r.version, "publisher": r.publisher, "source": r.wire_source(), "last_used_at": last_used,
                     "location": r.install_location, "protected_class": r.protected_class.is_some() || route.as_ref().is_err_and(|x| x.code == "policy_denied"),
@@ -227,6 +238,50 @@ mod imp {
         }
     }
 
+    /// UNI-08 on macOS: `~/Library` leftovers of apps removed earlier, by bundle-ID evidence; never preselected.
+    #[cfg(target_os = "macos")]
+    pub fn orphans(req: &str, p: &Parsed) -> ExitCode {
+        let env = match env(req, p) {
+            Ok(e) => e,
+            Err(c) => return c,
+        };
+        let items = plat::orphans(&env, true);
+        emit(&record("uninstall_leftovers", req, fields(json!({
+            "operation_id": null, "app": null, "groups": grouped(&items), "default_selected": 0, "external_references": [],
+        }))), p.format);
+        ExitCode::SUCCESS
+    }
+
+    /// UNI-08 on macOS: a separately reviewed Trash plan for the orphaned leftovers named with `--items`.
+    #[cfg(target_os = "macos")]
+    pub fn orphans_plan(req: &str, p: &Parsed) -> ExitCode {
+        let items = p.option("items").map(ids).unwrap_or_default();
+        let env = match env(req, p) {
+            Ok(e) => e,
+            Err(c) => return c,
+        };
+        let stores = match open_stores(req, p) {
+            Ok(s) => s,
+            Err(c) => return c,
+        };
+        let plan_id = format!("orp_{}", &req[4..]);
+        let pdigest = crate::plan_cmd::current_policy_digest(&stores);
+        let host = cm_core::host::HostProbe::current(&cm_platform::host::OsHostProbe, "cli");
+        match cm_app::uninstall::create_orphans_plan(&stores, &env, &items, &host, &plan_id, crate::plan_cmd::now_unix(), &pdigest) {
+            Ok((plan, _)) => {
+                emit(&crate::plan_cmd::v2_plan_record(req, &stores, &plan), p.format);
+                ExitCode::SUCCESS
+            }
+            Err(r) => refused(req, p, &r),
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn orphans_plan(req: &str, p: &Parsed) -> ExitCode {
+        fail(req, ErrorCode::Unsupported, "on Windows, orphaned leftovers are listed for review only in this build (`apps uninstall orphans`); remove them yourself after review", p.format)
+    }
+
+    #[cfg(windows)]
     pub fn orphans(req: &str, p: &Parsed) -> ExitCode {
         let env = match env(req, p) {
             Ok(e) => e,
@@ -243,41 +298,52 @@ mod imp {
     }
 }
 
-#[cfg(windows)]
-pub use imp::{leftovers, leftovers_plan, list, orphans, plan_create};
+#[cfg(any(windows, target_os = "macos"))]
+pub use imp::{leftovers, leftovers_plan, list, orphans, orphans_plan, plan_create};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn not_here(req: &str, p: &Parsed) -> ExitCode {
     let _ = (ids, grouped, refused);
-    fail(req, ErrorCode::Unsupported, "application uninstall is implemented for Windows in this build (see docs/app-uninstall.md)", p.format)
+    fail(req, ErrorCode::Unsupported, "application uninstall is implemented for Windows and macOS in this build (see docs/app-uninstall.md)", p.format)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn list(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn leftovers(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn leftovers_plan(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn orphans(req: &str, p: &Parsed) -> ExitCode {
     not_here(req, p)
 }
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn orphans_plan(req: &str, p: &Parsed) -> ExitCode {
+    not_here(req, p)
+}
 
-/// Seam for `plan apply` (plan/v2 backends): `uninstall` plans on macOS (quit, bundle to Trash, Homebrew adapters).
-/// `None` = unsupported here.
+/// Seam for `plan apply` (plan/v2 backends): `uninstall` plans on macOS (quit, bundle to the Trash, Homebrew adapters).
+/// UNI-02: ending still-running processes needs a plan reviewed for it and, at apply time, a person typing END.
 #[cfg(target_os = "macos")]
 pub(crate) fn mac_uninstall_backend() -> Option<Box<dyn cm_core::uninstall::UninstallActions>> {
-    None
+    let env = cm_platform::macos::uninstall::UninstallEnv::from_process().ok()?;
+    let confirm = Box::new(|procs: &[cm_core::uninstall::RunningProcess]| {
+        let names: Vec<String> = procs.iter().map(|x| x.describe()).collect();
+        crate::plan_cmd::interactive()
+            && crate::plan_cmd::prompt(&format!("Still running: {}. Type END to end them now, anything else to cancel (nothing is uninstalled then): ", names.join(", "))).as_deref()
+                == Some("END")
+    });
+    Some(Box::new(cm_platform::macos::uninstall::MacUninstall::new(env, confirm)))
 }
 
 /// `apps uninstall restore --operation OP`: a `recovery` plan putting back deleted keys and removed startup values.
@@ -326,6 +392,9 @@ pub fn review_lines(plan: &cm_core::plan::v2::PlanV2) -> Vec<String> {
         out.push(match a {
             PlanAction::AppQuit(q) if q.force == QuitForce::AskUser => format!("  {}  {note}: processes still running after the close request are ENDED only if you confirm when applying", q.action_id),
             PlanAction::AppQuit(q) => format!("  {}  {note}: never ended automatically; if it does not close, nothing is uninstalled", q.action_id),
+            PlanAction::ToolAdapter(t) if t.adapter_id == cm_core::uninstall::AdapterKind::MacTrashAppBundle.adapter_id() => {
+                format!("  {}  {note}; the bundle must still be the planned one, then its location is checked again", t.action_id)
+            }
             PlanAction::ToolAdapter(t) => format!("  {}  runs {note}; exit code and duration are recorded, then the folder and registration are checked again", t.action_id),
             PlanAction::RegistryBackupDelete(r) => format!("  {}  delete {}\\{} after its backup is stored ({})", r.action_id, r.hive.as_str(), r.key_path, r.owner_evidence),
             PlanAction::FsTrash(f) => format!("  {}  to the {}: {}  {note}", f.action_id, cm_core::manual_trash::BIN_NAME, f.target.path.display()),
