@@ -6,11 +6,20 @@
 
 | 能力 | macOS 状态 | 能验证什么 |
 | --- | --- | --- |
-| 扫描 `mac.posix` / `mac.bulk`、硬拒绝路径、凭据存储 | 已实现 | 测试套件中的 macOS 夹具测试；CLI 扫描临时夹具；完全磁盘访问（FDA）开启前后的差异 |
+| 扫描 `mac.posix` / `mac.bulk`、硬拒绝路径、凭据存储 | 已实现 | 测试套件中的 macOS 夹具测试；CLI 扫描临时夹具（夹具里有一个故意锁住的目录，结果应为 `partial`、退出码 5）；完全磁盘访问（FDA）开启前后的差异 |
 | 索引、规则分析、计划、授权（平台无关部分） | 已实现 | 测试套件；CLI `entries`、`analyze` |
-| 移入废纸篓 / 隔离 / 删除、恢复 | 未实现（9.5） | 目前应报告 `unsupported` |
-| 清理目录、构建产物、安装包、洞察、卸载、更新、启动项、维护、状态、常驻工具、特权 helper | 未实现 | CLI 应报告 `unsupported`，不应崩溃或误报可用 |
+| 移入废纸篓 / 隔离 / 删除、从隔离区恢复与清除 | 已实现（`unverified`） | 测试套件；CLI `capabilities` 应报告 `unverified` 而不是 `unsupported` |
+| 手动清理（选择文件移入废纸篓）、废纸篓列表 | 已实现（`unverified`，实验） | CLI `capabilities`；整个文件夹本版不移动 |
+| 清理目录（规则第 1 批 33 条，均为实验、只复核不预选） | 已实现（`unverified`，实验） | CLI `clean list` |
+| 构建产物、安装包清理 | 已实现（`unverified`，实验） | CLI `purge roots list`、`installer locations` |
+| 空间洞察（本地快照数、虚拟机与容器磁盘、iPhone 备份、交换与可清除空间估计、旧下载） | 已实现（`unverified`，实验，只读） | CLI `insights overview` |
+| 已安装应用列表 | 已实现（`unverified`，实验，只读） | CLI `apps list` |
+| 系统状态与进程、启动项列表、更新检测、维护任务、规则第 2 批 | 第 4 批；合入 main 前 `status`、`startup list` 报告 `unsupported`，`optimize list` 返回空任务目录 | CLI `status`、`startup list`、`optimize list` |
+| 卸载、常驻工具 | 未实现（第 5、6 批） | CLI 应报告 `unsupported`，不应崩溃或误报可用 |
+| 特权 helper、风扇与电池控制、Touch ID | 本次不做（需要签名或真机） | 应一直报告 `unsupported` |
 | 桌面应用 | 未在 macOS 上构建过 | `--desktop` 构建前端与 Tauri 宿主测试 |
+
+“已实现（`unverified`）”的意思是代码与测试都在，但只在托管 runner 上跑过；真机结果登记前不会改成 `verified`。
 
 ## 一键收集
 
@@ -35,6 +44,10 @@ tools/mac_verify.sh --quick --scan-dir ~/Downloads   # 只做 CLI 冒烟，并�
 1. 先在“系统设置 › 隐私与安全性 › 完全磁盘访问权限”中**关闭**终端（Terminal/iTerm），重开终端后运行 `tools/mac_verify.sh --quick --scan-dir ~/Library`。
 2. 再**打开**终端的完全磁盘访问，重开终端后运行同一条命令。
 3. 两次结果目录都附上。期望：没有权限时受保护子树记为 `permission_required` 的跳过范围，而不是空目录；有权限后这些范围被读到。不要把有 FDA 的结果当成“全访问保证”。
+
+## 已知的真机现象：隐私弹窗会让命令停住
+
+下载、桌面以及其他应用的容器（例如 Docker 的 `~/Library/Containers/com.docker.docker`）受 macOS 隐私保护。第一次读取时系统可能弹出“想要访问……”对话框，回答之前进程会一直等待，没有超时也没有提示。2026-10-17 在 Mac17,14 / macOS 27.0.1 上，第一次运行 `insights overview` 用了 155 秒，第二次只用了 0.4 秒，结果相同。看到某一步特别慢时，先找一下有没有没回答的对话框，并在提交结果时说明你点了允许还是拒绝。
 
 ## 结果怎样用
 

@@ -66,7 +66,11 @@ fn output(code: i32, stdout: &str, stderr: &str) -> ToolOutput {
 fn snapshot_insight_counts_without_a_size() {
     let none = snapshots_insight(Ok(output(0, "Snapshots for disk /:\n", "")), NOW);
     assert_eq!((none.count, none.logical_bytes, none.size_basis), (Some(0), None, SizeBasis::NotMeasured));
-    assert!(none.size_note.as_deref().unwrap().contains("Size unavailable"), "{:?}", none.size_note);
+    assert!(none.size_note.as_deref().unwrap().starts_with("APFS does not report"), "{:?}", none.size_note);
+    let downloads = cm_core::insights::old_downloads(None, vec![], 0, 90, NOW, None);
+    let cards = cm_core::insights::overview_cards(std::slice::from_ref(&none), &downloads, &[]);
+    let card = cards.iter().find(|c| c.kind == CardKind::Snapshots).unwrap().size_note.clone().unwrap();
+    assert_eq!(card.matches("Size unavailable").count(), 1, "the card prefixes the reason once: {card}");
     let w = none.to_wire();
     assert!(w["logical_bytes"].is_null() && w["count"] == 0 && w["kind"] == "macos.local_snapshots");
     assert_eq!(w["handling"], "open_system_settings");

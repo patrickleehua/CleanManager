@@ -34,15 +34,19 @@ fixture="${TMPDIR:-/tmp}/cm-mac-verify-$$"
 export CM_STORE_DIR="$store"
 
 say() { printf '%s\n' "$*" | tee -a "$summary"; }
-# step NAME CMD...: runs CMD, keeps full output in NAME.log, records pass/fail and duration.
-step() {
-  local name="$1"; shift
+# step_expect NAME RC CMD...: runs CMD, keeps full output in NAME.log, records pass/fail and duration; exit code RC
+# counts as a pass (0 for most steps).
+step_expect() {
+  local name="$1" want="$2"; shift 2
   local t0=$SECONDS
   "$@" >"$out/$name.log" 2>&1
   local rc=$?
-  say "| $name | $([ $rc -eq 0 ] && echo pass || echo "FAIL ($rc)") | $((SECONDS - t0)) s |"
-  return $rc
+  local result="FAIL ($rc)"
+  if [ $rc -eq "$want" ]; then result="pass"; [ "$want" -ne 0 ] && result="pass (expected exit $want)"; fi
+  say "| $name | $result | $((SECONDS - t0)) s |"
+  [ $rc -eq "$want" ]
 }
+step() { local name="$1"; shift; step_expect "$name" 0 "$@"; }
 
 say "# CleanManager macOS verification — $stamp"
 say ""
@@ -75,7 +79,16 @@ printf 's' >"$fixture/locked/secret" && chmod 000 "$fixture/locked"
 json() { "$cli" "$@" --json; }
 step cli-capabilities json capabilities
 step cli-doctor "$cli" doctor --format text
-step cli-scan-fixture json scan --root "$fixture"
+# The fixture's locked folder makes this scan partial (exit 5, docs/cli-protocol.md); anything else is a failure.
+step_expect cli-scan-fixture 5 json scan --root "$fixture"
+python3 -c '
+import json, sys
+r = json.load(open(sys.argv[1]))
+issues = r.get("issues", [])
+ok = r.get("status") == "partial" and len(issues) == 1 and issues[0].get("code") == "permission_required" \
+    and issues[0].get("scope_display", "").endswith("/locked")
+sys.exit(0 if ok else 1)' "$out/cli-scan-fixture.log" 2>/dev/null \
+  || say "| cli-scan-fixture-shape | FAIL (expected partial with one permission_required issue on locked/) | 0 s |"
 scan_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scan_id",""))' "$out/cli-scan-fixture.log" 2>/dev/null)"
 if [ -n "$scan_id" ]; then
   step cli-entries json entries list --scan "$scan_id" --limit 50

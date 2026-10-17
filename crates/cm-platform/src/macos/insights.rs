@@ -181,7 +181,8 @@ pub(crate) fn parse_tmutil(stdout: &str) -> Result<Snapshots, String> {
     Ok(s)
 }
 
-const SNAPSHOT_SIZE_NOTE: &str = "Size unavailable: APFS does not report the space a local snapshot holds (it shares blocks with the live volume and other snapshots), so only the number is shown";
+/// A bare reason: the overview card adds its own "Size unavailable: " prefix.
+const SNAPSHOT_SIZE_NOTE: &str = "APFS does not report the space a local snapshot holds (it shares blocks with the live volume and other snapshots), so only the number is shown";
 
 /// The local-snapshots insight from a `tmutil` run.
 pub(crate) fn snapshots_insight(run: Result<ToolOutput, ToolError>, observed_at: &str) -> Insight {
