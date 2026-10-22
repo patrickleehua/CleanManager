@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "needs_approval",
+  "message": "plan p_demo needs approval: it has not been reviewed and no policy covers it (pol_other: the plan's mode trash is not the policy's mode quarantine)",
+  "retryable": false,
+  "required_action": "Review the plan in the desktop app or run `cleanmanager plan review p_demo` in a terminal",
+  "details": {
+    "plan_id": "p_demo",
+    "operation_id": null,
+    "scope_id": null,
+    "policy_matches": [
+      {
+        "policy_id": "pol_other",
+        "policy_version": "1",
+        "state": "enabled",
+        "covers": false,
+        "reason": "mode_differs",
+        "message": "the plan's mode trash is not the policy's mode quarantine"
+      }
+    ]
+  }
+}

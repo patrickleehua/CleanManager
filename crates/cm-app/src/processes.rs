@@ -81,10 +81,12 @@ pub fn end_plan(row: &ProcessView, image_sha256: Option<String>, plan_id: &str, 
         rule_set_digest: NO_RULES_DIGEST,
         policy_digest,
     };
+    // The review shows the start time people read (UTC); the action binds the platform's exact start key.
     let note = format!(
-        "{} (PID {}{})",
+        "{} (PID {}{}){}",
         row.facts.name,
         row.facts.pid,
+        row.facts.started_at_utc.as_deref().map(|t| format!(", started {t}")).unwrap_or_default(),
         row.purpose.map(|p| format!(": {p}")).or_else(|| row.unidentified_reason.as_ref().map(|r| format!(": unidentified, {r}"))).unwrap_or_default()
     );
     Ok(build(&header, vec![PlanAction::ProcessEnd(action)], vec![ActionMeta { note: Some(note), ..Default::default() }])?)

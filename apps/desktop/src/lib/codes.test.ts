@@ -35,8 +35,11 @@ import hostDiag from '../../src-tauri/src/diag.rs?raw';
 
 afterEach(() => setPlatform('windows'));
 
-/** Matches in a source's production code (its `#[cfg(test)]` module is left out). */
-const all = (src: string, re: RegExp): string[] => [...src.split('#[cfg(test)]')[0].matchAll(re)].map((m) => m[1]);
+/**
+ * Matches in a source's production code: its inline `#[cfg(test)] mod … {` module is left out (a test-only item
+ * elsewhere in the file, e.g. a `#[cfg(test)]` helper method, does not hide the code after it).
+ */
+const all = (src: string, re: RegExp): string[] => [...src.split(/#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+\w+\s*\{/)[0].matchAll(re)].map((m) => m[1]);
 
 /** Issue codes: `ScanIssue { code: "x"`, `issue("x", …)`, `(SkipReason::…, "x")`, and `pub const X: &str = "x"` in issue modules. */
 function issueCodes(): Map<string, string> {

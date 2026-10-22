@@ -3,9 +3,17 @@
 //! A scan writes batches into a *staging* revision; queries only see *published* revisions.
 //! Sizes are stored as 8-byte big-endian BLOBs so SQLite's memcmp ordering equals exact u64
 //! ordering (no signed 64-bit truncation, no text sorting). Unknown sizes stay NULL.
+//!
+//! The index is rebuildable and opened on first use (BUG-WFA-01): a store's history, quarantine and
+//! recovery never wait for it or fail because of it. An unusable index (damaged, or a schema this
+//! program cannot use) is reported as `IndexCorrupt`/`IndexIncompatible` (protocol code
+//! `index_unavailable`) by every call that needs it, until `Stores::repair_index` moves it aside.
+//! Integrity checks run when due, not on every open (see [`crate::integrity`]).
 
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -22,6 +30,7 @@ pub use cm_core::scan::{EntryRow, ObjectRow, SkippedRow};
 use cm_core::scan::ScanSink;
 
 use crate::audit::{HostRef, Liveness};
+use crate::integrity::{self, Check};
 use crate::{Result, StoreError};
 
 pub const INDEX_SCHEMA_VERSION: &str = "2";
@@ -264,22 +273,322 @@ pub struct SelectionSummary {
     pub unread_ranges: u64,
 }
 
+/// The scan index of one store. The SQLite connection is opened, migrated and (when due) checked on
+/// first use; [`IndexStore::open`] does that at once. An unusable index is remembered (until the file
+/// changes, e.g. after a repair) so every later call reports the same typed error cheaply.
 pub struct IndexStore {
+    path: PathBuf,
+    index: OnceCell<Index>,
+    failed: RefCell<Option<Failure>>,
+}
+
+/// An open, checked index connection; every query lives here.
+struct Index {
     conn: Connection,
 }
 
-impl IndexStore {
-    pub fn open(path: &Path) -> Result<Self> {
-        let mut conn = Connection::open(path)?;
-        let check: String = conn
-            .query_row("PRAGMA quick_check", [], |r| r.get(0))
-            .map_err(|e| StoreError::IndexCorrupt(e.to_string()))?;
-        if check != "ok" {
-            return Err(StoreError::IndexCorrupt(check));
+/// Why the index cannot be used, kept for later calls.
+#[derive(Debug, Clone)]
+enum Unusable {
+    Corrupt(String),
+    Incompatible { found: String, expected: String },
+}
+
+impl Unusable {
+    fn of(e: &StoreError) -> Option<Unusable> {
+        match e {
+            StoreError::IndexCorrupt(m) => Some(Unusable::Corrupt(m.clone())),
+            StoreError::IndexIncompatible { found, expected } => Some(Unusable::Incompatible { found: found.clone(), expected: expected.clone() }),
+            _ => None,
         }
+    }
+
+    fn error(&self) -> StoreError {
+        match self {
+            Unusable::Corrupt(m) => StoreError::IndexCorrupt(m.clone()),
+            Unusable::Incompatible { found, expected } => StoreError::IndexIncompatible { found: found.clone(), expected: expected.clone() },
+        }
+    }
+}
+
+struct Failure {
+    unusable: Unusable,
+    /// Size and modification time of the file when it failed; a different file is tried again.
+    file: Option<(u64, Option<SystemTime>)>,
+}
+
+fn file_stamp(path: &Path) -> Option<(u64, Option<SystemTime>)> {
+    std::fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()))
+}
+
+/// SQLite reported damage (`SQLITE_CORRUPT`, `SQLITE_NOTADB`).
+pub(crate) fn is_corruption(e: &rusqlite::Error) -> bool {
+    matches!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase))
+}
+
+/// The first bytes of every SQLite database file.
+const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
+/// An existing, non-empty file must start with a SQLite header (read without opening it as a database).
+fn header_check(path: &Path) -> Result<()> {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut head = [0u8; 100];
+    let mut n = 0;
+    while n < head.len() {
+        match file.read(&mut head[n..])? {
+            0 => break,
+            k => n += k,
+        }
+    }
+    match n {
+        0 => Ok(()),
+        100 if &head[..16] == SQLITE_MAGIC => Ok(()),
+        _ => Err(StoreError::IndexCorrupt("file is not a database (the SQLite header is damaged)".into())),
+    }
+}
+
+/// `PRAGMA quick_check` as the typed result: damage, whether listed by the check or raised by SQLite while
+/// reading, is `IndexCorrupt("integrity check: …")`.
+fn full_check(conn: &Connection) -> Result<()> {
+    match integrity::quick_check(conn) {
+        Ok(None) => Ok(()),
+        Ok(Some(problem)) => Err(StoreError::IndexCorrupt(format!("integrity check: {problem}"))),
+        Err(e) if is_corruption(&e) => Err(StoreError::IndexCorrupt(format!("integrity check: {e}"))),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// `repair_index`'s first look: the header and a full check through a read-only connection, which never
+/// checkpoints, rewrites or deletes the database or its WAL (a read-write probe of a damaged file could).
+pub(crate) fn probe_read_only(path: &Path) -> Result<()> {
+    header_check(path)?;
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    full_check(&conn).map_err(classify)
+}
+
+/// A failed SQLite operation on the index that reports damage is the typed index error, never an internal one.
+fn classify(e: StoreError) -> StoreError {
+    match e {
+        StoreError::Sqlite(ref s) if is_corruption(s) => StoreError::IndexCorrupt(s.to_string()),
+        other => other,
+    }
+}
+
+impl IndexStore {
+    /// Open now; an unusable index is reported here (tests, short-lived readers).
+    pub fn open(path: &Path) -> Result<Self> {
+        let store = Self::deferred(path);
+        store.index(Check::Scheduled)?;
+        Ok(store)
+    }
+
+    /// Open on first use. Nothing is read or created until a query needs the index.
+    pub fn deferred(path: &Path) -> Self {
+        IndexStore { path: path.to_path_buf(), index: OnceCell::new(), failed: RefCell::new(None) }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn index(&self, check: Check) -> Result<&Index> {
+        if let Some(i) = self.index.get() {
+            return Ok(i);
+        }
+        if let Some(f) = self.failed.borrow().as_ref()
+            && f.file == file_stamp(&self.path)
+        {
+            return Err(f.unusable.error());
+        }
+        match Index::open(&self.path, check) {
+            Ok(i) => {
+                let _ = self.index.set(i);
+                Ok(self.index.get().expect("set above"))
+            }
+            Err(e) => {
+                if let Some(unusable) = Unusable::of(&e) {
+                    *self.failed.borrow_mut() = Some(Failure { unusable, file: file_stamp(&self.path) });
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Run `f` on the open index; damage SQLite reports at run time becomes `IndexCorrupt` and marks
+    /// the index for a full check at its next open.
+    fn with<T>(&self, f: impl FnOnce(&Index) -> Result<T>) -> Result<T> {
+        let index = self.index(Check::Scheduled)?;
+        f(index).map_err(|e| match classify(e) {
+            e @ StoreError::IndexCorrupt(_) => {
+                integrity::mark_due(&index.conn, "an operation reported damage");
+                e
+            }
+            other => other,
+        })
+    }
+
+    /// Open the index now (with the scheduled check, no query): commands that are about to start work on it
+    /// report an unusable index before doing anything else.
+    pub fn ready(&self) -> Result<()> {
+        self.index(Check::Scheduled).map(|_| ())
+    }
+
+    /// The full integrity check now (`doctor`, repair), recorded when it passes.
+    pub fn verify(&self) -> Result<()> {
+        match self.index.get() {
+            Some(i) => i.check_now(),
+            None => self.index(Check::Now).map(|_| ()),
+        }
+    }
+
+    /// Last passed integrity check (unix seconds) and the pending check marker, if any.
+    pub fn integrity_status(&self) -> Result<(Option<i64>, Option<String>)> {
+        self.with(|i| Ok(integrity::status(&i.conn)?))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.index(Check::Scheduled).expect("index opens").conn
+    }
+
+    /// Start a scan and its staging revision.
+    pub fn begin_scan(&self, init: &ScanInit) -> Result<u32> {
+        self.with(|i| i.begin_scan(init))
+    }
+
+    /// Commit one batch atomically into the staging revision.
+    pub fn write_batch(&self, scan_id: &str, revision: u32, objects: &[ObjectRow], entries: &[EntryRow], skipped: &[SkippedRow]) -> Result<()> {
+        self.with(|i| i.write_batch(scan_id, revision, objects, entries, skipped))
+    }
+
+    pub fn heartbeat(&self, scan_id: &str, now: &str) -> Result<()> {
+        self.with(|i| i.heartbeat(scan_id, now))
+    }
+
+    /// Record a cancel request. It is a receipt only; the host stops at its next safe boundary.
+    pub fn request_cancel(&self, scan_id: &str) -> Result<CancelReceipt> {
+        self.with(|i| i.request_cancel(scan_id))
+    }
+
+    pub fn cancel_requested(&self, scan_id: &str) -> Result<bool> {
+        self.with(|i| i.cancel_requested(scan_id))
+    }
+
+    pub fn set_stopping(&self, scan_id: &str) -> Result<()> {
+        self.with(|i| i.set_stopping(scan_id))
+    }
+
+    /// Publish the staging revision with a terminal state (SCN-03/04).
+    pub fn publish(&self, scan_id: &str, revision: u32, requested: ScanState, finished_at: &str) -> Result<ScanState> {
+        self.with(|i| i.publish(scan_id, revision, requested, finished_at))
+    }
+
+    /// Mark scans whose host process exited as `interrupted`, with a `host_exited` issue, and publish what was committed.
+    pub fn reconcile_hosts(&self, liveness: impl Fn(&HostRef) -> Liveness, now: &str) -> Result<Vec<String>> {
+        self.with(|i| i.reconcile_hosts(liveness, now))
+    }
+
+    pub fn scan_status(&self, scan_id: &str) -> Result<ScanStatusView> {
+        self.with(|i| i.scan_status(scan_id))
+    }
+
+    /// Every scan in this store, most recently started first.
+    pub fn list_scans(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<ScanListItem>, Option<String>)> {
+        self.with(|i| i.list_scans(page_size, cursor))
+    }
+
+    /// Persist the backend's report so it can be queried after the scan (SCN-02/03).
+    pub fn record_report(&self, scan_id: &str, report: &cm_core::scan::ScanReport) -> Result<()> {
+        self.with(|i| i.record_report(scan_id, report))
+    }
+
+    pub fn scan_report(&self, scan_id: &str) -> Result<Option<serde_json::Value>> {
+        self.with(|i| i.scan_report(scan_id))
+    }
+
+    /// Load a published revision as an analysis view (identity index included).
+    pub fn view(&self, scan_id: &str) -> Result<cm_core::analysis::MemView> {
+        self.with(|i| i.view(scan_id))
+    }
+
+    /// Persist an analysis result (derived data: rebuilt with the index).
+    pub fn save_candidates(&self, set: &cm_core::analysis::CandidateSet) -> Result<()> {
+        self.with(|i| i.save_candidates(set))
+    }
+
+    pub fn candidate_set(&self, candidate_set_id: &str) -> Result<serde_json::Value> {
+        self.with(|i| i.candidate_set(candidate_set_id))
+    }
+
+    /// The most recently saved candidate set of a scan, if any (`candidate_set_id`, `created_at`).
+    pub fn latest_candidate_set(&self, scan_id: &str) -> Result<Option<(String, String)>> {
+        self.with(|i| i.latest_candidate_set(scan_id))
+    }
+
+    /// One page of candidates ordered by candidate_id; the cursor binds the set and page size.
+    pub fn list_candidates(&self, candidate_set_id: &str, page_size: u32, cursor: Option<&str>) -> Result<(Vec<serde_json::Value>, Option<String>)> {
+        self.with(|i| i.list_candidates(candidate_set_id, page_size, cursor))
+    }
+
+    /// Remove an old revision (retention). Cursors bound to it become stale.
+    pub fn drop_scan(&self, scan_id: &str) -> Result<()> {
+        self.with(|i| i.drop_scan(scan_id))
+    }
+
+    /// One revision-bound page (IDX-01/02/03).
+    pub fn list_entries(&self, q: &EntryQuery) -> Result<EntriesPage> {
+        self.with(|i| i.list_entries(q))
+    }
+
+    /// Overlap-free summary of selected entries in the published revision (IDX-04).
+    pub fn summarize(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
+        self.with(|i| i.summarize(scan_id, entry_ids))
+    }
+
+    /// One entry of the published revision by id, with its full raw path.
+    pub fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
+        self.with(|i| i.get_entry(scan_id, entry_id))
+    }
+
+    /// Directory entries of the published revision whose object has one of the given identities
+    /// (`volume_id`, `file_id`). Identities absent from the scan are not returned. At most `MAX_PAGE`.
+    pub fn entries_by_identity(&self, scan_id: &str, identities: &[(String, String)]) -> Result<Vec<((String, String), EntryItem)>> {
+        self.with(|i| i.entries_by_identity(scan_id, identities))
+    }
+
+    /// Overlap-free total of one entry's subtree: the same result as `summarize(&[id])`.
+    pub fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
+        self.with(|i| i.folder_total(scan_id, entry_id))
+    }
+}
+
+impl Index {
+    /// Open, migrate and, when due, check the database (see [`crate::integrity`]).
+    fn open(path: &Path, check: Check) -> Result<Index> {
+        Self::open_checked(path, check).map_err(classify)
+    }
+
+    fn open_checked(path: &Path, check: Check) -> Result<Index> {
+        // A damaged header is refused before SQLite opens the file: closing a read-write connection to it
+        // would delete the WAL that belongs to it (kept for inspection by the repair instead).
+        header_check(path)?;
+        let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        let now = integrity::now_unix();
+        let mut due = integrity::due(&conn, check, now)?;
+        if due.is_none() && crate::migrate::read_version(&conn)?.is_some_and(|v| v != INDEX_SCHEMA_VERSION) {
+            due = Some("migration pending".into());
+        }
+        if due.is_some() {
+            full_check(&conn)?;
+        }
         // Older schemas are migrated in one transaction; an unmigratable index is reported as incompatible (rebuildable).
-        crate::migrate::prepare(&mut conn, crate::migrate::StoreKind::Index, path)?;
+        let outcome = crate::migrate::prepare(&mut conn, crate::migrate::StoreKind::Index, path)?;
         conn.execute_batch(SCHEMA).map_err(|e| StoreError::IndexCorrupt(e.to_string()))?;
         let found: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).optional()?;
@@ -290,11 +599,23 @@ impl IndexStore {
             Some(v) if v == INDEX_SCHEMA_VERSION => {}
             Some(v) => return Err(StoreError::IndexIncompatible { found: v, expected: INDEX_SCHEMA_VERSION.into() }),
         }
-        Ok(IndexStore { conn })
+        // A new database is consistent by construction; a migration checked itself inside its transaction.
+        if due.is_some() || !matches!(outcome, crate::migrate::Outcome::UpToDate) {
+            integrity::record_ok(&conn, now);
+        }
+        Ok(Index { conn })
     }
 
-    /// Start a scan and its staging revision.
-    pub fn begin_scan(&self, init: &ScanInit) -> Result<u32> {
+    fn check_now(&self) -> Result<()> {
+        if let Err(e) = full_check(&self.conn) {
+            integrity::mark_due(&self.conn, "integrity check failed");
+            return Err(e);
+        }
+        integrity::record_ok(&self.conn, integrity::now_unix());
+        Ok(())
+    }
+
+    fn begin_scan(&self, init: &ScanInit) -> Result<u32> {
         let revision = 1u32;
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -323,7 +644,7 @@ impl IndexStore {
     }
 
     /// Commit one batch atomically into the staging revision.
-    pub fn write_batch(&self, scan_id: &str, revision: u32, objects: &[ObjectRow], entries: &[EntryRow], skipped: &[SkippedRow]) -> Result<()> {
+    fn write_batch(&self, scan_id: &str, revision: u32, objects: &[ObjectRow], entries: &[EntryRow], skipped: &[SkippedRow]) -> Result<()> {
         self.require_staging(scan_id, revision)?;
         let tx = self.conn.unchecked_transaction()?;
         {
@@ -356,7 +677,7 @@ impl IndexStore {
         Ok(())
     }
 
-    pub fn heartbeat(&self, scan_id: &str, now: &str) -> Result<()> {
+    fn heartbeat(&self, scan_id: &str, now: &str) -> Result<()> {
         self.conn.execute("UPDATE scans SET heartbeat_at=?2 WHERE scan_id=?1", params![scan_id, now])?;
         Ok(())
     }
@@ -364,7 +685,7 @@ impl IndexStore {
     /// Record a cancel request. It is a receipt only; the host stops at its next safe boundary.
     /// The flag is set only while the scan is not terminal, in one statement, so an accepted
     /// receipt is always seen by `publish` and the scan ends `cancelled` (never `completed`).
-    pub fn request_cancel(&self, scan_id: &str) -> Result<CancelReceipt> {
+    fn request_cancel(&self, scan_id: &str) -> Result<CancelReceipt> {
         let state: String = self
             .conn
             .query_row("SELECT state FROM scans WHERE scan_id=?1", [scan_id], |r| r.get(0))
@@ -379,11 +700,11 @@ impl IndexStore {
         Ok(CancelReceipt { scan_id: scan_id.into(), accepted: true, state_at_receipt: state })
     }
 
-    pub fn cancel_requested(&self, scan_id: &str) -> Result<bool> {
+    fn cancel_requested(&self, scan_id: &str) -> Result<bool> {
         Ok(self.conn.query_row("SELECT cancel_requested FROM scans WHERE scan_id=?1", [scan_id], |r| r.get::<_, i64>(0))? != 0)
     }
 
-    pub fn set_stopping(&self, scan_id: &str) -> Result<()> {
+    fn set_stopping(&self, scan_id: &str) -> Result<()> {
         self.conn.execute("UPDATE scans SET state='stopping' WHERE scan_id=?1 AND state='running'", [scan_id])?;
         Ok(())
     }
@@ -392,13 +713,20 @@ impl IndexStore {
     /// downgraded to `partial` (SCN-03); `completed` after an accepted cancel request is published
     /// as `cancelled`, even when the backend finished before it polled again (SCN-04). Aggregates
     /// are computed here, once per revision.
-    pub fn publish(&self, scan_id: &str, revision: u32, requested: ScanState, finished_at: &str) -> Result<ScanState> {
-        if !requested.is_terminal() {
-            return Err(StoreError::InvalidState("publish needs a terminal state".into()));
-        }
+    fn publish(&self, scan_id: &str, revision: u32, requested: ScanState, finished_at: &str) -> Result<ScanState> {
         // Write lock first: a concurrent cancel request either lands before the state is decided
         // below or finds the scan terminal (receipt `already_terminal`), never in between.
         let tx = rusqlite::Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        let state = self.publish_locked(&tx, scan_id, revision, requested, finished_at)?;
+        tx.commit()?;
+        Ok(state)
+    }
+
+    /// `publish` inside a write transaction the caller holds (and commits).
+    fn publish_locked(&self, tx: &Connection, scan_id: &str, revision: u32, requested: ScanState, finished_at: &str) -> Result<ScanState> {
+        if !requested.is_terminal() {
+            return Err(StoreError::InvalidState("publish needs a terminal state".into()));
+        }
         self.require_staging(scan_id, revision)?;
         let skipped: i64 = tx.query_row("SELECT count(*) FROM skipped WHERE scan_id=?1 AND revision=?2", params![scan_id, revision], |r| r.get(0))?;
         let cancel: i64 = tx.query_row("SELECT cancel_requested FROM scans WHERE scan_id=?1", [scan_id], |r| r.get(0))?;
@@ -408,19 +736,22 @@ impl IndexStore {
             other => other,
         };
         let completeness = if state == ScanState::Completed { "verified_scope" } else { "partial_scope" };
-        compute_aggregates(&tx, scan_id, revision)?;
+        compute_aggregates(tx, scan_id, revision)?;
         tx.execute("UPDATE revisions SET status='published' WHERE scan_id=?1 AND revision=?2", params![scan_id, revision])?;
         tx.execute(
             "UPDATE scans SET state=?2, completeness=?3, finished_at=?4 WHERE scan_id=?1",
             params![scan_id, enum_text(&state), completeness, finished_at],
         )?;
-        tx.commit()?;
         Ok(state)
     }
 
     /// Mark scans whose host process exited as `interrupted` and publish what was committed. The
-    /// stored report names the exited host (`host_exited`), so later queries explain the state.
-    pub fn reconcile_hosts(&self, liveness: impl Fn(&HostRef) -> Liveness, now: &str) -> Result<Vec<String>> {
+    /// stored report always names the exited host (`host_exited`), so later queries explain the
+    /// state — also when the host had recorded its own report just before it was killed
+    /// (BUG-WFA-06): that report is kept, marked interrupted and given the issue. The report and the
+    /// publication are one write transaction, so a host that published its own terminal record first
+    /// is left exactly as it published. The index is marked for a full check at its next open.
+    fn reconcile_hosts(&self, liveness: impl Fn(&HostRef) -> Liveness, now: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT scan_id, revision, host_kind, host_pid, host_started_at, backend FROM scans WHERE state IN ('created','running','stopping')",
         )?;
@@ -430,39 +761,28 @@ impl IndexStore {
         drop(stmt);
         let mut interrupted = Vec::new();
         for (scan_id, revision, host, backend) in rows {
-            if liveness(&host) == Liveness::Exited {
-                let report = cm_core::scan::ScanReport {
-                    state: ScanState::Interrupted,
-                    backend,
-                    backend_reason: "the hosting process exited before recording a terminal state".into(),
-                    entries: 0,
-                    skipped_ranges: 0,
-                    boundaries: 0,
-                    elevated_read: vec![],
-                    issues: vec![cm_core::scan::ScanIssue {
-                        code: "host_exited".into(),
-                        scope_display: "scan host".into(),
-                        message: format!(
-                            "{} process {} exited before a terminal record; committed rows are kept and the scan is incomplete",
-                            host.kind, host.pid
-                        ),
-                    }],
-                };
-                let json = serde_json::to_string(&report).expect("report serializes");
-                self.conn.execute("UPDATE scans SET report_json=COALESCE(report_json, ?2) WHERE scan_id=?1", params![scan_id, json])?;
-                match self.publish(&scan_id, revision, ScanState::Interrupted, now) {
-                    Ok(_) => {}
-                    // The host published its own terminal record between the query and now.
-                    Err(StoreError::InvalidState(_)) => continue,
-                    Err(e) => return Err(e),
-                }
-                interrupted.push(scan_id);
+            if liveness(&host) != Liveness::Exited {
+                continue;
             }
+            let tx = rusqlite::Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+            match self.require_staging(&scan_id, revision) {
+                Ok(()) => {}
+                // The host published its own terminal record between the query and now (dropping `tx` rolls back).
+                Err(StoreError::InvalidState(_)) => continue,
+                Err(e) => return Err(e),
+            }
+            let stored: Option<String> = tx.query_row("SELECT report_json FROM scans WHERE scan_id=?1", [&scan_id], |r| r.get(0))?;
+            tx.execute("UPDATE scans SET report_json=?2 WHERE scan_id=?1", params![scan_id, host_exited_report(stored.as_deref(), &host, &backend)])?;
+            // The host died while it may have been writing: check the whole index at its next open.
+            tx.execute(integrity::MARK_DUE_SQL, [format!("scan host exited: {scan_id}")])?;
+            self.publish_locked(&tx, &scan_id, revision, ScanState::Interrupted, now)?;
+            tx.commit()?;
+            interrupted.push(scan_id);
         }
         Ok(interrupted)
     }
 
-    pub fn scan_status(&self, scan_id: &str) -> Result<ScanStatusView> {
+    fn scan_status(&self, scan_id: &str) -> Result<ScanStatusView> {
         let row = self
             .conn
             .query_row(
@@ -505,7 +825,7 @@ impl IndexStore {
 
     /// Every scan in this store, most recently started first, keyset-paginated by insertion
     /// order (rows are never renumbered, so pages stay stable while new scans start).
-    pub fn list_scans(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<ScanListItem>, Option<String>)> {
+    fn list_scans(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<ScanListItem>, Option<String>)> {
         if page_size == 0 || page_size > MAX_PAGE {
             return Err(StoreError::InvalidArgument(format!("page_size must be 1..={MAX_PAGE}")));
         }
@@ -558,7 +878,7 @@ impl IndexStore {
 
     /// Persist the backend's report (backend reason, issues, elevated-read label) so it can be
     /// queried after the scan, not only by the process that ran it (SCN-02/03).
-    pub fn record_report(&self, scan_id: &str, report: &cm_core::scan::ScanReport) -> Result<()> {
+    fn record_report(&self, scan_id: &str, report: &cm_core::scan::ScanReport) -> Result<()> {
         let json = serde_json::to_string(report).expect("report serializes");
         let n = self.conn.execute("UPDATE scans SET report_json=?2, backend=?3 WHERE scan_id=?1", params![scan_id, json, report.backend])?;
         if n == 0 {
@@ -567,7 +887,7 @@ impl IndexStore {
         Ok(())
     }
 
-    pub fn scan_report(&self, scan_id: &str) -> Result<Option<serde_json::Value>> {
+    fn scan_report(&self, scan_id: &str) -> Result<Option<serde_json::Value>> {
         let text: Option<Option<String>> =
             self.conn.query_row("SELECT report_json FROM scans WHERE scan_id=?1", [scan_id], |r| r.get(0)).optional()?;
         match text {
@@ -578,7 +898,7 @@ impl IndexStore {
     }
 
     /// Load a published revision as an analysis view (identity index included).
-    pub fn view(&self, scan_id: &str) -> Result<cm_core::analysis::MemView> {
+    fn view(&self, scan_id: &str) -> Result<cm_core::analysis::MemView> {
         use cm_core::analysis::{EntryFacts, MemView};
         let (revision, _, platform) = self.published(scan_id)?;
         let mut view = MemView { platform: Some(platform), ..Default::default() };
@@ -629,7 +949,7 @@ impl IndexStore {
     }
 
     /// Persist an analysis result (derived data: rebuilt with the index).
-    pub fn save_candidates(&self, set: &cm_core::analysis::CandidateSet) -> Result<()> {
+    fn save_candidates(&self, set: &cm_core::analysis::CandidateSet) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO candidate_sets(candidate_set_id,scan_id,revision,rule_set_digest,protection_version,created_at,set_json)
              VALUES(?1,?2,?3,?4,?5,?6,?7)",
@@ -639,7 +959,7 @@ impl IndexStore {
         Ok(())
     }
 
-    pub fn candidate_set(&self, candidate_set_id: &str) -> Result<serde_json::Value> {
+    fn candidate_set(&self, candidate_set_id: &str) -> Result<serde_json::Value> {
         let text: String = self
             .conn
             .query_row("SELECT set_json FROM candidate_sets WHERE candidate_set_id=?1", [candidate_set_id], |r| r.get(0))
@@ -649,7 +969,7 @@ impl IndexStore {
     }
 
     /// The most recently saved candidate set of a scan, if any (`candidate_set_id`, `created_at`).
-    pub fn latest_candidate_set(&self, scan_id: &str) -> Result<Option<(String, String)>> {
+    fn latest_candidate_set(&self, scan_id: &str) -> Result<Option<(String, String)>> {
         Ok(self
             .conn
             .query_row(
@@ -661,7 +981,7 @@ impl IndexStore {
     }
 
     /// One page of candidates ordered by candidate_id; the cursor binds the set and page size.
-    pub fn list_candidates(&self, candidate_set_id: &str, page_size: u32, cursor: Option<&str>) -> Result<(Vec<serde_json::Value>, Option<String>)> {
+    fn list_candidates(&self, candidate_set_id: &str, page_size: u32, cursor: Option<&str>) -> Result<(Vec<serde_json::Value>, Option<String>)> {
         if page_size == 0 || page_size > MAX_PAGE {
             return Err(StoreError::InvalidArgument(format!("page_size must be 1..={MAX_PAGE}")));
         }
@@ -690,7 +1010,7 @@ impl IndexStore {
     }
 
     /// Remove an old revision (retention). Cursors bound to it become stale.
-    pub fn drop_scan(&self, scan_id: &str) -> Result<()> {
+    fn drop_scan(&self, scan_id: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         for table in ["entries", "objects", "skipped", "revisions", "scans"] {
             tx.execute(&format!("DELETE FROM {table} WHERE scan_id=?1"), [scan_id])?;
@@ -722,7 +1042,7 @@ impl IndexStore {
 
     /// One revision-bound page (IDX-01/02/03). The order is total: size (exact u64, unknown
     /// last) or raw name, then entry_id.
-    pub fn list_entries(&self, q: &EntryQuery) -> Result<EntriesPage> {
+    fn list_entries(&self, q: &EntryQuery) -> Result<EntriesPage> {
         if q.page_size == 0 || q.page_size > MAX_PAGE {
             return Err(StoreError::InvalidArgument(format!("page_size must be 1..={MAX_PAGE}")));
         }
@@ -845,7 +1165,7 @@ impl IndexStore {
     }
 
     /// Overlap-free summary of selected entries in the published revision (IDX-04).
-    pub fn summarize(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
+    fn summarize(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
         let (revision, _, _) = self.published(scan_id)?;
         let tree = Tree::load(&self.conn, scan_id, revision)?;
         let selected: BTreeSet<u64> = entry_ids.iter().copied().collect();
@@ -881,7 +1201,7 @@ impl IndexStore {
     }
 
     /// One entry of the published revision by id, with its full raw path.
-    pub fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
+    fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
         let (revision, _, platform) = self.published(scan_id)?;
         let row = self
             .conn
@@ -901,7 +1221,7 @@ impl IndexStore {
     /// Directory entries of the published revision whose object has one of the given
     /// identities (`volume_id`, `file_id`), e.g. application install locations. Identities
     /// absent from the scan are not returned (unknown, not zero). At most `MAX_PAGE` identities.
-    pub fn entries_by_identity(&self, scan_id: &str, identities: &[(String, String)]) -> Result<Vec<((String, String), EntryItem)>> {
+    fn entries_by_identity(&self, scan_id: &str, identities: &[(String, String)]) -> Result<Vec<((String, String), EntryItem)>> {
         if identities.len() > MAX_PAGE as usize {
             return Err(StoreError::InvalidArgument(format!("at most {MAX_PAGE} identities per query")));
         }
@@ -939,7 +1259,7 @@ impl IndexStore {
     /// Overlap-free total of one entry's subtree: the same result as `summarize(&[id])`,
     /// computed by walking only that subtree through the parent index instead of loading the
     /// whole revision into memory. Objects count once; unread ranges count as unknown.
-    pub fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
+    fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
         let (revision, _, _) = self.published(scan_id)?;
         let id = entry_id as i64;
         let exists: Option<i64> = self
@@ -979,6 +1299,38 @@ impl IndexStore {
         }
         Ok(summary)
     }
+}
+
+/// The stored report of a scan whose host exited: the host's own report when it recorded one (its
+/// backend facts and issues are kept), marked `interrupted` and carrying `host_exited` exactly once.
+fn host_exited_report(stored: Option<&str>, host: &HostRef, backend: &str) -> String {
+    let issue = cm_core::scan::ScanIssue {
+        code: "host_exited".into(),
+        scope_display: "scan host".into(),
+        message: format!("{} process {} exited before a terminal record; committed rows are kept and the scan is incomplete", host.kind, host.pid),
+    };
+    if let Some(mut v) = stored.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()).filter(serde_json::Value::is_object) {
+        v["state"] = serde_json::json!(ScanState::Interrupted);
+        if !v["issues"].is_array() {
+            v["issues"] = serde_json::json!([]);
+        }
+        let issues = v["issues"].as_array_mut().expect("set above");
+        if !issues.iter().any(|i| i["code"] == "host_exited") {
+            issues.push(serde_json::to_value(&issue).expect("issue serializes"));
+        }
+        return v.to_string();
+    }
+    let report = cm_core::scan::ScanReport {
+        state: ScanState::Interrupted,
+        backend: backend.to_owned(),
+        backend_reason: "the hosting process exited before recording a terminal state".into(),
+        entries: 0,
+        skipped_ranges: 0,
+        boundaries: 0,
+        elevated_read: vec![],
+        issues: vec![issue],
+    };
+    serde_json::to_string(&report).expect("report serializes")
 }
 
 const ITEM_COLUMNS: &str = "e.entry_id, e.parent_entry_id, e.object_id, e.kind, e.boundary, e.sort_logical_be, e.sort_allocated_be,

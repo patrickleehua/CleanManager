@@ -490,7 +490,7 @@ fn bundle_instance(f: &Found, casks: &BTreeMap<Vec<u8>, Vec<CaskClaim>>, receipt
     app.uninstall_capability = Capability::new("app.uninstall", CapabilityState::Unsupported, Some(MAC_READ_ONLY_REASON));
     if f.domain == Domain::System || on_system_volume(&f.path) {
         app.protected_class = Some(ProtectedReason::OsPackage);
-        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, format!("{:?}", ProtectedReason::OsPackage)));
+        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, ProtectedReason::OsPackage.as_str()));
     }
     app.evidence = evidence;
     app

@@ -809,7 +809,7 @@ pub fn run_choice(choice: &AdapterChoice, timeout_seconds: u32) -> Result<(Optio
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                cm_core::debug_trace!("process", "uninstaller \"{}\" kind={:?} exit={:?} in {}ms", choice.program, choice.kind, status.code(), started.elapsed().as_millis());
+                cm_core::debug_trace!("process", "uninstaller \"{}\" kind={:?} exit={} in {}ms", choice.program, choice.kind, cm_core::trace::exit(status.code()), started.elapsed().as_millis());
                 return Ok((status.code(), started.elapsed().as_millis() as u64));
             }
             Ok(None) if Instant::now() >= deadline => {

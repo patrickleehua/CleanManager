@@ -124,6 +124,17 @@ pub enum Mode {
     Delete,
 }
 
+impl Mode {
+    /// The protocol word (`trash`, `quarantine`, `delete`), also used in messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Trash => "trash",
+            Mode::Quarantine => "quarantine",
+            Mode::Delete => "delete",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Impact {

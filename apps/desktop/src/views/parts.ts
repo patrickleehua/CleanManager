@@ -8,6 +8,7 @@ import { shortcutLabel } from '../lib/nav';
 import { words } from '../lib/platform';
 import type { Counts, Group, IpcError, ItemStatus } from '../lib/types';
 import { GROUP_LABEL, ITEM_STATUS_LABEL, progressSegments } from '../lib/words';
+import { t } from '../i18n';
 
 type Child = Node | string | null | undefined | false;
 
@@ -31,8 +32,8 @@ export function groupMark(group: Group, withLabel = true): HTMLElement {
 /** "812.0 MiB", or "至少 1.2 GiB（另有 3 项大小未知）" — unknown is never shown as 0. */
 export function sizeText(known: string | null, unknownCount: number): string {
   const k = parseBytes(known);
-  if (k === null) return '未知';
-  if (unknownCount > 0) return k === 0n ? `未知（${groupDigits(unknownCount)} 项）` : `至少 ${formatBytes(k)}，另有 ${groupDigits(unknownCount)} 项未知`;
+  if (k === null) return t('common.unknown');
+  if (unknownCount > 0) return k === 0n ? t('parts.unknownUnknowncount', { unknownCount }) : t('parts.leastKPlusUnknowncount', { k: formatBytes(k), unknownCount });
   return formatBytes(k);
 }
 
@@ -53,7 +54,7 @@ export function errorLine(e: IpcError | null, id?: string): HTMLElement | null {
     'div',
     { class: 'form-error', role: 'alert', id },
     h('p', {}, errorText(e)),
-    h('details', { class: 'tech' }, h('summary', {}, '技术详情'), h('p', { class: 'selectable small' }, `${e.code} / ${e.reason}：${e.message}`)),
+    h('details', { class: 'tech' }, h('summary', {}, t('common.technicalDetails')), h('p', { class: 'selectable small' }, t('parts.codeReasonMessage', { code: e.code, reason: e.reason, message: e.message }))),
   );
 }
 
@@ -86,13 +87,13 @@ export function emptyState(title: string, body: string, ...actions: Child[]): HT
 export function segBar(total: number, counts: Counts, label: string): HTMLElement {
   const segs = progressSegments(total, counts);
   const sum = segs.reduce((a, s) => a + s.count, 0) || 1;
-  const text = segs.map((s) => `${ITEM_STATUS_LABEL[s.key]} ${s.count}`).join('，');
+  const text = segs.map((s) => `${ITEM_STATUS_LABEL[s.key]} ${s.count}`).join(t('common.commaSep'));
   return h(
     'div',
     { class: 'segbar-wrap' },
     h(
       'div',
-      { class: 'segbar', role: 'img', 'aria-label': `${label}：共 ${total} 项，${text}` },
+      { class: 'segbar', role: 'img', 'aria-label': t('parts.labelTotalText', { label, total, text }) },
       ...segs.map((s) => {
         // CSSOM, not a style attribute: the production CSP forbids inline style attributes.
         const part = h('span', { class: 'seg-part', 'data-status': s.key });
@@ -119,19 +120,19 @@ export function statusWord(s: ItemStatus): HTMLElement {
 /** A machine string (id, command) people may copy to the CLI. */
 export function copyField(label: string, text: string): HTMLElement {
   const code = h('code', { class: 'copy-text selectable' }, text);
-  const btn = h('button', { type: 'button', class: 'icon-btn copy-btn', 'aria-label': `复制：${label}`, title: '复制' }, icon('copy'));
+  const btn = h('button', { type: 'button', class: 'icon-btn copy-btn', 'aria-label': t('parts.copyLabel', { label }), title: t('parts.copy') }, icon('copy'));
   const done = h('span', { class: 'copy-done', 'aria-live': 'polite' });
   btn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(text);
-      done.textContent = '已复制';
+      done.textContent = t('common.copied');
     } catch {
       const range = document.createRange();
       range.selectNodeContents(code);
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
-      done.textContent = `已选中，可按 ${shortcutLabel('C', words().mod)} 复制`;
+      done.textContent = t('parts.selectedPressShortcutlabelCopy', { shortcutLabel: shortcutLabel('C', words().mod) });
     }
     window.setTimeout(() => (done.textContent = ''), 2200);
   });
@@ -160,7 +161,7 @@ export function confirmInline(opts: {
     'aria-describedby': `${opts.id}-prompt`,
   }) as HTMLInputElement;
   const go = h('button', { type: 'button', class: opts.danger ? 'danger' : 'primary', disabled: true }, opts.action) as HTMLButtonElement;
-  const cancel = h('button', { type: 'button', class: 'quiet' }, '取消');
+  const cancel = h('button', { type: 'button', class: 'quiet' }, t('common.cancel'));
   const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
   input.addEventListener('input', () => (go.disabled = input.value.trim() !== opts.expected));
   input.addEventListener('keydown', (e) => {

@@ -70,8 +70,14 @@ pub fn emit(value: &Value, format: Format) {
 }
 
 pub fn fail(req: &str, code: ErrorCode, message: &str, format: Format) -> ExitCode {
-    emit(&error_record(req, code, message, None, ErrorDetails::default()), format);
+    emit(&error_record(req, code, message, required_action(code), ErrorDetails::default()), format);
     ExitCode::from(ExitClass::Error(code).code() as u8)
+}
+
+/// Codes whose next step is always the same, wherever the error is raised: an unusable scan index is
+/// repaired by `doctor --repair-index` (BUG-WFA-01).
+fn required_action(code: ErrorCode) -> Option<&'static str> {
+    (code == ErrorCode::IndexUnavailable).then_some(cm_store::REPAIR_INDEX_COMMAND)
 }
 
 fn main() -> ExitCode {

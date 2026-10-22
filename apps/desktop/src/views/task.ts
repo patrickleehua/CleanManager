@@ -3,10 +3,11 @@
 // (announced by the app).
 
 import type { App } from '../main';
-import { groupDigits } from '../lib/bytes';
-import { h, icon, replace } from '../lib/dom';
+
+import { h, icon, live, replace } from '../lib/dom';
 import { isTerminal, STATE_LABEL, stateTone, taskTitle } from '../lib/format';
 import { OPERATION_STATE_LABEL, operationTone } from '../lib/words';
+import { t } from '../i18n';
 
 export class TaskChip {
   el: HTMLElement;
@@ -19,7 +20,7 @@ export class TaskChip {
       const t = app.store.state.task;
       if (t) void app.openScan(t.scanId, 'overview');
     });
-    this.dismiss = h('button', { type: 'button', class: 'task-dismiss', 'aria-label': '隐藏任务结果' }, icon('close'));
+    this.dismiss = live(h('button', { type: 'button', class: 'task-dismiss' }, icon('close')), null, { 'aria-label': () => t('task.hideTaskResult') });
     this.dismiss.addEventListener('click', () => {
       const t = app.store.state.task;
       if (t) app.store.set({ task: { ...t, dismissed: true } });
@@ -28,29 +29,29 @@ export class TaskChip {
   }
 
   update(): void {
-    const t = this.app.store.state.task;
-    if (!t || (t.dismissed && isTerminal(t.state))) {
+    const task = this.app.store.state.task;
+    if (!task || (task.dismissed && isTerminal(task.state))) {
       this.el.hidden = true;
       return;
     }
     this.el.hidden = false;
-    const running = !isTerminal(t.state);
-    this.el.dataset.tone = stateTone(t.state);
+    const running = !isTerminal(task.state);
+    this.el.dataset.tone = stateTone(task.state);
     this.dismiss.hidden = running;
     const detail = running
-      ? t.state === 'stopping' || t.cancelRequested
-        ? '等待当前目录结束'
-        : `已发现 ${groupDigits(t.entriesSeen)} 项`
-      : t.error
-        ? '未能开始'
-        : '查看结果';
+      ? task.state === 'stopping' || task.cancelRequested
+        ? t('task.waitingCurrentFolderFinish')
+        : t('task.entriesseen', { entriesSeen: task.entriesSeen })
+      : task.error
+        ? t('task.couldntStart')
+        : t('common.viewResult');
     replace(
       this.main,
       h('span', { class: running ? 'pulse' : 'dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'task-state' }, taskTitle(t.state)),
+      h('span', { class: 'task-state' }, taskTitle(task.state)),
       h('span', { class: 'task-detail' }, detail),
     );
-    this.main.setAttribute('aria-label', `扫描任务：${STATE_LABEL[t.state]}，${detail}。打开概览`);
+    this.main.setAttribute('aria-label', t('task.scanTaskPDetail', { p: STATE_LABEL[task.state], detail }));
   }
 }
 
@@ -66,7 +67,7 @@ export class ApplyChip {
       const a = app.store.state.apply;
       if (a) app.openOperation(a.operationId);
     });
-    this.dismiss = h('button', { type: 'button', class: 'task-dismiss', 'aria-label': '隐藏执行结果' }, icon('close'));
+    this.dismiss = live(h('button', { type: 'button', class: 'task-dismiss' }, icon('close')), null, { 'aria-label': () => t('task.hideRunResult') });
     this.dismiss.addEventListener('click', () => {
       const a = app.store.state.apply;
       if (a) app.store.set({ apply: { ...a, dismissed: true } });
@@ -86,14 +87,14 @@ export class ApplyChip {
     const state = a.running ? (a.cancelRequested ? 'stopping' : 'running') : (a.status ?? 'failed');
     this.el.dataset.tone = a.error ? 'bad' : operationTone(state);
     this.dismiss.hidden = a.running;
-    const title = a.running ? (a.cancelRequested ? '正在停止执行' : '正在执行计划') : a.error ? '执行未能开始' : `执行${OPERATION_STATE_LABEL[state] ?? state}`;
-    const detail = a.running ? `${groupDigits(done)} / ${groupDigits(a.total)} 项` : '查看结果';
+    const title = a.running ? (a.cancelRequested ? t('task.stoppingRun') : t('task.runningPlan')) : a.error ? t('task.runCouldntStart') : t('task.runP', { p: OPERATION_STATE_LABEL[state] ?? state });
+    const detail = a.running ? t('task.doneTotal', { done, total: a.total }) : t('common.viewResult');
     replace(
       this.main,
       h('span', { class: a.running ? 'pulse' : 'dot', 'aria-hidden': 'true' }),
       h('span', { class: 'task-state' }, title),
       h('span', { class: 'task-detail num' }, detail),
     );
-    this.main.setAttribute('aria-label', `执行任务：${title}，${detail}。打开执行结果`);
+    this.main.setAttribute('aria-label', t('task.runTaskTitleDetail', { title, detail }));
   }
 }

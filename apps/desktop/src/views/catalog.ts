@@ -4,7 +4,7 @@
 // plan draft with processing modes. Nothing is pre-selected; creating a plan executes nothing.
 
 import type { App } from '../main';
-import { groupDigits } from '../lib/bytes';
+
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
@@ -13,29 +13,30 @@ import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOpti
 import { confirmInline, emptyState, errorLine, exactTitle, pageHead, sizeText } from './parts';
 import { notOnThisPlatform } from '../lib/platform';
 import { issueList, learnMore, pathText } from './ui';
+import { t } from '../i18n';
 
 const SOURCE_LABEL: Record<string, string> = {
-  downloads: '下载文件夹',
-  desktop: '桌面',
-  browser_downloads: '浏览器下载位置',
+  get downloads() { return t('catalog.sourceLabel.downloads'); },
+  get desktop() { return t('catalog.sourceLabel.desktop'); },
+  get browser_downloads() { return t('catalog.sourceLabel.browser_downloads'); },
 };
 
 const SKIP_LABEL: Record<string, string> = {
-  hard_denied: '系统硬拒绝范围',
-  protected: '受保护',
-  vcs_tracked: '包含被版本控制跟踪的文件',
-  vcs_unknown: '无法确认版本控制状态',
-  mounted: '映像正在挂载',
-  in_use: '正在被使用',
-  probe_unknown: '无法确认是否在使用',
-  partial_evidence: '证据不完整',
-  recent: '项目最近修改过',
+  get hard_denied() { return t('catalog.skipLabel.hard_denied'); },
+  get protected() { return t('catalog.skipLabel.protected'); },
+  get vcs_tracked() { return t('catalog.skipLabel.vcs_tracked'); },
+  get vcs_unknown() { return t('catalog.skipLabel.vcs_unknown'); },
+  get mounted() { return t('catalog.skipLabel.mounted'); },
+  get in_use() { return t('catalog.skipLabel.in_use'); },
+  get probe_unknown() { return t('catalog.skipLabel.probe_unknown'); },
+  get partial_evidence() { return t('catalog.skipLabel.partial_evidence'); },
+  get recent() { return t('catalog.skipLabel.recent'); },
 };
 
 const REBUILD_LABEL: Record<string, string> = {
-  local_rebuild: '本机重新构建即可恢复',
-  network_redownload: '需要联网重新下载',
-  not_rebuildable: '无法重新生成',
+  get local_rebuild() { return t('catalog.rebuildLabel.local_rebuild'); },
+  get network_redownload() { return t('catalog.rebuildLabel.network_redownload'); },
+  get not_rebuildable() { return t('catalog.rebuildLabel.not_rebuildable'); },
 };
 
 interface Copy {
@@ -50,31 +51,31 @@ interface Copy {
 
 /** Words of the summary (one table for the language switch). */
 const CATALOG_TEXT = {
-  found: (n: number) => `找到 ${groupDigits(n)} 个对象`,
-  plannable: (size: string) => `可以放入计划的合计 ${size}`,
-  note: '没有预先勾选任何项目；大小未知的不按 0 计算。',
-  summaryLabel: '各档位的对象数',
-  lowNote: '可以选择',
-  reviewNote: '逐项确认',
-  blockedNote: '只能查看',
+  found: (n: number) => t('catalog.found', { n }),
+  plannable: (size: string) => t('catalog.plannable', { size }),
+  get note() { return t('catalog.note'); },
+  get summaryLabel() { return t('catalog.summaryLabel'); },
+  get lowNote() { return t('catalog.lowNote'); },
+  get reviewNote() { return t('catalog.reviewNote'); },
+  get blockedNote() { return t('catalog.blockedNote'); },
 } as const;
 
 const COPY: Record<Catalog, Copy> = {
   purge: {
-    title: '构建产物',
-    verb: '扫描构建产物',
+    get title() { return t('catalog.copy.purge.title'); },
+    get verb() { return t('catalog.copy.purge.verb'); },
     op: 'purge',
-    lede: '在你的项目文件夹中找出 target、node_modules、.next 这类可重新生成的构建输出。',
-    more: '按项目标记（Cargo.toml、package.json 等）判断；产物名本身不会让一个目录成为候选。',
-    empty: '配置的项目文件夹中没有找到构建产物。没有项目标记的 build 目录不会被当作产物。',
+    get lede() { return t('catalog.copy.purge.lede'); },
+    get more() { return t('catalog.copy.purge.more'); },
+    get empty() { return t('catalog.copy.purge.empty'); },
   },
   installer: {
-    title: '安装包',
-    verb: '扫描安装包',
+    get title() { return t('catalog.copy.installer.title'); },
+    get verb() { return t('catalog.copy.installer.verb'); },
     op: 'installer',
-    lede: '在下载文件夹、桌面和浏览器下载位置找出安装程序与磁盘映像。',
-    more: '按文件内容识别，而不是只看扩展名；安装包一律需要逐项审阅，不会被默认选择。',
-    empty: '声明的位置中没有识别出安装包。',
+    get lede() { return t('catalog.copy.installer.lede'); },
+    get more() { return t('catalog.copy.installer.more'); },
+    get empty() { return t('catalog.copy.installer.empty'); },
   },
 };
 
@@ -105,7 +106,7 @@ export class CatalogPage {
     private catalog: Catalog,
   ) {
     this.body = h('div', { class: 'catalog-body' });
-    this.progress = new LongProgress(COPY[catalog].verb);
+    this.progress = new LongProgress(() => COPY[catalog].verb);
     this.el = h('section', { class: `page page-catalog page-${catalog}`, 'aria-labelledby': `${catalog}-title` }, this.body);
   }
 
@@ -145,8 +146,8 @@ export class CatalogPage {
       if (r) {
         this.rootsGate.invalidate();
         this.roots = r;
-        this.notice = '已添加扫描根目录。重新扫描后，它的项目会出现在下面。';
-        this.app.announce('已添加扫描根目录');
+        this.notice = t('catalog.scanRootAddedProjects');
+        this.app.announce(t('catalog.scanRootAdded'));
       }
     } catch (e) {
       this.rootsError = toIpcError(e);
@@ -159,8 +160,8 @@ export class CatalogPage {
       this.rootsGate.invalidate();
       this.roots = await this.app.backend.purgeRootsRemove(rootId);
       this.removing = null;
-      this.notice = '已移除扫描根目录。磁盘上的文件没有变化。';
-      this.app.announce('已移除扫描根目录');
+      this.notice = t('catalog.scanRootRemovedFiles');
+      this.app.announce(t('catalog.scanRootRemoved'));
     } catch (e) {
       this.rootsError = toIpcError(e);
     }
@@ -174,9 +175,9 @@ export class CatalogPage {
     this.scanning = true;
     this.scanError = null;
     this.notice = null;
-    this.progress.start(this.catalog === 'purge' ? '正在逐个扫描项目文件夹并识别项目标记…' : '正在扫描声明的位置并识别文件内容…');
+    this.progress.start(this.catalog === 'purge' ? t('catalog.scanningEachProjectFolder') : t('catalog.scanningListedLocationsChecking'));
     this.update();
-    this.app.announce(`开始${copy.verb}，只读取，不修改任何文件`);
+    this.app.announce(t('catalog.startedVerbReadOnly', { verb: copy.verb }));
     try {
       const r = await this.gate.latest(this.catalog === 'purge' ? this.app.backend.purgeScan() : this.app.backend.installerScan());
       if (r.stale) return;
@@ -184,7 +185,7 @@ export class CatalogPage {
       // A new discovery never inherits an old selection (different candidate sets).
       this.selected.clear();
       this.mode = null;
-      this.app.announce(`扫描完成：${r.value.items.length} 个对象，未预先勾选任何项目`);
+      this.app.announce(t('catalog.scanCompleteLengthNothing', { length: r.value.items.length }));
     } catch (e) {
       this.scanError = toIpcError(e);
     } finally {
@@ -198,7 +199,7 @@ export class CatalogPage {
     if (this.selected.has(i.candidate_id)) this.selected.delete(i.candidate_id);
     else if (i.plannable) this.selected.set(i.candidate_id, i);
     this.syncMode();
-    this.app.announce(this.selected.has(i.candidate_id) ? `已选择 ${i.name}` : `已取消选择 ${i.name}`);
+    this.app.announce(this.selected.has(i.candidate_id) ? t('common.selectedName', { name: i.name }) : t('common.deselectedName', { name: i.name }));
     this.update();
   }
 
@@ -206,13 +207,13 @@ export class CatalogPage {
     let n = 0;
     for (const i of items) if (i.plannable && !this.selected.has(i.candidate_id)) (this.selected.set(i.candidate_id, i), (n += 1));
     this.syncMode();
-    this.app.announce(n ? `已选择${label}中的 ${n} 项` : '没有可添加的项目');
+    this.app.announce(n ? t('catalog.selectedNLabel', { label, n }) : t('catalog.nothingAdd'));
     this.update();
   }
 
   private selectLowRisk(): void {
     const items = this.preview?.items.filter((i) => i.plannable && i.tier === 'default_selected') ?? [];
-    this.selectGroup(items, '低风险项');
+    this.selectGroup(items, t('catalog.lowRiskGroup'));
   }
 
   private syncMode(): void {
@@ -237,19 +238,19 @@ export class CatalogPage {
         stale += r.stale_items?.length ?? 0;
       }
       // Rows that changed since discovery are left out of the plan, never silently replaced.
-      if (stale) this.app.announce(`${stale} 项在扫描后已变化，没有放入计划`);
+      if (stale) this.app.announce(t('catalog.stale', { stale }));
       if (created.length === 1) {
-        this.app.announce('计划已生成，尚未执行。请审阅完整清单');
+        this.app.announce(t('common.planCreatedNotRun'));
         this.app.openPlan(created[0], this.catalog);
       } else {
-        this.app.announce(`已生成 ${created.length} 份计划，每个位置一份，都尚未执行`);
+        this.app.announce(t('catalog.createdLengthOnePer', { length: created.length }));
         this.app.openActivity('plans');
       }
       this.selected.clear();
       this.mode = null;
     } catch (e) {
       this.createError = toIpcError(e);
-      if (created.length) this.notice = `已生成 ${created.length} 份计划，其余未能生成。已生成的计划在“计划”中。`;
+      if (created.length) this.notice = t('catalog.createdLengthRestCouldnt', { length: created.length });
     } finally {
       this.creating = false;
       this.update();
@@ -260,7 +261,7 @@ export class CatalogPage {
 
   private render(): void {
     const copy = COPY[this.catalog];
-    const scanBtn = h('button', { type: 'button', class: this.preview ? '' : 'primary', id: `${this.catalog}-scan`, disabled: this.scanning }, this.scanning ? '正在扫描…' : this.preview ? '重新扫描' : copy.verb);
+    const scanBtn = h('button', { type: 'button', class: this.preview ? '' : 'primary', id: `${this.catalog}-scan`, disabled: this.scanning }, this.scanning ? t('catalog.scanning') : this.preview ? t('common.scanAgain') : copy.verb);
     scanBtn.addEventListener('click', () => void this.scan());
     const p = this.preview;
     const unsupported = (this.catalog === 'purge' ? this.roots?.supported : this.locations?.supported) === false || p?.supported === false;
@@ -269,12 +270,12 @@ export class CatalogPage {
       pageHead({
         id: `${this.catalog}-title`,
         title: copy.title,
-        meta: p ? [`扫描于 ${formatTime(p.observed_at)}`, `${groupDigits(p.items.length)} 个对象`, '只读发现，没有预先勾选'] : ['只读发现，没有预先勾选'],
+        meta: p ? [t('catalog.scannedObserved', { observed_at: formatTime(p.observed_at) }), t('common.objectCount', { length: p.items.length }), t('catalog.readOnlyDiscoveryNothing')] : [t('catalog.readOnlyDiscoveryNothing')],
         actions: unsupported ? [] : [scanBtn],
       }),
       this.notice ? noticeLine(this.notice, 'info', () => ((this.notice = null), this.update())) : null,
       unsupported
-        ? emptyState('此平台暂不提供', notOnThisPlatform('这项发现目前只在 Windows 上实现并经过验证。'), null)
+        ? emptyState(t('common.notAvailablePlatform'), notOnThisPlatform(t('catalog.discoveryImplementedVerifiedOnly')), null)
         : h(
             'div',
             { class: 'work-layout' },
@@ -290,14 +291,14 @@ export class CatalogPage {
     return h(
       'section',
       { class: 'panel catalog-intro', 'aria-labelledby': `${this.catalog}-intro` },
-      h('h2', { id: `${this.catalog}-intro` }, this.scanning ? '正在扫描' : '还没有扫描'),
+      h('h2', { id: `${this.catalog}-intro` }, this.scanning ? t('common.scanning') : t('catalog.notScannedYet')),
       h('p', { class: 'lede' }, copy.lede),
-      learnMore(h('p', {}, copy.more), h('p', {}, '扫描只读取文件元数据并把结果存进 CleanManager 自己的索引；不会打开、移动或删除任何文件。')),
+      learnMore(h('p', {}, copy.more), h('p', {}, t('catalog.scanReadsOnlyFile'))),
     );
   }
 
   private results(p: CatalogPreview): HTMLElement {
-    if (!p.items.length) return h('div', { class: 'panel' }, emptyState('没有找到', COPY[this.catalog].empty, null), this.issues(p));
+    if (!p.items.length) return h('div', { class: 'panel' }, emptyState(t('catalog.nothingFound'), COPY[this.catalog].empty, null), this.issues(p));
     const groups = new Map<string, CatalogItem[]>();
     for (const i of p.items) groups.set(i.group_label, [...(groups.get(i.group_label) ?? []), i]);
     const s = p.summary;
@@ -313,7 +314,7 @@ export class CatalogPage {
         { mark: tierBadge('review_only'), count: s.review_only_count, note: CATALOG_TEXT.reviewNote },
         { mark: tierBadge('blocked'), count: s.blocked_count, note: CATALOG_TEXT.blockedNote },
       ]),
-      lowCount && this.catalog === 'purge' ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => this.selectLowRisk() }, `选择全部低风险项（${lowCount}）`) : null,
+      lowCount && this.catalog === 'purge' ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => this.selectLowRisk() }, t('catalog.selectAllLowRisk', { lowCount })) : null,
     );
     return h('div', { class: 'catalog-results' }, summary, this.issues(p), ...[...groups.entries()].map(([label, items], gi) => this.group(label, items, gi)));
   }
@@ -323,8 +324,8 @@ export class CatalogPage {
     return h(
       'details',
       { class: 'issues-details' },
-      h('summary', {}, `扫描说明（${p.issues.length}）`),
-      issueList(p.issues, { label: '记录的问题' }),
+      h('summary', {}, t('catalog.scanNotesLength', { length: p.issues.length })),
+      issueList(p.issues, { label: t('common.recordedIssues') }),
     );
   }
 
@@ -338,7 +339,7 @@ export class CatalogPage {
       { type: 'button', class: 'group-toggle', id: `${id}-toggle`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-body` },
       h('span', { class: 'chev-icon', 'aria-hidden': 'true' }, icon('chevron')),
       h('span', { class: this.catalog === 'purge' ? 'path group-title' : 'group-title' }, title),
-      h('span', { class: 'group-count num' }, `${groupDigits(items.length)} 项`),
+      h('span', { class: 'group-count num' }, t('common.itemCount', { length: items.length })),
       h('span', { class: 'group-size num' }, atLeast(sum)),
     );
     toggle.addEventListener('click', () => {
@@ -349,7 +350,7 @@ export class CatalogPage {
     const plannable = items.filter((i) => i.plannable);
     const pick =
       this.catalog === 'installer' && plannable.length > 1
-        ? h('button', { type: 'button', class: 'quiet', onclick: () => this.selectGroup(plannable, title) }, `选择此来源的全部（${plannable.length}）`)
+        ? h('button', { type: 'button', class: 'quiet', onclick: () => this.selectGroup(plannable, title) }, t('catalog.selectAllSourceLength', { length: plannable.length }))
         : null;
     return h(
       'section',
@@ -363,11 +364,11 @@ export class CatalogPage {
     const rows: HTMLElement[] = [];
     for (const i of items) {
       const id = `${this.catalog}-${i.candidate_id}`;
-      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !i.plannable, 'aria-label': `选择 ${i.name}`, 'aria-describedby': `${id}-why` }) as HTMLInputElement;
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !i.plannable, 'aria-label': t('common.selectName', { name: i.name }), 'aria-describedby': `${id}-why` }) as HTMLInputElement;
       check.checked = this.selected.has(i.candidate_id);
       check.addEventListener('change', () => this.toggle(i));
       const open = this.expanded.has(i.candidate_id);
-      const more = h('button', { type: 'button', class: 'link-btn', id: `${id}-more`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-detail` }, open ? '收起依据' : '依据与影响');
+      const more = h('button', { type: 'button', class: 'link-btn', id: `${id}-more`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-detail` }, open ? t('catalog.hideBasis') : t('catalog.basisImpact'));
       more.addEventListener('click', () => {
         if (open) this.expanded.delete(i.candidate_id);
         else this.expanded.add(i.candidate_id);
@@ -392,8 +393,8 @@ export class CatalogPage {
       h(
         'table',
         { class: 'data-table ctable' },
-        h('caption', { class: 'sr-only' }, `${caption}：对象、大小与风险档位`),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '对象与依据'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col' }, '档位'))),
+        h('caption', { class: 'sr-only' }, t('catalog.captionObjectsSizesRisk', { caption })),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('common.objectBasis')), h('th', { scope: 'col', class: 'col-size' }, t('common.logicalSize')), h('th', { scope: 'col' }, t('catalog.tier')))),
         h('tbody', {}, ...rows),
       ),
     );
@@ -406,15 +407,15 @@ export class CatalogPage {
       h(
         'dl',
         { class: 'facts-list' },
-        h('dt', {}, '档位'),
+        h('dt', {}, t('catalog.tier')),
         h('dd', {}, TIER_EXPLAIN[i.tier], h('small', {}, i.tier_reason)),
-        h('dt', {}, '影响'),
-        h('dd', {}, i.impact || '没有额外说明'),
-        i.rebuild_class ? h('dt', {}, '重新获取') : null,
+        h('dt', {}, t('common.impact')),
+        h('dd', {}, i.impact || t('catalog.noFurtherNotes')),
+        i.rebuild_class ? h('dt', {}, t('catalog.gettingBack')) : null,
         i.rebuild_class ? h('dd', {}, REBUILD_LABEL[i.rebuild_class] ?? i.rebuild_class) : null,
-        i.unknown_size_count ? h('dt', {}, '未知大小') : null,
-        i.unknown_size_count ? h('dd', {}, `${groupDigits(i.unknown_size_count)} 个文件大小未知，未计入上面的数字。`) : null,
-        i.notes.length ? h('dt', {}, '依据') : null,
+        i.unknown_size_count ? h('dt', {}, t('common.unknownSize')) : null,
+        i.unknown_size_count ? h('dd', {}, t('catalog.unknownSizeCount', { unknown_size_count: i.unknown_size_count })) : null,
+        i.notes.length ? h('dt', {}, t('catalog.basis')) : null,
         i.notes.length ? h('dd', {}, h('ul', { class: 'plain-list' }, ...i.notes.map((n) => h('li', {}, n)))) : null,
       ),
     );
@@ -426,33 +427,33 @@ export class CatalogPage {
       return h(
         'section',
         { class: 'panel roots-panel', 'aria-labelledby': 'inst-loc-title' },
-        h('h2', { id: 'inst-loc-title' }, '查找位置'),
-        h('p', { class: 'muted small' }, `只查找下面这些位置，向下最多 ${l?.max_depth ?? '—'} 层（与命令行 installer locations 一致）。`),
+        h('h2', { id: 'inst-loc-title' }, t('catalog.searchLocations')),
+        h('p', { class: 'muted small' }, t('catalog.onlyLocationsSearchedUp', { p: l?.max_depth ?? '—' })),
         l
           ? h(
               'ul',
               { class: 'root-rows' },
-              ...l.locations.map((x) => h('li', {}, h('span', { class: 'root-main' }, h('b', {}, SOURCE_LABEL[x.source_label] ?? x.source_label), h('span', { class: 'path muted' }, x.display)), x.exists ? null : h('span', { class: 'why-not' }, '不存在'))),
+              ...l.locations.map((x) => h('li', {}, h('span', { class: 'root-main' }, h('b', {}, SOURCE_LABEL[x.source_label] ?? x.source_label), h('span', { class: 'path muted' }, x.display)), x.exists ? null : h('span', { class: 'why-not' }, t('catalog.missing')))),
             )
-          : h('p', { class: 'muted small', role: 'status' }, this.rootsError ? '' : '正在读取…'),
+          : h('p', { class: 'muted small', role: 'status' }, this.rootsError ? '' : t('catalog.loading')),
         errorLine(this.rootsError),
       );
     }
     const r = this.roots;
-    const add = h('button', { type: 'button', id: 'purge-root-add' }, icon('reveal'), '添加文件夹…');
+    const add = h('button', { type: 'button', id: 'purge-root-add' }, icon('reveal'), t('catalog.addFolder'));
     add.addEventListener('click', () => void this.addRoot());
     return h(
       'section',
       { class: 'panel roots-panel', 'aria-labelledby': 'purge-roots-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'purge-roots-title' }, '项目扫描根目录'), add),
-      h('p', { class: 'muted small' }, `只在这些文件夹里找项目，向下最多 ${r?.max_depth ?? '—'} 层。`),
-      learnMore(h('p', {}, `${r?.recent_days ?? '—'} 天内修改过的项目只列出、不归入低风险。与命令行 purge roots 使用同一份设置。`)),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'purge-roots-title' }, t('catalog.projectScanRoots')), add),
+      h('p', { class: 'muted small' }, t('catalog.projectsSearchedOnlyFolders', { p: r?.max_depth ?? '—' })),
+      learnMore(h('p', {}, t('catalog.projectsChangedWithinP', { p: r?.recent_days ?? '—' }))),
       r
         ? h(
             'ul',
             { class: 'root-rows' },
             ...r.roots.map((x) => {
-              const rm = h('button', { type: 'button', class: 'quiet', id: `root-rm-${x.root_id}`, 'aria-label': `移除 ${x.display}` }, '移除');
+              const rm = h('button', { type: 'button', class: 'quiet', id: `root-rm-${x.root_id}`, 'aria-label': t('catalog.removeDisplay', { display: x.display }) }, t('common.remove'));
               rm.addEventListener('click', () => {
                 this.removing = x.root_id;
                 this.update();
@@ -460,13 +461,13 @@ export class CatalogPage {
               return h(
                 'li',
                 {},
-                h('span', { class: 'root-main' }, h('span', { class: 'path' }, x.display), h('span', { class: 'muted small' }, x.source === 'default' ? '默认' : '你添加的', x.exists ? '' : '　·　当前不存在或卷离线，扫描时跳过')),
+                h('span', { class: 'root-main' }, h('span', { class: 'path' }, x.display), h('span', { class: 'muted small' }, x.source === 'default' ? t('common.default') : t('catalog.added'), x.exists ? '' : t('catalog.missingVolumeOfflineSkipped'))),
                 this.removing === x.root_id
                   ? confirmInline({
                       id: `root-rm-${x.root_id}-c`,
-                      prompt: '只从扫描设置中移除，不会改动磁盘上的文件。输入',
-                      expected: '移除',
-                      action: '确认移除',
+                      prompt: t('catalog.removesScanSettingsOnly'),
+                      expected: t('catalog.remove'),
+                      action: t('catalog.confirmRemoval'),
                       onConfirm: () => this.removeRoot(x.root_id),
                       onCancel: () => ((this.removing = null), this.update()),
                     })
@@ -474,8 +475,8 @@ export class CatalogPage {
               );
             }),
           )
-        : h('p', { class: 'muted small', role: 'status' }, this.rootsError ? '' : '正在读取…'),
-      r && !r.roots.length ? h('p', { class: 'small' }, '还没有扫描根目录。添加一个包含项目的文件夹后再扫描。') : null,
+        : h('p', { class: 'muted small', role: 'status' }, this.rootsError ? '' : t('catalog.loading')),
+      r && !r.roots.length ? h('p', { class: 'small' }, t('catalog.noScanRootsYet')) : null,
       errorLine(this.rootsError),
     );
   }
@@ -488,26 +489,26 @@ export class CatalogPage {
     const create = h(
       'button',
       { type: 'button', class: 'primary wide', id: `${this.catalog}-create`, disabled: n === 0 || !this.mode || this.creating },
-      this.creating ? '正在冻结计划…' : n === 0 ? '先选择对象' : !this.mode ? '再选择处理方式' : sets > 1 ? `生成 ${sets} 份计划（${n} 项）` : `生成计划（${n} 项）`,
+      this.creating ? t('common.freezingPlan') : n === 0 ? t('common.selectObjectsFirst') : !this.mode ? t('catalog.chooseAction') : sets > 1 ? t('catalog.createSetsPlansN', { sets, n }) : t('catalog.createPlanN', { n }),
     );
     create.addEventListener('click', () => void this.createPlans());
     return h(
       'aside',
       { class: 'panel work-aside draft', 'aria-labelledby': `${this.catalog}-draft-title` },
-      h('h2', { id: `${this.catalog}-draft-title` }, '选择草稿'),
+      h('h2', { id: `${this.catalog}-draft-title` }, t('catalog.selection')),
       n === 0
-        ? h('p', { class: 'muted small' }, '没有预先勾选任何项目。勾选对象后，在这里选择处理方式并生成计划。')
+        ? h('p', { class: 'muted small' }, t('catalog.nothingPreselectedCheckObjects'))
         : h(
             'div',
             { class: 'draft-sum' },
             h('p', { class: 'draft-figure num' }, atLeast(sum)),
-            h('p', { class: 'muted small' }, `${groupDigits(n)} 项的已知逻辑大小${sum.unknown ? `；另有 ${groupDigits(sum.unknown)} 项大小未知，未计入` : ''}。`),
-            sets > 1 ? h('p', { class: 'small' }, `来自 ${sets} 个位置：每个位置生成一份计划，分别审阅。`) : null,
+            h('p', { class: 'muted small' }, t('catalog.knownLogicalSizeN', { n, p: sum.unknown ? t('catalog.unknown', { unknown: sum.unknown }) : '' })),
+            sets > 1 ? h('p', { class: 'small' }, t('catalog.setsLocationsOnePlan', { sets })) : null,
           ),
       modeOptions({ name: `${this.catalog}-mode`, allowed: commonModes(items), current: this.mode, selected: n, onChange: (m) => ((this.mode = m), (this.createError = null), this.update()) }),
       errorLine(this.createError),
       create,
-      h('p', { class: 'muted small aside-note' }, '生成计划只冻结清单，不会执行；下一步由你逐项审阅并批准。'),
+      h('p', { class: 'muted small aside-note' }, t('catalog.creatingPlanOnlyFreezes')),
     );
   }
 
@@ -521,12 +522,12 @@ export class CatalogPage {
       onClear: () => {
         this.selected.clear();
         this.syncMode();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
       action: {
         id: `${this.catalog}-bar-go`,
-        text: this.mode ? '生成计划并审阅' : '选择处理方式',
+        text: this.mode ? t('common.createPlanReview') : t('common.chooseAction'),
         disabled: this.creating,
         onClick: () => {
           if (this.mode) void this.createPlans();

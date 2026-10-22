@@ -41,6 +41,10 @@ pub enum ErrorCode {
     InternalError,
     Cancelled,
     ProtectionUnavailable,
+    /// The rebuildable scan index (`index.db`) is damaged or of an unsupported schema. History, quarantine and
+    /// recovery do not depend on it; `required_action` names the repair (`doctor --repair-index`), after which
+    /// scans must be run again. Never retryable as is.
+    IndexUnavailable,
 }
 
 /// Process exit status. `Partial` and `ReconciliationRequired` are not errors: they accompany
@@ -65,7 +69,7 @@ impl ExitClass {
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 13] = [
+    pub const ALL: [ErrorCode; 14] = [
         ErrorCode::InvalidArgument,
         ErrorCode::SchemaMismatch,
         ErrorCode::NeedsApproval,
@@ -79,7 +83,28 @@ impl ErrorCode {
         ErrorCode::InternalError,
         ErrorCode::Cancelled,
         ErrorCode::ProtectionUnavailable,
+        ErrorCode::IndexUnavailable,
     ];
+
+    /// The protocol word (the serde name), for human-readable text that names a code.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::InvalidArgument => "invalid_argument",
+            ErrorCode::SchemaMismatch => "schema_mismatch",
+            ErrorCode::NeedsApproval => "needs_approval",
+            ErrorCode::PolicyDenied => "policy_denied",
+            ErrorCode::PermissionRequired => "permission_required",
+            ErrorCode::PlanStale => "plan_stale",
+            ErrorCode::CursorStale => "cursor_stale",
+            ErrorCode::Conflict => "conflict",
+            ErrorCode::Unsupported => "unsupported",
+            ErrorCode::IoError => "io_error",
+            ErrorCode::InternalError => "internal_error",
+            ErrorCode::Cancelled => "cancelled",
+            ErrorCode::ProtectionUnavailable => "protection_unavailable",
+            ErrorCode::IndexUnavailable => "index_unavailable",
+        }
+    }
 
     pub fn exit_code(self) -> i32 {
         match self {
@@ -88,7 +113,7 @@ impl ErrorCode {
             ErrorCode::PermissionRequired => 4,
             ErrorCode::PlanStale | ErrorCode::CursorStale | ErrorCode::Conflict => 6,
             ErrorCode::Unsupported => 7,
-            ErrorCode::IoError | ErrorCode::InternalError | ErrorCode::ProtectionUnavailable => 8,
+            ErrorCode::IoError | ErrorCode::InternalError | ErrorCode::ProtectionUnavailable | ErrorCode::IndexUnavailable => 8,
             ErrorCode::Cancelled => 130,
         }
     }
@@ -113,6 +138,8 @@ mod tests {
         assert_eq!(ErrorCode::Unsupported.exit_code(), 7);
         assert_eq!(ExitClass::ReconciliationRequired.code(), 8);
         assert_eq!(ErrorCode::ProtectionUnavailable.exit_code(), 8);
+        assert_eq!(ErrorCode::IndexUnavailable.exit_code(), 8);
+        assert!(!ErrorCode::IndexUnavailable.retryable(), "a damaged index needs a repair, not a retry");
         assert_eq!(ErrorCode::Cancelled.exit_code(), 130);
     }
 
@@ -138,6 +165,13 @@ mod tests {
         assert_eq!(table["results"]["success"], ExitClass::Success.code());
         assert_eq!(table["results"]["partial"], ExitClass::Partial.code());
         assert_eq!(table["results"]["reconciliation_required"], ExitClass::ReconciliationRequired.code());
+    }
+
+    #[test]
+    fn words_are_the_protocol_names() {
+        for code in ErrorCode::ALL {
+            assert_eq!(serde_json::to_value(code).unwrap(), code.as_str(), "{code:?}");
+        }
     }
 
     #[test]

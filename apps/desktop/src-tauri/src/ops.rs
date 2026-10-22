@@ -68,6 +68,7 @@ impl From<ApplyError> for IpcError {
             ApplyError::PolicyDenied(_) => "policy_denied",
             ApplyError::Conflict(_) => "operation_conflict",
             ApplyError::Crashed(_) => "internal",
+            ApplyError::ProtectionUnavailable(_) => "protection_unavailable",
             ApplyError::Store(_) => "store_error",
         };
         IpcError::new(e.code(), reason, e.to_string())
@@ -101,6 +102,7 @@ fn precheck(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<()> {
     let principal = current_principal();
     let contract = stores.audit.plan_contract(plan_id)?;
     if contract == PLAN_V2_CONTRACT {
+        cm_app::execute::require_protection(stores)?;
         return crate::v2::precheck(stores, plan_id);
     }
     if contract == RECOVERY_CONTRACT {
@@ -111,6 +113,9 @@ fn precheck(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<()> {
         return Ok(());
     }
     let plan = stores.audit.load_plan(plan_id)?;
+    // PRT-02 / BUG-WFA-03: nothing starts (and nothing is consumed) while the protection list is unusable; the executor
+    // repeats this before it registers an operation.
+    cm_app::execute::require_protection(stores)?;
     let digest = crate::cleanup::rules_digest_for(s, &plan).map_err(|e| ipc(ErrorCode::InternalError, "rules_unavailable", e))?;
     cm_core::plan::check_plan(&plan, now, &digest).map_err(ApplyError::Stale)?;
     let receipt = stores.audit.receipts_for(plan_id)?.iter().any(|r| receipt_valid(r, &plan, &principal, now));
@@ -866,6 +871,22 @@ mod tests {
         assert_eq!((e.code, e.reason), (ErrorCode::NeedsApproval, "needs_approval"));
         let e: IpcError = ApplyError::Stale(cm_core::plan::StaleReason::RuleSetChanged).into();
         assert_eq!(e.reason, "plan_stale");
+        let e: IpcError = ApplyError::ProtectionUnavailable("not valid JSON".into()).into();
+        assert_eq!((e.code, e.reason), (ErrorCode::ProtectionUnavailable, "protection_unavailable"));
+    }
+
+    /// PRT-02 / BUG-WFA-03: starting an apply is refused while the protection list is unusable, before a thread starts
+    /// or anything is recorded (the executor repeats the check).
+    #[test]
+    fn an_unusable_protection_list_refuses_the_start() {
+        let dir = std::env::temp_dir().join(format!("cm-desk-protect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let stores = Stores::open(&dir).unwrap();
+        std::fs::write(dir.join(cm_platform::protection::PROTECTION_FILE), b"{not json").unwrap();
+        let e: IpcError = cm_app::execute::require_protection(&stores).unwrap_err().into();
+        assert_eq!((e.code, e.reason), (ErrorCode::ProtectionUnavailable, "protection_unavailable"));
+        drop(stores);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

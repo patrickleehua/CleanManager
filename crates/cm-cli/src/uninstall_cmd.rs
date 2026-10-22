@@ -410,8 +410,79 @@ pub fn review_lines(plan: &cm_core::plan::v2::PlanV2) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use cm_core::uninstall::{Binding, Group, LEFTOVER_TIERS, Leftover, LeftoverKind, Marker, RegLocation, finish_leftover, object_id};
+    use serde_json::Value;
+
     #[test]
     fn ids_split_and_trim() {
         assert_eq!(super::ids(" a, b ,,c"), ["a", "b", "c"]);
+    }
+
+    fn enum_of(def: &Value, field: &str) -> Vec<String> {
+        let p = &def["properties"][field];
+        let e = if p["enum"].is_array() { &p["enum"] } else { &p["anyOf"][0]["enum"] };
+        e.as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()).collect()
+    }
+
+    /// WFA-113: every leftover the platforms can produce — each kind, each binding (including guidance-only manual
+    /// items such as a startup entry whose program still exists or a desktop shortcut), with or without a marker and
+    /// whatever tier the platform started from — serializes to a record that satisfies `schemas/v1`
+    /// `uninstall_leftover`: required fields only, enum values (never an empty tier) and the preselection rules.
+    #[test]
+    fn every_leftover_kind_and_binding_satisfies_the_schema() {
+        let schema: Value = serde_json::from_str(include_str!("../../../schemas/v1/protocol.schema.json")).unwrap();
+        let def = &schema["$defs"]["uninstall_leftover"];
+        let required: Vec<&str> = def["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let (tiers, kinds, groups, actions, markers) = (enum_of(def, "tier"), enum_of(def, "kind"), enum_of(def, "group"), enum_of(def, "action"), enum_of(def, "marker"));
+        assert_eq!(tiers, LEFTOVER_TIERS, "the core's tier list is the schema's");
+        let loc = RegLocation { root: String::new(), hive: cm_core::plan::v2::Hive::Hkcu, view: cm_core::startup::RegView::Default, key_path: r"Software\Vendor\App".into() };
+        let bindings = [
+            Binding::Path { path: r"C:\Users\A\AppData\Local\App\Cache".into() },
+            Binding::Registry { location: loc },
+            Binding::Startup { startup_item_id: "st_x".into() },
+            Binding::Manual { guidance: "its program still exists; uninstall first, then review leftovers again".into() },
+        ];
+        let all_kinds = [LeftoverKind::Directory, LeftoverKind::File, LeftoverKind::RegistryKey, LeftoverKind::StartupEntry, LeftoverKind::Shortcut, LeftoverKind::Service];
+        let all_groups = [Group::Bundle, Group::CachesLogs, Group::Settings, Group::PersonalData, Group::Startup, Group::System];
+        let mut checked = 0;
+        for kind in all_kinds {
+            for group in all_groups {
+                for binding in &bindings {
+                    for marker in [None, Some(Marker::SharedOwner), Some(Marker::OwnerUnknown), Some(Marker::AppReappeared)] {
+                        for tier in ["", "review_only", "blocked", "kept", "default_selected", "bogus"] {
+                            for requires_admin in [false, true] {
+                                let display = format!("{kind:?} {group:?} item");
+                                let l = finish_leftover(Leftover {
+                                    object_id: object_id(kind, &display), kind, group, display, evidence: vec!["evidence".into()], marker, tier: tier.into(),
+                                    selected: false, warnings: vec![], logical_bytes: Some(1), note: None, requires_admin, binding: binding.clone(),
+                                });
+                                let w = super::leftover_wire(&l);
+                                let o = w.as_object().unwrap();
+                                let mut keys: Vec<&str> = o.keys().map(String::as_str).collect();
+                                keys.sort_unstable();
+                                let mut want = required.clone();
+                                want.sort_unstable();
+                                assert_eq!(keys, want, "exactly the schema's fields: {w}");
+                                let s = |f: &str| w[f].as_str().unwrap_or_default().to_owned();
+                                assert!(tiers.contains(&s("tier")), "tier {:?} (started from {tier:?}) is not in the schema: {w}", s("tier"));
+                                assert!(kinds.contains(&s("kind")) && groups.contains(&s("group")) && actions.contains(&s("action")), "{w}");
+                                assert!(w["marker"].is_null() || markers.contains(&s("marker")), "{w}");
+                                if w["selected"] == true {
+                                    assert_eq!((s("group").as_str(), s("tier").as_str()), ("caches_logs", "default_selected"), "{w}");
+                                }
+                                if !w["marker"].is_null() {
+                                    assert_eq!(s("tier"), "kept", "{w}");
+                                }
+                                if s("action") == "manual" {
+                                    assert!(w["guidance"].is_string() && w["selected"] == false && s("tier") != "default_selected", "manual items are never preselected: {w}");
+                                }
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 6 * 6 * 4 * 4 * 6 * 2);
     }
 }

@@ -38,6 +38,39 @@ export function replace(el: Element, ...children: Child[]): void {
   append(el, children);
 }
 
+// Interface text of elements that are built once (page constructors, the shell) and not re-rendered: each binding
+// is re-applied after a language switch (LIF-05). Elements made in `render()` read their words afresh instead and
+// must not register here.
+const liveBindings: (() => void)[] = [];
+
+/** Set `el`'s text (and/or attributes) now and again after every language switch. */
+export function live<T extends Element>(el: T, text: (() => string) | null, attrs: Record<string, () => string | null> = {}): T {
+  const apply = () => {
+    if (text) el.textContent = text();
+    for (const [k, v] of Object.entries(attrs)) {
+      const value = v();
+      if (value === null) el.removeAttribute(k);
+      else el.setAttribute(k, value);
+    }
+  };
+  apply();
+  liveBindings.push(apply);
+  return el;
+}
+
+/** Fill `el` with `children()` now and again after every language switch (static blocks with mixed content). */
+export function liveChildren<T extends Element>(el: T, children: () => Child[]): T {
+  const apply = () => replace(el, ...children());
+  apply();
+  liveBindings.push(apply);
+  return el;
+}
+
+/** Re-apply every `live` binding (called by the shell after the language changed). */
+export function refreshLive(): void {
+  for (const apply of liveBindings) apply();
+}
+
 /** Inline SVG icon from a fixed internal path set (no external assets). */
 const ICONS: Record<string, string> = {
   overview: 'M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z',

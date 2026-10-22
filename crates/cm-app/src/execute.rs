@@ -69,7 +69,12 @@ pub struct OperationReport {
     pub volume_free_before_bytes: Option<String>,
     pub volume_free_after_bytes: Option<String>,
     pub observed_free_delta_bytes: Option<String>,
+    /// Who authorized the operation (`interactive_review`, `policy:ID@VERSION`). A later reconciliation never replaces
+    /// it; it is recorded separately in `reconciled_at` (WFA-40).
     pub authorization_source: String,
+    /// When `operations reconcile` last resolved actions of this operation that had no confirmed outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled_at: Option<String>,
 }
 
 pub(crate) fn zero_bytes() -> String {
@@ -80,7 +85,7 @@ pub(crate) fn zero_bytes() -> String {
 pub enum ApplyError {
     #[error("plan {0} needs approval")]
     NeedsApproval(String),
-    #[error("plan is stale: {0:?}")]
+    #[error("plan is stale: {0}")]
     Stale(StaleReason),
     #[error("policy denied: {0}")]
     PolicyDenied(String),
@@ -88,6 +93,9 @@ pub enum ApplyError {
     Conflict(String),
     #[error("simulated crash at {0}")]
     Crashed(String),
+    /// PRT-02: the user protection list cannot be used; no operation was started and nothing was recorded.
+    #[error("protection list unavailable: {0}; nothing was started")]
+    ProtectionUnavailable(String),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -101,8 +109,27 @@ impl ApplyError {
             ApplyError::Stale(_) => ErrorCode::PlanStale,
             ApplyError::Conflict(_) => ErrorCode::Conflict,
             ApplyError::Crashed(_) => ErrorCode::InternalError,
+            ApplyError::ProtectionUnavailable(_) => ErrorCode::ProtectionUnavailable,
             ApplyError::Store(e) => e.code(),
         }
+    }
+}
+
+/// PRT-02: no operation starts while the user protection list (`protection.json` in the store) is unusable. Executors
+/// check this before an authorization is used (a policy's quota) and before an operation is registered, so a refusal
+/// consumes nothing: the same approved plan applies once the list is repaired, while it is still valid.
+pub fn require_protection(stores: &Stores) -> Result<(), ApplyError> {
+    cm_platform::protection::load(&stores.dir).map(|_| ()).map_err(|e| ApplyError::ProtectionUnavailable(e.to_string()))
+}
+
+/// A protection re-check that failed for an object that is no longer at its planned place: the object's identity
+/// cannot be established because it is gone (e.g. another plan already moved it), which is the missing precondition,
+/// not a protection decision (WFA-33). Nothing is done either way; only the reported reason differs.
+pub(crate) fn skipped_protected(actions: &dyn FileActions, target: &ActionTarget<'_>, reason: String) -> (String, String) {
+    if actions.check(target) == LiveCheck::Missing {
+        ("precondition_missing".into(), "the object no longer exists at its planned place; nothing was done".into())
+    } else {
+        ("protected".into(), reason)
     }
 }
 
@@ -194,15 +221,70 @@ fn find_authorization(stores: &Stores, plan: &Plan, ctx: &ApplyContext<'_>, oper
                         revoked_at: None,
                     };
                     stores.audit.save_receipt(&receipt)?;
-                    return Ok((format!("policy:{}@{}", policy.policy_id, policy.version), Some(policy)));
+                    return Ok((policy_source(&policy.policy_id, policy.version), Some(policy)));
                 }
-                return Err(ApplyError::PolicyDenied(format!("policy {} has no remaining quota", policy.policy_id)));
+                return Err(ApplyError::PolicyDenied(format!("policy {} has no remaining quota: {}", policy.policy_id, quota_text(stores, &policy, plan, now))));
             }
             Err(m) => last = Some(m),
         }
     }
     let _ = last;
     Err(ApplyError::NeedsApproval(plan.body.plan_id.clone()))
+}
+
+fn policy_source(policy_id: &str, version: u32) -> String {
+    format!("policy:{policy_id}@{version}")
+}
+
+/// The rolling-window numbers behind a quota refusal (read-only).
+fn quota_text(stores: &Stores, policy: &Policy, plan: &Plan, now: i64) -> String {
+    let used = stores.audit.policy_usage(&policy.policy_id, now).unwrap_or_default();
+    let bytes = plan.body.total_logical().map_or_else(|| "an unknown number of".into(), |b| b.0.to_string());
+    format!(
+        "the last 24 hours used {} of {} bytes and {} of {} items; this plan needs {bytes} bytes and {} items",
+        used.bytes, policy.window_max_bytes, used.items, policy.window_max_items, plan.body.items.len()
+    )
+}
+
+/// How one stored policy relates to a plan right now (protocol `policy_match`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PolicyMatch {
+    pub policy_id: String,
+    pub policy_version: String,
+    pub state: cm_core::authz::PolicyState,
+    /// The policy would authorize this plan if it were applied now (its quota is reserved only then).
+    pub covers: bool,
+    /// The failing condition (`PolicyMismatch` code), `None` when it covers.
+    pub reason: Option<&'static str>,
+    pub message: String,
+}
+
+/// Every stored policy evaluated against `plan` for this principal (read-only: no quota is reserved). Says which
+/// policy would approve the plan and, for the others, which condition fails (WFA-42/43).
+pub fn policy_matches(stores: &Stores, plan: &Plan, principal: &str, now: i64) -> Result<Vec<PolicyMatch>, StoreError> {
+    let mut out = Vec::new();
+    for policy in stores.audit.policies()? {
+        let verdict = match policy_covers(&policy, plan, principal, now) {
+            Ok(()) => {
+                // The same window test the store applies atomically when the quota is reserved at apply time.
+                let used = stores.audit.policy_usage(&policy.policy_id, now)?;
+                let (bytes, items) = (plan.body.total_logical().map_or(u64::MAX, |b| b.0), plan.body.items.len() as u64);
+                if used.bytes.saturating_add(bytes) > policy.window_max_bytes || used.items.saturating_add(items) > policy.window_max_items {
+                    Err(cm_core::authz::PolicyMismatch::QuotaExceeded)
+                } else {
+                    Ok(())
+                }
+            }
+            Err(m) => Err(m),
+        };
+        let (covers, reason, message) = match verdict {
+            Ok(()) => (true, None, format!("would authorize this plan when it is applied ({})", quota_text(stores, &policy, plan, now))),
+            Err(cm_core::authz::PolicyMismatch::QuotaExceeded) => (false, Some("quota_exceeded"), quota_text(stores, &policy, plan, now)),
+            Err(m) => (false, Some(m.code()), m.explain(&policy, plan)),
+        };
+        out.push(PolicyMatch { policy_id: policy.policy_id.clone(), policy_version: policy.version.to_string(), state: policy.state, covers, reason, message });
+    }
+    Ok(out)
 }
 
 /// Apply a stored plan. Returns the final report, or an error before anything was touched.
@@ -217,6 +299,8 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
         return Err(ApplyError::Conflict(op));
     }
     check_plan(&plan, (ctx.now)(), ctx.current_rule_set_digest).map_err(ApplyError::Stale)?;
+    // PRT-02: before any quota is reserved or an operation registered (BUG-WFA-03).
+    require_protection(stores)?;
     let operation_id = format!("op_{}", &plan.digest[..16]);
     let (auth_source, policy) = find_authorization(stores, &plan, ctx, &operation_id)?;
     let identities: Vec<String> = plan.body.items.iter().map(|i| identity_key(&i.identity)).collect();
@@ -339,7 +423,8 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
             return Err(ApplyError::Crashed("after_intent".into()));
         }
         let outcome = if let Err(reason) = (ctx.protect)(&target) {
-            ActionOutcome::Skipped { code: "protected".into(), message: reason }
+            let (code, message) = skipped_protected(actions, &target, reason);
+            ActionOutcome::Skipped { code, message }
         } else if directory {
             actions.remove_empty_dir(&target)
         } else {
@@ -358,7 +443,7 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
             }
             other => {
                 let code = serde_json::to_value(&other).ok().and_then(|v| v["check"].as_str().map(str::to_owned)).unwrap_or_else(|| "precondition".into());
-                ActionOutcome::Skipped { code: format!("precondition_{code}"), message: format!("{other:?}") }
+                ActionOutcome::Skipped { code: format!("precondition_{code}"), message: format!("{other}; nothing was changed") }
             }
             }
         };
@@ -389,7 +474,14 @@ pub fn apply_plan(stores: &Stores, actions: &dyn FileActions, plan_id: &str, ctx
         slots[idx] = Some(result);
     }
     let results: Vec<ActionResult> = slots.into_iter().map(|s| s.expect("every planned item is scheduled once")).collect();
-    finish(stores, actions, &plan, &operation_id, &started_at, results, cancelled, free_before, &auth_source, policy.is_some(), ctx)
+    let auth = Authorization { source: &auth_source, reconciled_at: None };
+    finish(stores, actions, &plan, &operation_id, &started_at, results, cancelled, free_before, &auth, policy.is_some(), ctx)
+}
+
+/// Who authorized an operation, and when a reconciliation last resolved its unconfirmed actions (kept apart, WFA-40).
+pub(crate) struct Authorization<'a> {
+    pub source: &'a str,
+    pub reconciled_at: Option<String>,
 }
 
 /// Why no new action may start now (EXE-06), as a `not_started` code and message.
@@ -441,7 +533,7 @@ fn precondition_code(code: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 fn finish(
     stores: &Stores, actions: &dyn FileActions, plan: &Plan, operation_id: &str, started_at: &str, results: Vec<ActionResult>,
-    cancelled: bool, free_before: Option<u64>, auth_source: &str, policy: bool, ctx: &ApplyContext<'_>,
+    cancelled: bool, free_before: Option<u64>, auth: &Authorization<'_>, policy: bool, ctx: &ApplyContext<'_>,
 ) -> Result<OperationReport, ApplyError> {
     for r in results.iter().filter(|r| r.status == ActionStatus::NotStarted) {
         stores.audit.record_result(operation_id, &r.action_id, "not_started", &serde_json::to_string(r).unwrap(), &utc_from_unix((ctx.now)()))?;
@@ -473,7 +565,8 @@ fn finish(
         volume_free_before_bytes: free_before.map(|b| b.to_string()),
         volume_free_after_bytes: free_before.and(free_after).map(|b| b.to_string()),
         observed_free_delta_bytes: free_before.zip(free_after).map(|(b, a)| (i128::from(a) - i128::from(b)).to_string()),
-        authorization_source: auth_source.into(),
+        authorization_source: auth.source.into(),
+        reconciled_at: auth.reconciled_at.clone(),
     };
     if policy {
         stores.audit.settle_quota(operation_id, (processed, ok), (unknown_bytes, unknown))?;
@@ -490,7 +583,9 @@ fn finish(
 pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation_id: &str, ctx: &ApplyContext<'_>) -> Result<OperationReport, ApplyError> {
     let plan = stores.audit.load_plan(&stores.audit.operation_plan(operation_id)?)?;
     let journal = stores.audit.journal(operation_id)?;
+    let prior = prior_report(stores, operation_id)?;
     let mut results = Vec::new();
+    let mut resolved = false;
     for (idx, item) in plan.body.items.iter().enumerate() {
         let row = journal.iter().find(|r| r.action_id == item.action_id);
         let existing: Option<ActionResult> = row.and_then(|r| r.result_json.as_deref()).and_then(|j| serde_json::from_str(j).ok());
@@ -498,6 +593,7 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
             (_, Some(r)) if r.status != ActionStatus::Unknown => r,
             (None, _) => ActionResult { action_id: item.action_id.clone(), status: ActionStatus::NotStarted, code: "never_started".into(), message: "no action was started".into(), recovery: "not_applicable".into() },
             (Some(row), _) => {
+                resolved = true;
                 // An empty-directory removal is a delete whatever the plan mode (nothing to recover).
                 let tree = serde_json::from_str::<serde_json::Value>(&row.intent_json).ok().is_some_and(|v| v["action"] == "trash_tree");
                 let empty_dir = item.kind == ItemKind::Directory && !tree;
@@ -528,9 +624,131 @@ pub fn reconcile_operation(stores: &Stores, actions: &dyn FileActions, operation
         };
         results.push(result);
     }
-    let started = stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str::<OperationReport>(&j).ok()).map(|r| r.started_at)
-        .unwrap_or_else(|| utc_from_unix((ctx.now)()));
-    finish(stores, actions, &plan, operation_id, &started, results, false, None, "reconciliation", false, ctx)
+    // Nothing was unconfirmed: the recorded report stands as it is (its volume observations included).
+    if let Some(report) = prior.as_ref().filter(|_| !resolved) {
+        return Ok(report.clone());
+    }
+    let started = started_at(stores, operation_id, prior.as_ref(), ctx);
+    let source = match prior.as_ref().map(|r| r.authorization_source.clone()).filter(|s| s != LEGACY_RECONCILIATION_SOURCE) {
+        Some(s) => s,
+        None => cleanup_source(stores, &plan, operation_id)?,
+    };
+    let auth = Authorization { source: &source, reconciled_at: reconciled_at(resolved, prior.as_ref(), ctx) };
+    finish(stores, actions, &plan, operation_id, &started, results, false, None, &auth, false, ctx)
+}
+
+/// What older builds wrote as the authorization source of a reconciled operation (replacing the real one).
+pub(crate) const LEGACY_RECONCILIATION_SOURCE: &str = "reconciliation";
+
+pub(crate) fn prior_report(stores: &Stores, operation_id: &str) -> Result<Option<OperationReport>, ApplyError> {
+    Ok(stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str::<OperationReport>(&j).ok()))
+}
+
+/// When the operation started: its recorded report, else its registration.
+pub(crate) fn started_at(stores: &Stores, operation_id: &str, prior: Option<&OperationReport>, ctx: &ApplyContext<'_>) -> String {
+    match prior {
+        Some(r) => r.started_at.clone(),
+        None => stores.audit.operation_times(operation_id).map(|(s, _)| s).unwrap_or_else(|_| utc_from_unix((ctx.now)())),
+    }
+}
+
+/// This reconciliation's time when it resolved anything; otherwise the previous one's (if any).
+pub(crate) fn reconciled_at(resolved: bool, prior: Option<&OperationReport>, ctx: &ApplyContext<'_>) -> Option<String> {
+    if resolved { Some(utc_from_unix((ctx.now)())) } else { prior.and_then(|r| r.reconciled_at.clone()) }
+}
+
+/// The authorization of a cleanup operation that has no usable recorded source (it stopped before its report, or an
+/// older build replaced the source): the policy receipt this operation reserved, else the interactive review of this
+/// exact plan, else `unknown`.
+fn cleanup_source(stores: &Stores, plan: &Plan, operation_id: &str) -> Result<String, ApplyError> {
+    let receipts = stores.audit.receipts_for(&plan.body.plan_id)?;
+    let ours = receipts.iter().find(|r| r.receipt_id == format!("r_{operation_id}") && r.source == ReceiptSource::Policy);
+    if let Some(r) = ours
+        && let (Some(id), Some(v)) = (&r.policy_id, r.policy_version)
+    {
+        return Ok(policy_source(id, v));
+    }
+    let reviewed = receipts.iter().any(|r| r.source == ReceiptSource::InteractiveReview && r.plan_digest == plan.digest);
+    Ok(if reviewed { "interactive_review" } else { "unknown" }.into())
+}
+
+/// `operations show` for an operation whose host stopped before it finished (no report yet): a read-only,
+/// provisional `operation_report` with status `reconciliation_required` built from the journal. An action with an
+/// intent but no result is `unknown`, one without an intent `not_started`; nothing is resolved or recorded, which is
+/// what `operations reconcile` does (WFA-34). `finished_at` is the last recorded journal activity.
+pub fn interrupted_report(stores: &Stores, operation_id: &str) -> Result<OperationReport, ApplyError> {
+    let plan_id = stores.audit.operation_plan(operation_id)?;
+    let Planned { digest, actions: planned, source } = planned_actions(stores, &plan_id, operation_id)?;
+    let journal = stores.audit.journal(operation_id)?;
+    let reconcile = format!("intent recorded, outcome unconfirmed: run `cleanmanager operations reconcile {operation_id}` before deciding anything");
+    let items: Vec<ActionResult> = planned
+        .iter()
+        .map(|(id, _)| {
+            let row = journal.iter().find(|r| &r.action_id == id);
+            match row.and_then(|r| r.result_json.as_deref()).and_then(|j| serde_json::from_str::<ActionResult>(j).ok()) {
+                Some(r) => r,
+                None if row.is_some() => ActionResult { action_id: id.clone(), status: ActionStatus::Unknown, code: "outcome_unconfirmed".into(), message: reconcile.clone(), recovery: "unknown".into() },
+                None => ActionResult { action_id: id.clone(), status: ActionStatus::NotStarted, code: "never_started".into(), message: "no action was started".into(), recovery: "not_applicable".into() },
+            }
+        })
+        .collect();
+    let (ok, skipped, failed, not_started, unknown) = summarize(&items);
+    let size_of = |id: &str| planned.iter().find(|(a, _)| a == id).map_or(0, |(_, b)| *b);
+    let sum = |keep: &dyn Fn(&ActionResult) -> bool| -> u64 {
+        items.iter().filter(|r| r.status == ActionStatus::Succeeded && keep(r)).map(|r| size_of(&r.action_id)).sum()
+    };
+    let (started, last) = stores.audit.operation_times(operation_id)?;
+    Ok(OperationReport {
+        operation_id: operation_id.into(),
+        plan_id,
+        plan_digest: digest,
+        status: "reconciliation_required".into(),
+        finished_at: last.unwrap_or_else(|| started.clone()),
+        started_at: started,
+        succeeded: ok,
+        skipped,
+        failed,
+        not_started,
+        unknown,
+        processed_logical_bytes: sum(&|_| true).to_string(),
+        quarantined_logical_bytes: sum(&|r| r.recovery == "quarantine").to_string(),
+        // Only permanent deletes free space by themselves (REC-05).
+        estimated_freed_bytes: sum(&|r| r.recovery == "unavailable").to_string(),
+        volume_free_before_bytes: None,
+        volume_free_after_bytes: None,
+        observed_free_delta_bytes: None,
+        authorization_source: source,
+        reconciled_at: None,
+        items,
+    })
+}
+
+/// What a stored plan of any type plans, for a report built from the journal.
+struct Planned {
+    digest: String,
+    /// `(action_id, logical bytes)` in plan order.
+    actions: Vec<(String, u64)>,
+    /// plan/v2 and recovery plans are authorized only by an interactive review.
+    source: String,
+}
+
+fn planned_actions(stores: &Stores, plan_id: &str, operation_id: &str) -> Result<Planned, ApplyError> {
+    let contract = stores.audit.plan_contract(plan_id)?;
+    let reviewed = || "interactive_review".to_string();
+    Ok(if contract == cm_core::plan::v2::PLAN_V2_CONTRACT {
+        let p = stores.audit.load_plan_v2(plan_id)?;
+        let actions = p.body.items.iter().map(|a| (a.action_id().to_owned(), a.logical_bytes())).collect();
+        Planned { digest: p.digest, actions, source: reviewed() }
+    } else if contract == cm_core::recovery::RECOVERY_CONTRACT {
+        let p = stores.audit.load_recovery_plan(plan_id)?;
+        let actions = p.body.items.iter().map(|i| (i.action_id.clone(), i.logical_bytes.0)).collect();
+        Planned { digest: p.digest, actions, source: reviewed() }
+    } else {
+        let p = stores.audit.load_plan(plan_id)?;
+        let source = cleanup_source(stores, &p, operation_id)?;
+        let actions = p.body.items.iter().map(|i| (i.action_id.clone(), i.logical_bytes.0)).collect();
+        Planned { digest: p.digest, actions, source }
+    })
 }
 
 #[cfg(test)]

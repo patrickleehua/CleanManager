@@ -2,6 +2,7 @@
 // risk would always be stated in words (product-and-ux §7.1).
 
 import type { Entry } from './types';
+import { t } from '../i18n';
 
 export type Category = 'folder' | 'media' | 'archive' | 'code' | 'document' | 'image' | 'other' | 'boundary';
 
@@ -22,12 +23,12 @@ export function categoryOf(e: Pick<Entry, 'kind' | 'name' | 'boundary'>): Catego
 }
 
 export const CATEGORY_LABEL: Record<Category, string> = {
-  folder: '文件夹',
-  media: '音视频',
-  archive: '压缩包与镜像',
-  code: '程序与开发',
-  document: '文档',
-  image: '图片与设计',
-  other: '其他文件',
-  boundary: '未跟随的链接',
+  get folder() { return t('category.categoryLabel.folder'); },
+  get media() { return t('category.categoryLabel.media'); },
+  get archive() { return t('category.categoryLabel.archive'); },
+  get code() { return t('category.categoryLabel.code'); },
+  get document() { return t('category.categoryLabel.document'); },
+  get image() { return t('category.categoryLabel.image'); },
+  get other() { return t('category.categoryLabel.other'); },
+  get boundary() { return t('category.categoryLabel.boundary'); },
 };

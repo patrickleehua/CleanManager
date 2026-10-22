@@ -577,10 +577,68 @@ fn rename_no_replace(h: &Owned, dest: &[u16]) -> io::Result<()> {
 
 fn recycle_bin_available(display: &[u16]) -> Result<(), String> {
     let root = volume_root(display).ok_or("cannot determine the volume root")?;
-    let z = nul(&root);
+    recycle_bin_on(&root)
+}
+
+/// Where Explorer keeps the current user's per-volume Recycle Bin settings (`Volume\{GUID}\NukeOnDelete`).
+const BITBUCKET_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket";
+/// Group Policy "Do not move deleted files to the Recycle Bin" (user or machine).
+const RECYCLE_POLICY_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+/// Test seam: a key under `HKCU\Software\CleanManagerTest\` read *in addition to* the real BitBucket settings, so it can
+/// only turn a volume's bin off, never on.
+const BITBUCKET_TEST_ENV: &str = "CM_TEST_BITBUCKET_ROOT";
+
+fn reg_dword(hive: windows_sys::Win32::System::Registry::HKEY, sub: &str, name: &str) -> Option<u32> {
+    use windows_sys::Win32::System::Registry::{RRF_RT_REG_DWORD, RegGetValueW};
+    let sub: Vec<u16> = sub.encode_utf16().chain([0]).collect();
+    let name: Vec<u16> = name.encode_utf16().chain([0]).collect();
+    let (mut v, mut size) = (0u32, 4u32);
+    // SAFETY: NUL-terminated key and value names; four-byte buffer for a REG_DWORD; read-only query.
+    let rc = unsafe { RegGetValueW(hive, sub.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), (&mut v as *mut u32).cast(), &mut size) };
+    (rc == 0).then_some(v)
+}
+
+/// `{GUID}` of the volume mounted at `root` (as Explorer names its BitBucket subkey).
+fn volume_guid_of_root(root: &[u16]) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
+    let mut r = root.to_vec();
+    if r.last() != Some(&BS) {
+        r.push(BS);
+    }
+    let z = nul(&r);
+    let mut buf = [0u16; 64];
+    // SAFETY: NUL-terminated mount point with a trailing backslash; buffer length in characters.
+    if unsafe { GetVolumeNameForVolumeMountPointW(z.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } == 0 {
+        return None;
+    }
+    let s = String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())]);
+    let (start, end) = (s.find('{')?, s.find('}')?);
+    (start < end).then(|| s[start..=end].to_owned())
+}
+
+/// Whether the current user turned the bin off for this volume ("Don't move files to the Recycle Bin"), or a policy
+/// turned it off everywhere. Unreadable settings are not a refusal: the Shell call below and the progress-sink guard at
+/// execution still stop a delete that would not go to a bin.
+fn recycle_bin_turned_off(root: &[u16]) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    if [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE].into_iter().any(|h| reg_dword(h, RECYCLE_POLICY_KEY, "NoRecycleFiles").is_some_and(|v| v != 0)) {
+        return Some("the Recycle Bin is turned off by policy (\"Do not move deleted files to the Recycle Bin\")".into());
+    }
+    let guid = volume_guid_of_root(root)?;
+    let test = std::env::var(BITBUCKET_TEST_ENV).ok().filter(|r| super::startup::StartupEnv::checked_root(r).is_ok());
+    let nuke = std::iter::once(BITBUCKET_KEY.to_owned()).chain(test).any(|base| reg_dword(HKEY_CURRENT_USER, &format!(r"{base}\Volume\{guid}"), "NukeOnDelete").is_some_and(|v| v != 0));
+    nuke.then(|| "the Recycle Bin is turned off for this volume (its Recycle Bin properties say \"Don't move files to the Recycle Bin. Remove files immediately when deleted.\")".into())
+}
+
+/// Readiness of the bin of the volume mounted at `root` (from `GetVolumePathNameW`).
+fn recycle_bin_on(root: &[u16]) -> Result<(), String> {
+    let z = nul(root);
     // SAFETY: NUL-terminated root path.
     if unsafe { GetDriveTypeW(z.as_ptr()) } == DRIVE_REMOTE {
         return Err("network volumes have no recycle bin".into());
+    }
+    if let Some(why) = recycle_bin_turned_off(root) {
+        return Err(why);
     }
     let mut info = windows::Win32::UI::Shell::SHQUERYRBINFO { cbSize: size_of::<windows::Win32::UI::Shell::SHQUERYRBINFO>() as u32, ..Default::default() };
     // SAFETY: NUL-terminated root and a sized SHQUERYRBINFO.
@@ -650,7 +708,15 @@ pub(crate) mod shell {
             // Last identity check before the shell's own (path-based) open.
             match super::at_path(&path, &self.volume_id, &self.file_id) {
                 super::AtPath::Planned => {}
-                other => return self.refuse(format!("item is no longer the planned file ({other:?})")),
+                other => {
+                    let what = match other {
+                        super::AtPath::Other => "another file is there now".to_owned(),
+                        super::AtPath::Missing => "it is gone".to_owned(),
+                        super::AtPath::Error(e) => format!("it could not be checked: {e}"),
+                        super::AtPath::Planned => unreachable!("matched above"),
+                    };
+                    return self.refuse(format!("item is no longer the planned file ({what})"));
+                }
             }
             match super::full_path(&path).and_then(|(_, v)| super::open_attrs(&v)).and_then(|h| super::live(&h)) {
                 Ok(l) if !l.reparse() && l.directory == self.directory => Ok(()),
@@ -753,7 +819,7 @@ pub(crate) mod shell {
             // SAFETY: fresh thread; balanced with CoUninitialize below when it succeeded.
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
             if hr.is_err() {
-                return ShellOutcome { performed: Err(format!("COM initialization failed: {hr:?}")), aborted: true, refused: None };
+                return ShellOutcome { performed: Err(format!("COM initialization failed (HRESULT 0x{:08X})", hr.0 as u32)), aborted: true, refused: None };
             }
             let out = run(&path, volume_id, file_id, directory);
             // SAFETY: matches the successful CoInitializeEx on this thread.
@@ -1198,6 +1264,38 @@ pub fn recycle_bin_ready(path: &RawPath) -> Result<(), String> {
     let u = units(path).ok_or("not a Windows path")?;
     let (display, _) = full_path(u).map_err(|e| format!("cannot resolve path: {e}"))?;
     recycle_bin_available(&display)
+}
+
+/// Every volume among `paths` without a usable recycle bin, each volume checked once, in first-seen order:
+/// `(volume root or the unresolvable path, why)`. Used to refuse a trash-mode plan up front (MTR-03, WFA-35).
+pub fn recycle_bins_unready(paths: &[RawPath]) -> Vec<(String, String)> {
+    let mut checked = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for p in paths {
+        let root = units(p)
+            .ok_or_else(|| "not a Windows path".to_string())
+            .and_then(|u| full_path(u).map_err(|e| format!("cannot resolve path: {e}")))
+            .and_then(|(display, _)| volume_root(&display).ok_or_else(|| "cannot determine the volume root".to_string()));
+        match root {
+            Err(why) => out.push((p.display(), why)),
+            Ok(root) => {
+                let shown = String::from_utf16_lossy(&root);
+                if checked.insert(shown.to_lowercase())
+                    && let Err(why) = recycle_bin_on(&root)
+                {
+                    out.push((shown, why));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `{GUID}` of the volume holding `path` (how Explorer names its per-volume Recycle Bin settings); tests use it to
+/// write a redirected setting under `CM_TEST_BITBUCKET_ROOT`.
+pub fn recycle_bin_volume_key(path: &RawPath) -> Option<String> {
+    let (display, _) = full_path(units(path)?).ok()?;
+    volume_guid_of_root(&volume_root(&display)?)
 }
 
 #[cfg(test)]

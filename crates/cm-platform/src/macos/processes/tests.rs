@@ -14,6 +14,7 @@ fn fake(pid: u32, name: &str, path: Option<&str>, uid: u32, sig: Signature, appl
             name: name.into(),
             image_path: path.map(|p| RawPath::unix(p.as_bytes().to_vec()).unwrap()),
             started_at: Some("1700000000000000".into()),
+            started_at_utc: Some("2023-11-14T22:13:20Z".into()),
             cpu_percent: None,
             memory_bytes: None,
             disk_bytes_per_sec: None,
@@ -84,6 +85,9 @@ fn the_list_reads_this_process_and_withholds_other_users_usage() {
     assert!(me.facts.cpu_percent.is_some_and(|c| (0.0..=100.0).contains(&c)), "{me:?}");
     assert!(me.facts.memory_bytes.is_some_and(|m| m > 0), "{me:?}");
     assert!(me.facts.started_at.as_deref().is_some_and(|s| s.len() >= 16 && s.bytes().all(|b| b.is_ascii_digit())), "{me:?}");
+    // WFA-93: the microsecond key binds the instance; the same instant reads as RFC 3339 UTC (whole seconds).
+    let micros: i64 = me.facts.started_at.as_deref().unwrap().parse().unwrap();
+    assert_eq!(me.facts.started_at_utc.as_deref(), Some(cm_core::time::utc_from_unix(micros / 1_000_000).as_str()), "{me:?}");
     assert!(me.facts.network_bytes_per_sec.is_none());
     eprintln!("this test binary: {:?}", me.facts.signature);
     let launchd = rows.iter().find(|r| r.facts.pid == 1).expect("launchd");
@@ -141,7 +145,15 @@ fn ending_a_spawned_child_re_identifies_it_first() {
 #[test]
 fn protected_targets_are_refused_at_execution() {
     let b = MacProcesses;
-    let a = |pid: u32, name: &str| ProcessEndAction { action_id: "a01".into(), pid, started_at: "0".into(), name: name.into(), image_path: None, image_sha256: None };
+    let a = |pid: u32, name: &str| ProcessEndAction {
+        action_id: "a01".into(),
+        pid,
+        started_at: "0".into(),
+        started_at_utc: None,
+        name: name.into(),
+        image_path: None,
+        image_sha256: None,
+    };
     assert_eq!(b.end(&a(1, "launchd"), std::process::id()), EndOutcome::Protected(Protection::CriticalSystem));
     assert_eq!(b.end(&a(4242, "WindowServer"), std::process::id()), EndOutcome::Protected(Protection::CriticalSystem));
     assert_eq!(b.end(&a(std::process::id(), "x"), std::process::id()), EndOutcome::Protected(Protection::CleanManager));

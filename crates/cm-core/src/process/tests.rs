@@ -12,6 +12,7 @@ fn facts(pid: u32, name: &str, path: Option<&str>, signer: Option<&str>) -> Proc
         name: name.into(),
         image_path: path.map(raw),
         started_at: Some("134050000000000000".into()),
+        started_at_utc: Some("2025-10-15T11:06:40Z".into()),
         cpu_percent: Some(1.0),
         memory_bytes: Some(1 << 20),
         disk_bytes_per_sec: Some(0.0),
@@ -92,6 +93,12 @@ fn end_action_binds_one_instance_and_plans_hold_exactly_one() {
     let v = view(facts(4321, "notepad.exe", Some(r"C:\Windows\System32\notepad.exe"), None));
     let a = end_action(&v, Some("ab".repeat(32))).unwrap();
     assert_eq!((a.pid, a.started_at.as_str(), a.name.as_str()), (4321, "134050000000000000", "notepad.exe"));
+    // WFA-93: the exact start key binds the instance; the plan also carries the same time for people.
+    assert_eq!(a.started_at_utc.as_deref(), Some("2025-10-15T11:06:40Z"));
+    assert_eq!(v.to_wire()["started_at_utc"], "2025-10-15T11:06:40Z");
+    let old = serde_json::json!({"action_id": "a01", "pid": 1, "started_at": "1", "name": "x.exe", "image_path": null, "image_sha256": null});
+    let parsed: ProcessEndAction = serde_json::from_value(old.clone()).expect("plans made before started_at_utc still load");
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), old, "and serialize exactly as before, so their digests hold");
     let mut no_time = v.clone();
     no_time.facts.started_at = None;
     assert_eq!(end_action(&no_time, None), Err(EndRefusal::NoIdentity));

@@ -277,6 +277,21 @@ impl AuditStore {
             .ok_or_else(|| StoreError::NotFound(operation_id.into()))
     }
 
+    /// When an operation was registered and when its journal last recorded an intent or a result (`None`: nothing yet).
+    pub fn operation_times(&self, operation_id: &str) -> Result<(String, Option<String>)> {
+        let started: String = self
+            .conn
+            .query_row("SELECT started_at FROM operations WHERE operation_id=?1", [operation_id], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(operation_id.into()))?;
+        let last: Option<String> = self.conn.query_row(
+            "SELECT MAX(COALESCE(result_at, intent_at)) FROM action_journal WHERE operation_id=?1",
+            [operation_id],
+            |r| r.get(0),
+        )?;
+        Ok((started, last))
+    }
+
     pub fn finish_operation(&self, operation_id: &str, state: &str, report_json: &str, now: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("UPDATE operations SET state=?2, finished_at=?3 WHERE operation_id=?1", params![operation_id, state, now])?;

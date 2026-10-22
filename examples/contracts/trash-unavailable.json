@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "unsupported",
+  "message": "trash_unavailable: no usable Recycle Bin on W:\\ (the Recycle Bin is turned off for this volume (its Recycle Bin properties say \"Don't move files to the Recycle Bin. Remove files immediately when deleted.\")); there is no permanent-delete alternative",
+  "retryable": false,
+  "required_action": "Create the plan again with --mode quarantine, or turn the Recycle Bin on for it (right-click the Recycle Bin › Properties › select the volume › Custom size; a policy setting has to be changed by its administrator) and plan again; affected: W:\\",
+  "details": {
+    "plan_id": null,
+    "operation_id": null,
+    "scope_id": null
+  }
+}

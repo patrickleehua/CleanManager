@@ -1,132 +1,135 @@
 // One vocabulary for cleanup, plans, execution and recovery. Every risk, state and outcome has
 // words (never colour alone); the same action keeps the same name through the whole flow.
+// The words live in the language resources (src/i18n, LIF-05); the bin and file-manager words come from the platform
+// table (GUI-12), while the keys (`trash`, `system_recycle_bin`) mean the same on every platform and in every language.
 
-import { onPlatform, words } from './platform';
+import { words } from './platform';
 import type { Availability, AuthStatus, Counts, Group, ItemStatus, Mode, NotSelectable, PlanKind, PolicyState } from './types';
+import { t } from '../i18n';
 
 export const MODE_LABEL: Record<Mode, string> = {
-  trash: '移到回收站',
-  quarantine: '移入同卷隔离区',
-  delete: '永久删除',
+  get trash() { return words().moveToBin; },
+  get quarantine() { return t('words.modeLabel.quarantine'); },
+  get delete() { return t('words.modeLabel.delete'); },
 };
 
 /** What each mode does to the object and to free space, and how it can be undone. */
 export const MODE_EXPLAIN: Record<Mode, { effect: string; space: string; recovery: string }> = {
   trash: {
-    effect: '交给系统回收站。',
-    space: '回收站仍占用这个卷的空间，清空回收站后才释放。',
-    recovery: '在资源管理器的回收站中还原；CleanManager 无法替你还原。',
+    get effect() { return t('words.sendsSystemBin', { bin: words().bin }); },
+    get space() { return t('words.itemsBinStillTake', { bin: words().bin }); },
+    get recovery() { return t('words.restorefrombinCleanmanagerCantRestore', { restoreFromBin: words().restoreFromBin }); },
   },
   quarantine: {
-    effect: '移动到同一个卷上的 CleanManager 隔离区，原位置不再有这些文件。',
-    space: '此操作不立即释放空间：文件仍在同一个卷上，直到你另行创建并批准“永久清空”计划。',
-    recovery: '在“活动 › 隔离区”为它们创建恢复计划；原位置被占用时跳过，不会覆盖。',
+    get effect() { return t('words.modeExplain.quarantine.effect'); },
+    get space() { return t('words.modeExplain.quarantine.space'); },
+    get recovery() { return t('words.modeExplain.quarantine.recovery'); },
   },
   delete: {
-    effect: '直接从磁盘删除。',
-    space: '删除成功的文件立即释放其占用（实际变化以卷空间观测为准）。',
-    recovery: '无法撤销，没有回收站或隔离副本。',
+    get effect() { return t('words.modeExplain.delete.effect'); },
+    get space() { return t('words.modeExplain.delete.space'); },
+    get recovery() { return t('words.cantUndoneTheresNo', { bin: words().bin }); },
   },
 };
 
 export const PLAN_KIND_LABEL: Record<PlanKind, string> = {
-  cleanup: '清理计划',
-  restore: '恢复计划',
-  purge: '永久清空计划',
-  manual_trash: '手选回收站计划',
-  manual_purge: '永久删除回收站项目计划',
-  startup: '启动项计划',
-  startup_restore: '启动项还原计划',
-  uninstall: '卸载计划',
-  uninstall_leftovers: '卸载残留计划',
-  uninstall_restore: '注册表还原计划',
-  update: '应用更新计划',
-  process: '结束进程计划',
-  maintenance: '维护计划',
+  get cleanup() { return t('words.planKindLabel.cleanup'); },
+  get restore() { return t('words.planKindLabel.restore'); },
+  get purge() { return t('words.planKindLabel.purge'); },
+  get manual_trash() { return t('words.handPickedBinPlan', { bin: words().bin }); },
+  get manual_purge() { return t('words.permanentBinDeletionPlan', { bin: words().bin }); },
+  get startup() { return t('words.planKindLabel.startup'); },
+  get startup_restore() { return t('words.planKindLabel.startup_restore'); },
+  get uninstall() { return t('words.planKindLabel.uninstall'); },
+  get uninstall_leftovers() { return t('words.planKindLabel.uninstall_leftovers'); },
+  get uninstall_restore() { return t('words.planKindLabel.uninstall_restore'); },
+  get update() { return t('words.planKindLabel.update'); },
+  get process() { return t('words.planKindLabel.process'); },
+  get maintenance() { return t('words.planKindLabel.maintenance'); },
 };
 
 export const RECOVERY_EXPLAIN: Record<'restore' | 'purge', { effect: string; space: string; recovery: string }> = {
   restore: {
-    effect: '把每一项移回原来的文件夹。',
-    space: '隔离区与原位置在同一个卷上，恢复不改变可用空间。',
-    recovery: '原位置已有同名对象时跳过该项，从不覆盖；被跳过的项目仍留在隔离区。',
+    get effect() { return t('words.recoveryExplain.restore.effect'); },
+    get space() { return t('words.recoveryExplain.restore.space'); },
+    get recovery() { return t('words.recoveryExplain.restore.recovery'); },
   },
   purge: {
-    effect: '永久删除隔离区中的这些对象。',
-    space: '清空成功后释放这些对象占用的空间。',
-    recovery: '无法撤销。清空授权不继承自当初的隔离授权，需要单独批准。',
+    get effect() { return t('words.recoveryExplain.purge.effect'); },
+    get space() { return t('words.recoveryExplain.purge.space'); },
+    get recovery() { return t('words.recoveryExplain.purge.recovery'); },
   },
 };
 
 export const GROUP_LABEL: Record<Group, string> = {
-  low: '低风险',
-  review: '需要审阅',
-  pending: '待判断',
-  blocked: '不可选择',
+  get low() { return t('words.groupLabel.low'); },
+  get review() { return t('words.groupLabel.review'); },
+  get pending() { return t('words.groupLabel.pending'); },
+  get blocked() { return t('words.groupLabel.blocked'); },
 };
 
 export const GROUP_EXPLAIN: Record<Group, string> = {
-  low: '规则已验证可再生成。即使如此也不会预先勾选，请确认后再选择。',
-  review: '可以处理，但删除后可能需要重新下载、重新登录或丢失本地状态。请逐项确认影响。',
-  pending: '证据不完整（有未读取的子项或时间未知），在补齐证据前不能放入计划。',
-  blocked: '受保护、属于硬拒绝范围，或只允许逐项审阅的对象。这里只说明原因，不能选择。',
+  get low() { return t('words.groupExplain.low'); },
+  get review() { return t('words.groupExplain.review'); },
+  get pending() { return t('words.groupExplain.pending'); },
+  get blocked() { return t('words.groupExplain.blocked'); },
 };
 
 export const NOT_SELECTABLE_LABEL: Record<NotSelectable, string> = {
-  blocked: '受保护或被规则拒绝',
-  protected_reviewable: '默认保护：仅可逐项审阅，不进入批量计划',
-  pending_evidence: '证据不完整，待判断',
-  no_mode: '此规则不提供文件操作',
-  unknown_size: '含大小未知的文件，无法冻结进计划',
-  hint: '大项提示：只给出处理建议，不进入计划',
-  adapter: '由所属工具清理；此版本只预览，不提供文件操作',
-  in_use: '正在使用中，本次跳过',
-  probe_unknown: '无法确认是否在使用，按占用处理',
-  needs_reanalysis: '需要重新分析：占用与版本检查只在本次运行的分析中有效',
+  get blocked() { return t('words.notSelectableLabel.blocked'); },
+  get protected_reviewable() { return t('words.notSelectableLabel.protected_reviewable'); },
+  get pending_evidence() { return t('words.notSelectableLabel.pending_evidence'); },
+  get no_mode() { return t('words.notSelectableLabel.no_mode'); },
+  get unknown_size() { return t('words.notSelectableLabel.unknown_size'); },
+  get hint() { return t('words.notSelectableLabel.hint'); },
+  get adapter() { return t('words.notSelectableLabel.adapter'); },
+  get in_use() { return t('words.notSelectableLabel.in_use'); },
+  get probe_unknown() { return t('words.notSelectableLabel.probe_unknown'); },
+  get needs_reanalysis() { return t('words.notSelectableLabel.needs_reanalysis'); },
 };
 
 export const REGISTRY_LABEL: Record<string, string> = {
-  covered: '已安装版本在实测范围内',
-  version_untested: '已安装版本未经实测，因此只能审阅',
-  not_registered: '没有对应的实测登记',
-  not_checked: '未检查实测登记',
+  get covered() { return t('words.registryLabel.covered'); },
+  get version_untested() { return t('words.registryLabel.version_untested'); },
+  get not_registered() { return t('words.registryLabel.not_registered'); },
+  get not_checked() { return t('words.registryLabel.not_checked'); },
 };
 
 export const PROBE_STATE_LABEL: Record<string, string> = {
-  in_use: '正在使用',
-  not_in_use: '未在使用',
-  unknown: '无法确认（按占用处理）',
+  get in_use() { return t('words.probeStateLabel.in_use'); },
+  get not_in_use() { return t('words.probeStateLabel.not_in_use'); },
+  get unknown() { return t('words.probeStateLabel.unknown'); },
 };
 
 export const PROBE_LABEL: Record<string, string> = {
-  owner_process: '所属应用进程',
-  open_handles: '打开的文件句柄',
+  get owner_process() { return t('words.probeLabel.owner_process'); },
+  get open_handles() { return t('words.probeLabel.open_handles'); },
 };
 
 export const AUTH_LABEL: Record<AuthStatus, string> = {
-  authorized: '已授权',
-  required: '等待你批准',
-  expired: '已过期',
-  revoked: '已撤销',
+  get authorized() { return t('words.authLabel.authorized'); },
+  get required() { return t('words.authLabel.required'); },
+  get expired() { return t('words.authLabel.expired'); },
+  get revoked() { return t('words.authLabel.revoked'); },
 };
 
 export const STALE_LABEL: Record<string, string> = {
-  expired: '计划已过有效期（15 分钟）。请从候选重新生成计划。',
-  rule_set_changed: '规则包已更新，旧计划不会按新规则执行。请重新分析并生成新计划。',
-  digest_mismatch: '存储的计划内容与摘要不符，拒绝使用。',
-  rules_unavailable: '规则包当前无法加载，计划不能执行。',
+  get expired() { return t('words.staleLabel.expired'); },
+  get rule_set_changed() { return t('words.staleLabel.rule_set_changed'); },
+  get digest_mismatch() { return t('words.staleLabel.digest_mismatch'); },
+  get rules_unavailable() { return t('words.staleLabel.rules_unavailable'); },
 };
 
 export const OPERATION_STATE_LABEL: Record<string, string> = {
-  created: '准备中',
-  validating: '复核中',
-  running: '执行中',
-  stopping: '正在停止',
-  completed: '全部完成',
-  partial: '部分完成',
-  cancelled: '已停止',
-  failed: '失败',
-  reconciliation_required: '需要核对',
+  get created() { return t('words.operationStateLabel.created'); },
+  get validating() { return t('words.operationStateLabel.validating'); },
+  get running() { return t('words.operationStateLabel.running'); },
+  get stopping() { return t('words.operationStateLabel.stopping'); },
+  get completed() { return t('words.operationStateLabel.completed'); },
+  get partial() { return t('words.operationStateLabel.partial'); },
+  get cancelled() { return t('words.operationStateLabel.cancelled'); },
+  get failed() { return t('words.operationStateLabel.failed'); },
+  get reconciliation_required() { return t('words.operationStateLabel.reconciliation_required'); },
 };
 
 export function operationTone(state: string): 'good' | 'warn' | 'bad' | 'busy' | 'muted' {
@@ -146,86 +149,86 @@ export function operationTone(state: string): 'good' | 'warn' | 'bad' | 'busy' |
 }
 
 export const ITEM_STATUS_LABEL: Record<ItemStatus, string> = {
-  succeeded: '成功',
-  skipped: '已跳过',
-  failed: '失败',
-  not_started: '未开始',
-  unknown: '结果未知',
-  in_flight: '进行中',
-  pending: '等待',
+  get succeeded() { return t('words.itemStatusLabel.succeeded'); },
+  get skipped() { return t('words.itemStatusLabel.skipped'); },
+  get failed() { return t('words.itemStatusLabel.failed'); },
+  get not_started() { return t('words.itemStatusLabel.not_started'); },
+  get unknown() { return t('words.itemStatusLabel.unknown'); },
+  get in_flight() { return t('words.itemStatusLabel.in_flight'); },
+  get pending() { return t('words.itemStatusLabel.pending'); },
 };
 
 /** Result codes explained for people. Unknown codes fall back to the host's own message. */
 export const CODE_EXPLAIN: Record<string, string> = {
-  done: '已按计划完成。',
-  protected: '执行前复查发现它受保护，未触碰。',
-  precondition_missing: '对象已不在原位置，未做任何操作。',
-  precondition_link_or_reparse: '对象变成了链接或重分析点，未跟随也未操作。',
-  precondition_identity_changed: '同名位置上已是另一个文件，未操作。',
-  precondition_parent_changed: '上级文件夹被替换，未操作。',
-  precondition_metadata_changed: '文件在计划后被修改过，未操作。',
-  precondition_in_use: '文件正被占用，未操作。',
-  precondition_owner_running: '所属应用正在运行，未操作。关闭应用后可重新分析。',
-  precondition_unsupported: '此平台或文件系统不支持该操作，未操作。',
-  quarantine_unavailable: '同一卷上没有可用的隔离位置，未操作。',
-  cancelled: '你停止了后续操作，此项未开始。',
-  plan_expired: '执行途中计划到期，此项未开始。',
-  authorization_revoked: '授权已撤销，此项未开始。',
-  outcome_unconfirmed: '系统调用的结果无法确认，可能已经生效。请先核对，不会自动重试。',
-  reconciled_performed: '核对确认：该动作已经生效。',
-  reconciled_not_performed: '核对确认：对象仍在原处，动作没有发生。',
-  never_started: '没有开始过该动作。',
-  restored: '已移回原位置。',
-  purged: '已永久删除。',
-  not_recoverable: '该隔离项已被其他计划恢复或清空，跳过。',
-  target_conflict: '原位置已有同名对象，按规则跳过，不覆盖。',
-  missing: '隔离区中找不到该对象。',
+  get done() { return t('words.codeExplain.done'); },
+  get protected() { return t('words.codeExplain.protected'); },
+  get precondition_missing() { return t('words.codeExplain.precondition_missing'); },
+  get precondition_link_or_reparse() { return t('words.codeExplain.precondition_link_or_reparse'); },
+  get precondition_identity_changed() { return t('words.codeExplain.precondition_identity_changed'); },
+  get precondition_parent_changed() { return t('words.codeExplain.precondition_parent_changed'); },
+  get precondition_metadata_changed() { return t('words.codeExplain.precondition_metadata_changed'); },
+  get precondition_in_use() { return t('words.codeExplain.precondition_in_use'); },
+  get precondition_owner_running() { return t('words.codeExplain.precondition_owner_running'); },
+  get precondition_unsupported() { return t('words.codeExplain.precondition_unsupported'); },
+  get quarantine_unavailable() { return t('words.codeExplain.quarantine_unavailable'); },
+  get cancelled() { return t('words.codeExplain.cancelled'); },
+  get plan_expired() { return t('words.codeExplain.plan_expired'); },
+  get authorization_revoked() { return t('words.codeExplain.authorization_revoked'); },
+  get outcome_unconfirmed() { return t('words.codeExplain.outcome_unconfirmed'); },
+  get reconciled_performed() { return t('words.codeExplain.reconciled_performed'); },
+  get reconciled_not_performed() { return t('words.codeExplain.reconciled_not_performed'); },
+  get never_started() { return t('words.codeExplain.never_started'); },
+  get restored() { return t('words.codeExplain.restored'); },
+  get purged() { return t('words.codeExplain.purged'); },
+  get not_recoverable() { return t('words.codeExplain.not_recoverable'); },
+  get target_conflict() { return t('words.codeExplain.target_conflict'); },
+  get missing() { return t('words.codeExplain.missing'); },
   // Uninstall (UNI-02/03/06/09)
-  not_running: '应用没有在运行。',
-  closed: '收到退出请求后，应用已自行关闭。',
-  still_running: '发出退出请求后应用仍在运行：卸载程序没有运行，也没有删除任何东西。请先关闭它再执行；强制结束只能在终端中单独审阅。',
-  app_still_running: '应用没有退出，卸载程序没有运行，也没有删除任何东西。',
-  running_state_unknown: '无法判断应用是否仍在运行，为安全起见没有卸载。',
-  leftovers_remain: '卸载程序已运行，但重新扫描发现安装目录或卸载登记仍在，结果记为“部分完成”。下一步：审阅残留。',
-  restart_required: '卸载程序要求重启后才能完成；重启后再审阅残留。',
-  cancelled_by_user: '你在卸载程序中取消了卸载。',
-  uninstaller_failed: '卸载程序报告失败（见退出码），应用可能仍然安装着。',
-  record_changed: '卸载登记在计划之后发生了变化，没有运行卸载程序。',
-  program_changed: '卸载程序文件在计划之后被替换或修改，没有运行。',
-  start_failed: '卸载程序无法启动，没有运行任何东西。',
-  backup_failed: '注册表项的备份未能保存，因此没有删除该项。',
-  precondition_changed: '对象在计划之后发生了变化，没有改动它。',
-  permission_required: '需要管理员权限，已跳过。',
-  destination_exists: '目标已被重新创建，按规则跳过，不覆盖。',
+  get not_running() { return t('words.codeExplain.not_running'); },
+  get closed() { return t('words.codeExplain.closed'); },
+  get still_running() { return t('words.codeExplain.still_running'); },
+  get app_still_running() { return t('words.codeExplain.app_still_running'); },
+  get running_state_unknown() { return t('words.codeExplain.running_state_unknown'); },
+  get leftovers_remain() { return t('words.codeExplain.leftovers_remain'); },
+  get restart_required() { return t('words.codeExplain.restart_required'); },
+  get cancelled_by_user() { return t('words.codeExplain.cancelled_by_user'); },
+  get uninstaller_failed() { return t('words.codeExplain.uninstaller_failed'); },
+  get record_changed() { return t('words.codeExplain.record_changed'); },
+  get program_changed() { return t('words.codeExplain.program_changed'); },
+  get start_failed() { return t('words.codeExplain.start_failed'); },
+  get backup_failed() { return t('words.codeExplain.backup_failed'); },
+  get precondition_changed() { return t('words.codeExplain.precondition_changed'); },
+  get permission_required() { return t('words.codeExplain.permission_required'); },
+  get destination_exists() { return t('words.codeExplain.destination_exists'); },
   // Updates (UPD-02/03)
-  updated: '已更新，并回读确认了新版本。',
-  app_running: '应用正在运行，已跳过。请先关闭它，再执行一份新的更新计划；CleanManager 不会为了更新而关闭应用。',
-  running_unknown: '无法判断应用是否在运行，已跳过。请先关闭它再执行。',
-  signature_mismatch: '下载包的签名者与已安装应用不一致：拒绝更新，原应用没有改变。',
-  unverifiable: '下载包无法验证签名：没有安装，原应用没有改变。请前往官方页面更新。',
-  download_failed: '安装包未能下载以供验证，没有更新。',
-  tool_changed: '包管理器程序在计划之后发生了变化，没有运行。请重新生成计划。',
-  target_changed: '更新目标与审阅的计划不一致，没有运行。',
-  adapter_mismatch: '更新命令不是审阅时的固定形式，没有运行。',
-  tool_failed: '包管理器报告失败。',
+  get updated() { return t('words.codeExplain.updated'); },
+  get app_running() { return t('words.codeExplain.app_running'); },
+  get running_unknown() { return t('words.codeExplain.running_unknown'); },
+  get signature_mismatch() { return t('words.codeExplain.signature_mismatch'); },
+  get unverifiable() { return t('words.codeExplain.unverifiable'); },
+  get download_failed() { return t('words.codeExplain.download_failed'); },
+  get tool_changed() { return t('words.codeExplain.tool_changed'); },
+  get target_changed() { return t('words.codeExplain.target_changed'); },
+  get adapter_mismatch() { return t('words.codeExplain.adapter_mismatch'); },
+  get tool_failed() { return t('words.codeExplain.tool_failed'); },
   // File actions reported by the platform layer (a per-item result is never shown as the host's raw message).
-  access_denied: '系统拒绝了这个操作（权限不足），未做任何更改。',
-  trash_unavailable: '这个位置没有可用的回收站，没有改为永久删除，也没有移动。',
-  rename_failed: '移动没有完成，对象仍在原位置。',
-  delete_failed: '删除没有完成，对象可能仍在原位置。',
-  new_descendant: '文件夹里出现了计划之后新增的内容，为安全起见没有处理。',
-  precondition_descendant_kept: '文件夹里还有被保留的内容，文件夹本身没有移除。',
-  invalid_target: '目标不是计划中记录的对象，没有操作。',
-  in_use: '对象正被占用，未操作。',
-  changed_since_plan: '对象在计划之后发生了变化，没有改动它。',
-  identity_changed: '同一位置上已是另一个对象，没有操作。',
-  tree_mismatch: '文件夹的内容与计划时不一致，没有操作。',
-  race_safety_unavailable: '无法安全地确认对象在操作时没有被替换，为安全起见没有操作。',
-  unsupported: '这个平台或文件系统不支持这个操作，没有操作。',
+  get access_denied() { return t('words.codeExplain.access_denied'); },
+  get trash_unavailable() { return t('words.codeExplain.trash_unavailable'); },
+  get rename_failed() { return t('words.codeExplain.rename_failed'); },
+  get delete_failed() { return t('words.codeExplain.delete_failed'); },
+  get new_descendant() { return t('words.codeExplain.new_descendant'); },
+  get precondition_descendant_kept() { return t('words.codeExplain.precondition_descendant_kept'); },
+  get invalid_target() { return t('words.codeExplain.invalid_target'); },
+  get in_use() { return t('words.codeExplain.in_use'); },
+  get changed_since_plan() { return t('words.codeExplain.changed_since_plan'); },
+  get identity_changed() { return t('words.codeExplain.identity_changed'); },
+  get tree_mismatch() { return t('words.codeExplain.tree_mismatch'); },
+  get race_safety_unavailable() { return t('words.codeExplain.race_safety_unavailable'); },
+  get unsupported() { return t('words.codeExplain.unsupported'); },
   // Processes (STS-04)
-  ended: '进程已结束；其中未保存的工作已丢失。',
-  precondition_gone: '进程在执行前已经退出，没有结束任何东西。',
-  end_failed: '结束进程失败。',
+  get ended() { return t('words.codeExplain.ended'); },
+  get precondition_gone() { return t('words.codeExplain.precondition_gone'); },
+  get end_failed() { return t('words.codeExplain.end_failed'); },
 };
 
 export function explainCode(code: string | null, message: string | null): string {
@@ -234,72 +237,72 @@ export function explainCode(code: string | null, message: string | null): string
 }
 
 export const AVAILABILITY_LABEL: Record<Availability, string> = {
-  in_app_restore: '可在隔离区恢复',
-  system_recycle_bin: '在系统回收站中还原',
-  unavailable: '无法撤销',
-  not_applicable: '无需恢复',
-  unknown: '恢复情况未知，需要核对',
+  get in_app_restore() { return t('words.availabilityLabel.in_app_restore'); },
+  get system_recycle_bin() { return t('words.restoreSystemBin', { bin: words().bin }); },
+  get unavailable() { return t('words.availabilityLabel.unavailable'); },
+  get not_applicable() { return t('words.availabilityLabel.not_applicable'); },
+  get unknown() { return t('words.availabilityLabel.unknown'); },
 };
 
 export const ACTION_LABEL: Record<string, string> = {
-  trash: '移到回收站',
-  quarantine: '移入隔离区',
-  delete: '永久删除',
-  restore: '从隔离区恢复',
-  purge: '永久清空隔离项',
-  startup: '修改启动项',
-  maintenance: '运行维护任务',
-  uninstall: '卸载应用',
-  uninstall_leftovers: '处理卸载残留',
-  uninstall_restore: '还原注册表项',
-  update: '更新应用',
-  process: '结束进程',
+  get trash() { return words().moveToBin; },
+  get quarantine() { return t('words.actionLabel.quarantine'); },
+  get delete() { return t('words.actionLabel.delete'); },
+  get restore() { return t('words.actionLabel.restore'); },
+  get purge() { return t('words.actionLabel.purge'); },
+  get startup() { return t('words.actionLabel.startup'); },
+  get maintenance() { return t('words.actionLabel.maintenance'); },
+  get uninstall() { return t('words.actionLabel.uninstall'); },
+  get uninstall_leftovers() { return t('words.actionLabel.uninstall_leftovers'); },
+  get uninstall_restore() { return t('words.actionLabel.uninstall_restore'); },
+  get update() { return t('words.actionLabel.update'); },
+  get process() { return t('words.actionLabel.process'); },
 };
 
 export const QUARANTINE_STATE_LABEL: Record<string, string> = {
-  recoverable: '可恢复',
-  target_conflict: '原位置已被占用',
-  volume_offline: '所在卷离线',
-  volume_changed: '卷已更换',
-  identity_changed: '身份不符',
-  missing: '内容缺失',
-  parent_changed: '原上级文件夹已变化',
-  manifest_incomplete: '记录不完整，无法验证恢复',
-  unknown: '状态未知',
+  get recoverable() { return t('words.quarantineStateLabel.recoverable'); },
+  get target_conflict() { return t('words.quarantineStateLabel.target_conflict'); },
+  get volume_offline() { return t('words.quarantineStateLabel.volume_offline'); },
+  get volume_changed() { return t('words.quarantineStateLabel.volume_changed'); },
+  get identity_changed() { return t('words.quarantineStateLabel.identity_changed'); },
+  get missing() { return t('words.quarantineStateLabel.missing'); },
+  get parent_changed() { return t('words.quarantineStateLabel.parent_changed'); },
+  get manifest_incomplete() { return t('words.quarantineStateLabel.manifest_incomplete'); },
+  get unknown() { return t('words.quarantineStateLabel.unknown'); },
 };
 
 export const POLICY_STATE_LABEL: Record<PolicyState, string> = {
-  enabled: '已启用',
-  paused: '已暂停',
-  revoked: '已撤销',
+  get enabled() { return t('words.policyStateLabel.enabled'); },
+  get paused() { return t('words.policyStateLabel.paused'); },
+  get revoked() { return t('words.policyStateLabel.revoked'); },
 };
 
 export const POLICY_MISMATCH_LABEL: Record<string, string> = {
-  not_enabled: '策略未启用',
-  expired: '策略已到期',
-  other_principal: '策略属于另一个用户',
-  scope_differs: '扫描范围不同',
-  mode_differs: '处理方式不同',
-  rule_not_covered: '包含策略未列出的规则版本',
-  tier_not_default_selected: '包含需审阅的项目（策略只覆盖低风险项）',
-  size_unknown: '总大小未知',
-  single_limit: '超过单次上限',
-  quota_exceeded: '超过 24 小时额度',
+  get not_enabled() { return t('words.policyMismatchLabel.not_enabled'); },
+  get expired() { return t('words.policyMismatchLabel.expired'); },
+  get other_principal() { return t('words.policyMismatchLabel.other_principal'); },
+  get scope_differs() { return t('words.policyMismatchLabel.scope_differs'); },
+  get mode_differs() { return t('words.policyMismatchLabel.mode_differs'); },
+  get rule_not_covered() { return t('words.policyMismatchLabel.rule_not_covered'); },
+  get tier_not_default_selected() { return t('words.policyMismatchLabel.tier_not_default_selected'); },
+  get size_unknown() { return t('words.policyMismatchLabel.size_unknown'); },
+  get single_limit() { return t('words.policyMismatchLabel.single_limit'); },
+  get quota_exceeded() { return t('words.policyMismatchLabel.quota_exceeded'); },
 };
 
 export const LAYER_LABEL: Record<string, string> = {
-  hard_deny: '硬拒绝（程序内置）',
-  default_category: '默认保护类目',
-  user: '你的保护项',
+  get hard_deny() { return t('words.layerLabel.hard_deny'); },
+  get default_category() { return t('words.layerLabel.default_category'); },
+  get user() { return t('words.layerLabel.user'); },
 };
 
 export const MATCH_LABEL: Record<string, string> = {
-  exact: '仅此对象',
-  descendants: '此位置及其内容',
-  ancestors: '此位置及上级',
-  glob: '名称模式',
-  rule: '整条规则',
-  maintenance_task: '维护任务',
+  get exact() { return t('words.matchLabel.exact'); },
+  get descendants() { return t('words.matchLabel.descendants'); },
+  get ancestors() { return t('words.matchLabel.ancestors'); },
+  get glob() { return t('words.matchLabel.glob'); },
+  get rule() { return t('words.matchLabel.rule'); },
+  get maintenance_task() { return t('words.matchLabel.maintenance_task'); },
 };
 
 /** Segments of a fixed-total progress bar: every planned action is in exactly one segment. */
@@ -321,8 +324,8 @@ export function progressSegments(total: number, c: Counts): { key: ItemStatus; c
 /** Seconds as "12 分 05 秒" / "45 秒". */
 export function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
-  if (s < 60) return `${s} 秒`;
-  return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`;
+  if (s < 60) return t('common.seconds', { s });
+  return t('words.floorMinPadstart', { floor: Math.floor(s / 60), padStart: String(s % 60).padStart(2, '0') });
 }
 
 /** The digest in groups of 8 for reading aloud and comparing with the CLI. */
@@ -336,20 +339,3 @@ export function digestGroups(digest: string): string[] {
 export function normalizeCode(typed: string): string {
   return typed.replace(/[\s-]/g, '').toLowerCase().slice(0, 8);
 }
-
-// Platform idioms: the bin and file-manager words follow the platform table (GUI-12). The keys
-// (`trash`, `system_recycle_bin`) and what they mean stay identical on every platform.
-onPlatform(() => {
-  const w = words();
-  MODE_LABEL.trash = w.moveToBin;
-  ACTION_LABEL.trash = w.moveToBin;
-  MODE_EXPLAIN.trash = {
-    effect: `交给系统${w.bin}。`,
-    space: `${w.bin}仍占用这个卷的空间，清空${w.bin}后才释放。`,
-    recovery: `${w.restoreFromBin}；CleanManager 无法替你还原。`,
-  };
-  MODE_EXPLAIN.delete = { ...MODE_EXPLAIN.delete, recovery: `无法撤销，没有${w.bin}或隔离副本。` };
-  AVAILABILITY_LABEL.system_recycle_bin = `在系统${w.bin}中还原`;
-  PLAN_KIND_LABEL.manual_trash = `手选${w.bin}计划`;
-  PLAN_KIND_LABEL.manual_purge = `永久删除${w.bin}项目计划`;
-});

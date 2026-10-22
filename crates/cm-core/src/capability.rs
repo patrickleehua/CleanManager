@@ -10,6 +10,16 @@ pub enum Platform {
     Macos,
 }
 
+impl Platform {
+    /// The protocol word (the serde name), for human-readable text.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Platform::Windows => "windows",
+            Platform::Macos => "macos",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityState {
@@ -78,6 +88,13 @@ pub trait CapabilityProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn platform_words_are_the_protocol_names() {
+        for p in [Platform::Windows, Platform::Macos] {
+            assert_eq!(serde_json::to_value(p).unwrap(), p.as_str());
+        }
+    }
 
     #[test]
     fn states_serialize_to_protocol_names() {

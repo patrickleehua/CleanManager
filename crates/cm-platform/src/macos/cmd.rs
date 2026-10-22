@@ -401,11 +401,11 @@ impl Tool {
         let duration = started.elapsed();
         cm_core::debug_trace!(
             "process",
-            "{} {:?} exit={:?} signal={:?} timed_out={timed_out} stdout_bytes={} stderr_bytes={} in {}ms",
+            "{} {:?} exit={} signal={} timed_out={timed_out} stdout_bytes={} stderr_bytes={} in {}ms",
             program.display(),
             self.args,
-            status.code(),
-            status.signal(),
+            cm_core::trace::exit(status.code()),
+            cm_core::trace::exit(status.signal()),
             stdout.len(),
             stderr.len(),
             duration.as_millis()

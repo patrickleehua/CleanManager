@@ -78,6 +78,26 @@ impl InstallerKind {
     pub fn rule_id(self) -> String {
         format!("{RULE_PREFIX}{}", self.as_str().replace('_', "-"))
     }
+
+    /// The kind an installer file's name suggests (`.exe`, `.msi`, `.zip`...). Used only to list a file whose
+    /// content cannot be read right now (held open by another process), never to recognize or plan one.
+    pub fn suggested_by_name(file_name: &str) -> Option<InstallerKind> {
+        let ext = file_name.rsplit_once('.')?.1.to_ascii_lowercase();
+        Some(match ext.as_str() {
+            "exe" => InstallerKind::Exe,
+            "msi" => InstallerKind::Msi,
+            "msp" => InstallerKind::Msp,
+            "msix" | "appx" => InstallerKind::Msix,
+            "msixbundle" | "appxbundle" => InstallerKind::MsixBundle,
+            "zip" => InstallerKind::Archive,
+            "iso" => InstallerKind::Iso,
+            "vhd" => InstallerKind::Vhd,
+            "vhdx" => InstallerKind::Vhdx,
+            "dmg" => InstallerKind::Dmg,
+            "pkg" | "mpkg" | "xip" => InstallerKind::Pkg,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +105,9 @@ impl InstallerKind {
 pub enum Verdict {
     Installer { kind: InstallerKind, evidence: String },
     NotInstaller { reason: String },
+    /// The content cannot be read now because another process holds the file open without read sharing
+    /// (INC-04): nothing is recognized; the file is listed as in use (by its name) and is never plannable.
+    InUse { reason: String },
 }
 
 fn not(reason: impl Into<String>) -> Verdict {
@@ -369,6 +392,11 @@ pub trait InstallerProbe {
     fn mounted(&self, path: &RawPath) -> Option<bool>;
     /// Whether another process holds the file open now (`None`: cannot tell).
     fn in_use(&self, path: &RawPath) -> Option<bool>;
+    /// Who holds the file open, as display text (`notepad.exe (pid 1234)`); `None`: cannot tell. Asked only for
+    /// files that are in use.
+    fn holders(&self, _path: &RawPath) -> Option<Vec<String>> {
+        None
+    }
     /// Whether this platform reads a signer for installers of `kind` (Authenticode formats on Windows, flat
     /// packages through `pkgutil` on macOS).
     fn signs(&self, kind: InstallerKind) -> bool {
@@ -400,6 +428,26 @@ pub struct InstallerFacts {
     pub installed_hint: Option<String>,
     pub mounted: Option<bool>,
     pub in_use: Option<bool>,
+    /// `false`: the content could not be read (held open by another process), so `kind` comes from the name only
+    /// and the row is never plannable.
+    pub content_verified: bool,
+    /// Processes holding the file open, when it is in use and they could be determined.
+    pub holders: Option<Vec<String>>,
+}
+
+impl InstallerFacts {
+    /// How the file was recognized, for previews.
+    pub fn recognition_note(&self) -> String {
+        if self.content_verified { format!("recognized: {}", self.evidence) } else { format!("not recognized by content: {}", self.evidence) }
+    }
+
+    /// Who holds the file open and what to do, when it is in use.
+    pub fn in_use_note(&self) -> Option<String> {
+        (self.in_use == Some(true)).then(|| match self.holders.as_deref() {
+            Some(h) if !h.is_empty() => format!("in use by {}: close it there, then scan again", h.join(", ")),
+            _ => "in use by another process (which one could not be determined): close programs using it, then scan again".to_owned(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -465,12 +513,26 @@ pub fn analyze_installers(view: &dyn IndexView, input: &InstallerInput<'_>, prot
                 continue;
             }
             let path = view.path(e);
-            let Verdict::Installer { kind, evidence } = probe.classify(&path) else { continue };
             let name = view.name(e).lossy();
-            let signer = if probe.signs(kind) { probe.signer(&path) } else { None };
+            // A file another process holds open cannot be read, so it cannot be recognized; one whose name suggests an
+            // installer is still listed (in use, never plannable) instead of silently disappearing (INC-04).
+            let (kind, evidence, verified) = match probe.classify(&path) {
+                Verdict::Installer { kind, evidence } => (kind, evidence, true),
+                Verdict::InUse { reason } => match InstallerKind::suggested_by_name(&name) {
+                    Some(kind) => (kind, format!("{reason}; listed because its name suggests {}", kind.as_str()), false),
+                    None => continue,
+                },
+                Verdict::NotInstaller { .. } => continue,
+            };
+            let signer = if verified && probe.signs(kind) { probe.signer(&path) } else { None };
             let hint = installed_hint(&name, signer.as_deref(), input.apps);
-            let mounted = if kind.is_image() { probe.mounted(&path) } else { Some(false) };
-            let in_use = probe.in_use(&path);
+            let mounted = match (kind.is_image(), verified) {
+                (false, _) => Some(false),
+                (true, true) => probe.mounted(&path),
+                (true, false) => None,
+            };
+            let in_use = if verified { probe.in_use(&path) } else { Some(true) };
+            let holders = if in_use == Some(true) { probe.holders(&path) } else { None };
             let mut reasons = vec![format!("installer:{}", kind.as_str()), format!("source:{}", input.source_label)];
             let (mut blocks, mut pending) = (Vec::new(), Vec::new());
             if let Some(why) = hard_deny(view, e, &path, prot) {
@@ -497,6 +559,9 @@ pub fn analyze_installers(view: &dyn IndexView, input: &InstallerInput<'_>, prot
                 Some(true) => pending.push("in_use: another process has the file open".into()),
                 None => pending.push("in_use_unknown".into()),
                 Some(false) => {}
+            }
+            if !verified {
+                pending.push("content_unverified: the content could not be read".into());
             }
             if f.link_count.is_some_and(|n| n > 1) {
                 reasons.push("hard_link_outside_scope".into());
@@ -532,11 +597,14 @@ pub fn analyze_installers(view: &dyn IndexView, input: &InstallerInput<'_>, prot
             let _ = logical.add(f.logical.map(Bytes));
             let facts = InstallerFacts {
                 candidate_id: candidate_id.clone(), kind, evidence, source_label: input.source_label.into(), signer, installed_hint: hint, mounted, in_use,
+                content_verified: verified, holders,
             };
+            let what = if verified { "" } else { "unverified " };
             let candidate = Candidate {
                 candidate_id, entry_id: e, path, kind: f.kind, rules, category: "installers".into(), state, tier, reasons, protection: None, logical,
-                allowed_modes: if state == CandidateState::Blocked { vec![] } else { vec![Mode::Trash, Mode::Quarantine, Mode::Delete] }, probes: vec![],
-                impact: format!("{} installer or image from {}; getting it back means downloading it again from its publisher", kind.as_str(), input.source_label),
+                allowed_modes: if state == CandidateState::Blocked || !verified { vec![] } else { vec![Mode::Trash, Mode::Quarantine, Mode::Delete] },
+                probes: vec![],
+                impact: format!("{what}{} installer or image from {}; getting it back means downloading it again from its publisher", kind.as_str(), input.source_label),
                 owner_id: None,
             };
             found.insert(e, (candidate, facts));

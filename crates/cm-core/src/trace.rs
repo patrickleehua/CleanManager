@@ -55,6 +55,12 @@ macro_rules! debug_trace {
     };
 }
 
+/// An external program's exit code for trace lines: `0`, `-1978335212`, or `none` (ended without one: killed,
+/// signalled or timed out). Never Rust debug text such as `Some(0)`.
+pub fn exit(code: Option<i32>) -> String {
+    code.map_or_else(|| "none".to_owned(), |c| c.to_string())
+}
+
 /// A timed phase: `start` writes `phase: start`, drop writes `phase: done in Nms`.
 pub struct Span {
     phase: &'static str,
@@ -93,5 +99,10 @@ mod tests {
         let s = super::span("phase");
         assert_eq!(s.elapsed(), std::time::Duration::ZERO);
         crate::debug_trace!("phase", "{}", "nothing is written");
+    }
+
+    #[test]
+    fn exit_codes_read_as_numbers_not_debug_text() {
+        assert_eq!((super::exit(Some(0)).as_str(), super::exit(Some(-2)).as_str(), super::exit(None).as_str()), ("0", "-2", "none"));
     }
 }

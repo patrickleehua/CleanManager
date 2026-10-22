@@ -11,12 +11,12 @@ import type { App } from '../main';
 import { words } from '../lib/platform';
 import { reviewTrash } from './trash';
 import { toIpcError } from '../lib/api';
-import { formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
-import { h, icon, keepFocus, replace } from '../lib/dom';
+import { formatExactBytes, parseBytes } from '../lib/bytes';
+import { h, icon, keepFocus, live, replace } from '../lib/dom';
 import { ERROR_HINT, formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { MERGED_ID } from '../lib/treemap';
-import { HINT_LABEL, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
+import { hintLabel, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
 import { categoryOf } from '../lib/category';
 import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, type DiskView } from '../lib/diskModel';
 import { sizeLabel } from '../lib/display';
@@ -25,6 +25,7 @@ import { canOpen, EntryGrid } from './grid';
 import { REST_ID, TreemapView } from './treemapView';
 import { refusalText } from '../lib/codes';
 import { emptyBlock, pathText, sizeEl, stateLine, statusBanner, techBlock } from './ui';
+import { t } from '../i18n';
 
 const PAGE_SIZE = 200;
 const TREEMAP_LIMIT = 120;
@@ -32,75 +33,75 @@ const LOCATE_PAGE_BUDGET = 10;
 
 /** Words of the working page (the state words are in DISK_TEXT). */
 const T = {
-  crumbsLabel: '当前位置',
-  up: '返回上一级',
+  get crumbsLabel() { return t('disk.t.crumbsLabel'); },
+  get up() { return t('disk.t.up'); },
   upKey: 'Backspace',
-  more: '显示中间的文件夹',
-  basis: '面积与排序按逻辑大小',
-  known: '此文件夹的已知大小',
-  unknownIn: (n: number) => `${groupDigits(n)} 项大小未知`,
-  chart: '空间分布图',
-  table: '条目表格',
-  tableLabel: '当前文件夹的条目',
-  side: '详情与选择',
-  filters: '表格过滤与排序',
-  scope: '范围',
-  scopeLayer: '当前文件夹',
-  scopeAll: '整个扫描',
-  kind: '类型',
-  kindAny: '全部',
-  kindDir: '文件夹',
-  kindFile: '文件',
-  filter: '按名称过滤',
-  sort: '排序',
-  sortLogical: '逻辑大小（大到小）',
-  sortAllocated: '分配大小（大到小）',
-  sortName: '名称（A–Z）',
-  showMore: '显示更多',
-  detailTitle: '详情',
-  detailEmpty: '在图或表格中选中一项，这里会显示它是什么、有多大。',
-  logical: '逻辑大小',
-  allocated: (s: string) => `分配 ${s}`,
-  openFolder: '打开此文件夹',
-  select: '选择',
-  unselect: '取消选择',
-  diag: 'AI 诊断',
-  diagTip: '解释这个对象的用途与删除后果',
-  techBasis: '大小依据',
-  techIdentity: '身份',
-  identityStrong: '卷 + 文件 ID',
-  identityWeak: '较弱（仅供浏览，不作执行依据）',
-  techExact: '精确逻辑大小',
-  techEntry: '条目编号',
-  hintNote: '只是提示：不会替你选中，也不改变保护或风险判断。',
-  selected: (n: number) => `已选 ${groupDigits(n)} 项`,
-  hiddenSelected: (n: number) => `其中 ${groupDigits(n)} 项不在当前表格中（其他文件夹或被过滤）。`,
-  dedup: '去重后逻辑大小',
-  unknownSel: (n: number) => `${groupDigits(n)} 项，未计入`,
-  unknownSelLabel: '大小未知',
-  overlap: '包含关系',
-  overlapText: (n: number) => `${groupDigits(n)} 项位于另一已选文件夹内，只计一次`,
-  summing: '正在汇总…',
-  binNote: (moveToBin: string) => `可以把选中的对象${moveToBin}：先逐项检查保护与占用，再生成计划，由你审阅批准后才会移动。`,
-  clear: '清除选择',
-  showSelected: '查看全部已选',
-  hideSelected: '收起已选',
-  cleared: '已清除选择',
-  opened: (n: string) => `已打开 ${n}`,
-  back: (n: string) => `已返回 ${n}`,
-  switched: '已切换到另一份扫描结果，之前的选择不会套用到新结果上。',
-  revision: '扫描结果的版本已变化，页面已按新版本重新加载。',
-  notInTable: '此条目不在表格当前的过滤或已加载范围内；详情已显示在右侧。清除过滤或继续加载可在表格中找到它。',
-  restTile: '“其余”图块里的条目没有单独绘制；在表格中继续向下加载可以逐项看到它们。',
-  mergedTile: (n: number) => `这个图块合并了 ${groupDigits(n)} 个较小的条目；表格已定位到其中最大的一项。`,
-  emptyFiltered: '没有符合过滤条件的条目。清除过滤可查看全部。',
-  emptyFolder: '这个文件夹是空的。',
-  loadFailed: (r: string) => `无法加载：${r}`,
-  chartFailed: (r: string) => `图表无法加载：${r}。表格仍可使用。`,
-  count: (n: number) => `共 ${groupDigits(n)} 项`,
-  loaded: (n: number) => `已加载 ${groupDigits(n)} 项，还有更多`,
-  selectedHidden: (n: number, hidden: number) => `；已选 ${groupDigits(n)} 项${hidden ? `（${groupDigits(hidden)} 项不在当前表格中）` : ''}`,
-  revisionTip: (r: number) => `扫描版本 ${r}`,
+  get more() { return t('disk.t.more'); },
+  get basis() { return t('disk.t.basis'); },
+  get known() { return t('disk.t.known'); },
+  unknownIn: (n: number) => t('disk.t.unknownIn', { n }),
+  get chart() { return t('disk.t.chart'); },
+  get table() { return t('disk.t.table'); },
+  get tableLabel() { return t('disk.t.tableLabel'); },
+  get side() { return t('disk.t.side'); },
+  get filters() { return t('disk.t.filters'); },
+  get scope() { return t('disk.t.scope'); },
+  get scopeLayer() { return t('disk.t.scopeLayer'); },
+  get scopeAll() { return t('disk.t.scopeAll'); },
+  get kind() { return t('disk.t.kind'); },
+  get kindAny() { return t('disk.t.kindAny'); },
+  get kindDir() { return t('disk.t.kindDir'); },
+  get kindFile() { return t('disk.t.kindFile'); },
+  get filter() { return t('disk.t.filter'); },
+  get sort() { return t('disk.t.sort'); },
+  get sortLogical() { return t('disk.t.sortLogical'); },
+  get sortAllocated() { return t('disk.t.sortAllocated'); },
+  get sortName() { return t('disk.t.sortName'); },
+  get showMore() { return t('disk.t.showMore'); },
+  get detailTitle() { return t('disk.t.detailTitle'); },
+  get detailEmpty() { return t('disk.t.detailEmpty'); },
+  get logical() { return t('disk.t.logical'); },
+  allocated: (s: string) => t('disk.t.allocated', { s }),
+  get openFolder() { return t('disk.t.openFolder'); },
+  get select() { return t('disk.t.select'); },
+  get unselect() { return t('disk.t.unselect'); },
+  get diag() { return t('disk.t.diag'); },
+  get diagTip() { return t('disk.t.diagTip'); },
+  get techBasis() { return t('disk.t.techBasis'); },
+  get techIdentity() { return t('disk.t.techIdentity'); },
+  get identityStrong() { return t('disk.t.identityStrong'); },
+  get identityWeak() { return t('disk.t.identityWeak'); },
+  get techExact() { return t('disk.t.techExact'); },
+  get techEntry() { return t('disk.t.techEntry'); },
+  get hintNote() { return t('disk.t.hintNote'); },
+  selected: (n: number) => t('disk.t.selected', { n }),
+  hiddenSelected: (n: number) => t('disk.t.hiddenSelected', { n }),
+  get dedup() { return t('disk.t.dedup'); },
+  unknownSel: (n: number) => t('disk.t.unknownSel', { n }),
+  get unknownSelLabel() { return t('disk.t.unknownSelLabel'); },
+  get overlap() { return t('disk.t.overlap'); },
+  overlapText: (n: number) => t('disk.t.overlapText', { n }),
+  get summing() { return t('disk.t.summing'); },
+  binNote: (moveToBin: string) => t('disk.t.binNote', { moveToBin }),
+  get clear() { return t('disk.t.clear'); },
+  get showSelected() { return t('disk.t.showSelected'); },
+  get hideSelected() { return t('disk.t.hideSelected'); },
+  get cleared() { return t('disk.t.cleared'); },
+  opened: (n: string) => t('disk.t.opened', { n }),
+  back: (n: string) => t('disk.t.back', { n }),
+  get switched() { return t('disk.t.switched'); },
+  get revision() { return t('disk.t.revision'); },
+  get notInTable() { return t('disk.t.notInTable'); },
+  get restTile() { return t('disk.t.restTile'); },
+  mergedTile: (n: number) => t('disk.t.mergedTile', { n }),
+  get emptyFiltered() { return t('disk.t.emptyFiltered'); },
+  get emptyFolder() { return t('disk.t.emptyFolder'); },
+  loadFailed: (r: string) => t('disk.t.loadFailed', { r }),
+  chartFailed: (r: string) => t('disk.t.chartFailed', { r }),
+  count: (n: number) => t('disk.t.count', { n }),
+  loaded: (n: number) => t('disk.t.loaded', { n }),
+  selectedHidden: (n: number, hidden: number) => t('disk.t.selectedHidden', { n, p: hidden ? t('disk.hiddenNotCurrentTable', { hidden }) : '' }),
+  revisionTip: (r: number) => t('disk.t.revisionTip', { r }),
 } as const;
 
 interface Crumb {
@@ -157,7 +158,7 @@ export class DiskPage {
 
   constructor(private app: App) {
     this.crumbs = h('ol', { class: 'crumbs' });
-    this.upBtn = h('button', { type: 'button', id: 'disk-up', class: 'icon-btn crumb-up', 'aria-label': T.up, title: `${T.up}（${T.upKey}）`, 'aria-keyshortcuts': 'Backspace' }, icon('back')) as HTMLButtonElement;
+    this.upBtn = live(h('button', { type: 'button', id: 'disk-up', class: 'icon-btn crumb-up', 'aria-keyshortcuts': 'Backspace' }, icon('back')), null, { 'aria-label': () => T.up, title: () => t('disk.upUpkey', { up: T.up, upKey: T.upKey }) });
     this.upBtn.addEventListener('click', () => this.up());
     this.metaRow = h('p', { class: 'meta-row disk-meta' });
     this.stateNote = h('div', { class: 'disk-state' });
@@ -165,7 +166,7 @@ export class DiskPage {
     this.header = h(
       'div',
       { class: 'page-head disk-head' },
-      h('div', { class: 'page-head-text' }, h('h1', { id: 'disk-title' }, DISK_TEXT.title), h('nav', { class: 'crumb-bar', 'aria-label': T.crumbsLabel }, this.upBtn, this.crumbs), this.metaRow),
+      h('div', { class: 'page-head-text' }, live(h('h1', { id: 'disk-title' }), () => DISK_TEXT.title), live(h('nav', { class: 'crumb-bar' }, this.upBtn, this.crumbs), null, { 'aria-label': () => T.crumbsLabel }), this.metaRow),
     );
     this.treemap = new TreemapView({
       onSelect: (id, members, how) => this.fromTile(id, members, how),
@@ -173,7 +174,7 @@ export class DiskPage {
       onUp: () => this.up('chart'),
       onToggle: (e) => this.toggle(e),
     });
-    this.grid = new EntryGrid('disk', T.tableLabel, {
+    this.grid = new EntryGrid('disk', () => T.tableLabel, {
       onActive: (e) => this.setActive(e),
       onOpen: (e) => this.drill(e),
       onUp: () => this.up(),
@@ -183,9 +184,9 @@ export class DiskPage {
       isSelected: (id) => this.selection.has(id),
       onHover: (e) => this.treemap.setHover(e?.entry_id ?? null),
     });
-    this.controls = h('div', { class: 'controls', role: 'group', 'aria-label': T.filters });
+    this.controls = live(h('div', { class: 'controls', role: 'group' }), null, { 'aria-label': () => T.filters });
     this.gridStatus = h('p', { class: 'grid-status muted', 'aria-live': 'polite' });
-    this.moreBtn = h('button', { type: 'button', id: 'disk-more', class: 'quiet' }, T.showMore);
+    this.moreBtn = live(h('button', { type: 'button', id: 'disk-more', class: 'quiet' }), () => T.showMore);
     this.moreBtn.addEventListener('click', () => void this.loadMore());
     this.chartHead = h('div', { class: 'chart-head' });
     this.details = h('div', { class: 'details', 'aria-live': 'polite', 'aria-atomic': 'false' });
@@ -193,16 +194,16 @@ export class DiskPage {
     this.content = h(
       'div',
       { class: 'disk-layout' },
-      h('section', { class: 'panel chart-panel', 'aria-label': T.chart }, this.chartHead, this.treemap.el),
+      live(h('section', { class: 'panel chart-panel' }, this.chartHead, this.treemap.el), null, { 'aria-label': () => T.chart }),
       h(
         'section',
         { class: 'panel table-panel', 'aria-labelledby': 'table-title' },
-        h('h2', { id: 'table-title', class: 'sr-only' }, T.table),
+        live(h('h2', { id: 'table-title', class: 'sr-only' }), () => T.table),
         this.controls,
         this.grid.el,
         h('div', { class: 'grid-foot' }, this.gridStatus, this.moreBtn),
       ),
-      h('aside', { class: 'panel side-panel', 'aria-label': T.side }, this.details, this.selectionBox),
+      live(h('aside', { class: 'panel side-panel' }, this.details, this.selectionBox), null, { 'aria-label': () => T.side }),
     );
     this.blocked = h('div', { class: 'disk-blocked' });
     this.el = h('section', { class: 'page page-disk', 'aria-labelledby': 'disk-title' }, this.header, this.stateNote, this.notice, this.blocked, this.content);
@@ -212,6 +213,17 @@ export class DiskPage {
   activate(): void {
     // Restore keyboard position when returning to the page (filters/path/scroll were kept).
     if (this.grid.active) requestAnimationFrame(() => this.grid.setActive(this.grid.active!, true));
+  }
+
+  /** LIF-05: the parts drawn only when their data changes are drawn again in the new language. */
+  relocalize(): void {
+    this.renderHeader();
+    this.renderChartHead();
+    this.renderControls();
+    this.renderSide();
+    if (this.scanId) this.pushGrid();
+    this.grid.relocalize();
+    this.treemap.relocalize();
   }
 
   update(): void {
@@ -231,7 +243,7 @@ export class DiskPage {
     this.blocked.hidden = true;
     this.content.hidden = false;
     if (status.scan_id !== this.scanId || status.revision !== this.revision) {
-      this.bind(status.scan_id, status.revision!, status.root_entry_id!, status.root_display ?? '扫描根目录');
+      this.bind(status.scan_id, status.revision!, status.root_entry_id!, status.root_display ?? t('disk.scanRoot'));
     }
     this.renderStateNote(v);
     this.renderMeta();
@@ -532,7 +544,7 @@ export class DiskPage {
         this.crumbs,
         ...trail.map((c) => {
           if (c.kind === 'more') {
-            const b = h('button', { type: 'button', id: 'crumb-more', class: 'crumb crumb-more', 'aria-label': `${T.more}（${groupDigits(c.depths.length)} 层）`, title: c.depths.map((d) => names[d]).join(' › ') }, '…');
+            const b = h('button', { type: 'button', id: 'crumb-more', class: 'crumb crumb-more', 'aria-label': t('disk.moreLength', { more: T.more, length: c.depths.length }), title: c.depths.map((d) => names[d]).join(' › ') }, '…');
             b.addEventListener('click', () => {
               this.crumbsOpen = true;
               this.renderHeader();
@@ -666,7 +678,7 @@ export class DiskPage {
     diag?.addEventListener('click', () => this.app.openDiagnosis({ scanId: this.scanId!, entryId: e.entry_id, origin: 'disk', name: e.name }, 'disk'));
     // Platform idiom (GUI-12): show the object in the file manager; the host resolves the path from the index.
     const reveal = this.scanId ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
-    reveal?.addEventListener('click', () => void this.app.backend.revealEntry(this.scanId!, e.entry_id).catch(() => this.app.announce(`无法${words().reveal}`)));
+    reveal?.addEventListener('click', () => void this.app.backend.revealEntry(this.scanId!, e.entry_id).catch(() => this.app.announce(t('disk.revealFailed'))));
     const hint = hintOf(e);
     replace(
       this.details,
@@ -713,7 +725,7 @@ export class DiskPage {
     return h(
       'div',
       { class: 'hint-entry' },
-      h('p', { class: 'hint-head' }, h('span', { class: 'hint-tag' }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), HINT_LABEL), h('span', { id: 'detail-hint-basis', class: 'small' }, hintBasisText(hint))),
+      h('p', { class: 'hint-head' }, h('span', { class: 'hint-tag' }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), hintLabel()), h('span', { id: 'detail-hint-basis', class: 'small' }, hintBasisText(hint))),
       h('p', { class: 'muted small', id: 'detail-hint-note' }, `${T.hintNote}${action.note}`),
       go,
     );
@@ -750,7 +762,7 @@ export class DiskPage {
           ? h('p', { class: 'form-error' }, this.summaryError)
           : h('p', { class: 'muted small', role: 'status' }, T.summing),
       hidden ? h('p', { class: 'notice warn' }, T.hiddenSelected(hidden)) : null,
-      s?.overlapping_selected ? h('p', { class: 'muted small' }, `${T.overlap}：${T.overlapText(s.overlapping_selected)}`) : null,
+      s?.overlapping_selected ? h('p', { class: 'muted small' }, t('disk.overlapOverlappingSelected', { overlap: T.overlap, overlapping_selected: T.overlapText(s.overlapping_selected) })) : null,
       h('div', { class: 'card-actions' }, trash, toggleList, clear),
       h('p', { class: 'muted small' }, T.binNote(words().moveToBin)),
       this.showSelected
@@ -779,7 +791,7 @@ export class DiskPage {
         title: v.banner.title,
         sentence: v.banner.sentence,
         meta: st?.root_display ? [pathText(st.root_display, { max: 64, className: 'sb-path' })] : [],
-        extra: v.layout === 'running' ? [h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': DISK_TEXT.runningTitle, 'aria-valuetext': `已发现 ${groupDigits(st?.entries_seen ?? 0)} 个条目` })] : [],
+        extra: v.layout === 'running' ? [h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': DISK_TEXT.runningTitle, 'aria-valuetext': t('disk.groupdigitsFound', { groupDigits: st?.entries_seen ?? 0 }) })] : [],
         actions: [go(v.layout === 'running' ? '' : 'primary')],
       });
     const others = v.offerOthers ? s.recent.filter((r) => r.scan_id !== s.scanId && r.state && isTerminal(r.state) && r.published && r.state !== 'failed') : [];

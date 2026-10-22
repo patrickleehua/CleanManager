@@ -25,6 +25,7 @@
         "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAFwAZQB4AGEAbQBwAGwAZQAtAGgAZQBsAHAAZQByAC4AZQB4AGUA"
       },
       "started_at": "134050000000000000",
+      "started_at_utc": "2025-10-15T11:06:40Z",
       "cpu_percent": 12.5,
       "memory_bytes": "104857600",
       "disk_bytes_per_sec": 0.0,
@@ -62,6 +63,7 @@
         "raw_base64": "QwA6AFwAVwBpAG4AZABvAHcAcwBcAFMAeQBzAHQAZQBtADMAMgBcAGwAcwBhAHMAcwAuAGUAeABlAA=="
       },
       "started_at": "134049000000000000",
+      "started_at_utc": "2025-10-14T07:20:00Z",
       "cpu_percent": 0.1,
       "memory_bytes": "8388608",
       "disk_bytes_per_sec": 0.0,

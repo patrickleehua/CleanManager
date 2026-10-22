@@ -168,6 +168,10 @@ pub fn scan(req: &str, p: &Parsed) -> ExitCode {
     {
         return store_error(req, &e, p.format);
     }
+    // An unusable index is reported before any work, in particular before a background host is started.
+    if let Err(e) = stores.index.ready() {
+        return store_error(req, &e, p.format);
+    }
     if p.flag("detach") {
         // The background host runs without --debug: its stderr is closed, so it would trace into nothing.
         cm_core::debug_trace!("scan", "host=detached scan_id={scan_id}");

@@ -122,6 +122,8 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
         Err(PlanProblem::Stale(r)) => return Err(ApplyError::Stale(r)),
         Err(PlanProblem::Kind(k)) => return Err(ApplyError::PolicyDenied(format!("plan violates its kind: {k}"))),
     }
+    // PRT-02: tasks consult the protection list; none runs (and no operation is registered) while it is unusable.
+    crate::execute::require_protection(stores)?;
     let authorized = |now: i64| -> Result<bool, StoreError> { Ok(crate::plans::authorization(stores, &plan, ctx.principal, now)?.0 == "authorized") };
     if !authorized((ctx.now)())? {
         return Err(ApplyError::NeedsApproval(plan_id.into()));
@@ -329,6 +331,7 @@ pub fn apply_maintenance_plan(stores: &Stores, b: &MaintenanceBackends<'_>, plan
         volume_free_after_bytes: None,
         observed_free_delta_bytes: None,
         authorization_source: "interactive_review".into(),
+        reconciled_at: None,
     };
     stores.audit.save_maintenance_run(&operation_id, plan_id, &finished_at, &serde_json::to_string(&report).expect("report serializes"))?;
     stores.audit.release_locks(&operation_id)?;

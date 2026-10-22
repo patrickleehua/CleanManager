@@ -71,6 +71,34 @@ impl ProtectionDecision {
     }
 }
 
+impl DenyLayer {
+    /// The protocol word (`hard_deny`, `default_class`, `user`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DenyLayer::HardDeny => "hard_deny",
+            DenyLayer::DefaultClass => "default_class",
+            DenyLayer::User => "user",
+        }
+    }
+}
+
+/// What a person reads (never Rust debug text such as `Denied { layer: HardDeny, … }`): the layer's code, then why.
+impl std::fmt::Display for ProtectionDecision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtectionDecision::Allowed => f.write_str("allowed"),
+            ProtectionDecision::Denied { layer, reason } => {
+                let what = match layer {
+                    DenyLayer::HardDeny => "protected by the built-in hard-deny list",
+                    DenyLayer::DefaultClass => "protected by default",
+                    DenyLayer::User => "protected by your protection list",
+                };
+                write!(f, "{}: {what}: {reason}", layer.as_str())
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Hard-deny roots and identity checks
 // ---------------------------------------------------------------------------------------------

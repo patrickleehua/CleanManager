@@ -30,7 +30,7 @@ fn store_dir(req: &str, p: &Parsed) -> Result<PathBuf, ExitCode> {
         .ok_or_else(|| fail(req, ErrorCode::InvalidArgument, "no store directory; pass --store or set CM_STORE_DIR", p.format))
 }
 
-fn unavailable(req: &str, dir: &Path, e: &ProtectionUnavailable, format: Format) -> ExitCode {
+pub(crate) fn unavailable(req: &str, dir: &Path, e: &ProtectionUnavailable, format: Format) -> ExitCode {
     let action = format!("Repair or move aside {}; every write stays stopped until the list loads", dir.join(PROTECTION_FILE).display());
     emit(&error_record(req, e.code(), &e.to_string(), Some(&action), ErrorDetails::default()), format);
     ExitCode::from(ExitClass::Error(e.code()).code() as u8)

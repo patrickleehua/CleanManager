@@ -264,6 +264,17 @@ pub enum AcceptError {
     Io(String),
 }
 
+impl std::fmt::Display for AcceptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AcceptError::Timeout { refused: 0 } => f.write_str("it did not connect in time"),
+            AcceptError::Timeout { refused } => write!(f, "it did not connect in time ({refused} other client(s) were refused)"),
+            AcceptError::WorkerExited => f.write_str("it exited before connecting"),
+            AcceptError::Io(e) => f.write_str(e),
+        }
+    }
+}
+
 /// Parent side: wait for the launched process to connect. Clients from any other process are disconnected and refused
 /// (counted in the returned value), and waiting continues until `timeout`.
 pub fn accept(pipe: &Pipe, expected_pid: u32, child: Option<&OwnedHandle>, timeout: Duration) -> Result<u32, AcceptError> {
@@ -490,7 +501,7 @@ pub fn start_worker(launcher: &dyn WorkerLauncher, cfg: &WorkerConfig, grant: &W
         Err(LaunchError::Failed(e)) => return Err(StartError::Unavailable(e)),
     };
     cm_core::debug_trace!("process", "maintenance worker launched pid={} elevating_launcher={}", child.pid, launcher.elevates());
-    let refused_clients = accept(&pipe, child.pid, Some(&child.process), cfg.connect_timeout).map_err(|e| StartError::Unavailable(format!("worker did not connect: {e:?}")))?;
+    let refused_clients = accept(&pipe, child.pid, Some(&child.process), cfg.connect_timeout).map_err(|e| StartError::Unavailable(format!("worker did not connect: {e}")))?;
     let hello = match pipe.read_line(MAX_REPLY, cfg.connect_timeout) {
         Ok(ReadLine::Line(l)) => WorkerReply::parse(&l).ok_or_else(|| StartError::Unavailable("worker hello not understood".into()))?,
         _ => return Err(StartError::Unavailable("worker sent no hello".into())),

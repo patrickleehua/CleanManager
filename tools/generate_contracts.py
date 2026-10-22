@@ -88,6 +88,19 @@ def main():
         "allowed_modes": {**arr(enum("trash", "quarantine", "delete")), "uniqueItems": True}}
     defs["candidate"] = record("candidate", candidate_props)
     defs["candidate_item"] = obj(candidate_props)
+    # ANA-02 / WFA-17: optional explanation fields, the same wording as the `clean` preview (absent in older records;
+    # the rule-derived ones also when the current rule pack no longer has the candidate's rule version): category, tier
+    # and why (rule ceiling, then every lowering code), rebuild and offline cost, the rule's age threshold and the time
+    # it measures (never a last-use time), what getting the object back can do per offered mode, evidence references.
+    defs["recovery_limit"] = obj({"mode": enum("trash", "quarantine", "delete"),
+        "recovery": enum("system_recycle_bin", "in_app_restore", "unavailable"), "limit": STR})
+    explanation = {"category": STR, "tier": enum("default_selected", "review_only", "blocked"), "tier_reason": STR,
+        "rebuild_class": enum("local_rebuild", "network_redownload", "not_rebuildable"),
+        "regeneration": nullable(STR), "offline_effect": nullable(STR),
+        "age_threshold": nullable(obj({"min_age_days": COUNT, "basis": enum("modified_time", "created_time")})),
+        "recovery_limits": arr(ref("recovery_limit")), "evidence_refs": arr(STR)}
+    for name in ("candidate", "candidate_item"):
+        defs[name]["properties"].update(explanation)
     # Read-side records (task 2.3): live scan status, cancel receipts, revision-bound pages.
     defs["scan_status"] = record("scan_status", {"scan_id": STR, "scope_id": STR,
         "state": enum("created", "running", "stopping"), "host": obj({"kind": enum("cli", "desktop"), "process_id": COUNT,
@@ -198,7 +211,8 @@ def main():
             "operation": enum("enable", "disable", "remove_with_backup", "restore"), "scope": enum("user", "system")},
         "maintenance_task": {"task_id": STR, "task_version": STR, "requires_admin": {"type": "boolean"}},
         "settings_change": {"setting_id": STR, "from_value": STR, "to_value": STR, "restore_on_exit": {"type": "boolean"}},
-        # STS-04: one process instance (PID + creation time in FILETIME ticks); a reused PID never matches.
+        # STS-04: one process instance (PID + exact creation time: Windows FILETIME ticks, macOS microseconds since the
+        # epoch); a reused PID never matches. The same time for people is the optional `started_at_utc` (added below).
         "process_end": {"pid": {"type": "integer", "minimum": 0, "maximum": 4294967295}, "started_at": {"type": "string", "pattern": "^[0-9]{1,20}$"},
             "name": STR, "image_path": nullable(ref("path")), "image_sha256": nullable(HASH)},
     }
@@ -217,6 +231,8 @@ def main():
     defs["action_registry_backup_delete"]["properties"]["observed_sha256"] = HASH
     # Parity 14.5: a volume task (Spotlight rebuild) binds the mount point chosen when planning.
     defs["action_maintenance_task"]["properties"]["volume"] = STR
+    # WFA-93: the process start time in RFC 3339 UTC for people (digest-covered, informational; absent in older plans).
+    defs["action_process_end"]["properties"]["started_at_utc"] = TIME
     kind_actions = {
         "cleanup": ["fs_trash", "fs_quarantine", "fs_delete", "tool_adapter"],
         "manual_selection": ["fs_trash", "fs_delete"],
@@ -293,11 +309,30 @@ def main():
         "volume_free_after_bytes": nullable(UINT), "observed_free_delta_bytes": nullable(SINT)})
     # UNI-11: a stage-1 uninstall also reports each application's own result (optional; other plans omit it).
     defs["operation_report"]["properties"]["uninstall_apps"] = arr(uninstall_app_outcome, 1)
+    # WFA-40: when `operations reconcile` last resolved unconfirmed actions (optional). The reconciliation is recorded next
+    # to the operation's authorization source (review or policy), never in its place; history lists it too.
+    defs["operation_report"]["properties"]["reconciled_at"] = TIME
+    defs["operation_summary"]["properties"]["reconciled_at"] = TIME
     defs["error"] = record("error", {"code": enum("invalid_argument", "schema_mismatch", "needs_approval", "policy_denied",
         "permission_required", "plan_stale", "cursor_stale", "conflict", "unsupported", "io_error", "internal_error", "cancelled",
-        "protection_unavailable"),
+        "protection_unavailable", "index_unavailable"),
         "message": STR, "retryable": {"type": "boolean"}, "required_action": nullable(STR),
         "details": obj({"plan_id": nullable(STR), "operation_id": nullable(STR), "scope_id": nullable(STR)})})
+    # WFA-42/43: how each stored policy relates to a cleanup plan now (read-only; quota is reserved only at apply time):
+    # the one that would authorize it and, for the others, the failing condition. A `plan` record lists them while a
+    # policy could still authorize the plan; a needs_approval error of a cleanup plan lists them in `details` (optional).
+    defs["policy_match"] = obj({"policy_id": STR, "policy_version": STR, "state": enum("enabled", "paused", "revoked"),
+        "covers": {"type": "boolean"}, "reason": nullable(enum("not_enabled", "expired", "other_principal", "scope_differs",
+            "mode_differs", "rule_not_covered", "tier_not_default_selected", "size_unknown", "single_limit", "quota_exceeded")),
+        "message": STR})
+    defs["policy_match"]["allOf"] = [{"if": {"properties": {"covers": {"const": True}}},
+        "then": {"properties": {"reason": {"type": "null"}}}, "else": {"properties": {"reason": {"type": "string"}}}}]
+    defs["plan"]["properties"]["policy_matches"] = arr(ref("policy_match"))
+    # The receipt that authorizes, or (once used and expired) authorized, this exact cleanup plan: a terminal review or a
+    # policy by ID and version (optional; null when none).
+    defs["plan"]["properties"]["authorized_by"] = nullable(obj({"source": enum("interactive_review", "policy"),
+        "policy_id": nullable(STR), "policy_version": nullable(STR), "authorized_at": TIME}))
+    defs["error"]["properties"]["details"]["properties"]["policy_matches"] = arr(ref("policy_match"))
     defs["progress"] = record("progress", {"task_id": STR, "sequence": COUNT,
         "phase": enum("discovering", "indexing", "analyzing", "validating", "applying", "stopping"),
         "completed_units": COUNT, "total_units": nullable(COUNT), "emitted_at": TIME})
@@ -353,7 +388,7 @@ def main():
             "max_samples": nullable({"type": "integer", "minimum": 1, "maximum": 100000})}),
         "protect.list": obj({}), "protect.add": obj({"entry": ref("protection_entry_input")}), "protect.remove": obj({"protection_id": STR}),
         "protect.check": obj({"path": ref("path"), "rule_id": nullable(STR)}),
-        "doctor.report": obj({"redact": {"type": "boolean"}}),
+        "doctor.report": obj({"redact": {"type": "boolean"}, "repair_index": {"type": "boolean"}}, required=["redact"]),
         "completion.generate": obj({"shell": enum("bash", "zsh", "fish", "powershell"), "write_profile": {"type": "boolean"}}),
         # LIF-01/02, MVP 14.1: `manifest` overrides the build's update channel (URL or local path of a signed envelope).
         "self.update.check": obj({"manifest": nullable(STR)}), "self.update.apply": obj({"manifest": nullable(STR)}),
@@ -381,6 +416,8 @@ def main():
     # Purge/installer previews (PUR/INC): optional source label and notes; version control undecidable.
     defs["preview_item"]["properties"].update({"source_label": nullable(STR), "notes": arr(STR)})
     defs["preview_item"]["properties"]["skip_reason"]["anyOf"][0]["enum"].append("vcs_unknown")
+    # ANA-02 / WFA-17: the `clean` preview carries the candidate's explanation fields too (optional).
+    defs["preview_item"]["properties"].update({k: explanation[k] for k in ("regeneration", "offline_effect", "age_threshold", "recovery_limits")})
     defs["selection_preview"] = record("selection_preview", {"command": STR, "scan_id": nullable(STR), "scan_revision": nullable(COUNT),
         "dry_run": {"const": True}, "non_interactive": {"type": "boolean"}, "items": arr(ref("preview_item")), **page,
         "summary": obj({"selected_count": COUNT, "selected_known_bytes": UINT, "selected_unknown_size_count": COUNT,
@@ -497,6 +534,10 @@ def main():
             "retryable": {"type": "boolean"}})),
         "recent_errors": arr(obj({"code": STR, "count": COUNT, "last_seen": nullable(TIME)})),
         "export": nullable(obj({"path": STR, "written": {"type": "boolean"}}))})
+    # BUG-WFA-01: `doctor --repair-index` only. An unusable scan index is moved aside (kept, never deleted) and an empty
+    # one is created; a healthy or missing index is left alone. Optional: absent without the flag.
+    defs["doctor_report"]["properties"]["index_repair"] = obj({"status": enum("repaired", "not_needed"),
+        "previous_state": enum("healthy", "missing", "corrupt", "incompatible"), "kept_files": arr(STR), "message": STR})
     defs["purge_roots"] = record("purge_roots", {"roots": arr(obj({"path": ref("path"), "source": enum("default", "user"),
         "exists": {"type": "boolean"}}))})
     defs["installer_locations"] = record("installer_locations", {"locations": arr(obj({"path": ref("path"),
@@ -544,6 +585,8 @@ def main():
     defs["signature"] = obj({"state": enum("signed", "catalog_signed", "unsigned", "unknown"), "publisher": nullable(STR), "reason": nullable(STR)})
     defs["process_row"] = obj({"pid": U32, "parent_pid": nullable(U32), "parent_name": nullable(STR), "name": STR,
         "image_path": nullable(ref("path")), "started_at": nullable({"type": "string", "pattern": "^[0-9]{1,20}$"}),
+        # WFA-93: `started_at` is the exact identity key plans bind; people and agents read `started_at_utc`.
+        "started_at_utc": nullable(TIME),
         "cpu_percent": nullable(NUM), "memory_bytes": nullable(UINT), "disk_bytes_per_sec": nullable(NUM), "network_bytes_per_sec": nullable(NUM),
         "signature": ref("signature"), "owner_app": nullable(STR), "identified": BOOL, "purpose": nullable(STR), "unidentified_reason": nullable(STR),
         "ai_diagnosis": nullable(obj({"available": {"const": True}, "hint": STR})), "pinned": BOOL,
@@ -661,9 +704,16 @@ def main():
         issues=[{"code": "permission_required", "scope_display": "synthetic protected subtree", "message": "Synthetic access denial"}])
     candidate = rec("candidate", candidate_id="c_demo", scan_id="s_demo", scan_revision=1, entry_id="e_demo",
         rule_id="example.cache", rule_version="0.1.0", risk="low", path=path,
-        reason="Synthetic verified-owner cache example", impact="Cache would need rebuilding",
+        reason="example.cache@0.1.0: Synthetic verified-owner cache files. Age threshold: modified at least 7 day(s) before the analysis, by its modification time (when it was last used is not known)",
+        impact="Cache would need rebuilding",
         logical_bytes="104857600", allocated_bytes="104857600", reclaimable_estimate_bytes=None,
-        estimate_basis="not_computed", allowed_modes=["trash"])
+        estimate_basis="not_computed", allowed_modes=["trash"],
+        category="app_caches", tier="default_selected", tier_reason="rule example.cache@0.1.0 allows default selection (rebuilt locally by its owner when needed)",
+        rebuild_class="local_rebuild", regeneration="Rebuilt by the example app on its next start.",
+        offline_effect="None: the cache is rebuilt from local data.", age_threshold={"min_age_days": 7, "basis": "modified_time"},
+        recovery_limits=[{"mode": "trash", "recovery": "system_recycle_bin",
+            "limit": "restored only with the system's own Recycle Bin tools; emptying the Recycle Bin, or the Recycle Bin discarding old items when it is full, makes it unrecoverable; frees no space until the Recycle Bin is emptied; a volume without a usable Recycle Bin refuses the plan"}],
+        evidence_refs=["synthetic_fixture"])
     body = {"engine_contract": "plan/v1", "plan_id": "p_demo", "scope_id": "scope_demo", "scan_id": "s_demo",
         "scan_revision": 1, "rule_set_digest": "1"*64, "policy_digest": "2"*64,
         "created_at": "2026-10-14T12:01:00Z", "expires_at": "2026-10-14T12:16:00Z", "mode": "trash",
@@ -682,6 +732,12 @@ def main():
             stale_items=[{"object_id": "c_gone", "reason": "missing", "detail": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache\\old2.tmp no longer exists"}]),
         "needs-approval": rec("error", code="needs_approval", message="Plan needs user authorization", retryable=False,
             required_action="Review the plan in the trusted UI", details={"plan_id": "p_demo", "operation_id": None, "scope_id": "scope_demo"}),
+        # MTR-03 / WFA-35: a trash-mode plan on a volume without a usable bin is refused when it is created.
+        "trash-unavailable": rec("error", code="unsupported",
+            message="trash_unavailable: no usable Recycle Bin on W:\\ (the Recycle Bin is turned off for this volume (its Recycle Bin properties say \"Don't move files to the Recycle Bin. Remove files immediately when deleted.\")); there is no permanent-delete alternative",
+            retryable=False,
+            required_action="Create the plan again with --mode quarantine, or turn the Recycle Bin on for it (right-click the Recycle Bin › Properties › select the volume › Custom size; a policy setting has to be changed by its administrator) and plan again; affected: W:\\",
+            details={"plan_id": None, "operation_id": None, "scope_id": None}),
         "operation-trash": rec("operation_report", operation_id="op_demo", plan_id="p_demo", plan_digest=digest,
             status="completed", started_at="2026-10-14T12:02:00Z", finished_at="2026-10-14T12:02:01Z",
             succeeded=1, skipped=0, failed=0, not_started=0, unknown=0,
@@ -695,6 +751,8 @@ def main():
     mac = json.loads(json.dumps(candidate))
     mac["path"] = {"platform": "macos", "display": "/Users/example/Library/Caches/ExampleApp/old.tmp",
                    "raw_encoding": "unix_bytes_base64", "raw_base64": base64.b64encode(b"/Users/example/Library/Caches/ExampleApp/old.tmp").decode("ascii")}
+    for limit in mac["recovery_limits"]:
+        limit["limit"] = limit["limit"].replace("Recycle Bin", "Trash")
     save("examples/contracts/candidate-macos.json", mac)
     # plan/v2 golden vectors: every action type appears in at least one synthetic plan.
     ident = {"volume_id": "synthetic-volume", "file_id": fid("file"), "generation": None, "quality": "strong", "observed_at": t1}
@@ -763,7 +821,8 @@ def main():
             {"action_id": "a03", "action_type": "settings_change", "setting_id": "display.keep_awake", "from_value": "on_60_minutes",
              "to_value": "off", "restore_on_exit": False}]),
         "plan-v2-process": plan_v2("p_v2_process", "process", [
-            {"action_id": "a01", "action_type": "process_end", "pid": 4242, "started_at": "134050000000000000", "name": "example.exe",
+            {"action_id": "a01", "action_type": "process_end", "pid": 4242, "started_at": "134050000000000000",
+             "started_at_utc": "2025-10-15T11:06:40Z", "name": "example.exe",
              "image_path": wpath_early(r"C:\Users\Example\AppData\Local\Example\example.exe"), "image_sha256": "7" * 64}]),
     }
     # UNI-11: one stage-1 plan for two applications (each its own close request and uninstaller); a third, protected
@@ -844,6 +903,9 @@ def main():
         "experimental-off": rec("error", code="unsupported", message="maintenance.run is off until release gate G3 passes; experimental features are "
             "disabled. To evaluate it on this machine, turn them on with `cleanmanager experimental --state on` or 设置 › 实验功能 in the desktop app",
             retryable=False, required_action="cleanmanager experimental --state on", details={"plan_id": None, "operation_id": None, "scope_id": None}),
+        "index-unavailable": rec("error", code="index_unavailable", message="index database is damaged: file is not a database (the SQLite header is damaged); history and recovery are not affected: "
+            "repair the index with `cleanmanager doctor --repair-index` (the damaged file is kept) and scan again",
+            retryable=False, required_action="cleanmanager doctor --repair-index", details={"plan_id": None, "operation_id": None, "scope_id": None}),
         "protection-unavailable": rec("error", code="protection_unavailable", message="Protection list could not be parsed",
             retryable=False, required_action="Repair or reset the protection list", details={"plan_id": None, "operation_id": None, "scope_id": None}),
         "app-list": rec("app_list", next_cursor=None, page_size=50, items=[
@@ -954,6 +1016,14 @@ def main():
             error_codes=[{"code": "needs_approval", "exit_code": 3, "retryable": False}],
             recent_errors=[{"code": "precondition_changed", "count": 2, "last_seen": t1}],
             export={"path": "~\\Desktop\\cleanmanager-doctor.json", "written": False}),
+        "doctor-report-index-repair": rec("doctor_report", generated_at=t1, redacted=True, engine_version="0.0.0-design-example", platform="windows",
+            capabilities=[{"name": "uninstall.registry", "state": "unverified", "reason": "Synthetic report"}],
+            checks=[{"area": "store", "check": "store.open", "status": "ok", "detail": "Synthetic audit store check"},
+                    {"area": "store", "check": "store.index", "status": "ok", "detail": "Synthetic index check after the repair"}],
+            error_codes=[{"code": "index_unavailable", "exit_code": 8, "retryable": False}], recent_errors=[], export=None,
+            index_repair={"status": "repaired", "previous_state": "corrupt",
+                "kept_files": ["~\\AppData\\Local\\CleanManager\\store\\index.db.damaged-20261022T101500Z"],
+                "message": "Synthetic: the scan index was moved aside and an empty one was created; run scan again"}),
     }
     cli.update({
         "purge-roots": rec("purge_roots", roots=[{"path": wpath("C:\\Users\\Example\\Projects"), "source": "default", "exists": True},
@@ -1122,13 +1192,13 @@ def main():
         notes=["disk_bytes_per_sec is the process's read+write transfer rate"], items=[
             {"pid": 4242, "parent_pid": 1000, "parent_name": "explorer.exe", "name": "example-helper.exe",
              "image_path": wpath("C:\\Users\\Example\\AppData\\Local\\Example\\example-helper.exe"), "started_at": "134050000000000000",
-             "cpu_percent": 12.5, "memory_bytes": "104857600", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None, "signature": unsigned,
+             "started_at_utc": "2025-10-15T11:06:40Z", "cpu_percent": 12.5, "memory_bytes": "104857600", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None, "signature": unsigned,
              "owner_app": None, "identified": False, "purpose": None, "unidentified_reason": "Not in CleanManager's local process knowledge",
              "ai_diagnosis": {"available": True, "hint": "Purpose not identified locally. You can ask the optional AI diagnosis about this process"},
              "pinned": False, "end_capability": {"state": "available", "protection": None, "reason": "Ends only through a reviewed plan for this one process"},
              "notes": []},
             {"pid": 700, "parent_pid": 600, "parent_name": "wininit.exe", "name": "lsass.exe", "image_path": wpath("C:\\Windows\\System32\\lsass.exe"),
-             "started_at": "134049000000000000", "cpu_percent": 0.1, "memory_bytes": "8388608", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None,
+             "started_at": "134049000000000000", "started_at_utc": "2025-10-14T07:20:00Z", "cpu_percent": 0.1, "memory_bytes": "8388608", "disk_bytes_per_sec": 0.0, "network_bytes_per_sec": None,
              "signature": {"state": "catalog_signed", "publisher": "Microsoft Windows", "reason": None}, "owner_app": None, "identified": True,
              "purpose": "Local Security Authority: sign-in, credentials and security policy", "unidentified_reason": None, "ai_diagnosis": None,
              "pinned": False, "end_capability": {"state": "unsupported", "protection": "critical_system",
@@ -1239,6 +1309,26 @@ def main():
              "leftovers_reviewable": False, "groups": [], "default_selected": 0, "external_references": []},
             {"app": tool_app, "status": "completed", "code": "done", "message": "uninstaller exited with code 0 after 8410 ms",
              "leftovers_reviewable": True, "groups": [{"group": "caches_logs", "items": [tool_cache]}], "default_selected": 1, "external_references": []}])
+    # WFA-42/43: which policy authorized a plan or would, and why the others do not; WFA-40: a reconciled operation
+    # keeps its authorization and records the reconciliation apart.
+    mismatch = {"policy_id": "pol_other", "policy_version": "1", "state": "enabled", "covers": False, "reason": "mode_differs",
+        "message": "the plan's mode trash is not the policy's mode quarantine"}
+    cli["plan-policy-matches"] = rec("plan", body=body, plan_digest=digest, authorization_status="required", authorized_by=None,
+        policy_matches=[{"policy_id": "pol_demo", "policy_version": "2", "state": "enabled", "covers": True, "reason": None,
+            "message": "would authorize this plan when it is applied (the last 24 hours used 0 of 2147483648 bytes and 0 of 2000 items; "
+                       "this plan needs 104857600 bytes and 1 items)"}, mismatch])
+    cli["plan-policy-authorized"] = rec("plan", body=body, plan_digest=digest, authorization_status="authorized",
+        authorized_by={"source": "policy", "policy_id": "pol_demo", "policy_version": "2", "authorized_at": "2026-10-14T12:02:00Z"})
+    cli["needs-approval-policy-mismatch"] = rec("error", code="needs_approval",
+        message="plan p_demo needs approval: it has not been reviewed and no policy covers it (pol_other: " + mismatch["message"] + ")",
+        retryable=False, required_action="Review the plan in the desktop app or run `cleanmanager plan review p_demo` in a terminal",
+        details={"plan_id": "p_demo", "operation_id": None, "scope_id": None, "policy_matches": [mismatch]})
+    cli["operation-reconciled"] = {**report_unknown, "status": "completed", "succeeded": 2, "unknown": 0, "items": [
+            {"action_id": "a_demo", "status": "succeeded", "code": "moved_to_trash", "message": "Synthetic move", "recovery": "trash"},
+            {"action_id": "a_demo2", "status": "succeeded", "code": "reconciled_performed", "message": "the action was found to have taken effect",
+             "recovery": "trash"}],
+        "processed_logical_bytes": "209715200", "volume_free_before_bytes": None, "finished_at": "2026-10-14T12:05:00Z",
+        "reconciled_at": "2026-10-14T12:05:00Z"}
     for name, example in cli.items():
         save("examples/contracts/" + name + ".json", example)
     save("rules/examples/example-cache.json", {"schema_version": "1.0", "rule_id": "example.cache", "version": "0.1.0",

@@ -1,7 +1,7 @@
 import './styles.css';
 
 import { createBackend, toIpcError, type Backend } from './lib/api';
-import { appMark, h, icon, replace } from './lib/dom';
+import { appMark, h, icon, live, refreshLive, replace } from './lib/dom';
 import { isTerminal, taskTitle } from './lib/format';
 import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
 import type { DiagTarget } from './lib/diagTypes';
@@ -26,11 +26,12 @@ import { UninstallPage } from './views/uninstall';
 import { UpdatesPage } from './views/updates';
 import { DiagnosisPage, MaintenancePage } from './views/maintenance';
 import { ProcessesPage } from './views/processes';
-import { ResidentPage } from './views/resident';
+import { ResidentPage, batteryName } from './views/resident';
 import { ensureReady } from './views/kit';
 import { GateOffView } from './views/gateOff';
 import { gateBadge } from './views/ui';
 import { refusalText } from './lib/codes';
+import { locale, onLocale, resolveLocale, setLocale, storedLanguage, storeLanguage, t, type LanguagePref } from './i18n';
 
 export interface App {
   backend: Backend;
@@ -48,9 +49,21 @@ export interface App {
   /** Optional AI diagnosis of one object (from the cleanup, disk or apps page). */
   openDiagnosis(target: DiagTarget, from?: Page): void;
   announce(text: string): void;
+  /** Interface language (LIF-05): store the choice and show every page in it at once, without a restart. */
+  setLanguage(pref: LanguagePref): void;
 }
 
 const THEME_KEY = 'cm.theme';
+
+/**
+ * The language preference: stored next to the theme (`cm.lang`, absent = follow the system). The browser design preview
+ * also takes `?lang=en`, `?lang=zh-CN` or `?lang=system` for one visit (not stored); the desktop host has no query string.
+ */
+function initialLanguage(search: string = location.search): LanguagePref {
+  const asked = new URLSearchParams(search).get('lang');
+  if (asked === 'en' || asked === 'zh-CN' || asked === 'system') return asked;
+  return storedLanguage();
+}
 
 function applyTheme(theme: string | null): void {
   const root = document.documentElement;
@@ -81,12 +94,15 @@ function cycleTheme(): string {
 
 async function boot(): Promise<void> {
   applyTheme(storedTheme());
+  setLocale(resolveLocale(initialLanguage()));
   const root = document.getElementById('app')!;
+  const booting = root.querySelector('.booting');
+  if (booting) booting.textContent = t('main.starting');
   let backend: Backend;
   try {
     backend = await createBackend();
   } catch (e) {
-    replace(root, h('div', { class: 'fatal', role: 'alert' }, h('h1', {}, 'CleanManager 无法启动'), h('p', {}, String(e))));
+    replace(root, h('div', { class: 'fatal', role: 'alert' }, h('h1', {}, t('main.cleanmanagerCouldntStart')), h('p', {}, String(e))));
     return;
   }
 
@@ -128,6 +144,14 @@ async function boot(): Promise<void> {
     backend,
     store,
     announce,
+    setLanguage(pref) {
+      storeLanguage(pref);
+      const before = locale();
+      setLocale(resolveLocale(pref));
+      // Same language (e.g. following a system that already matched): the settings page still shows the new choice.
+      if (locale() === before) render();
+      announce(t('main.languageNow'));
+    },
     navigate(page) {
       // Navigation only changes the view; it never cancels or pauses a running scan or operation.
       store.set({ page });
@@ -152,7 +176,7 @@ async function boot(): Promise<void> {
     },
     async startScan(rootToken) {
       // GUI-13: explain missing access once before the long task; it never prompts mid-scan.
-      if (!(await ensureReady(app, 'scan', '扫描'))) return;
+      if (!(await ensureReady(app, 'scan', t('main.scan')))) return;
       const res = await backend.startScan(rootToken);
       store.set({
         task: {
@@ -167,15 +191,15 @@ async function boot(): Promise<void> {
           dismissed: false,
         },
       });
-      announce(`已开始只读扫描：${res.root_display}`);
+      announce(t('main.readOnlyScanStarted', { root_display: res.root_display }));
       await app.openScan(res.scan_id, 'overview');
     },
     async cancelScan(scanId) {
       const r = await backend.cancelScan(scanId);
-      const t = store.state.task;
-      if (t && t.scanId === scanId && r.accepted) {
-        store.set({ task: { ...t, cancelRequested: true, state: t.state === 'running' ? 'stopping' : t.state } });
-        announce('已请求停止扫描，正在安全停止');
+      const task = store.state.task;
+      if (task && task.scanId === scanId && r.accepted) {
+        store.set({ task: { ...task, cancelRequested: true, state: task.state === 'running' ? 'stopping' : task.state } });
+        announce(t('main.stopRequestedScanStopping'));
       }
       await app.refreshStatus();
     },
@@ -193,15 +217,15 @@ async function boot(): Promise<void> {
       store.set({ activityTab: tab, page: 'activity' });
     },
     async applyPlan(planId, readiness = 'apply') {
-      if (!(await ensureReady(app, readiness, '执行'))) return;
+      if (!(await ensureReady(app, readiness, t('main.runPlan')))) return;
       const r = await backend.startApply(planId);
       if (!r.existing) {
         store.set({
           apply: { planId, operationId: r.operation_id, total: r.total, counts: { ...EMPTY_COUNTS }, cancelRequested: false, running: true, status: null, error: null, dismissed: false },
         });
-        announce(`开始执行计划，共 ${r.total} 项`);
+        announce(t('main.planRunStartedTotal', { total: r.total }));
       } else {
-        announce('这份计划已经执行过，显示已有的执行记录');
+        announce(t('main.planAlreadyRunShowing'));
       }
       app.openOperation(r.operation_id, 'plan');
     },
@@ -216,21 +240,21 @@ async function boot(): Promise<void> {
 
   // Events from the host: coalesced progress and one terminal notice per task.
   await backend.onProgress((e) => {
-    const t = store.state.task;
-    if (!t || t.scanId !== e.scan_id) return;
-    const changedState = t.state !== e.state;
-    store.set({ task: { ...t, state: e.state, entriesSeen: e.entries_seen, skippedRanges: e.skipped_ranges, cancelRequested: e.cancel_requested } });
-    if (changedState && e.state === 'stopping') announce('正在停止扫描');
+    const task = store.state.task;
+    if (!task || task.scanId !== e.scan_id) return;
+    const changedState = task.state !== e.state;
+    store.set({ task: { ...task, state: e.state, entriesSeen: e.entries_seen, skippedRanges: e.skipped_ranges, cancelRequested: e.cancel_requested } });
+    if (changedState && e.state === 'stopping') announce(t('main.stoppingScan'));
     if (store.state.scanId === e.scan_id && store.state.status && !isTerminal(store.state.status.state)) {
       store.set({ status: { ...store.state.status, state: e.state, entries_seen: e.entries_seen, skipped_ranges: e.skipped_ranges, cancel_requested: e.cancel_requested } });
     }
   });
   await backend.onFinished(async (e) => {
-    const t = store.state.task;
-    if (t && t.scanId === e.scan_id) {
-      store.set({ task: { ...t, state: e.state ?? 'failed', error: e.error, dismissed: false } });
+    const task = store.state.task;
+    if (task && task.scanId === e.scan_id) {
+      store.set({ task: { ...task, state: e.state ?? 'failed', error: e.error, dismissed: false } });
     }
-    announce(e.state ? taskTitle(e.state) : `扫描未能开始：${e.error ? refusalText(e.error) : ''}`);
+    announce(e.state ? taskTitle(e.state) : t('main.scanCouldntStartP', { p: e.error ? refusalText(e.error) : '' }));
     if (store.state.scanId === e.scan_id) await app.refreshStatus();
     store.set({ recent: await backend.recentScans().catch(() => store.state.recent) });
   });
@@ -244,11 +268,11 @@ async function boot(): Promise<void> {
     if (a && a.operationId === e.operation_id) {
       store.set({ apply: { ...a, running: false, status: e.status, error: e.error, dismissed: false } });
     }
-    announce(e.status ? `执行结束：${OPERATION_STATE_LABEL[e.status] ?? e.status}` : `执行未能开始：${e.error ? refusalText(e.error) : ''}`);
+    announce(e.status ? t('main.runFinishedP', { p: OPERATION_STATE_LABEL[e.status] ?? e.status }) : t('main.runCouldntStartP', { p: e.error ? refusalText(e.error) : '' }));
   });
   await backend.onDiagFinished((e) => {
-    const word = e.state === 'completed' ? '已完成' : e.state === 'cancelled' ? '已取消' : e.state === 'failed' ? '失败' : e.state;
-    announce(`AI 诊断${word}`);
+    const word = e.state === 'completed' ? t('main.completed') : e.state === 'cancelled' ? t('main.cancelled') : e.state === 'failed' ? t('main.failed') : e.state;
+    announce(t('main.aiDiagnosisWord', { word }));
     void (pages.diag as DiagPage).finished(e.diagnosis_id);
   });
   // Tray (RES-01): quick links open one of a fixed set of pages; alerts and changes refresh 常驻工具.
@@ -257,24 +281,24 @@ async function boot(): Promise<void> {
   });
   await backend.onResidentChanged(() => (pages.resident as ResidentPage).changed());
   await backend.onResidentAlert((alerts) => {
-    announce(alerts.map((a) => `电量低：${a.name} ${a.percent}%`).join('；'));
+    announce(alerts.map((a) => t('main.batteryLowNamePercent', { name: batteryName(a), percent: a.percent })).join(t('common.clauseSep')));
     (pages.resident as ResidentPage).alerted(alerts);
   });
   // D15: the switch changed from the CLI; the host already stopped the resident utilities when it went off. Fresh
   // capabilities make open gated pages show (or leave) their "默认关闭" page.
   await backend.onFeaturesChanged((e) => {
     void backend.capabilities().then((caps) => store.set({ caps }), () => undefined);
-    const stopped = e.resident_stopped ? (e.error ? '；常驻工具已停止，但开机启动项未能更新，下次启动时会重试' : '；未通过门禁的工具和常驻工具已停止') : '';
-    announce(`${e.experimental_features ? '实验功能已在命令行中开启' : '实验功能已在命令行中关闭'}${stopped}`);
+    const stopped = e.resident_stopped ? (e.error ? t('main.residentToolsStoppedBut') : t('main.toolsHaventPassedGate')) : '';
+    announce(`${e.experimental_features ? t('main.experimentalFeaturesTurnedCommand') : t('main.experimentalFeaturesTurnedOff')}${stopped}`);
   });
   await backend.onClosing((e) => {
     store.set({ closing: true });
-    announce(e.waiting_for.includes('operation') ? '正在停止后续操作，当前动作结束后关闭窗口' : '正在安全停止扫描，完成后关闭窗口');
+    announce(e.waiting_for.includes('operation') ? t('main.stoppingFurtherActionsWindow') : t('main.stoppingScanSafelyWindow'));
   });
 
   // Shell: five tools, then the extensions (D14). Every entry keeps its place on every platform.
   const caps = capabilityPages(app);
-  const pages: Record<Page, { el: HTMLElement; update(): void; activate?(): void }> = {
+  const pages: Record<Page, { el: HTMLElement; update(): void; activate?(): void; relocalize?(): void }> = {
     scope: new ScopePage(app),
     overview: new OverviewPage(app),
     disk: new DiskPage(app),
@@ -315,31 +339,44 @@ async function boot(): Promise<void> {
   };
   const keyHint = (key: string) => shortcutLabel(key, w.mod);
   const ariaKeys = (key: string) => `${platform() === 'macos' ? 'Meta' : 'Control'}+${key}`;
-  const toolButtons = TOOLS.map((t) =>
-    h(
-      'button',
-      { class: 'nav-item tool-item', type: 'button', 'data-tool': t.id, 'aria-keyshortcuts': ariaKeys(t.key), title: `${t.label}：${t.blurb}（${keyHint(t.key)}）`, onclick: () => openTool(t.id) },
-      icon(t.icon),
-      h('span', { class: 'nav-label' }, t.label),
-      h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(t.key)),
+  // Shell text is bound with `live`: a language switch (LIF-05) re-applies it without rebuilding the shell.
+  const toolButtons = TOOLS.map((tool) =>
+    live(
+      h(
+        'button',
+        { class: 'nav-item tool-item', type: 'button', 'data-tool': tool.id, 'aria-keyshortcuts': ariaKeys(tool.key), onclick: () => openTool(tool.id) },
+        icon(tool.icon),
+        live(h('span', { class: 'nav-label' }), () => tool.label),
+        h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(tool.key)),
+      ),
+      null,
+      { title: () => t('main.labelBlurbKey', { label: tool.label, blurb: tool.blurb, key: keyHint(tool.key) }) },
     ),
   );
-  const extNav = h('nav', { class: 'ext-nav', id: 'ext-nav', 'aria-label': '扩展' });
-  const moreBtn = h('button', { class: 'nav-item more-item', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'ext-nav', title: '扩展：计划、活动、恢复、Agent、AI 诊断、设置' }, icon('ext-plans'), h('span', { class: 'nav-label' }, '更多'));
+  const extNav = live(h('nav', { class: 'ext-nav', id: 'ext-nav' }), null, { 'aria-label': () => t('main.more') });
+  const moreBtn = live(
+    h('button', { class: 'nav-item more-item', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'ext-nav' }, icon('ext-plans'), live(h('span', { class: 'nav-label' }), () => t('main.moreButton'))),
+    null,
+    { title: () => t('main.morePlansActivityRecovery') },
+  );
   const closeMore = () => {
     extNav.classList.remove('open');
     moreBtn.setAttribute('aria-expanded', 'false');
   };
   const extButtons = EXTENSIONS.map((e) =>
-    h(
-      'button',
-      { class: 'nav-item ext-item', type: 'button', 'data-ext': e.id, 'aria-keyshortcuts': ariaKeys(e.key), title: `${e.label}（${keyHint(e.key)}）`, onclick: () => (closeMore(), openExt(e.id)) },
-      icon(e.icon),
-      h('span', { class: 'nav-label' }, e.label),
-      h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(e.key)),
+    live(
+      h(
+        'button',
+        { class: 'nav-item ext-item', type: 'button', 'data-ext': e.id, 'aria-keyshortcuts': ariaKeys(e.key), onclick: () => (closeMore(), openExt(e.id)) },
+        icon(e.icon),
+        live(h('span', { class: 'nav-label' }), () => e.label),
+        h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, keyHint(e.key)),
+      ),
+      null,
+      { title: () => t('main.labelKey', { label: e.label, key: keyHint(e.key) }) },
     ),
   );
-  replace(extNav, h('p', { class: 'nav-group-label', 'aria-hidden': 'true' }, '扩展'), ...extButtons);
+  replace(extNav, live(h('p', { class: 'nav-group-label', 'aria-hidden': 'true' }), () => t('main.more')), ...extButtons);
   moreBtn.addEventListener('click', () => {
     const open = !extNav.classList.contains('open');
     extNav.classList.toggle('open', open);
@@ -352,33 +389,33 @@ async function boot(): Promise<void> {
       moreBtn.focus();
     }
   });
-  const themeBtn = h('button', { class: 'icon-btn', type: 'button', title: '主题：跟随系统', 'aria-label': '切换主题（当前跟随系统）' }, icon('theme'));
-  const syncThemeLabel = (t: string) => {
-    const label = t === 'system' ? '跟随系统' : t === 'dark' ? '深色' : '浅色';
-    themeBtn.title = `主题：${label}`;
-    themeBtn.setAttribute('aria-label', `切换主题（当前${label}）`);
+  const themeBtn = h('button', { class: 'icon-btn', type: 'button' }, icon('theme'));
+  const syncThemeLabel = (theme: string) => {
+    const label = theme === 'system' ? t('main.system') : theme === 'dark' ? t('main.dark') : t('main.light');
+    themeBtn.title = t('main.themeLabel', { label });
+    themeBtn.setAttribute('aria-label', t('main.switchThemeNowLabel', { label }));
   };
   syncThemeLabel(document.documentElement.dataset.theme ?? 'system');
   themeBtn.addEventListener('click', () => syncThemeLabel(cycleTheme()));
-  const keysBtn = h('button', { class: 'icon-btn', type: 'button', title: '键盘快捷键（?）', 'aria-label': '键盘快捷键', 'aria-keyshortcuts': 'Shift+?' }, icon('keyboard'));
+  const keysBtn = live(h('button', { class: 'icon-btn', type: 'button', 'aria-keyshortcuts': 'Shift+?' }, icon('keyboard')), null, { title: () => t('main.keyboardShortcutsHint'), 'aria-label': () => t('main.keyboardShortcuts') });
   const sidebar = h(
     'aside',
     { class: 'sidebar', 'aria-label': 'CleanManager' },
     h('div', { class: 'brand' }, appMark(28), h('span', { class: 'brand-name' }, 'CleanManager')),
-    h('nav', { class: 'tool-nav', 'aria-label': '工具' }, ...toolButtons, moreBtn),
+    live(h('nav', { class: 'tool-nav' }, ...toolButtons, moreBtn), null, { 'aria-label': () => t('main.tools') }),
     extNav,
   );
   // Theme and shortcut sheet sit at the foot of the extension group (inside the "更多" menu on narrow windows).
   extNav.append(h('div', { class: 'side-foot' }, keysBtn, themeBtn));
-  const sectionNav = h('nav', { class: 'section-nav', 'aria-label': '分区' });
+  const sectionNav = h('nav', { class: 'section-nav', 'aria-label': t('main.sections') }); // labelled per tool in render()
   const chip = new TaskChip(app);
   const applyChip = new ApplyChip(app);
   const main = h('main', { id: 'main', tabindex: '-1' });
   const previewBanner = backend.preview
-    ? h('div', { class: 'preview-banner', role: 'note' }, '浏览器预览：以下为开发用示例数据，不是本机扫描结果，也不会对任何文件执行操作。')
+    ? live(h('div', { class: 'preview-banner', role: 'note' }), () => t('main.browserPreviewDataBelow'))
     : null;
-  const closingBanner = h('div', { class: 'closing-banner', role: 'alert', hidden: true }, '正在安全停止。扫描会发布已确认的结果，执行会停止派发后续动作；完成后窗口关闭。');
-  const skip = h('a', { class: 'skip-link', href: '#main' }, '跳到主要内容');
+  const closingBanner = live(h('div', { class: 'closing-banner', role: 'alert', hidden: true }), () => t('main.stoppingSafelyScanPublishes'));
+  const skip = live(h('a', { class: 'skip-link', href: '#main' }), () => t('main.skipMainContent'));
   const header = h('header', { class: 'topbar' }, sectionNav, h('div', { class: 'topbar-tools' }, applyChip.el, chip.el));
   replace(root, skip, h('div', { class: 'shell' }, sidebar, h('div', { class: 'main-col' }, previewBanner, header, closingBanner, main)), announcer);
 
@@ -388,22 +425,22 @@ async function boot(): Promise<void> {
     const dlg = h(
       'dialog',
       { class: 'cm-dialog shortcuts', 'aria-labelledby': 'keys-title' },
-      h('div', { class: 'dlg-head' }, h('h2', { id: 'keys-title' }, '键盘快捷键'), h('p', { class: 'muted' }, '两个平台相同：Windows 用 Ctrl，macOS 用 ⌘。')),
+      h('div', { class: 'dlg-head' }, h('h2', { id: 'keys-title' }, t('main.keyboardShortcuts')), h('p', { class: 'muted' }, t('main.sameBothPlatformsCtrl'))),
       h(
         'table',
         { class: 'keys-table' },
-        h('caption', { class: 'sr-only' }, '快捷键与对应入口'),
+        h('caption', { class: 'sr-only' }, t('main.shortcutsWhereTheyGo')),
         h(
           'tbody',
           {},
-          ...TOOLS.map((t) => row(keyHint(t.key), `${t.label}：${t.blurb}`)),
+          ...TOOLS.map((tool) => row(keyHint(tool.key), t('main.labelBlurb', { label: tool.label, blurb: tool.blurb }))),
           ...EXTENSIONS.map((e) => row(keyHint(e.key), e.label)),
-          row(`${keyHint('PageUp')} / ${keyHint('PageDown')}`, '当前工具的上一个 / 下一个分区'),
-          row('?', '显示这张表'),
-          row('Esc', '关闭对话框或菜单'),
+          row(`${keyHint('PageUp')} / ${keyHint('PageDown')}`, t('main.previousNextSectionCurrent')),
+          row('?', t('main.showTable')),
+          row('Esc', t('main.closeDialogMenu')),
         ),
       ),
-      h('div', { class: 'dlg-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dlg.close() }, '关闭')),
+      h('div', { class: 'dlg-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dlg.close() }, t('main.close'))),
     ) as HTMLDialogElement;
     dlg.addEventListener('close', () => dlg.remove());
     document.body.append(dlg);
@@ -462,10 +499,10 @@ async function boot(): Promise<void> {
     // Section tabs of the current tool (detail pages keep their tool's sections visible).
     const tool = toolId ? toolOf(toolId) : null;
     const ext = extId ? EXTENSIONS.find((x) => x.id === extId) : null;
-    const sectionKey = `${tool ? `${tool.id}:${s.page}` : `ext:${extId ?? ''}`}:${off ? 'off' : 'on'}`;
+    const sectionKey = `${tool ? `${tool.id}:${s.page}` : `ext:${extId ?? ''}`}:${off ? 'off' : 'on'}:${locale()}`;
     if (sectionNav.dataset.key !== sectionKey) {
       sectionNav.dataset.key = sectionKey;
-      sectionNav.setAttribute('aria-label', tool ? `${tool.label}分区` : '当前位置');
+      sectionNav.setAttribute('aria-label', tool ? t('main.labelSections', { label: tool.label }) : t('main.currentLocation'));
       replace(
         sectionNav,
         tool ? h('span', { class: 'section-tool' }, icon(tool.icon), tool.label) : ext ? h('span', { class: 'section-tool' }, icon(ext.icon), ext.label) : null,
@@ -477,7 +514,7 @@ async function boot(): Promise<void> {
                   type: 'button',
                   class: 'section-tab',
                   'aria-current': sec.page === s.page ? 'page' : null,
-                  title: gatedOff(sec.page, s.caps?.gates) ? `${sec.label}：默认关闭，可在 设置 › 实验功能 中开启` : null,
+                  title: gatedOff(sec.page, s.caps?.gates) ? t('main.labelOffDefaultTurn', { label: sec.label }) : null,
                   onclick: () => app.navigate(sec.page),
                 },
                 sec.label,
@@ -509,6 +546,14 @@ async function boot(): Promise<void> {
     applyChip.update();
   };
   store.subscribe(render);
+  // LIF-05: a language switch re-applies the shell's bound text and re-renders the current page in place; other pages
+  // read their words afresh when they are shown. Machine fields, codes and states never change with the language.
+  onLocale(() => {
+    refreshLive();
+    for (const p of Object.values(pages)) p.relocalize?.();
+    syncThemeLabel(document.documentElement.dataset.theme ?? 'system');
+    render();
+  });
 
   // Startup: capabilities, scans recorded in the store, an operation still running here.
   const [recent, active] = await Promise.all([backend.recentScans().catch(() => []), backend.activeApply().catch(() => null)]);

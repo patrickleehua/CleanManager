@@ -21,6 +21,7 @@ fn action_for(f: &ProcessFacts) -> ProcessEndAction {
         action_id: "a01".into(),
         pid: f.pid,
         started_at: f.started_at.clone().unwrap(),
+        started_at_utc: f.started_at_utc.clone(),
         name: f.name.clone(),
         image_path: f.image_path.clone(),
         image_sha256: f.image_path.as_ref().and_then(|p| file_sha256(&p.display())),
@@ -36,6 +37,15 @@ fn list_reads_own_process_and_marks_critical_ones() {
     assert!(me.image_path.is_some() && me.started_at.is_some() && me.memory_bytes.is_some_and(|m| m > 0));
     assert!(me.cpu_percent.is_some());
     assert!(me.network_bytes_per_sec.is_none(), "network rate is unknown, never 0");
+    // WFA-93: the FILETIME key stays for identity; people read the same instant as RFC 3339 UTC.
+    let key: u64 = me.started_at.as_deref().unwrap().parse().unwrap();
+    let utc = me.started_at_utc.as_deref().expect("start time in UTC");
+    assert_eq!(utc, start_utc(key));
+    assert!(utc.len() == 20 && utc.ends_with('Z') && utc.as_bytes()[10] == b'T', "{utc}");
+    let started = cm_core::time::filetime_to_unix(key);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    assert!((now - 86_400 * 2..=now + 5).contains(&started), "this test process started moments ago: {utc}");
+    assert_eq!(start_utc(134_371_365_203_426_535), "2026-10-22T09:55:20Z", "the acceptance run's raw value");
     let views = explain(all.clone(), own, &windows_dir(), &[], &[]);
     for name in ["csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "smss.exe", "System"] {
         if let Some(v) = views.iter().find(|v| v.facts.name.eq_ignore_ascii_case(name)) {

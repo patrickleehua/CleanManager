@@ -102,6 +102,43 @@ fn no_channel_is_cannot_check_never_latest() {
     assert!(f[0].reason.as_deref().unwrap().contains("not installed"));
 }
 
+/// UPD-01 (WFA-78): a row from winget's `msstore` source never makes a Store app `up_to_date` (or a package-manager
+/// update): the Store checks its own apps, so the app is `cannot_check` with the Store page, whether or not the row
+/// lists a newer version. The constructor enforces the same for any Store result.
+#[test]
+fn msstore_rows_are_cannot_check_never_up_to_date() {
+    let mut text = fixture();
+    text = text.replace("\r\n\r\n2 个", &format!("\r\n{}\r\n\r\n2 个", row(["PixPin 版本 3.5.5.1", "XP89F3CGSRZHC7", "3.5.5.1", "", "msstore"])));
+    let apps = vec![app("Store Thing", "2.0", reg("StoreThing"), None), app("PixPin 版本 3.5.5.1", "3.5.5.1", reg("PixPin"), None)];
+    let input = DetectInput { apps: &apps, winget: Some(parse_winget_list(&text)), scoop: &[], self_updater: &|_| None, checked_at: "2026-10-22T09:59:10Z" };
+    let r = detect(&input);
+    for (c, id) in r.iter().zip(["9NBLGGH4NNS1", "XP89F3CGSRZHC7"]) {
+        assert_eq!((c.state, c.channel, c.route, c.channel_id.as_deref()), (UpdateState::CannotCheck, Some(Channel::MicrosoftStore), Route::OpenStore, Some(id)), "{c:?}");
+        assert!(c.reason.as_deref().unwrap().starts_with(STORE_SELF), "{c:?}");
+        assert_eq!((c.available_version.as_deref(), c.checked_at.as_deref()), (None, Some("2026-10-22T09:59:10Z")));
+    }
+    assert!(r[0].reason.as_deref().unwrap().contains("lists version 2.1"), "a newer version winget saw is named: {:?}", r[0].reason);
+    for state in [UpdateState::UpToDate, UpdateState::UpdateAvailable] {
+        let forced = UpdateCheck::new(&apps[1], Some(Channel::MicrosoftStore), None, Some("9".into()), state, None, Some("t".into()), Route::PackageManager);
+        assert_eq!((forced.state, forced.route, forced.reason.as_deref(), forced.available_version), (UpdateState::CannotCheck, Route::OpenStore, Some(STORE_SELF), None));
+    }
+    // A Store row an older build saved as `up_to_date` is shown as `cannot_check` from the cache too (checks off).
+    let mut stale = r[1].clone();
+    (stale.state, stale.reason, stale.route) = (UpdateState::UpToDate, None, Route::OpenStore);
+    let shown = when_disabled(&apps[1..], &[stale]);
+    assert_eq!((shown[0].state, shown[0].reason.as_deref(), shown[0].checked_at.as_deref()), (UpdateState::CannotCheck, Some(STORE_SELF), Some("2026-10-22T09:59:10Z")));
+}
+
+#[test]
+fn channel_and_state_words_match_the_protocol() {
+    for c in [Channel::Winget, Channel::MicrosoftStore, Channel::Scoop, Channel::SelfUpdater, Channel::Sparkle, Channel::MacAppStore, Channel::Homebrew, Channel::Electron] {
+        assert_eq!(serde_json::to_value(c).unwrap(), c.as_str());
+    }
+    for s in [UpdateState::UpdateAvailable, UpdateState::UpToDate, UpdateState::CannotCheck, UpdateState::NotChecked] {
+        assert_eq!(serde_json::to_value(s).unwrap(), s.as_str());
+    }
+}
+
 #[test]
 fn scoop_compares_with_the_local_bucket() {
     let apps = vec![app("ripgrep", "?", AppSource::Unknown, Some(r"C:\Users\A\scoop\apps\ripgrep\current")), app("jq", "?", AppSource::Unknown, Some(r"C:\Users\A\scoop\apps\jq\current"))];

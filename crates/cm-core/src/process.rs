@@ -50,8 +50,12 @@ pub struct ProcessFacts {
     pub parent_pid: Option<u32>,
     pub name: String,
     pub image_path: Option<RawPath>,
-    /// Creation time as FILETIME ticks (decimal string); with the PID it names one process instance.
+    /// Creation time in the platform's exact form (Windows: FILETIME ticks; macOS: microseconds since the Unix epoch;
+    /// decimal string). With the PID it names one process instance, so plans bind it; people read `started_at_utc`.
     pub started_at: Option<String>,
+    /// The same creation time as an RFC 3339 UTC timestamp (whole seconds), for people and agents.
+    #[serde(default)]
+    pub started_at_utc: Option<String>,
     pub cpu_percent: Option<f64>,
     pub memory_bytes: Option<u64>,
     pub disk_bytes_per_sec: Option<f64>,
@@ -312,6 +316,7 @@ impl ProcessView {
             "name": f.name,
             "image_path": f.image_path,
             "started_at": f.started_at,
+            "started_at_utc": f.started_at_utc,
             "cpu_percent": f.cpu_percent,
             "memory_bytes": f.memory_bytes.map(|b| b.to_string()),
             "disk_bytes_per_sec": f.disk_bytes_per_sec,
@@ -436,7 +441,15 @@ pub fn end_action(r: &ProcessView, image_sha256: Option<String>) -> Result<Proce
         return Err(EndRefusal::Protected(p));
     }
     let started_at = r.facts.started_at.clone().ok_or(EndRefusal::NoIdentity)?;
-    Ok(ProcessEndAction { action_id: "a01".into(), pid: r.facts.pid, started_at, name: r.facts.name.clone(), image_path: r.facts.image_path.clone(), image_sha256 })
+    Ok(ProcessEndAction {
+        action_id: "a01".into(),
+        pid: r.facts.pid,
+        started_at,
+        started_at_utc: r.facts.started_at_utc.clone(),
+        name: r.facts.name.clone(),
+        image_path: r.facts.image_path.clone(),
+        image_sha256,
+    })
 }
 
 /// Result of ending one process at execution time.

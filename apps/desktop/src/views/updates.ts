@@ -16,14 +16,15 @@ import { LongProgress, ensureReady, noticeLine, selectionBar, toIpcError } from 
 import { copyField, emptyState, errorLine, pageHead, pill } from './parts';
 import { notOnThisPlatform, words } from '../lib/platform';
 import { learnMore } from './ui';
+import { t } from '../i18n';
 
 type Filter = 'all' | 'update_available' | 'cannot_check' | 'up_to_date';
 
 const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'update_available', label: '有可用更新' },
-  { key: 'cannot_check', label: '无法检查' },
-  { key: 'up_to_date', label: '已是最新' },
+  { key: 'all', get label() { return t('updates.filters.all.label'); } },
+  { key: 'update_available', get label() { return t('updates.filters.update_available.label'); } },
+  { key: 'cannot_check', get label() { return t('updates.filters.cannot_check.label'); } },
+  { key: 'up_to_date', get label() { return t('updates.filters.up_to_date.label'); } },
 ];
 
 /** UPD-01: "up to date" only when a channel actually answered; otherwise it cannot be checked. */
@@ -49,7 +50,7 @@ export class UpdatesPage {
   private created: UpdatePlanCreated | null = null;
   private savingSetting = false;
   private gate = new RequestGate();
-  private progress = new LongProgress('检查更新');
+  private progress = new LongProgress(() => t('updates.checkingUpdates'));
 
   constructor(private app: App) {
     this.body = h('div', { class: 'updates-body' });
@@ -69,7 +70,7 @@ export class UpdatesPage {
       if (this.checking) return;
       this.checking = true;
       this.progress.start(words().updatesProgress);
-      this.app.announce('开始检查更新');
+      this.app.announce(t('updates.startedCheckingUpdates'));
     }
     this.error = null;
     this.update();
@@ -81,7 +82,7 @@ export class UpdatesPage {
       if (check) {
         this.selected.clear();
         this.created = null;
-        this.app.announce(`检查完成：${r.value.counts.update_available ?? 0} 个应用有可用更新`);
+        this.app.announce(t('updates.checkCompleteP', { p: r.value.counts.update_available ?? 0 }));
       }
     } catch (e) {
       this.error = toIpcError(e);
@@ -99,7 +100,7 @@ export class UpdatesPage {
     this.update();
     try {
       await this.app.backend.updatesSetChecks(enabled);
-      this.app.announce(enabled ? '已允许检查更新' : '已关闭更新检查：不会发出任何请求');
+      this.app.announce(enabled ? t('updates.updateChecksAllowed') : t('updates.updateChecksTurnedOff'));
       await this.load(false);
     } catch (e) {
       this.error = toIpcError(e);
@@ -111,7 +112,7 @@ export class UpdatesPage {
 
   private async createPlan(): Promise<void> {
     if (this.creating || !this.selected.size) return;
-    if (!(await ensureReady(this.app, 'update', '更新应用'))) return;
+    if (!(await ensureReady(this.app, 'update', t('updates.updateApps')))) return;
     this.creating = true;
     this.createError = null;
     this.update();
@@ -119,12 +120,12 @@ export class UpdatesPage {
       const r = await this.app.backend.updatesPlan([...this.selected]);
       this.selected.clear();
       if (r.plan_id && !r.routed.length) {
-        this.app.announce('更新计划已生成，尚未执行。请审阅后批准');
+        this.app.announce(t('updates.updatePlanCreatedNothing'));
         this.app.openPlan(r.plan_id, 'updates');
         return;
       }
       this.created = r;
-      this.app.announce(r.plan_id ? `已生成更新计划（${r.planned} 项），另有 ${r.routed.length} 个应用需在别处更新` : '所选应用都不能由这里更新，已列出各自的更新去处');
+      this.app.announce(r.plan_id ? t('updates.createdUpdatePlanPlanned', { planned: r.planned, length: r.routed.length }) : t('updates.noneSelectedAppsUpdated'));
     } catch (e) {
       this.createError = toIpcError(e);
     } finally {
@@ -138,23 +139,23 @@ export class UpdatesPage {
   private render(): void {
     const d = this.data;
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'updates-title', title: '更新' }), emptyState('此平台暂不提供', notOnThisPlatform('更新检查目前只在 Windows 上实现。'), null));
+      replace(this.body, pageHead({ id: 'updates-title', title: t('updates.updates') }), emptyState(t('common.notAvailablePlatformYet'), notOnThisPlatform(t('updates.updateChecksOnlyImplemented')), null));
       return;
     }
-    const check = h('button', { type: 'button', class: 'primary', id: 'updates-check', disabled: this.checking || !d?.checks_enabled }, icon('refresh'), this.checking ? '正在检查…' : '检查更新');
+    const check = h('button', { type: 'button', class: 'primary', id: 'updates-check', disabled: this.checking || !d?.checks_enabled }, icon('refresh'), this.checking ? t('common.checking') : t('updates.checkUpdates'));
     check.addEventListener('click', () => void this.load(true));
     replace(
       this.body,
       pageHead({
         id: 'updates-title',
-        title: '更新',
-        meta: d ? [d.checked_at ? `上次检查 ${formatTime(d.checked_at)}` : '还没有检查过', d.checks_enabled ? '只在你点击时检查' : '检查已关闭', '只用官方渠道'] : [],
+        title: t('updates.updates'),
+        meta: d ? [d.checked_at ? t('updates.lastCheckedChecked', { checked_at: formatTime(d.checked_at) }) : t('updates.notCheckedYet'), d.checks_enabled ? t('updates.checksOnlyWhenClick') : t('updates.checksOff'), t('updates.officialChannelsOnly')] : [],
         actions: [check],
       }),
-      d && !d.checks_enabled ? noticeLine('更新检查已关闭：不会运行任何更新通道，也不会发出任何请求。下面是上次的结果，保留原来的检查时间。', 'warn') : null,
+      d && !d.checks_enabled ? noticeLine(t('updates.updateChecksOffNo'), 'warn') : null,
       this.progress.el,
       errorLine(this.error),
-      d ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.routedPanel(), this.resultsPanel(d)), this.aside(d)) : !this.error ? h('p', { class: 'muted', role: 'status' }, '正在读取上次的结果…') : null,
+      d ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.routedPanel(), this.resultsPanel(d)), this.aside(d)) : !this.error ? h('p', { class: 'muted', role: 'status' }, t('updates.readingLastResults')) : null,
       d ? this.bar() : null,
     );
   }
@@ -163,7 +164,7 @@ export class UpdatesPage {
     const seg = h(
       'fieldset',
       { class: 'seg' },
-      h('legend', { class: 'sr-only' }, '筛选结果'),
+      h('legend', { class: 'sr-only' }, t('common.filterResults')),
       ...FILTERS.map((f) => {
         const input = h('input', { type: 'radio', name: 'updates-filter', id: `updates-filter-${f.key}`, value: f.key }) as HTMLInputElement;
         input.checked = this.filter === f.key;
@@ -181,8 +182,8 @@ export class UpdatesPage {
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'updates-list-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'updates-list-title' }, '检查结果'), seg),
-      items.length ? this.table(items) : h('p', { class: 'muted small' }, d.items.length ? '没有符合条件的应用。' : '还没有结果。点击“检查更新”。'),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'updates-list-title' }, t('updates.checkResults')), seg),
+      items.length ? this.table(items) : h('p', { class: 'muted small' }, d.items.length ? t('common.noAppsMatch') : t('updates.noResultsYetClick')),
     );
   }
 
@@ -192,7 +193,7 @@ export class UpdatesPage {
       const state = shownState(c);
       const st = UPDATE_STATE[state];
       const can = plannable(c);
-      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !can, 'aria-label': `选择 ${c.name}` }) as HTMLInputElement;
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !can, 'aria-label': t('common.selectName', { name: c.name }) }) as HTMLInputElement;
       check.checked = this.selected.has(c.app_instance_id);
       check.addEventListener('change', () => {
         if (check.checked) this.selected.add(c.app_instance_id);
@@ -202,11 +203,11 @@ export class UpdatesPage {
       });
       const versions =
         state === 'update_available'
-          ? `${c.current_version ?? '当前版本未知'} → ${c.available_version ?? '?'}`
+          ? `${c.current_version ?? t('updates.currentVersionUnknown')} → ${c.available_version ?? '?'}`
           : c.current_version
-            ? `当前 ${c.current_version}`
-            : '当前版本未知';
-      const channel = c.channel ? `${CHANNEL_WORD[c.channel]}${c.channel_id ? `：${c.channel_id}` : ''}` : '没有更新通道';
+            ? t('updates.currentCurrentVersion', { current_version: c.current_version })
+            : t('updates.currentVersionUnknown');
+      const channel = c.channel ? `${CHANNEL_WORD[c.channel]}${c.channel_id ? t('updates.channelId', { channel_id: c.channel_id }) : ''}` : t('updates.noUpdateChannel');
       let go: HTMLElement | null = null;
       if (c.route === 'open_store') go = h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), words().openStoreUpdates);
       else if (!can && state === 'update_available') go = h('span', { class: 'small muted' }, ROUTE_WORD[c.route]);
@@ -221,7 +222,7 @@ export class UpdatesPage {
           h('label', { for: `${id}-check`, class: 'obj-name' }, c.name),
           h('span', { class: 'obj-path num' }, versions),
           c.reason ? h('span', { class: state === 'cannot_check' ? 'why-not' : 'obj-reason muted' }, updateReason(c.reason)) : null,
-          c.official_url && !can && !c.official_url.startsWith('macappstore:') ? h('span', { class: 'obj-reason muted path' }, `官方页面：${c.official_url}`) : null,
+          c.official_url && !can && !c.official_url.startsWith('macappstore:') ? h('span', { class: 'obj-reason muted path' }, t('updates.officialPageOfficialUrl', { official_url: c.official_url })) : null,
         ),
         h('td', { class: 'col-source' }, h('span', { class: 'small' }, channel), c.checked_at ? h('span', { class: 'small muted block' }, formatTime(c.checked_at)) : null),
         h('td', { class: 'col-status' }, pill(st.label, st.tone), go),
@@ -233,8 +234,8 @@ export class UpdatesPage {
       h(
         'table',
         { class: 'data-table updates-table' },
-        h('caption', { class: 'sr-only' }, '应用、版本、更新通道与结果'),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '应用与版本'), h('th', { scope: 'col', class: 'col-source' }, '通道'), h('th', { scope: 'col', class: 'col-status' }, '结果'))),
+        h('caption', { class: 'sr-only' }, t('updates.appsVersionsUpdateChannels')),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('updates.appVersion')), h('th', { scope: 'col', class: 'col-source' }, t('updates.channel')), h('th', { scope: 'col', class: 'col-status' }, t('common.result')))),
         h('tbody', {}, ...rows),
       ),
     );
@@ -243,11 +244,11 @@ export class UpdatesPage {
   private routedPanel(): HTMLElement | null {
     const c = this.created;
     if (!c) return null;
-    const review = c.plan_id ? h('button', { type: 'button', class: 'primary', id: 'updates-review', onclick: () => this.app.openPlan(c.plan_id!, 'updates') }, `审阅更新计划（${c.planned} 项）`) : null;
+    const review = c.plan_id ? h('button', { type: 'button', class: 'primary', id: 'updates-review', onclick: () => this.app.openPlan(c.plan_id!, 'updates') }, t('updates.reviewUpdatePlanPlanned', { planned: c.planned })) : null;
     return h(
       'section',
       { class: 'panel routed-panel', 'aria-labelledby': 'updates-routed' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'updates-routed' }, c.plan_id ? '计划已生成，以下应用需在别处更新' : '所选应用不能由这里更新'), review),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'updates-routed' }, c.plan_id ? t('updates.planCreatedAppsBelow') : t('updates.selectedAppsCantUpdated')), review),
       h(
         'ul',
         { class: 'run-list' },
@@ -260,7 +261,7 @@ export class UpdatesPage {
             r.route === 'open_store'
               ? h('button', { type: 'button', class: 'quiet', onclick: () => void this.app.backend.openSystemPage('store_updates') }, icon('external'), words().openStore)
               : r.url
-                ? copyField('官方页面', r.url)
+                ? copyField(t('updates.officialPage'), r.url)
                 : h('span', {}),
           ),
         ),
@@ -273,13 +274,13 @@ export class UpdatesPage {
     toggle.checked = d.checks_enabled;
     toggle.addEventListener('change', () => void this.setChecks(toggle.checked));
     const n = this.selected.size;
-    const create = h('button', { type: 'button', class: 'primary wide', id: 'updates-create', disabled: !n || this.creating }, this.creating ? '正在冻结计划…' : n ? `生成更新计划（${n} 项）` : '先选择有更新的应用');
+    const create = h('button', { type: 'button', class: 'primary wide', id: 'updates-create', disabled: !n || this.creating }, this.creating ? t('common.freezingPlan') : n ? t('updates.createUpdatePlanN', { n }) : t('updates.selectAppsUpdatesFirst'));
     create.addEventListener('click', () => void this.createPlan());
     const counts = d.counts;
     return h(
       'aside',
       { class: 'panel work-aside draft', 'aria-labelledby': 'updates-aside-title' },
-      h('h2', { id: 'updates-aside-title' }, '更新草稿'),
+      h('h2', { id: 'updates-aside-title' }, t('updates.updateDraft')),
       h(
         'ul',
         { class: 'draft-list' },
@@ -289,13 +290,13 @@ export class UpdatesPage {
         counts.not_checked ? h('li', {}, h('span', {}, UPDATE_STATE.not_checked.label), h('b', { class: 'num' }, groupDigits(counts.not_checked))) : null,
       ),
       h('p', { class: 'small' }, words().updatesPlanNote),
-      learnMore(h('p', {}, '正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。')),
+      learnMore(h('p', {}, t('updates.runningAppsSkippedClose'))),
       errorLine(this.createError),
       create,
       h(
         'div',
         { class: 'aside-section' },
-        h('label', { class: 'switch-row', for: 'updates-checks' }, toggle, h('span', {}, h('b', {}, '允许检查更新'), h('span', { class: 'muted small' }, '关闭后不运行任何通道、不发出任何请求；也没有定期检查。'))),
+        h('label', { class: 'switch-row', for: 'updates-checks' }, toggle, h('span', {}, h('b', {}, t('updates.allowUpdateChecks')), h('span', { class: 'muted small' }, t('updates.whenOffNoChannel')))),
       ),
     );
   }
@@ -306,10 +307,10 @@ export class UpdatesPage {
       sum: null,
       onClear: () => {
         this.selected.clear();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
-      action: { id: 'updates-bar-go', text: '生成更新计划并审阅', disabled: this.creating, onClick: () => void this.createPlan() },
+      action: { id: 'updates-bar-go', text: t('updates.createUpdatePlanReview'), disabled: this.creating, onClick: () => void this.createPlan() },
     });
   }
 }

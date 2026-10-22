@@ -341,6 +341,7 @@ function proc(pid: number, name: string, image: string | null, cpu: number | nul
     name,
     image_path: image,
     started_at: '133730000000000000',
+    started_at_utc: '2024-10-10T02:13:20Z',
     cpu_percent: cpu,
     memory_bytes: mem === null ? null : b(mem),
     disk_bytes_per_sec: cpu === null ? null : Math.round((cpu * 40_000) % 900_000),

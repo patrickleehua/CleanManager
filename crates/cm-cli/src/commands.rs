@@ -20,6 +20,12 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
     if let Err(msg) = p.check_selection_widening() {
         return fail(req, ErrorCode::InvalidArgument, &msg, p.format);
     }
+    // BUG-WFA-07: the arguments are checked against the command table before the gate, so an unknown option or a
+    // missing ID is `invalid_argument` whether or not the command's capability is on. Only words and options are
+    // compared here; nothing is opened, read or written before the gate.
+    if let Err(msg) = check_declared(&p) {
+        return fail(req, ErrorCode::InvalidArgument, &msg, p.format);
+    }
     // D15: a capability whose release gate has not passed refuses before any work unless experimental features are on.
     if let Err(code) = crate::features_cmd::guard(req, &p) {
         return code;
@@ -40,7 +46,7 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         ["entries", "list"] => p.allow(&["scan", "store", "sort", "kind", "parent", "name", "limit", "cursor"], &[]).map(|_| crate::scan_cmd::entries_list(req, &p)),
         ["completion", "print", shell] => p.allow(&[], &[]).map(|_| crate::completion_cmd::print(req, &p, shell)),
         ["completion", "install", shell] => p.allow(&["profile"], &[]).map(|_| crate::completion_cmd::install(req, &p, shell)),
-        ["doctor"] => p.allow(&["store", "export"], &["no-redact"]).map(|_| crate::doctor_cmd::doctor(req, &p)),
+        ["doctor"] => p.allow(&["store", "export"], &["no-redact", "repair-index"]).map(|_| crate::doctor_cmd::doctor(req, &p)),
         ["self", "update"] => p.allow(&["store", "manifest"], &["check"]).map(|_| crate::self_cmd::self_update(req, &p)),
         ["self", "install"] => p.allow(&["store", "dir"], &["add-to-path"]).map(|_| crate::self_cmd::self_install(req, &p)),
         ["self", "uninstall"] => p.allow(&["store", "install-dir"], &["remove-user-data"]).map(|_| crate::self_cmd::self_uninstall(req, &p)),
@@ -129,6 +135,19 @@ pub fn run(req: &str, p: Parsed) -> ExitCode {
         Ok(code) => code,
         Err(msg) => fail(req, ErrorCode::InvalidArgument, &msg, p.format),
     }
+}
+
+/// The options, flags and positional argument of a known command as `args::COMMANDS` declares them (the same
+/// lists the dispatch arms accept; a unit test keeps them equal). Unknown commands are left to the dispatch.
+fn check_declared(p: &Parsed) -> Result<(), String> {
+    let words: Vec<&str> = p.words.iter().map(String::as_str).collect();
+    let Some(spec) = crate::args::spec_for(&words) else { return Ok(()) };
+    if let Some(arg) = spec.arg
+        && words.len() == spec.words.len()
+    {
+        return Err(format!("{} needs {arg}", spec.words.join(" ")));
+    }
+    p.allow(spec.options, spec.flags)
 }
 
 fn capabilities(req: &str, p: &Parsed) -> ExitCode {

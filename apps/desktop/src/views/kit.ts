@@ -7,13 +7,14 @@
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { formatBytes, groupDigits, parseBytes } from '../lib/bytes';
-import { h, icon } from '../lib/dom';
+import { h, icon, live } from '../lib/dom';
 import { words } from '../lib/platform';
 import type { IpcError, Mode, Readiness, ReadinessCheck, ReadinessOp, Tier } from '../lib/types';
 import { MODE_EXPLAIN, MODE_LABEL } from '../lib/words';
 import { MODE_UNDO, UNDO_LABEL, UNDO_SHORT, type Undo } from '../lib/planModel';
 import { copyField, errorLine, errorText, pill, type Tone } from './parts';
 import { learnMore } from './ui';
+import { t } from '../i18n';
 
 type Child = Node | string | null | undefined | false;
 
@@ -21,17 +22,17 @@ type Child = Node | string | null | undefined | false;
 // Three-tier badge
 
 export const TIER_LABEL: Record<Tier, string> = {
-  default_selected: '低风险',
-  review_only: '需审阅',
-  blocked: '已阻止',
+  get default_selected() { return t('kit.tierLabel.default_selected'); },
+  get review_only() { return t('kit.tierLabel.review_only'); },
+  get blocked() { return t('kit.tierLabel.blocked'); },
 };
 
 const TIER_SHAPE: Record<Tier, string> = { default_selected: 'low', review_only: 'review', blocked: 'blocked' };
 
 export const TIER_EXPLAIN: Record<Tier, string> = {
-  default_selected: '规则确认可在本机重新生成。界面仍不会替你预先勾选。',
-  review_only: '可以处理，但可能需要联网重新下载、重新登录或丢失手动放入的文件。请逐项确认。',
-  blocked: '受保护、被版本控制跟踪、正在使用或证据不足。只能查看，不能放入计划。',
+  get default_selected() { return t('kit.tierExplain.default_selected'); },
+  get review_only() { return t('kit.tierExplain.review_only'); },
+  get blocked() { return t('kit.tierExplain.blocked'); },
 };
 
 /** Shape + word for a rule tier (filled circle, half circle, struck square). */
@@ -64,13 +65,13 @@ export function sumSizes(items: { bytes: string | null; unknown?: number }[]): S
 
 /** "1.2 GiB", "至少 1.2 GiB", or "大小未知" — never an exact-looking total over unknown parts. */
 export function atLeast(sum: SizeSum): string {
-  if (sum.unknown > 0 && sum.known === 0n) return '大小未知';
-  if (sum.unknown > 0) return `至少 ${formatBytes(sum.known)}`;
+  if (sum.unknown > 0 && sum.known === 0n) return t('common.sizeUnknown');
+  if (sum.unknown > 0) return t('kit.leastKnown', { known: formatBytes(sum.known) });
   return formatBytes(sum.known);
 }
 
 export function unknownNote(sum: SizeSum): string | null {
-  return sum.unknown > 0 ? `${groupDigits(sum.unknown)} 项大小未知，未计入` : null;
+  return sum.unknown > 0 ? t('kit.unknown', { unknown: sum.unknown }) : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -98,17 +99,17 @@ export function selectionBar(o: SelectionBarOpts): HTMLElement {
   go.addEventListener('click', o.action.onClick);
   return h(
     'div',
-    { class: 'selection-bar', role: 'region', 'aria-label': '选择栏' },
+    { class: 'selection-bar', role: 'region', 'aria-label': t('kit.selectionBar') },
     h(
       'p',
       { class: 'selbar-sum', 'aria-live': 'polite' },
-      h('b', { class: 'num' }, `已选 ${groupDigits(o.count)} 项`),
+      h('b', { class: 'num' }, t('kit.countSelected', { count: o.count })),
       o.sum ? h('span', { class: 'num' }, atLeast(o.sum)) : null,
       unknown ? h('span', { class: 'selbar-unknown' }, unknown) : null,
-      o.sources && o.sources > 1 ? h('span', { class: 'muted' }, `来自 ${o.sources} 个位置，每个位置一份计划`) : null,
+      o.sources && o.sources > 1 ? h('span', { class: 'muted' }, t('kit.sourcesOnePlanPer', { sources: o.sources })) : null,
       o.note ? h('span', { class: 'muted' }, o.note) : null,
     ),
-    h('div', { class: 'selbar-actions' }, h('button', { type: 'button', class: 'quiet', onclick: o.onClear }, '清空选择'), go),
+    h('div', { class: 'selbar-actions' }, h('button', { type: 'button', class: 'quiet', onclick: o.onClear }, t('kit.clearSelection')), go),
   );
 }
 
@@ -126,8 +127,8 @@ export function undoBadge(undo: Undo, label = UNDO_LABEL[undo]): HTMLElement {
 
 /** Words of the mode choice (one table for the language switch). */
 export const MODE_CHOICE_TEXT = {
-  legend: '处理方式',
-  notAllowed: '所选项目中有规则不允许这种方式',
+  get legend() { return t('kit.legend'); },
+  get notAllowed() { return t('kit.notAllowed'); },
 } as const;
 
 export function modeOptions(opts: { name: string; allowed: Mode[]; current: Mode | null; selected: number; onChange: (m: Mode) => void; modes?: Mode[]; id?: (m: Mode) => string }): HTMLElement {
@@ -181,7 +182,7 @@ export function summaryStrip(label: string, cells: SummaryCell[]): HTMLElement {
     'ul',
     { class: 'summary-strip', 'aria-label': label },
     ...cells.map((c) => {
-      const body = [c.mark, h('span', { class: 'ss-count num' }, `${groupDigits(c.count)} 项`), c.size ? h('span', { class: 'ss-size num' }, c.size) : null, c.note ? h('span', { class: 'ss-note' }, c.note) : null];
+      const body = [c.mark, h('span', { class: 'ss-count num' }, t('common.itemsCount', { count: c.count })), c.size ? h('span', { class: 'ss-size num' }, c.size) : null, c.note ? h('span', { class: 'ss-note' }, c.note) : null];
       return h(
         'li',
         { 'data-zero': c.count === 0 ? 'yes' : 'no' },
@@ -207,13 +208,13 @@ export class LongProgress {
   private stageEl: HTMLElement;
   private elapsedEl: HTMLElement;
 
-  constructor(label: string) {
+  constructor(label: () => string) {
     this.stageEl = h('span', { class: 'lp-stage' });
     this.elapsedEl = h('span', { class: 'lp-elapsed num' });
     this.el = h(
       'div',
       { class: 'long-progress', hidden: true },
-      h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': label, 'aria-valuetext': '进行中，总量未知' }),
+      live(h('div', { class: 'indeterminate', role: 'progressbar' }), null, { 'aria-label': label, 'aria-valuetext': () => t('kit.progressTotalUnknown') }),
       h('p', { class: 'lp-line', role: 'status', 'aria-live': 'polite' }, this.stageEl, this.elapsedEl),
     );
   }
@@ -242,7 +243,7 @@ export class LongProgress {
 
   private tick(): void {
     const s = Math.floor((Date.now() - this.started) / 1000);
-    this.elapsedEl.textContent = s >= 1 ? `已用 ${s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`}` : '';
+    this.elapsedEl.textContent = s >= 1 ? t('kit.elapsedP', { p: s >= 60 ? t('kit.floorMinP', { floor: Math.floor(s / 60), p: s % 60 }) : t('common.seconds', { s }) }) : '';
   }
 }
 
@@ -259,45 +260,45 @@ export function readinessWords(forOp?: ReadinessOp): Record<string, CheckWords> 
   const w = words();
   return {
     store: {
-      title: 'CleanManager 数据目录',
-      missing: () => '数据目录不可用，扫描结果和计划无法保存，因此不能开始。',
-      fix: '在设置 › 能力与权限中查看原因；修复后重新打开应用。',
+      title: t('kit.cleanmanagerDataFolder'),
+      missing: () => t('kit.dataFolderUnavailableSo'),
+      fix: t('kit.seeReasonSettingsCapabilities'),
     },
     protection_list: {
-      title: '保护清单',
-      missing: () => '保护清单无法读取。为安全起见，所有写操作都会停止，只能浏览。',
-      fix: '在设置 › 保护清单中查看原因并修复文件。',
+      title: t('common.protectionList'),
+      missing: () => t('kit.protectionListCantRead'),
+      fix: t('kit.seeReasonSettingsProtection'),
     },
     administrator: {
       title: w.admin,
       missing: (op) =>
         op === 'scan' || op === 'purge' || op === 'installer'
-          ? '没有管理员权限：系统保护的文件夹会显示为“未读取”，不会按 0 计算。'
+          ? t('kit.noAdministratorRightsSystem')
           : op === 'startup'
-            ? '没有管理员权限：所有用户共用的启动项只能查看，不能停用或启用。'
+            ? t('kit.noAdministratorRightsStartup')
             : op === 'maintenance'
               ? w.maintAdminMissing
               : op === 'uninstall'
                 ? w.uninstallAdminMissing
                 : op === 'process'
-                  ? '没有管理员权限：其他用户或系统的进程在执行时会被跳过并说明原因。'
-                  : '没有管理员权限：需要管理员的项目会在执行时被跳过并说明原因。',
-      fix: forOp === 'maintenance' ? w.maintAdminFix : `CleanManager 不会自动提权。需要时请关闭后以${w.admin}重新启动。`,
+                  ? t('kit.noAdministratorRightsProcesses')
+                  : t('kit.noAdministratorRightsItems'),
+      fix: forOp === 'maintenance' ? w.maintAdminFix : t('kit.cleanmanagerNeverElevatesOwn', { admin: w.admin }),
     },
     bypass_privileges: {
-      title: '备份/还原特权',
-      missing: () => '未能关闭进程的备份/还原特权。为避免越权读取，部分受限位置会按未读取处理。',
-      fix: '通常无需处理；详情见设置 › 能力与权限。',
+      title: t('kit.backupRestorePrivileges'),
+      missing: () => t('kit.couldntDropProcesssBackup'),
+      fix: t('kit.usuallyNothingSeeSettings'),
     },
     recycle_bin: {
       title: w.bin,
-      missing: () => `有卷没有可用的${w.bin}。选择“${w.moveToBin}”的项目会失败，不会改为永久删除。`,
-      fix: `改用“移入同卷隔离区”，或在系统设置中为该卷启用${w.bin}。`,
+      missing: () => t('kit.volumeNoUsableBin', { bin: w.bin, moveToBin: w.moveToBin }),
+      fix: t('kit.useMoveQuarantineSame', { bin: w.bin }),
     },
     full_disk_access: {
-      title: '完全磁盘访问',
-      missing: () => '缺少完全磁盘访问：受保护的用户数据位置不可读，相关类目会显示为未读取。',
-      fix: '在 系统设置 › 隐私与安全性 › 完全磁盘访问 中允许 CleanManager。',
+      title: t('kit.fullDiskAccess'),
+      missing: () => t('kit.fullDiskAccessMissing'),
+      fix: t('kit.allowCleanmanagerSystemSettings'),
     },
   };
 }
@@ -335,26 +336,26 @@ function readinessDialog(op: ReadinessOp, label: string, gaps: ReadinessCheck[],
       dlg.remove();
       resolve(v);
     };
-    const go = h('button', { type: 'button', class: 'primary', id: 'ready-go', disabled: blocking }, '以当前权限继续');
+    const go = h('button', { type: 'button', class: 'primary', id: 'ready-go', disabled: blocking }, t('kit.continueCurrentPermissions'));
     go.addEventListener('click', () => finish(true));
-    const cancel = h('button', { type: 'button', id: 'ready-cancel' }, '取消');
+    const cancel = h('button', { type: 'button', id: 'ready-cancel' }, t('common.cancel'));
     cancel.addEventListener('click', () => finish(false));
     dlg.addEventListener('cancel', (e) => {
       e.preventDefault();
       finish(false);
     });
     dlg.append(
-      h('div', { class: 'dlg-head' }, h('h2', { id: 'ready-title' }, `开始${label}之前`), h('p', { id: 'ready-lede', class: 'muted' }, blocking ? '下面的问题解决前不能开始。' : '当前权限下可以继续，但有以下影响。任务开始后不会再弹出权限请求。')),
+      h('div', { class: 'dlg-head' }, h('h2', { id: 'ready-title' }, t('kit.beforeStartLabel', { label })), h('p', { id: 'ready-lede', class: 'muted' }, blocking ? t('kit.cantStartUntilProblems') : t('kit.continueCurrentPermissionsEffects'))),
       h(
         'ul',
         { class: 'ready-list' },
         ...gaps.map((g) => {
-          const t = table[g.check_id];
+          const row = table[g.check_id];
           return h(
             'li',
             { 'data-blocking': g.blocking ? 'yes' : 'no' },
             h('span', { class: 'ready-mark', 'aria-hidden': 'true' }, icon(g.blocking ? 'lock' : 'warn')),
-            h('span', { class: 'ready-text' }, h('b', {}, t?.title ?? g.check_id), h('span', {}, t ? t.missing(op) : (g.detail ?? '状态未知')), t ? h('span', { class: 'muted small' }, t.fix) : null),
+            h('span', { class: 'ready-text' }, h('b', {}, row?.title ?? g.check_id), h('span', {}, row ? row.missing(op) : (g.detail ?? t('kit.stateUnknown'))), row ? h('span', { class: 'muted small' }, row.fix) : null),
           );
         }),
       ),
@@ -372,11 +373,11 @@ function readinessDialog(op: ReadinessOp, label: string, gaps: ReadinessCheck[],
 export type GateState = 'in_progress' | 'not_applicable' | 'experimental' | 'cli_only' | 'off';
 
 export const GATE_LABEL: Record<GateState, string> = {
-  in_progress: '开发中',
-  not_applicable: '此平台不适用',
-  experimental: '实验功能',
-  cli_only: '仅命令行',
-  off: '默认关闭',
+  get in_progress() { return t('kit.gateLabel.in_progress'); },
+  get not_applicable() { return t('kit.gateLabel.not_applicable'); },
+  get experimental() { return t('kit.gateLabel.experimental'); },
+  get cli_only() { return t('kit.gateLabel.cli_only'); },
+  get off() { return t('kit.gateLabel.off'); },
 };
 
 const GATE_TONE: Record<GateState, Tone> = { in_progress: 'busy', not_applicable: 'muted', experimental: 'warn', cli_only: 'good', off: 'muted' };
@@ -412,16 +413,16 @@ export function capabilityPage(o: CapabilityOpts): HTMLElement {
     h(
       'div',
       { class: 'cap-grid' },
-      h('section', { class: 'panel cap-does', 'aria-labelledby': `${o.id}-does` }, h('h2', { id: `${o.id}-does` }, '它会做什么'), h('ul', { class: 'cap-list-plain' }, ...o.does.map((d) => h('li', {}, d)))),
+      h('section', { class: 'panel cap-does', 'aria-labelledby': `${o.id}-does` }, h('h2', { id: `${o.id}-does` }, t('kit.what')), h('ul', { class: 'cap-list-plain' }, ...o.does.map((d) => h('li', {}, d)))),
       h(
         'section',
         { class: 'panel cap-why', 'aria-labelledby': `${o.id}-why` },
-        h('h2', { id: `${o.id}-why` }, o.gate === 'not_applicable' ? '为什么这里不提供' : '现在的状态'),
+        h('h2', { id: `${o.id}-why` }, o.gate === 'not_applicable' ? t('kit.whyIsntOfferedHere') : t('kit.currentStatus')),
         h('p', {}, o.why),
-        learnMore(...(o.whyMore ?? []).map((t) => h('p', {}, t)), h('p', { class: 'small' }, `规格 ${o.spec}；发布前验收项 ${o.gateName}。`)),
-        o.safety?.length ? h('h3', {}, '上线后仍然遵守') : null,
+        learnMore(...(o.whyMore ?? []).map((t) => h('p', {}, t)), h('p', { class: 'small' }, t('kit.specSpecReleaseGate', { spec: o.spec, gateName: o.gateName }))),
+        o.safety?.length ? h('h3', {}, t('kit.stillAppliesOnceReleased')) : null,
         o.safety?.length ? h('ul', { class: 'cap-list-plain small' }, ...o.safety.map((s) => h('li', {}, s))) : null,
-        o.cli?.length ? h('h3', {}, o.gate === 'off' ? '在终端中开启' : '现在可以在终端中使用') : null,
+        o.cli?.length ? h('h3', {}, o.gate === 'off' ? t('kit.turnTerminal') : t('kit.availableTerminalNow')) : null,
         ...(o.cli ?? []).map((c) => copyField(c.label, c.command)),
         o.actions?.length ? h('div', { class: 'card-actions' }, ...o.actions) : null,
       ),
@@ -447,15 +448,15 @@ export function gateOffPage(o: GateOffOpts): HTMLElement {
     title: o.title,
     gate: 'off',
     does: o.does,
-    why: '这项功能尚未通过发布前验收，默认关闭，不会读取或更改这台电脑上的任何东西。',
+    why: t('kit.featureHasntPassedRelease'),
     whyMore: [
-      '发布前验收需要两个平台的真机证据；没有通过的功能按发布规则默认关闭。',
-      '如果只想在这台电脑上评估，可以在“设置 › 实验功能”中开启。开启不代表它已通过验收，每项更改仍然需要你审阅计划。',
+      t('kit.releaseGateRequiresEvidence'),
+      t('kit.evaluateComputerOnlyTurn'),
     ],
     spec: o.capability,
     gateName: o.gate,
-    cli: [{ label: '开启实验功能（与桌面端共用同一设置）', command: 'cleanmanager experimental --state on' }],
-    actions: [h('button', { type: 'button', class: 'primary', 'data-open-experimental': '', onclick: o.openSettings }, '打开实验功能设置')],
+    cli: [{ label: t('kit.turnExperimentalFeaturesShared'), command: 'cleanmanager experimental --state on' }],
+    actions: [h('button', { type: 'button', class: 'primary', 'data-open-experimental': '', onclick: o.openSettings }, t('kit.openExperimentalFeaturesSettings'))],
   });
 }
 
@@ -489,12 +490,12 @@ export function stageSteps(label: string, steps: Step[], current: number): HTMLE
 export type Outcome = 'applied' | 'unchanged' | 'attention' | 'skipped' | 'unavailable' | 'failed';
 
 export const OUTCOME_LABEL: Record<Outcome, string> = {
-  applied: '已执行',
-  unchanged: '无需改变',
-  attention: '需要跟进',
-  skipped: '已跳过',
-  unavailable: '不可用',
-  failed: '失败',
+  get applied() { return t('kit.outcomeLabel.applied'); },
+  get unchanged() { return t('kit.outcomeLabel.unchanged'); },
+  get attention() { return t('kit.outcomeLabel.attention'); },
+  get skipped() { return t('kit.outcomeLabel.skipped'); },
+  get unavailable() { return t('kit.outcomeLabel.unavailable'); },
+  get failed() { return t('kit.outcomeLabel.failed'); },
 };
 
 export function outcomeMark(o: Outcome, withLabel = true): HTMLElement {
@@ -502,7 +503,7 @@ export function outcomeMark(o: Outcome, withLabel = true): HTMLElement {
 }
 
 /** All six counts in a fixed order; zero counts stay visible but quiet, so nothing reads as "all done" by omission. */
-export function outcomeTally(counts: Partial<Record<Outcome, number>>, label = '结果'): HTMLElement {
+export function outcomeTally(counts: Partial<Record<Outcome, number>>, label = t('kit.results')): HTMLElement {
   const order: Outcome[] = ['applied', 'unchanged', 'attention', 'skipped', 'unavailable', 'failed'];
   return h(
     'ul',
@@ -520,7 +521,7 @@ export function noticeLine(text: string, tone: 'info' | 'warn' = 'info', onClose
     'div',
     { class: `notice${tone === 'warn' ? ' warn' : ''}`, role: 'status' },
     h('span', {}, text),
-    onClose ? h('button', { type: 'button', class: 'quiet', onclick: onClose }, '知道了') : null,
+    onClose ? h('button', { type: 'button', class: 'quiet', onclick: onClose }, t('common.got')) : null,
   );
 }
 

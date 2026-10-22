@@ -136,7 +136,7 @@ pub(crate) fn run_bounded(exe: &Path, args: &[OsString], cwd: &Path, timeout: Du
     };
     let (stdout, stdout_total) = out.join().unwrap_or_default();
     let (stderr, stderr_total) = err.join().unwrap_or_default();
-    cm_core::debug_trace!("process", "\"{}\" exit={:?} stdout_bytes={stdout_total} stderr_bytes={stderr_total}", exe.display(), status.code());
+    cm_core::debug_trace!("process", "\"{}\" exit={} stdout_bytes={stdout_total} stderr_bytes={stderr_total}", exe.display(), cm_core::trace::exit(status.code()));
     Ok(Ran { exit: status.code(), stdout, stdout_total, stderr, stderr_total })
 }
 
@@ -190,7 +190,10 @@ pub fn run_preview(spec: &AdapterSpec) -> AdapterPreview {
                 }
             } else {
                 p.status = AdapterStatus::Failed;
-                p.reason = Some(format!("exit code {:?}", ran.exit));
+                p.reason = Some(match ran.exit {
+                    Some(code) => format!("exit code {code}"),
+                    None => "ended without an exit code".into(),
+                });
             }
             p.output_summary = summary.trim().to_owned();
         }

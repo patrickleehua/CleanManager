@@ -56,7 +56,7 @@ pub(crate) fn zip(entries: &[(&str, u16)]) -> Vec<u8> {
 fn kind(bytes: &[u8]) -> Option<InstallerKind> {
     match classify(&bytes.to_vec()) {
         Verdict::Installer { kind, .. } => Some(kind),
-        Verdict::NotInstaller { .. } => None,
+        Verdict::NotInstaller { .. } | Verdict::InUse { .. } => None,
     }
 }
 
@@ -181,7 +181,9 @@ struct Fake;
 impl InstallerProbe for Fake {
     fn classify(&self, path: &RawPath) -> Verdict {
         let p = path.lossy().to_lowercase();
-        if p.ends_with(".exe") || p.ends_with(".iso") || p.ends_with(".msi") {
+        if p.contains("held") {
+            Verdict::InUse { reason: "fake: held open without read sharing".into() }
+        } else if p.ends_with(".exe") || p.ends_with(".iso") || p.ends_with(".msi") {
             let kind = if p.ends_with(".iso") { InstallerKind::Iso } else if p.ends_with(".msi") { InstallerKind::Msi } else { InstallerKind::Exe };
             yes(kind, "fake")
         } else {
@@ -197,6 +199,48 @@ impl InstallerProbe for Fake {
     fn in_use(&self, path: &RawPath) -> Option<bool> {
         Some(path.lossy().contains("busy"))
     }
+    fn holders(&self, path: &RawPath) -> Option<Vec<String>> {
+        path.lossy().contains("held.zip").then(|| vec!["powershell.exe (pid 4242)".to_string()])
+    }
+}
+
+/// INC-04 (WFA-58): a file held open without read sharing cannot be recognized, yet it is listed as in use (with its
+/// holder when known) and never becomes plannable; a held file whose name suggests no installer stays out.
+#[test]
+fn a_held_file_is_listed_in_use_with_its_holder_and_is_never_plannable() {
+    let v = view(&["held.zip", "held-unknown-holder.msi", "held-notes.pdf", "ChromeSetup.exe"]);
+    let input = InstallerInput { scan_id: "s", revision: 1, source_label: "downloads", max_depth: 2, apps: &[] };
+    let a = analyze_installers(&v, &input, &AnalysisProtection::default(), &Fake);
+    let names: Vec<String> = a.set.candidates.iter().map(|c| c.path.lossy().rsplit('\\').next().unwrap().to_owned()).collect();
+    assert_eq!(names, ["held.zip", "held-unknown-holder.msi", "ChromeSetup.exe"], "the held pdf is not an installer by any measure");
+    let (zip, zf) = (&a.set.candidates[0], &a.facts[0]);
+    assert_eq!((zip.state, zip.tier, zip.allowed_modes.is_empty()), (CandidateState::PendingEvidence, Tier::ReviewOnly, true));
+    assert!(zip.reasons.iter().any(|r| r.starts_with("in_use:")) && zip.reasons.iter().any(|r| r.starts_with("content_unverified")), "{:?}", zip.reasons);
+    assert_eq!((zf.kind, zf.content_verified, zf.in_use, zf.signer.as_deref()), (InstallerKind::Archive, false, Some(true), None));
+    assert_eq!(zf.holders.as_deref(), Some(&["powershell.exe (pid 4242)".to_string()][..]));
+    assert_eq!(zf.in_use_note().as_deref(), Some("in use by powershell.exe (pid 4242): close it there, then scan again"));
+    assert!(zf.recognition_note().starts_with("not recognized by content: fake: held open"), "{}", zf.recognition_note());
+    assert!(zip.impact.starts_with("unverified archive installer"), "{}", zip.impact);
+    let unknown = &a.facts[1];
+    assert_eq!((unknown.in_use, unknown.holders.clone()), (Some(true), None));
+    assert!(unknown.in_use_note().unwrap().contains("could not be determined"));
+    // Plans never take an unverified row, even when named explicitly.
+    assert!(crate::plan::build_plan(&v, &a.set, std::slice::from_ref(&zip.candidate_id), Mode::Trash, &plan_input()).is_err());
+    let ok = &a.facts[2];
+    assert!(ok.content_verified && ok.in_use_note().is_none() && ok.recognition_note().starts_with("recognized: "));
+}
+
+fn plan_input() -> crate::plan::PlanInput<'static> {
+    crate::plan::PlanInput { plan_id: "p", scope_id: "scope", created_unix: 0, observed_at: "2026-10-22T00:00:00Z", policy_digest: "d" }
+}
+
+#[test]
+fn names_suggest_a_kind_only_for_installer_extensions() {
+    assert_eq!(InstallerKind::suggested_by_name("Setup.EXE"), Some(InstallerKind::Exe));
+    assert_eq!(InstallerKind::suggested_by_name("pkg.appxbundle"), Some(InstallerKind::MsixBundle));
+    assert_eq!(InstallerKind::suggested_by_name("disk.vhdx"), Some(InstallerKind::Vhdx));
+    assert_eq!(InstallerKind::suggested_by_name("report.pdf"), None);
+    assert_eq!(InstallerKind::suggested_by_name("noextension"), None);
 }
 
 #[test]

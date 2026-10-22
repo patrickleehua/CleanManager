@@ -3,6 +3,7 @@
 
 import { middleEllipsis } from '../../lib/display';
 import { h, icon } from '../../lib/dom';
+import { t } from '../../i18n';
 
 export interface PathOpts {
   /** Width budget in units (CJK counts 2). */
@@ -30,13 +31,13 @@ export function pathText(full: string, opts: PathOpts = {}): HTMLElement {
   });
   if (opts.copy) {
     const done = h('span', { class: 'pt-done', 'aria-live': 'polite' });
-    const btn = h('button', { type: 'button', class: 'icon-btn pt-copy', title: '复制完整路径', 'aria-label': `复制完整路径：${full}` }, icon('copy'));
+    const btn = h('button', { type: 'button', class: 'icon-btn pt-copy', title: t('ui.path.copyFullPath'), 'aria-label': t('ui.path.copyFullPathFull', { full }) }, icon('copy'));
     btn.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(full);
-        done.textContent = '已复制';
+        done.textContent = t('common.copied');
       } catch {
-        done.textContent = '无法访问剪贴板，可选中路径后复制';
+        done.textContent = t('ui.path.cantAccessClipboardSelect');
       }
       window.setTimeout(() => (done.textContent = ''), 2200);
     });

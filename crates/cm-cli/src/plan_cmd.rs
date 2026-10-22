@@ -73,11 +73,35 @@ pub fn authorization_record(req: &str, stores: &Stores, plan: &Plan) -> Value {
 
 pub fn plan_record(req: &str, stores: &Stores, plan: &Plan) -> Value {
     let auth = authorization_record(req, stores, plan);
-    record("plan", req, fields(json!({
+    let (now, principal) = (now_unix(), current_principal());
+    // WFA-42: the receipt that authorizes this exact plan, or that authorized it (a used policy receipt or a review
+    // stays the answer after the plan expired); a revoked one never counts.
+    let receipts = stores.audit.receipts_for(&plan.body.plan_id).unwrap_or_default();
+    let by = receipts.iter().find(|r| receipt_valid(r, plan, &principal, now)).or_else(|| {
+        receipts.iter().filter(|r| r.revoked_at.is_none() && r.plan_digest == plan.digest && r.principal == principal).max_by(|a, b| a.created_at.cmp(&b.created_at))
+    });
+    let authorized_by = by.map(|r| json!({
+        "source": r.source,
+        "policy_id": r.policy_id,
+        "policy_version": r.policy_version.map(|v| v.to_string()),
+        "authorized_at": r.created_at,
+    }));
+    let mut rec = record("plan", req, fields(json!({
         "body": plan.body,
         "plan_digest": plan.digest,
         "authorization_status": auth["status"],
-    })))
+        "authorized_by": authorized_by,
+    })));
+    // While a policy could still authorize it: which one would, and why each other one does not (WFA-42/43).
+    if matches!(auth["status"].as_str(), Some("required" | "revoked")) {
+        rec["policy_matches"] = json!(cm_app::execute::policy_matches(stores, plan, &principal, now).unwrap_or_default());
+    }
+    rec
+}
+
+/// PRT-02: no plan is created while the protection list is unusable (BUG-WFA-03).
+pub fn require_protection(req: &str, p: &Parsed, stores: &Stores) -> Result<(), ExitCode> {
+    cm_platform::protection::load(&stores.dir).map(|_| ()).map_err(|e| crate::protect_cmd::unavailable(req, &stores.dir, &e, p.format))
 }
 
 pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
@@ -90,6 +114,9 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
         Ok(s) => s,
         Err(c) => return c,
     };
+    if let Err(c) = require_protection(req, p, &stores) {
+        return c;
+    }
     let set: CandidateSet = match stores.index.candidate_set(set_id).and_then(|v| serde_json::from_value(v).map_err(|e| cm_store::StoreError::IndexCorrupt(e.to_string()))) {
         Ok(s) => s,
         Err(e) => return store_error(req, &e, p.format),
@@ -126,6 +153,10 @@ pub fn plan_create(req: &str, p: &Parsed) -> ExitCode {
         }
     };
     cm_core::debug_trace!("plan", "built plan={} items={} digest={}", plan.body.plan_id, plan.body.items.len(), plan.digest);
+    // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume; refused before the plan is stored.
+    if let Err(c) = crate::trash_cmd::plan_bins_ready(req, p, &set, &selected, mode) {
+        return c;
+    }
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }
@@ -192,7 +223,7 @@ pub fn plan_review(req: &str, p: &Parsed, id: &str) -> ExitCode {
         return fail(req, ErrorCode::PlanStale, "plan expired; create a new plan", p.format);
     }
     let total = plan.body.total_logical().map(|b| b.to_string()).unwrap_or_else(|| "unknown".into());
-    println!("Plan {}  mode={:?}  items={}  logical_bytes={total}", plan.body.plan_id, plan.body.mode, plan.body.items.len());
+    println!("Plan {}  mode={}  items={}  logical_bytes={total}", plan.body.plan_id, plan.body.mode.as_str(), plan.body.items.len());
     println!("Rules: {}", plan.rule_refs.join(", "));
     println!("Expires: {}   Digest: {}", plan.body.expires_at, plan.digest);
     match plan.body.mode {
@@ -292,7 +323,7 @@ pub fn policy_set_state(req: &str, p: &Parsed, id: &str, state: PolicyState) -> 
         return fail(req, ErrorCode::Conflict, "a revoked policy cannot change state; create a new one", p.format);
     }
     if state == PolicyState::Enabled {
-        println!("Policy {}: scope={} mode={:?} rules={}", policy.policy_id, policy.scope_id, policy.mode, policy.rules.join(", "));
+        println!("Policy {}: scope={} mode={} rules={}", policy.policy_id, policy.scope_id, policy.mode.as_str(), policy.rules.join(", "));
         println!("Limits: {} bytes / {} items per plan; {} bytes / {} items per rolling 24 h; expires {}",
             policy.single_max_bytes, policy.single_max_items, policy.window_max_bytes, policy.window_max_items, policy.expires_at);
         match prompt(&format!("Type {} to enable it, anything else to cancel: ", policy.policy_id)) {
@@ -433,7 +464,7 @@ fn v2_summary(plan: &PlanV2) -> bool {
             for (a, m) in shown {
                 let name = m.note.as_deref().unwrap_or("");
                 match a {
-                    PlanAction::StartupToggle(t) => println!("  {}  {:?} {name}  {}  scope={:?}", t.action_id, t.operation, t.definition.as_deref().unwrap_or(""), t.scope),
+                    PlanAction::StartupToggle(t) => println!("  {}  {} {name}  {}  scope={}", t.action_id, t.operation.as_str(), t.definition.as_deref().unwrap_or(""), t.scope.as_str()),
                     PlanAction::RegistryRestore(r) => println!("  {}  recreate {}\\{} : {} unless it exists again", r.action_id, r.hive.as_str(), r.key_path, r.value_name.as_deref().unwrap_or("(key)")),
                     PlanAction::MaintenanceTask(t) => println!(
                         "  {}  {}@{}  {name}{}{}",

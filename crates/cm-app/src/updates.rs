@@ -53,7 +53,10 @@ pub struct UpdateStore {
 }
 
 pub fn load(store: &Path) -> UpdateStore {
-    std::fs::read_to_string(store.join(UPDATES_FILE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    let mut s: UpdateStore = std::fs::read_to_string(store.join(UPDATES_FILE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    // Results saved by an older build keep UPD-01 too (e.g. a Microsoft Store row once stored as `up_to_date`).
+    s.results = std::mem::take(&mut s.results).into_iter().map(UpdateCheck::enforced).collect();
+    s
 }
 
 pub fn save(store: &Path, s: &UpdateStore) -> std::io::Result<()> {
@@ -188,7 +191,7 @@ pub fn plan_updates(i: &PlanInputs<'_>, plan_id: &str, now_unix: i64, policy_dig
         let app = i.apps.iter().find(|a| &a.instance_id == id).ok_or_else(|| UpdatePlanError::UnknownApp(id.clone()))?;
         let route = |route: Route, reason: String, url: Option<String>| Routed { app_instance_id: id.clone(), name: app.name.clone(), route, reason, url };
         if check.state != UpdateState::UpdateAvailable {
-            let why = check.reason.clone().unwrap_or_else(|| format!("no update is available ({:?})", check.state).to_lowercase());
+            let why = check.reason.clone().unwrap_or_else(|| format!("no update is available ({})", check.state.as_str()));
             let url = (check.route == Route::OpenStore).then(|| store_updates_uri(check.channel).to_owned()).or(check.official_url.clone());
             routed.push(route(if check.route == Route::PackageManager { Route::None } else { check.route }, why, url));
             continue;
@@ -293,20 +296,20 @@ pub fn run_update(b: Option<&dyn UpdateBackend>, a: &ToolAdapterAction, m: &Acti
 pub fn describe(a: &ToolAdapterAction, m: &ActionMeta) -> String {
     match m.note.as_deref().and_then(|n| serde_json::from_str::<UpdateTarget>(n).ok()) {
         Some(t) if verified_by_channel(t.channel) => format!(
-            "{}: {} -> {} via {:?} ({}), Homebrew verifies the download's checksum{}",
+            "{}: {} -> {} via {} ({}), Homebrew verifies the download's checksum{}",
             t.name,
             t.from_version.as_deref().unwrap_or("?"),
             t.to_version,
-            t.channel,
+            t.channel.label(),
             a.argv.join(" "),
             t.installed_signer.as_deref().map(|s| format!("; the app must still be signed by {s} afterwards")).unwrap_or_default()
         ),
         Some(t) => format!(
-            "{}: {} -> {} via {:?} ({}), package signer must be {}",
+            "{}: {} -> {} via {} ({}), package signer must be {}",
             t.name,
             t.from_version.as_deref().unwrap_or("?"),
             t.to_version,
-            t.channel,
+            t.channel.label(),
             a.argv.join(" "),
             t.installed_signer.as_deref().unwrap_or("?")
         ),

@@ -10,6 +10,7 @@ import { explainCode } from '../lib/words';
 import { resultText } from '../lib/codes';
 import { words } from '../lib/platform';
 import type { Tone } from './parts';
+import { t } from '../i18n';
 
 /** Most applications in one uninstall plan (the core's limit). */
 export const MAX_BATCH = 20;
@@ -26,23 +27,23 @@ export function batchSelection(items: UninstallApp[], selected: ReadonlySet<stri
 
 /** Words of the plan button for `n` selected applications. */
 export function batchActionText(n: number): string {
-  return n > 1 ? `生成卸载计划并审阅（${n} 个应用，一份计划）` : '生成卸载计划并审阅';
+  return n > 1 ? t('uninstallBatch.createUninstallPlanReview', { n }) : t('uninstallBatch.createUninstallPlanReview2');
 }
 
 /** One application's own result (UNI-11), as a pill. */
 export const APP_OUTCOME: Record<AppOutcomeStatus, { label: string; tone: Tone }> = {
-  completed: { label: '已卸载', tone: 'good' },
-  partial: { label: '已卸载，有残留', tone: 'warn' },
-  failed: { label: '卸载失败', tone: 'bad' },
-  skipped: { label: '没有卸载', tone: 'warn' },
-  not_started: { label: '未开始', tone: 'muted' },
-  unknown: { label: '结果未确认', tone: 'warn' },
-  pending: { label: '等待执行', tone: 'busy' },
+  completed: { get label() { return t('uninstallBatch.appOutcome.completed.label'); }, tone: 'good' },
+  partial: { get label() { return t('uninstallBatch.appOutcome.partial.label'); }, tone: 'warn' },
+  failed: { get label() { return t('uninstallBatch.appOutcome.failed.label'); }, tone: 'bad' },
+  skipped: { get label() { return t('uninstallBatch.appOutcome.skipped.label'); }, tone: 'warn' },
+  not_started: { get label() { return t('uninstallBatch.appOutcome.not_started.label'); }, tone: 'muted' },
+  unknown: { get label() { return t('uninstallBatch.appOutcome.unknown.label'); }, tone: 'warn' },
+  pending: { get label() { return t('uninstallBatch.appOutcome.pending.label'); }, tone: 'busy' },
 };
 
 /** Why an application ended as it did, in words (a code without words reads as such; the raw message never). */
 export function outcomeReason(o: Pick<AppOutcome, 'status' | 'code' | 'message'>): string {
-  if (o.status === 'completed') return '卸载程序已运行，重新检查后安装目录与卸载登记都已不在。';
+  if (o.status === 'completed') return t('uninstallBatch.uninstallerRanRecheckFound');
   return o.code ? resultText(o.code) : explainCode(o.code, o.message);
 }
 
@@ -64,7 +65,7 @@ export function rowsByApp(items: PlanItem[], apps: NonNullable<KindDetail['apps'
     if (g) g.items.push(i);
     else rest.push(i);
   }
-  return rest.length ? [...groups, { app_instance_id: null, name: '其他动作', items: rest }] : groups;
+  return rest.length ? [...groups, { app_instance_id: null, name: t('uninstallBatch.otherActions'), items: rest }] : groups;
 }
 
 /** One application's section of a leftover review. */
@@ -87,7 +88,7 @@ export function leftoverSections(l: Leftovers): LeftoverSection[] {
       name: a.app.name,
       reviewable: a.leftovers_reviewable,
       status: a.status,
-      reason: a.leftovers_reviewable ? outcomeReason(a) : `${outcomeReason(a)} 这个应用仍然安装着，它的${words().leftoverKinds}全部保留，不进入残留计划。`,
+      reason: a.leftovers_reviewable ? outcomeReason(a) : t('uninstallBatch.appStillInstalledSo', { a: outcomeReason(a), leftoverKinds: words().leftoverKinds }),
       objects: ids.length,
       object_ids: ids,
     };
@@ -96,11 +97,11 @@ export function leftoverSections(l: Leftovers): LeftoverSection[] {
 
 /** The title of a leftover review: the application, or how many applications of a batch. */
 export function leftoversTitle(l: Leftovers | null): string {
-  if (!l) return '审阅残留';
-  if (l.app) return `审阅残留：${l.app.name}`;
+  if (!l) return t('common.reviewLeftovers');
+  if (l.app) return t('uninstallBatch.reviewLeftoversName', { name: l.app.name });
   const n = l.apps.length;
   const open = l.apps.filter((a) => a.leftovers_reviewable).length;
-  return open === n ? `审阅残留：${n} 个应用` : `审阅残留：${n} 个应用中的 ${open} 个`;
+  return open === n ? t('uninstallBatch.reviewLeftoversN', { n }) : t('uninstallBatch.reviewLeftoversOpenN', { n, open });
 }
 
 /**

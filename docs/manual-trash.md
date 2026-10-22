@@ -9,7 +9,8 @@
 - 只能把**已发布扫描中的条目**（条目 ID，不接受路径）移到系统回收站。计划种类是 `manual_selection`，动作只有原位 `fs_trash`；不能改成隔离或永久删除（MTR-01）。
 - 这种计划**永远不被预授权策略匹配**：即使启用了覆盖同一范围的清理策略，`plan apply` 仍返回 `needs_approval`（退出 3），只有在终端里对这份计划逐字审阅（`plan review`）才授权。`trash` 命令本身只创建计划，没有任何“直接执行”的参数。
 - 回收站内对象的**永久删除**是另一份单独的计划（`trash purge`，`fs_delete` 且目标限于回收站内），审阅时先要输入 `DELETE` 确认不可恢复，再输入摘要前 8 位（MTR-03）。
-- 卷没有可用回收站（网络卷、回收站被禁用、对象过大）时，**创建计划就失败**，不会降级为永久删除，也没有“直接删除”的替代命令。
+- 卷没有可用回收站（网络卷、该卷在回收站属性中设为“不将文件移到回收站”、组策略“不将删除的文件移到回收站”、系统查询失败）时，**创建计划就失败**：`code: "unsupported"`（退出 7），`message` 以 `trash_unavailable:` 开头并列出受影响的卷与原因，`required_action` 说明先为该卷打开回收站；`trash inspect` 对这样的对象给出 `trashable: false`、`refusal.reason: "trash_unavailable"`。不会降级为永久删除，也没有“直接删除”的替代命令。对象过大等只有执行时才知道的情况，执行时仍以 `trash_unavailable` 失败并保留原文件。规则清理（`clean`/`plan create`/`purge`/`installer`）的 trash 模式同样在建计划时检查，并提示可改用 `--mode quarantine`。
+- 指向受保护系统位置的链接（例如指向 `C:\Windows\System32` 的目录联接）以 `policy_denied`（退出 3）拒绝，`message` 写明链接解析到的受保护位置；解析只读进行，从不经链接写入。指向普通位置的链接仍为 `unsupported`（链接从不移动、也不跟随）。
 
 ## 系统目录为什么只读（MTR-02）
 

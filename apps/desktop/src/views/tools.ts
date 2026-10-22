@@ -4,7 +4,7 @@
 // (Agent, browsing the recycle bin). Writes only ever create plans for the shared review page.
 
 import type { App } from '../main';
-import { formatBytes, groupDigits } from '../lib/bytes';
+import { formatBytes } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
@@ -17,6 +17,7 @@ import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTyp
 import { atLeast, capabilityPage, ensureReady, noticeLine, selectionBar, sumSizes, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, type Tone } from './parts';
 import { issueList, learnMore, techBlock } from './ui';
+import { t } from '../i18n';
 
 interface PageLike {
   el: HTMLElement;
@@ -28,22 +29,22 @@ interface PageLike {
 // 软件 › 启动项
 
 const SOURCE_WORD: Record<string, string> = {
-  run_key: '注册表 Run 项',
-  startup_folder: '启动文件夹',
-  scheduled_task: '计划任务',
-  store_startup_task: '商店应用启动任务',
-  sm_login_item: '登录项',
-  sm_background_item: '后台项目',
+  get run_key() { return t('tools.sourceWord.run_key'); },
+  get startup_folder() { return t('tools.sourceWord.startup_folder'); },
+  get scheduled_task() { return t('tools.sourceWord.scheduled_task'); },
+  get store_startup_task() { return t('tools.sourceWord.store_startup_task'); },
+  get sm_login_item() { return t('tools.sourceWord.sm_login_item'); },
+  get sm_background_item() { return t('tools.sourceWord.sm_background_item'); },
   launchd_user: 'LaunchAgent',
   launchd_system: 'LaunchDaemon',
 };
 
 const STATE_WORD: Record<string, [string, Tone]> = {
-  enabled: ['已启用', 'good'],
-  disabled: ['已停用', 'muted'],
-  broken: ['目标缺失', 'warn'],
-  target_unreachable: ['目标暂不可达', 'warn'],
-  unknown: ['状态未知', 'muted'],
+  get enabled(): [string, Tone] { return [t('tools.stateWord.enabled'), 'good']; },
+  get disabled(): [string, Tone] { return [t('tools.stateWord.disabled'), 'muted']; },
+  get broken(): [string, Tone] { return [t('tools.stateWord.broken'), 'warn']; },
+  get target_unreachable(): [string, Tone] { return [t('tools.stateWord.target_unreachable'), 'warn']; },
+  get unknown(): [string, Tone] { return [t('tools.stateWord.unknown'), 'muted']; },
 };
 
 /** System Settings › General › Login Items & Extensions (macOS 13+): where Service Management items are reviewed. */
@@ -68,22 +69,22 @@ export interface StartupRowView {
 export function startupRow(i: StartupItem, mac = platform() === 'macos'): StartupRowView {
   const state = STATE_WORD[i.state] ?? [i.state, 'muted' as Tone];
   const why = i.protected
-    ? '受保护：只读'
+    ? t('tools.protectedReadOnly')
     : i.toggle_capability === 'permission_required'
-      ? `需要${words().admin}`
+      ? t('common.needsAdmin', { admin: words().admin })
       : i.toggle_capability === 'unsupported'
-        ? '没有可验证的修改方式'
+        ? t('tools.noVerifiableWayChange')
         : i.toggle_capability === 'unverified'
-          ? '修改方式未经验证'
+          ? t('tools.changeMethodNotVerified')
           : null;
   if (!mac) return { name: i.name, state, why, reason: i.reason, stateNote: null, settingsLink: false, showAction: true };
   // Service Management login and background items have no public listing API: one honest row points to System Settings.
   if (!i.target && (i.source === 'sm_background_item' || i.source === 'sm_login_item' || i.definition === LOGIN_ITEMS_URI)) {
     return {
-      name: '登录项与后台项目（Service Management）',
+      name: t('tools.loginItemsBackgroundItems'),
       state,
       why: null,
-      reason: 'macOS 没有公开接口列出通过 Service Management 注册的登录项和后台项目，所以这里列不出它们，也不猜测它们的状态。请在“系统设置 › 通用 › 登录项与扩展”中查看和修改。',
+      reason: t('tools.macosNoPublicInterface'),
       stateNote: null,
       settingsLink: true,
       showAction: false,
@@ -97,9 +98,9 @@ export function startupRow(i: StartupItem, mac = platform() === 'macos'): Startu
   return {
     name: i.name,
     state,
-    why: i.protected ? '受保护：只读' : i.toggle_capability === 'unsupported' ? '只读：在应用自己的设置或系统设置中修改' : why,
+    why: i.protected ? t('tools.protectedReadOnly') : i.toggle_capability === 'unsupported' ? t('tools.readOnlyChangeApps') : why,
     reason: rest || null,
-    stateNote: i.state === 'unknown' ? 'launchd 没有把它列为已加载：可能已在“登录项与扩展”中关闭，或只在其他会话中运行。不会显示为已启用或已停用。' : null,
+    stateNote: i.state === 'unknown' ? t('tools.launchdDoesntListLoaded') : null,
     settingsLink: false,
     showAction: i.toggle_capability !== 'unsupported' && !i.protected,
   };
@@ -147,13 +148,13 @@ export class StartupPage implements PageLike {
 
   private async plan(i: StartupItem, op: 'disable' | 'enable'): Promise<void> {
     if (this.busy) return;
-    if (!(await ensureReady(this.app, 'startup', op === 'disable' ? '停用启动项' : '启用启动项'))) return;
+    if (!(await ensureReady(this.app, 'startup', op === 'disable' ? t('tools.disableStartupItem') : t('tools.enableStartupItem')))) return;
     this.busy = i.startup_item_id;
     this.rowError.delete(i.startup_item_id);
     this.update();
     try {
       const r = await this.app.backend.startupPlan(i.startup_item_id, op);
-      this.app.announce('计划已生成，尚未执行。请审阅后批准');
+      this.app.announce(t('tools.planCreatedNotRun'));
       this.app.openPlan(r.plan_id, 'startup');
     } catch (e) {
       this.rowError.set(i.startup_item_id, toIpcError(e));
@@ -165,58 +166,58 @@ export class StartupPage implements PageLike {
 
   private render(): void {
     const d = this.data;
-    const refresh = h('button', { type: 'button', id: 'startup-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在读取…' : '重新读取');
+    const refresh = h('button', { type: 'button', id: 'startup-refresh', disabled: this.loading }, icon('refresh'), this.loading ? t('common.reading') : t('common.reload'));
     refresh.addEventListener('click', () => void this.load());
     const w = words();
     const mac = platform() === 'macos';
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'startup-title', title: '启动项' }), emptyState('此平台暂不提供', notOnThisPlatform('启动项清单目前只在 Windows 上实现。'), null));
+      replace(this.body, pageHead({ id: 'startup-title', title: t('tools.startupItems') }), emptyState(t('common.notAvailablePlatform'), notOnThisPlatform(t('tools.startupItemListCurrently')), null));
       return;
     }
     replace(
       this.body,
       pageHead({
         id: 'startup-title',
-        title: '启动项',
-        meta: d ? [`${groupDigits(d.items.length)} 项`, d.is_admin ? `以${w.admin}运行` : '以当前用户运行', '只读清单'] : ['只读清单'],
+        title: t('tools.startupItems'),
+        meta: d ? [t('common.itemCount', { length: d.items.length }), d.is_admin ? t('common.runningAdmin', { admin: w.admin }) : t('common.runningCurrentUser'), t('common.readOnlyList')] : [t('common.readOnlyList')],
         actions: [refresh],
       }),
       mac
-        ? noticeLine(`这一版在 macOS 上只读：不停用、启用或删除任何启动项。登录项请在“${w.startupSettings}”中修改。`)
+        ? noticeLine(t('tools.readOnlyMacosVersion', { startupSettings: w.startupSettings }))
         : d && !d.is_admin
-          ? noticeLine(`没有${w.admin}：所有用户共用的启动项只能查看。CleanManager 不会自动提权。`, 'warn')
+          ? noticeLine(t('tools.noAdminStartupItems', { admin: w.admin }), 'warn')
           : null,
       errorLine(this.error),
       d
         ? h(
             'div',
             { class: 'work-layout' },
-            h('div', { class: 'work-main' }, h('section', { class: 'panel', 'aria-labelledby': 'startup-list-title' }, h('h2', { id: 'startup-list-title' }, '登录时启动的程序'), this.table(d.items), this.issues(d))),
+            h('div', { class: 'work-main' }, h('section', { class: 'panel', 'aria-labelledby': 'startup-list-title' }, h('h2', { id: 'startup-list-title' }, t('tools.programsStartSign')), this.table(d.items), this.issues(d))),
             mac
               ? h(
                   'aside',
                   { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
-                  h('h2', { id: 'startup-how' }, '怎样修改'),
-                  h('p', { class: 'small' }, `这一版只列出启动项，不修改。登录项和后台项目在“${w.startupSettings}”中开关；LaunchAgent 和 LaunchDaemon 由安装它们的应用管理。`),
+                  h('h2', { id: 'startup-how' }, t('tools.howChangeThem')),
+                  h('p', { class: 'small' }, t('tools.versionOnlyListsStartup', { startupSettings: w.startupSettings })),
                   this.settingsButton('startup-open-settings'),
-                  learnMore(h('p', {}, '状态来自 launchd：没有加载的作业显示为“状态未知”，不会被猜成已启用或已停用。macOS 自带的作业只读显示。')),
+                  learnMore(h('p', {}, t('tools.stateComesLaunchdJobs'))),
                 )
               : h(
                   'aside',
                   { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
-                  h('h2', { id: 'startup-how' }, '怎样修改'),
-                  h('p', { class: 'small' }, `停用和启用只改系统的启用记录（与${w.startupSettings}相同），不删除程序或它的设置。`),
-                  learnMore(h('p', {}, '每次修改都先生成计划，由你审阅批准后执行；执行前记录原来的状态，可在“活动”中生成还原计划。'), h('p', {}, '安全软件和系统组件只读显示。')),
+                  h('h2', { id: 'startup-how' }, t('tools.howChangeThem')),
+                  h('p', { class: 'small' }, t('tools.disablingEnablingChangeOnly', { startupSettings: w.startupSettings })),
+                  learnMore(h('p', {}, t('tools.everyChangeFirstCreates')), h('p', {}, t('tools.securitySoftwareSystemComponents'))),
                 ),
           )
         : !this.error
-          ? h('p', { class: 'muted', role: 'status' }, '正在读取启动项…')
+          ? h('p', { class: 'muted', role: 'status' }, t('tools.readingStartupItems'))
           : null,
     );
   }
 
   private table(items: StartupItem[]): HTMLElement {
-    if (!items.length) return h('p', { class: 'muted' }, '没有找到启动项。');
+    if (!items.length) return h('p', { class: 'muted' }, t('tools.noStartupItemsFound'));
     const rows = items.map((i) => {
       const v = startupRow(i);
       const [word, tone] = v.state;
@@ -226,7 +227,7 @@ export class StartupPage implements PageLike {
       let act: HTMLElement | null = null;
       if (v.settingsLink) act = this.settingsButton(`${id}-settings`);
       else if (v.showAction) {
-        act = h('button', { type: 'button', class: 'quiet', id: `${id}-act`, disabled: !!why || this.busy !== null || i.state === 'broken' }, op === 'disable' ? '停用…' : '启用…');
+        act = h('button', { type: 'button', class: 'quiet', id: `${id}-act`, disabled: !!why || this.busy !== null || i.state === 'broken' }, op === 'disable' ? t('tools.disable') : t('common.enable'));
         act.addEventListener('click', () => void this.plan(i, op));
       }
       const err = this.rowError.get(i.startup_item_id);
@@ -238,7 +239,7 @@ export class StartupPage implements PageLike {
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, v.name),
           v.settingsLink ? null : h('span', { class: 'obj-path path' }, i.target?.display ?? i.definition),
-          h('span', { class: 'obj-reason muted' }, `${SOURCE_WORD[i.source] ?? i.source} · ${i.scope === 'user' ? '当前用户' : '所有用户'}${i.publisher ? ` · ${i.publisher}` : ' · 发布者未验证'}`),
+          h('span', { class: 'obj-reason muted' }, `${SOURCE_WORD[i.source] ?? i.source} · ${i.scope === 'user' ? t('tools.currentUser') : t('tools.allUsers')}${i.publisher ? ` · ${i.publisher}` : t('tools.publisherNotVerified')}`),
           // A host reason without words is a technical detail; the state and the action column say it in Chinese.
           v.reason && !isRawHostText(v.reason) ? h('span', { class: v.settingsLink ? 'obj-reason' : 'why-not' }, v.reason) : null,
           v.reason && isRawHostText(v.reason) ? techBlock(h('p', { class: 'selectable small' }, v.reason)) : null,
@@ -254,8 +255,8 @@ export class StartupPage implements PageLike {
       h(
         'table',
         { class: 'data-table startup-table' },
-        h('caption', { class: 'sr-only' }, '启动项、状态与可用操作'),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, '程序与来源'), h('th', { scope: 'col', class: 'col-flags' }, '状态'), h('th', { scope: 'col', class: 'col-status' }, '操作'))),
+        h('caption', { class: 'sr-only' }, t('tools.startupItemsStateAvailable')),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, t('tools.programSource')), h('th', { scope: 'col', class: 'col-flags' }, t('tools.state')), h('th', { scope: 'col', class: 'col-status' }, t('common.action')))),
         h('tbody', {}, ...rows),
       ),
     );
@@ -263,7 +264,7 @@ export class StartupPage implements PageLike {
 
   /** macOS: open System Settings › General › Login Items & Extensions (the host opens only that fixed page). */
   private settingsButton(id: string): HTMLElement {
-    const b = h('button', { type: 'button', class: 'quiet', id }, icon('external'), '打开登录项设置');
+    const b = h('button', { type: 'button', class: 'quiet', id }, icon('external'), t('tools.openLoginItemsSettings'));
     b.addEventListener('click', () => void this.openLoginItems());
     return h('span', { class: 'block' }, b, this.settingsError ? h('span', { class: 'form-error', role: 'alert' }, this.settingsError) : null);
   }
@@ -273,7 +274,7 @@ export class StartupPage implements PageLike {
     try {
       if (!(await this.app.backend.openSystemPage('login_items'))) throw new Error('not opened');
     } catch {
-      this.settingsError = `无法打开系统设置。请手动打开“${words().startupSettings}”。`;
+      this.settingsError = t('tools.couldntOpenSystemSettings', { startupSettings: words().startupSettings });
     }
     this.update();
   }
@@ -283,8 +284,8 @@ export class StartupPage implements PageLike {
     return h(
       'details',
       { class: 'issues-details' },
-      h('summary', {}, `未能读取的来源（${d.issues.length}）——清单可能不完整`),
-      issueList(d.issues, { label: '记录的问题' }),
+      h('summary', {}, t('tools.sourcesCouldntReadLength', { length: d.issues.length })),
+      issueList(d.issues, { label: t('common.recordedIssues') }),
     );
   }
 }
@@ -293,82 +294,82 @@ export class StartupPage implements PageLike {
 // 分析 › 空间洞察
 
 const INSIGHT_TITLE: Record<string, [string, string]> = {
-  'windows.hibernation_file': ['休眠文件', '保存休眠和快速启动时的内存内容。'],
-  'windows.page_file': ['分页文件', '虚拟内存，由系统按需调整大小。'],
-  'windows.swap_file': ['应用交换文件', '商店应用挂起时使用的交换空间。'],
-  'windows.component_store': ['组件存储（WinSxS）', 'Windows 组件与更新的存储；资源管理器显示的大小包含硬链接，并非实际占用。'],
-  'windows.shadow_storage': ['还原点与卷影副本', '系统还原点和卷影复制使用的空间。'],
-  'windows.wsl_disk': ['WSL 虚拟磁盘', '在 WSL 中删除文件不会自动缩小这个磁盘文件。'],
-  'windows.docker_disk': ['Docker 数据磁盘', '镜像、容器和卷所在的虚拟磁盘。'],
-  'windows.hyperv_disks': ['Hyper-V 虚拟磁盘', '虚拟机的磁盘文件。'],
-  'windows.previous_installation': ['旧版 Windows（Windows.old）', '升级后保留的旧系统，用于回退。'],
-  'windows.delivery_optimization_cache': ['传递优化缓存', 'Windows 更新的点对点分发缓存。'],
-  'macos.local_snapshots': ['本地快照', 'Time Machine 等在启动磁盘上保留的 APFS 本地快照；系统不报告它们占用的空间。'],
-  'macos.docker_disk': ['Docker 磁盘映像', 'Docker Desktop 的镜像、容器和卷所在的磁盘映像。'],
-  'macos.orbstack_disk': ['OrbStack 数据映像', 'OrbStack 的容器与虚拟机数据。'],
-  'macos.parallels_vms': ['Parallels 虚拟机', '虚拟机包及其磁盘。'],
-  'macos.vmware_vms': ['VMware 虚拟机', '虚拟机包及其磁盘。'],
-  'macos.utm_vms': ['UTM 虚拟机', '位于受保护的应用容器中，未读取大小。'],
-  'macos.lima_vms': ['Lima 虚拟机', '轻量 Linux 虚拟机的磁盘与状态。'],
-  'macos.colima_vms': ['Colima 虚拟机', 'Colima 容器运行时虚拟机的磁盘与状态。'],
-  'macos.device_backups': ['设备备份', 'iPhone/iPad 的本地备份；读取需要“完全磁盘访问权限”。'],
-  'macos.swap': ['交换文件', '内存不足时系统使用的交换空间，由系统管理。'],
-  'macos.purgeable_space': ['可清除空间（估算）', '系统可在需要时自动释放的空间，按“重要用途可用容量”减去可用容量估算。'],
-  old_downloads: ['旧下载', '下载文件夹中较久未修改的文件。'],
+  get 'windows.hibernation_file'(): [string, string] { return [t('tools.insightTitle.windows.hibernation_file.title'), t('tools.insightTitle.windows.hibernation_file.note')]; },
+  get 'windows.page_file'(): [string, string] { return [t('tools.insightTitle.windows.page_file.title'), t('tools.insightTitle.windows.page_file.note')]; },
+  get 'windows.swap_file'(): [string, string] { return [t('tools.insightTitle.windows.swap_file.title'), t('tools.insightTitle.windows.swap_file.note')]; },
+  get 'windows.component_store'(): [string, string] { return [t('tools.insightTitle.windows.component_store.title'), t('tools.insightTitle.windows.component_store.note')]; },
+  get 'windows.shadow_storage'(): [string, string] { return [t('tools.insightTitle.windows.shadow_storage.title'), t('tools.insightTitle.windows.shadow_storage.note')]; },
+  get 'windows.wsl_disk'(): [string, string] { return [t('tools.insightTitle.windows.wsl_disk.title'), t('tools.insightTitle.windows.wsl_disk.note')]; },
+  get 'windows.docker_disk'(): [string, string] { return [t('tools.insightTitle.windows.docker_disk.title'), t('tools.insightTitle.windows.docker_disk.note')]; },
+  get 'windows.hyperv_disks'(): [string, string] { return [t('tools.insightTitle.windows.hyperv_disks.title'), t('tools.insightTitle.windows.hyperv_disks.note')]; },
+  get 'windows.previous_installation'(): [string, string] { return [t('tools.insightTitle.windows.previous_installation.title'), t('tools.insightTitle.windows.previous_installation.note')]; },
+  get 'windows.delivery_optimization_cache'(): [string, string] { return [t('tools.insightTitle.windows.delivery_optimization_cache.title'), t('tools.insightTitle.windows.delivery_optimization_cache.note')]; },
+  get 'macos.local_snapshots'(): [string, string] { return [t('tools.insightTitle.macos.local_snapshots.title'), t('tools.insightTitle.macos.local_snapshots.note')]; },
+  get 'macos.docker_disk'(): [string, string] { return [t('tools.insightTitle.macos.docker_disk.title'), t('tools.insightTitle.macos.docker_disk.note')]; },
+  get 'macos.orbstack_disk'(): [string, string] { return [t('tools.insightTitle.macos.orbstack_disk.title'), t('tools.insightTitle.macos.orbstack_disk.note')]; },
+  get 'macos.parallels_vms'(): [string, string] { return [t('tools.insightTitle.macos.parallels_vms.title'), t('tools.insightTitle.macos.parallels_vms.note')]; },
+  get 'macos.vmware_vms'(): [string, string] { return [t('tools.insightTitle.macos.vmware_vms.title'), t('tools.insightTitle.macos.vmware_vms.note')]; },
+  get 'macos.utm_vms'(): [string, string] { return [t('tools.insightTitle.macos.utm_vms.title'), t('tools.insightTitle.macos.utm_vms.note')]; },
+  get 'macos.lima_vms'(): [string, string] { return [t('tools.insightTitle.macos.lima_vms.title'), t('tools.insightTitle.macos.lima_vms.note')]; },
+  get 'macos.colima_vms'(): [string, string] { return [t('tools.insightTitle.macos.colima_vms.title'), t('tools.insightTitle.macos.colima_vms.note')]; },
+  get 'macos.device_backups'(): [string, string] { return [t('tools.insightTitle.macos.device_backups.title'), t('tools.insightTitle.macos.device_backups.note')]; },
+  get 'macos.swap'(): [string, string] { return [t('tools.insightTitle.macos.swap.title'), t('tools.insightTitle.macos.swap.note')]; },
+  get 'macos.purgeable_space'(): [string, string] { return [t('tools.insightTitle.macos.purgeable_space.title'), t('tools.insightTitle.macos.purgeable_space.note')]; },
+  get old_downloads(): [string, string] { return [t('tools.insightTitle.old_downloads.title'), t('tools.insightTitle.old_downloads.note')]; },
 };
 
 const CARD_OF: Record<string, string> = {
-  'windows.wsl_disk': '虚拟机与容器',
-  'windows.docker_disk': '虚拟机与容器',
-  'windows.hyperv_disks': '虚拟机与容器',
-  'windows.shadow_storage': '还原点',
-  'windows.hibernation_file': '系统文件',
-  'windows.page_file': '系统文件',
-  'windows.swap_file': '系统文件',
-  'windows.component_store': '组件存储',
-  'windows.previous_installation': '旧版系统',
-  'windows.delivery_optimization_cache': '更新缓存',
-  'macos.local_snapshots': '还原点',
-  'macos.docker_disk': '虚拟机与容器',
-  'macos.orbstack_disk': '虚拟机与容器',
-  'macos.parallels_vms': '虚拟机与容器',
-  'macos.vmware_vms': '虚拟机与容器',
-  'macos.utm_vms': '虚拟机与容器',
-  'macos.lima_vms': '虚拟机与容器',
-  'macos.colima_vms': '虚拟机与容器',
-  'macos.device_backups': '设备备份',
-  'macos.swap': '系统文件',
-  'macos.purgeable_space': '可清除空间',
-  old_downloads: '旧下载',
+  get 'windows.wsl_disk'() { return t('tools.cardOf.windows.wsl_disk'); },
+  get 'windows.docker_disk'() { return t('tools.cardOf.windows.docker_disk'); },
+  get 'windows.hyperv_disks'() { return t('tools.cardOf.windows.hyperv_disks'); },
+  get 'windows.shadow_storage'() { return t('tools.cardOf.windows.shadow_storage'); },
+  get 'windows.hibernation_file'() { return t('tools.cardOf.windows.hibernation_file'); },
+  get 'windows.page_file'() { return t('tools.cardOf.windows.page_file'); },
+  get 'windows.swap_file'() { return t('tools.cardOf.windows.swap_file'); },
+  get 'windows.component_store'() { return t('tools.cardOf.windows.component_store'); },
+  get 'windows.previous_installation'() { return t('tools.cardOf.windows.previous_installation'); },
+  get 'windows.delivery_optimization_cache'() { return t('tools.cardOf.windows.delivery_optimization_cache'); },
+  get 'macos.local_snapshots'() { return t('tools.cardOf.macos.local_snapshots'); },
+  get 'macos.docker_disk'() { return t('tools.cardOf.macos.docker_disk'); },
+  get 'macos.orbstack_disk'() { return t('tools.cardOf.macos.orbstack_disk'); },
+  get 'macos.parallels_vms'() { return t('tools.cardOf.macos.parallels_vms'); },
+  get 'macos.vmware_vms'() { return t('tools.cardOf.macos.vmware_vms'); },
+  get 'macos.utm_vms'() { return t('tools.cardOf.macos.utm_vms'); },
+  get 'macos.lima_vms'() { return t('tools.cardOf.macos.lima_vms'); },
+  get 'macos.colima_vms'() { return t('tools.cardOf.macos.colima_vms'); },
+  get 'macos.device_backups'() { return t('tools.cardOf.macos.device_backups'); },
+  get 'macos.swap'() { return t('tools.cardOf.macos.swap'); },
+  get 'macos.purgeable_space'() { return t('tools.cardOf.macos.purgeable_space'); },
+  get old_downloads() { return t('tools.cardOf.old_downloads'); },
 };
 
 /** DIN-03 cards: known size or unknown, and when it was observed. */
 export function insightCards(items: Insight[]): { title: string; size: string; observed: string | null; count: number }[] {
   const cards = new Map<string, Insight[]>();
   for (const i of items) {
-    const c = CARD_OF[i.kind] ?? '其他';
+    const c = CARD_OF[i.kind] ?? t('common.other');
     cards.set(c, [...(cards.get(c) ?? []), i]);
   }
   return [...cards.entries()].map(([title, members]) => {
     const sum = sumSizes(members.map((m) => ({ bytes: m.logical_bytes })));
     const observed = members.map((m) => m.observed_at).filter((x): x is string => !!x).sort()[0] ?? null;
-    return { title, size: sum.known === 0n && sum.unknown ? '大小未知' : atLeast(sum), observed, count: members.length };
+    return { title, size: sum.known === 0n && sum.unknown ? t('common.sizeUnknown') : atLeast(sum), observed, count: members.length };
   });
 }
 
 /** DIN-03 overview card titles by kind (the host's cards: known size or unknown, count, oldest observation). */
 export const CARD_TITLE: Record<string, string> = {
-  old_downloads: '旧下载',
-  virtual_machines: '虚拟机与容器',
-  snapshots: '还原点与快照',
-  system_files: '系统文件',
-  component_store: '组件存储',
-  previous_installation: '旧版系统',
-  update_cache: '更新缓存',
-  developer_tools: '开发工具缓存',
-  model_libraries: 'AI 模型库',
-  device_backups: '设备备份',
-  purgeable_space: '可清除空间（估算）',
+  get old_downloads() { return t('tools.cardTitle.old_downloads'); },
+  get virtual_machines() { return t('tools.cardTitle.virtual_machines'); },
+  get snapshots() { return t('tools.cardTitle.snapshots'); },
+  get system_files() { return t('tools.cardTitle.system_files'); },
+  get component_store() { return t('tools.cardTitle.component_store'); },
+  get previous_installation() { return t('tools.cardTitle.previous_installation'); },
+  get update_cache() { return t('tools.cardTitle.update_cache'); },
+  get developer_tools() { return t('tools.cardTitle.developer_tools'); },
+  get model_libraries() { return t('tools.cardTitle.model_libraries'); },
+  get device_backups() { return t('tools.cardTitle.device_backups'); },
+  get purgeable_space() { return t('tools.cardTitle.purgeable_space'); },
 };
 
 /** One overview card as shown: never a partial sum presented as the total. */
@@ -377,13 +378,13 @@ export function privacyPending(note: string | null | undefined): boolean {
   return !!note && note.includes('permission_cause=privacy_prompt_pending');
 }
 
-export const PRIVACY_PENDING_SIZE = '等待 macOS 授权';
-export const PRIVACY_PENDING_TEXT = 'macOS 没有及时答复读取请求，可能正在显示“想要访问……”的隐私对话框。请在对话框中选择允许或不允许，然后点“重新测量”。在此之前大小未知，不按 0 计算。';
+export const privacyPendingSize = () => t('tools.privacyPendingSize');
+export const privacyPendingText = () => t('tools.privacyPendingText');
 
 export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; count: number | null; observed: string | null; pending: boolean } {
   const pending = c.logical_bytes === null && privacyPending(c.size_note);
-  const size = pending ? PRIVACY_PENDING_SIZE : c.logical_bytes === null ? (c.count !== null ? `${c.count} 个` : '大小未知') : formatBytes(c.logical_bytes);
-  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: pending ? PRIVACY_PENDING_TEXT : c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at, pending };
+  const size = pending ? privacyPendingSize() : c.logical_bytes === null ? (c.count !== null ? t('tools.countItems', { count: c.count }) : t('common.sizeUnknown')) : formatBytes(c.logical_bytes);
+  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: pending ? privacyPendingText() : c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at, pending };
 }
 
 const OLD_DAYS = 90;
@@ -443,7 +444,7 @@ export class InsightsPage implements PageLike {
     if (this.dlSelected.has(d.item_id)) this.dlSelected.delete(d.item_id);
     else this.dlSelected.set(d.item_id, d);
     this.createError = null;
-    this.app.announce(this.dlSelected.has(d.item_id) ? `已选择 ${d.name}` : `已取消选择 ${d.name}`);
+    this.app.announce(this.dlSelected.has(d.item_id) ? t('common.selectedName', { name: d.name }) : t('common.deselectedName', { name: d.name }));
     this.update();
   }
 
@@ -456,7 +457,7 @@ export class InsightsPage implements PageLike {
     try {
       const r = await this.app.backend.downloadsTrashPlan([...this.dlSelected.keys()]);
       this.dlSelected.clear();
-      this.app.announce('计划已生成，尚未执行。请审阅后批准');
+      this.app.announce(t('tools.planCreatedNotRun'));
       this.app.openPlan(r.plan_id, 'insights');
     } catch (e) {
       this.createError = toIpcError(e);
@@ -468,17 +469,17 @@ export class InsightsPage implements PageLike {
 
   private render(): void {
     const d = this.data;
-    const refresh = h('button', { type: 'button', id: 'insights-refresh' }, icon('refresh'), '重新测量');
+    const refresh = h('button', { type: 'button', id: 'insights-refresh' }, icon('refresh'), t('tools.measureAgain'));
     refresh.addEventListener('click', () => ((this.data = null), (this.overview = null), this.update(), void this.load()));
     const ov = this.overview;
     // Some location is still waiting for a macOS privacy prompt: say so once, above the cards.
     const waiting = !!ov?.cards.some((c) => c.logical_bytes === null && privacyPending(c.size_note)) || !!d?.items.some((i) => i.logical_bytes === null && privacyPending(i.size_note)) || privacyPending(ov?.downloads?.note);
     replace(
       this.body,
-      pageHead({ id: 'insights-title', title: '空间洞察', meta: d ? [`观测于 ${formatTime(d.observed_at)}`, '系统对象只读说明，没有删除入口'] : ['系统对象只读说明，没有删除入口'], actions: [refresh] }),
+      pageHead({ id: 'insights-title', title: t('tools.spaceInsights'), meta: d ? [t('tools.measuredObserved', { observed_at: formatTime(d.observed_at) }), t('tools.systemObjectsReadOnly')] : [t('tools.systemObjectsReadOnly')], actions: [refresh] }),
       errorLine(this.error),
-      waiting ? noticeLine(`正在等待 macOS 授权。${PRIVACY_PENDING_TEXT}`, 'warn') : null,
-      d && !d.supported ? emptyState('此平台暂不提供', notOnThisPlatform('空间洞察目前只在 Windows 上实现。'), null) : null,
+      waiting ? noticeLine(t('tools.waitingMacosPermissionPrivacy', { text: privacyPendingText() }), 'warn') : null,
+      d && !d.supported ? emptyState(t('common.notAvailablePlatform'), notOnThisPlatform(t('tools.spaceInsightsCurrentlyImplemented')), null) : null,
       d && d.supported
         ? h(
             'div',
@@ -486,7 +487,7 @@ export class InsightsPage implements PageLike {
             ov && ov.cards.length
               ? h(
                   'ul',
-                  { class: 'insight-cards', 'aria-label': '按类别汇总' },
+                  { class: 'insight-cards', 'aria-label': t('tools.totalsCategory') },
                   ...ov.cards.map((c) => {
                     const v = overviewCard(c);
                     return h(
@@ -494,25 +495,25 @@ export class InsightsPage implements PageLike {
                       { class: `icard${v.pending ? ' pending' : ''}`, 'data-kind': c.kind },
                       h('span', { class: 'icard-title' }, v.title),
                       h('span', { class: 'icard-size num' }, v.size),
-                      h('span', { class: 'icard-meta muted' }, [v.count !== null && c.logical_bytes !== null ? `${v.count} 个对象` : null, v.observed ? formatTime(v.observed) : null].filter(Boolean).join(' · ')),
+                      h('span', { class: 'icard-meta muted' }, [v.count !== null && c.logical_bytes !== null ? t('tools.countObjects', { count: v.count }) : null, v.observed ? formatTime(v.observed) : null].filter(Boolean).join(' · ')),
                       v.note ? h('span', { class: 'icard-meta muted' }, v.note) : null,
                     );
                   }),
                 )
               : h(
                   'ul',
-                  { class: 'insight-cards', 'aria-label': '按类别汇总' },
+                  { class: 'insight-cards', 'aria-label': t('tools.totalsCategory') },
                   ...insightCards(d.items).map((c) =>
-                    h('li', { class: 'icard' }, h('span', { class: 'icard-title' }, c.title), h('span', { class: 'icard-size num' }, c.size), h('span', { class: 'icard-meta muted' }, `${c.count} 个对象${c.observed ? ` · ${formatTime(c.observed)}` : ''}`)),
+                    h('li', { class: 'icard' }, h('span', { class: 'icard-title' }, c.title), h('span', { class: 'icard-size num' }, c.size), h('span', { class: 'icard-meta muted' }, t('tools.countP', { count: c.count, p: c.observed ? ` · ${formatTime(c.observed)}` : '' }))),
                   ),
                 ),
             errorLine(this.ovError),
             this.downloadsPanel(),
-            h('p', { class: 'muted small' }, '下面这些对象由系统或其所属工具管理。CleanManager 只解释它们是什么、由谁管理，并给出官方工具的用法；不会运行这些命令，也不提供删除。'),
+            h('p', { class: 'muted small' }, t('tools.objectsBelowManagedSystem')),
             ...d.items.map((i) => this.item(i)),
           )
         : !this.error
-          ? h('p', { class: 'muted', role: 'status' }, '正在测量已知的大型系统对象…如果 macOS 询问是否允许访问，请回答对话框。')
+          ? h('p', { class: 'muted', role: 'status' }, t('tools.measuringKnownLargeSystem'))
           : null,
       this.dlBar(),
     );
@@ -521,16 +522,16 @@ export class InsightsPage implements PageLike {
   private downloadsPanel(): HTMLElement {
     const ov = this.overview;
     const dl = ov?.downloads ?? null;
-    if (!ov) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small', role: 'status' }, this.ovError ? '' : '正在列出下载文件夹中较久未修改的文件…'));
-    if (!dl) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, '旧下载'), h('p', { class: 'muted small' }, '没有找到下载文件夹。'));
+    if (!ov) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, t('tools.oldDownloads')), h('p', { class: 'muted small', role: 'status' }, this.ovError ? '' : t('tools.listingFilesDownloadsFolder')));
+    if (!dl) return h('section', { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' }, h('h2', { id: 'dl-title' }, t('tools.oldDownloads')), h('p', { class: 'muted small' }, t('tools.noDownloadsFolderFound')));
     // An unreadable or pending folder: neither the file count nor the size is known (never "0 files").
     const known = dl.total_logical_bytes !== null;
     const pending = !known && privacyPending(dl.note);
-    const files = dl.item_count === null ? '文件数未知' : `${groupDigits(dl.item_count)} 个文件`;
-    const summary = known ? `${files}，共 ${formatBytes(dl.total_logical_bytes as string)}` : pending ? PRIVACY_PENDING_SIZE : '文件数与大小未知';
+    const files = dl.item_count === null ? t('tools.fileCountUnknown') : t('tools.itemCount', { item_count: dl.item_count });
+    const summary = known ? t('tools.filesFormatbytesTotal', { files, formatBytes: formatBytes(dl.total_logical_bytes as string) }) : pending ? privacyPendingSize() : t('tools.fileCountSizeUnknown');
     const rows = dl.items.map((x) => {
       const id = `dl-${x.item_id}`;
-      const check = h('input', { type: 'checkbox', id: `${id}-check`, 'aria-label': `选择 ${x.name}` }) as HTMLInputElement;
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, 'aria-label': t('common.selectName', { name: x.name }) }) as HTMLInputElement;
       check.checked = this.dlSelected.has(x.item_id);
       check.addEventListener('change', () => this.toggleDownload(x));
       return h(
@@ -542,19 +543,19 @@ export class InsightsPage implements PageLike {
           { class: 'col-object' },
           h('label', { for: `${id}-check`, class: 'obj-name' }, x.name),
           h('span', { class: 'obj-path path' }, x.path_display),
-          x.installer_like ? h('span', { class: 'obj-reason' }, h('span', { class: 'row-tag' }, '像安装包'), '也可以在“清理 › 安装包”中按内容审阅') : null,
+          x.installer_like ? h('span', { class: 'obj-reason' }, h('span', { class: 'row-tag' }, t('tools.looksLikeInstaller')), t('tools.alsoReviewContentClean')) : null,
         ),
         h('td', { class: 'col-size num', title: exactTitle(x.logical_bytes) }, formatBytes(x.logical_bytes)),
-        h('td', { class: 'col-when' }, `${groupDigits(x.age_days)} 天前`, h('span', { class: 'why-not' }, formatTime(x.modified_at))),
+        h('td', { class: 'col-when' }, t('tools.ageDays', { age_days: x.age_days }), h('span', { class: 'why-not' }, formatTime(x.modified_at))),
       );
     });
     return h(
       'section',
       { class: 'panel dl-panel', 'aria-labelledby': 'dl-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'dl-title' }, `旧下载：超过 ${dl.older_than_days} 天没有修改`), h('span', { class: 'muted small num' }, summary)),
-      h('p', { class: 'muted small' }, `只供审阅：没有预先勾选任何文件，按大小从大到小排列。勾选的文件会先生成“${words().moveToBin}”计划，由你审阅批准后才移动。`),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'dl-title' }, t('tools.oldDownloadsNotModified', { older_than_days: dl.older_than_days })), h('span', { class: 'muted small num' }, summary)),
+      h('p', { class: 'muted small' }, t('tools.reviewOnlyNoFiles', { moveToBin: words().moveToBin })),
       dl.root_display ? h('p', { class: 'path small muted' }, dl.root_display) : null,
-      dl.note ? noticeLine(pending ? PRIVACY_PENDING_TEXT : dl.note, 'warn') : null,
+      dl.note ? noticeLine(pending ? privacyPendingText() : dl.note, 'warn') : null,
       dl.items.length
         ? h(
             'div',
@@ -562,15 +563,15 @@ export class InsightsPage implements PageLike {
             h(
               'table',
               { class: 'data-table ctable dl-table' },
-              h('caption', { class: 'sr-only' }, '下载文件夹中较久未修改的文件，按大小排序'),
-              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '文件'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col', class: 'col-when' }, '上次修改'))),
+              h('caption', { class: 'sr-only' }, t('tools.filesDownloadsFolderNot')),
+              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('common.file')), h('th', { scope: 'col', class: 'col-size' }, t('common.logicalSize')), h('th', { scope: 'col', class: 'col-when' }, t('tools.lastModified')))),
               h('tbody', {}, ...rows),
             ),
           )
         : known
-          ? h('p', { class: 'small' }, `没有超过 ${dl.older_than_days} 天没有修改的文件。`)
+          ? h('p', { class: 'small' }, t('tools.noFilesUnmodifiedMore', { older_than_days: dl.older_than_days }))
           : null,
-      dl.item_count !== null && dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, `显示最大的 ${groupDigits(dl.items.length)} 个，共 ${groupDigits(dl.item_count)} 个；合计包括全部文件。`) : null,
+      dl.item_count !== null && dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, t('tools.showingLargestLengthItem', { length: dl.items.length, item_count: dl.item_count })) : null,
       errorLine(this.createError),
     );
   }
@@ -582,18 +583,18 @@ export class InsightsPage implements PageLike {
       sum: sumSizes(items.map((i) => ({ bytes: i.logical_bytes }))),
       onClear: () => {
         this.dlSelected.clear();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
-      action: { id: 'dl-bar-go', text: this.creating ? '正在冻结计划…' : `${words().moveToBin}…`, disabled: this.creating, onClick: () => void this.trashDownloads() },
+      action: { id: 'dl-bar-go', text: this.creating ? t('tools.creatingPlan') : `${words().moveToBin}…`, disabled: this.creating, onClick: () => void this.trashDownloads() },
     });
   }
 
   private item(i: Insight): HTMLElement {
     const [title, explain] = INSIGHT_TITLE[i.kind] ?? [i.title, i.explanation];
     const pending = i.logical_bytes === null && privacyPending(i.size_note);
-    const size = pending ? PRIVACY_PENDING_SIZE : i.logical_bytes === null ? '大小未知' : formatBytes(i.logical_bytes);
-    const note = pending ? PRIVACY_PENDING_TEXT : i.size_note;
+    const size = pending ? privacyPendingSize() : i.logical_bytes === null ? t('common.sizeUnknown') : formatBytes(i.logical_bytes);
+    const note = pending ? privacyPendingText() : i.size_note;
     return h(
       'section',
       { class: 'panel insight', 'aria-labelledby': `ins-${i.insight_id}` },
@@ -601,15 +602,15 @@ export class InsightsPage implements PageLike {
         'div',
         { class: 'insight-head' },
         h('div', {}, h('h2', { id: `ins-${i.insight_id}` }, title), i.path ? h('p', { class: 'path muted small' }, i.path.display) : null),
-        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, `${i.count} 个`) : null, note ? h('small', {}, note) : null),
+        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, t('tools.countItems', { count: i.count })) : null, note ? h('small', {}, note) : null),
       ),
       h('p', {}, explain),
       ...i.guidance.map((g) =>
         h(
           'div',
           { class: 'guidance' },
-          h('p', { class: 'small' }, h('b', {}, g.tool), g.requires_admin ? `（需要${words().admin}）` : '', '：', g.impact),
-          copyField('官方用法（CleanManager 不会替你运行）', g.steps),
+          h('p', { class: 'small' }, h('b', {}, g.tool), g.requires_admin ? t('tools.needsAdmin', { admin: words().admin }) : '', t('tools.colon'), g.impact),
+          copyField(t('tools.officialUsageCleanmanagerWont'), g.steps),
         ),
       ),
     );
@@ -618,7 +619,7 @@ export class InsightsPage implements PageLike {
 
 /** One sustained-CPU alert in words (STS-05). */
 export function alertText(a: CpuAlert): string {
-  return `持续高占用：${a.name}（PID ${a.pid}）在 ${a.window_seconds} 秒内一直不低于整机处理器的 ${a.threshold_percent}%（最低 ${a.min_cpu_percent.toFixed(0)}%）`;
+  return t('tools.sustainedHighCpuName', { name: a.name, pid: a.pid, window_seconds: a.window_seconds, threshold_percent: a.threshold_percent, toFixed: a.min_cpu_percent.toFixed(0) });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -629,7 +630,7 @@ function metric(s: StatusSnapshot, name: string): StatusMetric | undefined {
 }
 
 function valueText(m: StatusMetric | undefined): string {
-  if (!m || m.value === null || m.availability !== 'available') return '不可用';
+  if (!m || m.value === null || m.availability !== 'available') return t('common.unavailable');
   switch (m.unit) {
     case 'percent':
       return `${m.value.toFixed(m.value < 10 ? 1 : 0)}%`;
@@ -640,7 +641,7 @@ function valueText(m: StatusMetric | undefined): string {
     case 'celsius':
       return `${m.value.toFixed(0)} °C`;
     case 'rpm':
-      return `${Math.round(m.value)} 转/分`;
+      return t('tools.valueRpm', { value: Math.round(m.value) });
     default:
       return String(m.value);
   }
@@ -658,7 +659,7 @@ export interface MetricTile {
 
 /** Words of the status page that are not data (one table for the language switch). */
 export const STATUS_TEXT = {
-  noReading: '系统没有提供这个读数',
+  get noReading() { return t('tools.noReading'); },
 } as const;
 
 /**
@@ -669,7 +670,7 @@ export function metricTiles(s: StatusSnapshot, mac = platform() === 'macos'): Me
   const tile = (label: string, name: string, extra?: string | null): MetricTile => {
     const m = metric(s, name);
     const available = !!m && m.availability === 'available';
-    const reason = m && !available ? metricReason(m.reason ?? '不可用') : null;
+    const reason = m && !available ? metricReason(m.reason ?? t('common.unavailable')) : null;
     const raw = reason !== null && isRawHostText(reason) ? reason : null;
     return { label, value: valueText(m), note: reason === null ? (extra ?? '') : raw ? STATUS_TEXT.noReading : reason, available, raw };
   };
@@ -677,46 +678,46 @@ export function metricTiles(s: StatusSnapshot, mac = platform() === 'macos'): Me
   const diskTotal = metric(s, 'disk.system.total_bytes');
   const cycles = metric(s, 'battery.cycle_count');
   const tiles = [
-    tile('处理器', 'cpu.total_percent', metric(s, 'cpu.logical_count') ? `${metric(s, 'cpu.logical_count')!.value} 个逻辑处理器` : null),
-    tile('内存已用', 'memory.used_percent', memTotal?.value ? `共 ${valueText(memTotal)}，可用 ${valueText(metric(s, 'memory.available_bytes'))}` : null),
-    tile('系统盘可用', 'disk.system.free_bytes', diskTotal?.value ? `${valueText(metric(s, 'disk.system.free_percent'))}，共 ${valueText(diskTotal)}` : null),
-    tile('磁盘繁忙', 'disk.busy_percent', `读 ${valueText(metric(s, 'disk.read_bytes_per_sec'))} · 写 ${valueText(metric(s, 'disk.write_bytes_per_sec'))}`),
-    tile('最高温度', 'thermal.max_zone_celsius'),
-    tile('显卡温度', 'gpu.temperature_celsius'),
-    tile('电量', 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? '正在使用电源' : '使用电池'),
-    tile('电池健康', 'battery.health_percent', mac && cycles?.availability === 'available' && cycles.value !== null ? `相对设计容量，已循环 ${cycles.value} 次` : '相对设计容量'),
+    tile(t('common.cpu'), 'cpu.total_percent', metric(s, 'cpu.logical_count') ? t('tools.logicalProcessors', { value: metric(s, 'cpu.logical_count')!.value }) : null),
+    tile(t('common.memoryUsed'), 'memory.used_percent', memTotal?.value ? t('tools.memtotalTotalValuetextAvailable', { memTotal: valueText(memTotal), valueText: valueText(metric(s, 'memory.available_bytes')) }) : null),
+    tile(t('common.systemDiskFree'), 'disk.system.free_bytes', diskTotal?.value ? t('tools.valuetextDisktotalTotal', { valueText: valueText(metric(s, 'disk.system.free_percent')), diskTotal: valueText(diskTotal) }) : null),
+    tile(t('tools.diskBusy'), 'disk.busy_percent', t('tools.readValuetextWriteValuetext2', { valueText: valueText(metric(s, 'disk.read_bytes_per_sec')), valueText2: valueText(metric(s, 'disk.write_bytes_per_sec')) })),
+    tile(t('tools.highestTemperature'), 'thermal.max_zone_celsius'),
+    tile(t('tools.gpuTemperature'), 'gpu.temperature_celsius'),
+    tile(t('common.batteryLevel'), 'battery.charge_percent', metric(s, 'battery.on_ac_power')?.value ? t('tools.powerAdapter') : t('common.battery')),
+    tile(t('tools.batteryHealth'), 'battery.health_percent', mac && cycles?.availability === 'available' && cycles.value !== null ? t('tools.designCapacityValue', { value: cycles.value }) : t('tools.designCapacity')),
   ];
   if (!mac) return tiles;
   const zombies = metric(s, 'process.zombie_count');
   const z = zombies?.availability === 'available' ? zombies.value : null;
   tiles.push(
-    tile('风扇', 'fan.rpm'),
-    tile('进程', 'process.count', z === null ? (zombies?.reason ? metricReason(zombies.reason) : null) : z > 0 ? `其中 ${z} 个僵尸进程（已退出、等待父进程回收，不占用处理器和内存）` : '没有僵尸进程'),
+    tile(t('tools.fans'), 'fan.rpm'),
+    tile(t('common.processes'), 'process.count', z === null ? (zombies?.reason ? metricReason(zombies.reason) : null) : z > 0 ? t('tools.zExitedWaitingParent', { z }) : t('tools.noZombieProcesses')),
   );
   return tiles;
 }
 
-const DIMENSION_LABEL: Record<string, string> = { cpu: '处理器', memory: '内存', disk: '系统盘空间', thermal: '温度', io: '磁盘繁忙' };
+const DIMENSION_LABEL: Record<string, string> = { get cpu() { return t('tools.dimensionLabel.cpu'); }, get memory() { return t('tools.dimensionLabel.memory'); }, get disk() { return t('tools.dimensionLabel.disk'); }, get thermal() { return t('tools.dimensionLabel.thermal'); }, get io() { return t('tools.dimensionLabel.io'); } };
 
 const DIAGNOSIS_LABEL: Record<string, string> = {
-  low_free_space: '系统盘可用空间偏低',
-  disk_health_warning: '系统盘报告可能故障，请立即备份',
-  high_cpu: '处理器占用很高',
-  memory_pressure: '内存紧张',
-  battery_low: '电量低且未充电',
-  battery_worn: '电池容量明显衰减',
-  high_temperature: '温度偏高',
-  heavy_io: '磁盘持续繁忙',
+  get low_free_space() { return t('tools.diagnosisLabel.low_free_space'); },
+  get disk_health_warning() { return t('tools.diagnosisLabel.disk_health_warning'); },
+  get high_cpu() { return t('tools.diagnosisLabel.high_cpu'); },
+  get memory_pressure() { return t('tools.diagnosisLabel.memory_pressure'); },
+  get battery_low() { return t('tools.diagnosisLabel.battery_low'); },
+  get battery_worn() { return t('tools.diagnosisLabel.battery_worn'); },
+  get high_temperature() { return t('tools.diagnosisLabel.high_temperature'); },
+  get heavy_io() { return t('tools.diagnosisLabel.heavy_io'); },
 };
 
-const NET_CLASS_WORD: Record<string, string> = { physical: '物理网卡', tunnel: '隧道', virtual: '虚拟网卡', unknown: '无法分类' };
+const NET_CLASS_WORD: Record<string, string> = { get physical() { return t('tools.netClassWord.physical'); }, get tunnel() { return t('tools.netClassWord.tunnel'); }, get virtual() { return t('tools.netClassWord.virtual'); }, get unknown() { return t('tools.netClassWord.unknown'); } };
 
 /** What the network total covers, in words (STS-07). */
 export function networkScope(n: NetworkTotals): string {
-  if (n.classification === 'unavailable') return '无法区分网卡类型：合计是所有网卡之和，隧道或虚拟交换机的流量可能被重复计算。';
-  if (n.may_double_count) return '合计包含无法分类的网卡，隧道或虚拟交换机的流量可能被重复计算。';
-  const loop = n.loopback_excluded ? '，已排除回环' : '';
-  return `合计只计物理网卡${loop}；隧道和虚拟网卡单独列出，不计入合计。`;
+  if (n.classification === 'unavailable') return t('tools.adapterTypesCantTold');
+  if (n.may_double_count) return t('tools.totalIncludesUnclassifiedAdapters');
+  const loop = n.loopback_excluded ? t('tools.excludingLoopback') : '';
+  return t('tools.totalCountsPhysicalAdapters', { loop });
 }
 
 export class StatusPage implements PageLike {
@@ -768,7 +769,7 @@ export class StatusPage implements PageLike {
       this.snap = r.value;
       if (r.value.alerts?.length) {
         this.alerts = [...r.value.alerts, ...this.alerts].slice(0, 5);
-        this.app.announce(r.value.alerts.map((x) => alertText(x)).join('；'));
+        this.app.announce(r.value.alerts.map((x) => alertText(x)).join(t('common.clauseSep')));
       }
       this.error = null;
     } catch (e) {
@@ -781,7 +782,7 @@ export class StatusPage implements PageLike {
     const refreshChanged = next.refreshSeconds !== this.prefs.refreshSeconds;
     // The process sort belongs to the process page: keep whatever it stored meanwhile.
     this.prefs = sanitize({ ...next, processSort: loadPrefs().processSort });
-    this.prefsNote = savePrefs(this.prefs) ? null : '这台电脑不允许保存显示设置；本次打开期间仍然生效。';
+    this.prefsNote = savePrefs(this.prefs) ? null : t('tools.computerDoesntAllowSaving');
     if (refreshChanged) this.schedule();
     this.app.announce(said);
     this.update();
@@ -789,27 +790,27 @@ export class StatusPage implements PageLike {
 
   private render(): void {
     const s = this.snap;
-    const pause = h('button', { type: 'button', id: 'status-pause', 'aria-pressed': this.paused ? 'true' : 'false' }, this.paused ? '继续刷新' : '暂停刷新');
+    const pause = h('button', { type: 'button', id: 'status-pause', 'aria-pressed': this.paused ? 'true' : 'false' }, this.paused ? t('tools.resumeRefresh') : t('tools.pauseRefresh'));
     pause.addEventListener('click', () => {
       this.paused = !this.paused;
       this.schedule();
       this.update();
     });
-    const customize = h('button', { type: 'button', id: 'status-prefs-toggle', 'aria-expanded': this.prefsOpen ? 'true' : 'false', 'aria-controls': 'status-prefs' }, icon('settings'), '显示设置');
+    const customize = h('button', { type: 'button', id: 'status-prefs-toggle', 'aria-expanded': this.prefsOpen ? 'true' : 'false', 'aria-controls': 'status-prefs' }, icon('settings'), t('tools.displaySettings'));
     customize.addEventListener('click', () => {
       this.prefsOpen = !this.prefsOpen;
       this.update();
     });
     if (s && !s.supported) {
-      replace(this.body, pageHead({ id: 'status-title', title: '系统状态' }), emptyState('此平台暂不提供', notOnThisPlatform('状态采样目前只在 Windows 上实现。'), null));
+      replace(this.body, pageHead({ id: 'status-title', title: t('tools.systemStatus') }), emptyState(t('common.notAvailablePlatform'), notOnThisPlatform(t('tools.statusSamplingCurrentlyImplemented')), null));
       return;
     }
     replace(
       this.body,
       pageHead({
         id: 'status-title',
-        title: '系统状态',
-        meta: s?.sampled_at ? [`采样于 ${formatTime(s.sampled_at)}`, s.stale ? '数据已过期' : this.paused ? '已暂停' : `每 ${this.prefs.refreshSeconds} 秒刷新`] : [],
+        title: t('tools.systemStatus'),
+        meta: s?.sampled_at ? [t('common.sampledSampled', { sampled_at: formatTime(s.sampled_at) }), s.stale ? t('tools.dataStale') : this.paused ? t('tools.paused') : t('tools.refreshesEveryRefreshseconds', { refreshSeconds: this.prefs.refreshSeconds })] : [],
         actions: [customize, pause],
       }),
       this.prefsOpen ? this.prefsPanel() : null,
@@ -819,10 +820,10 @@ export class StatusPage implements PageLike {
           'div',
           { class: 'notice warn alert-line', role: 'status' },
           h('span', {}, alertText(x)),
-          h('span', { class: 'alert-actions' }, h('button', { type: 'button', class: 'quiet', onclick: () => (this.app.store.set({ processFocus: x.pid }), this.app.navigate('processes')) }, '查看进程'), h('button', { type: 'button', class: 'quiet', onclick: () => ((this.alerts = this.alerts.filter((_, j) => j !== i)), this.update()) }, '知道了')),
+          h('span', { class: 'alert-actions' }, h('button', { type: 'button', class: 'quiet', onclick: () => (this.app.store.set({ processFocus: x.pid }), this.app.navigate('processes')) }, t('tools.viewProcesses')), h('button', { type: 'button', class: 'quiet', onclick: () => ((this.alerts = this.alerts.filter((_, j) => j !== i)), this.update()) }, t('common.got'))),
         ),
       ),
-      s ? this.view(s) : !this.error ? h('p', { class: 'muted', role: 'status' }, '正在采样…') : null,
+      s ? this.view(s) : !this.error ? h('p', { class: 'muted', role: 'status' }, t('common.sampling')) : null,
     );
   }
 
@@ -831,12 +832,12 @@ export class StatusPage implements PageLike {
     const refresh = h(
       'fieldset',
       { class: 'seg' },
-      h('legend', { class: 'sr-only' }, '刷新间隔'),
+      h('legend', { class: 'sr-only' }, t('tools.refreshInterval')),
       ...REFRESH_SECONDS.map((sec) => {
         const input = h('input', { type: 'radio', name: 'status-refresh', id: `status-refresh-${sec}`, value: String(sec) }) as HTMLInputElement;
         input.checked = p.refreshSeconds === sec;
-        input.addEventListener('change', () => this.setPrefs({ ...p, refreshSeconds: sec }, `改为每 ${sec} 秒刷新`));
-        return h('label', { for: `status-refresh-${sec}` }, input, h('span', {}, `${sec} 秒`));
+        input.addEventListener('change', () => this.setPrefs({ ...p, refreshSeconds: sec }, t('tools.refreshingEverySec', { sec })));
+        return h('label', { for: `status-refresh-${sec}` }, input, h('span', {}, t('tools.sec', { sec })));
       }),
     );
     const shownCount = p.order.length - p.hidden.length;
@@ -846,14 +847,14 @@ export class StatusPage implements PageLike {
       box.checked = shown;
       // At least one panel stays visible, so the page never turns blank.
       box.disabled = shown && shownCount === 1;
-      box.addEventListener('change', () => this.setPrefs(setShown(p, panel, box.checked), `${box.checked ? '显示' : '隐藏'}${PANEL_LABEL[panel]}`));
+      box.addEventListener('change', () => this.setPrefs(setShown(p, panel, box.checked), box.checked ? t('tools.panelShown', { panel: PANEL_LABEL[panel] }) : t('tools.panelHidden', { panel: PANEL_LABEL[panel] })));
       const move = (delta: -1 | 1) => {
         const id = `status-${delta < 0 ? 'up' : 'down'}-${panel}`;
         const edge = delta < 0 ? i === 0 : i === p.order.length - 1;
-        const b = h('button', { type: 'button', class: 'icon-btn small-btn', id, disabled: edge, 'aria-label': `${PANEL_LABEL[panel]}${delta < 0 ? '上移' : '下移'}`, title: delta < 0 ? '上移' : '下移' }, icon(delta < 0 ? 'up' : 'down'));
+        const b = h('button', { type: 'button', class: 'icon-btn small-btn', id, disabled: edge, 'aria-label': delta < 0 ? t('tools.panelMoveUp', { panel: PANEL_LABEL[panel] }) : t('tools.panelMoveDown', { panel: PANEL_LABEL[panel] }), title: delta < 0 ? t('tools.moveUp2') : t('tools.moveDown2') }, icon(delta < 0 ? 'up' : 'down'));
         b.addEventListener('click', () => {
           const next = movePanel(p, panel, delta);
-          this.setPrefs(next, `${PANEL_LABEL[panel]}移到第 ${next.order.indexOf(panel) + 1} 位`);
+          this.setPrefs(next, t('tools.pMovedPositionP2', { p: PANEL_LABEL[panel], p2: next.order.indexOf(panel) + 1 }));
           // At the new edge this button is disabled; keep focus on the row's other move button.
           const now = document.getElementById(id) as HTMLButtonElement | null;
           if (now?.disabled) document.getElementById(`status-${delta < 0 ? 'down' : 'up'}-${panel}`)?.focus();
@@ -867,14 +868,14 @@ export class StatusPage implements PageLike {
         h('span', { class: 'pref-move' }, move(-1), move(1)),
       );
     });
-    const reset = h('button', { type: 'button', class: 'quiet', id: 'status-prefs-reset' }, '恢复默认');
-    reset.addEventListener('click', () => this.setPrefs({ ...DEFAULT_PREFS }, '显示设置已恢复默认'));
+    const reset = h('button', { type: 'button', class: 'quiet', id: 'status-prefs-reset' }, t('tools.resetDefaults'));
+    reset.addEventListener('click', () => this.setPrefs({ ...DEFAULT_PREFS }, t('tools.displaySettingsResetDefaults')));
     return h(
       'section',
       { class: 'panel status-prefs', id: 'status-prefs', 'aria-labelledby': 'status-prefs-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'status-prefs-title' }, '显示设置'), reset),
-      h('div', { class: 'pref-grid' }, h('div', {}, h('h3', {}, '面板与顺序'), h('ol', { class: 'pref-panels' }, ...rows)), h('div', {}, h('h3', {}, '刷新间隔'), refresh, h('p', { class: 'muted small' }, '进程列表的排序在“进程”页选择，也会记住。'))),
-      this.prefsNote ? noticeLine(this.prefsNote, 'warn') : h('p', { class: 'muted small' }, '设置只保存在这台电脑的本应用中，下次打开时按上次的样子显示。'),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'status-prefs-title' }, t('tools.displaySettings')), reset),
+      h('div', { class: 'pref-grid' }, h('div', {}, h('h3', {}, t('tools.panelsOrder')), h('ol', { class: 'pref-panels' }, ...rows)), h('div', {}, h('h3', {}, t('tools.refreshInterval')), refresh, h('p', { class: 'muted small' }, t('tools.processListsSortOrder')))),
+      this.prefsNote ? noticeLine(this.prefsNote, 'warn') : h('p', { class: 'muted small' }, t('tools.settingsSavedOnlyApp')),
     );
   }
 
@@ -889,9 +890,9 @@ export class StatusPage implements PageLike {
     return h(
       'section',
       { class: 'panel health', 'aria-labelledby': 'health-title' },
-      h('h2', { id: 'health-title' }, '健康分'),
+      h('h2', { id: 'health-title' }, t('tools.healthScore')),
       h('p', { class: 'health-score num' }, hl?.score === null || hl?.score === undefined ? '—' : String(hl.score), h('small', {}, '/ 100')),
-      h('p', { class: 'muted small' }, '只反映当前的负载、空间与温度，不代表需要清理。'),
+      h('p', { class: 'muted small' }, t('tools.reflectsOnlyCurrentLoad')),
       hl
         ? h(
             'ul',
@@ -902,9 +903,9 @@ export class StatusPage implements PageLike {
               return h(
                 'li',
                 { 'data-low': d.score !== null && d.score < 60 ? 'yes' : 'no' },
-                h('span', { class: 'dim-label' }, DIMENSION_LABEL[d.dimension] ?? d.dimension, h('small', { class: 'muted' }, `权重 ${hl.weights[d.dimension] ?? '—'}`)),
+                h('span', { class: 'dim-label' }, DIMENSION_LABEL[d.dimension] ?? d.dimension, h('small', { class: 'muted' }, t('tools.weightP', { p: hl.weights[d.dimension] ?? '—' }))),
                 bar,
-                h('span', { class: 'dim-score num' }, d.score === null ? '无数据' : String(d.score)),
+                h('span', { class: 'dim-score num' }, d.score === null ? t('tools.noData') : String(d.score)),
               );
             }),
           )
@@ -914,7 +915,7 @@ export class StatusPage implements PageLike {
             'div',
             { class: 'notice warn diag-line' },
             h('span', { title: DIAGNOSIS_LABEL[diag.code] ? null : diag.message }, DIAGNOSIS_LABEL[diag.code] ?? unknownCodeText(diag.code)),
-            diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, '去分析磁盘') : null,
+            diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, t('common.analyzeDisk')) : null,
           )
         : null,
     );
@@ -924,7 +925,7 @@ export class StatusPage implements PageLike {
     return h(
       'section',
       { class: 'panel metrics', 'aria-labelledby': 'metrics-title' },
-      h('h2', { id: 'metrics-title' }, '指标'),
+      h('h2', { id: 'metrics-title' }, t('tools.metrics')),
       h(
         'ul',
         { class: 'mtiles' },
@@ -932,16 +933,16 @@ export class StatusPage implements PageLike {
           h('li', { class: 'mtile', 'data-available': t.available ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, t.label), h('span', { class: 'mtile-value num' }, t.value), h('span', { class: 'mtile-note muted', title: t.raw ?? null }, t.note)),
         ),
       ),
-      h('p', { class: 'muted small' }, '不可用的指标会写明原因，从不显示为 0。'),
+      h('p', { class: 'muted small' }, t('tools.unavailableMetricsStateReason')),
     );
   }
 
   private networkPanel(s: StatusSnapshot): HTMLElement {
     const n = s.network;
-    const head = h('h2', { id: 'network-title' }, '网络');
+    const head = h('h2', { id: 'network-title' }, t('tools.network'));
     if (!n) {
       const m = metric(s, 'network.received_bytes_per_sec');
-      return h('section', { class: 'panel network', 'aria-labelledby': 'network-title' }, head, h('p', { class: 'muted small' }, m?.reason ?? '这次采样没有网络数据。'));
+      return h('section', { class: 'panel network', 'aria-labelledby': 'network-title' }, head, h('p', { class: 'muted small' }, m?.reason ?? t('tools.noNetworkDataSample')));
     }
     const rate = (v: number) => `${formatBytes(BigInt(Math.round(v)))}/s`;
     const row = (i: { name: string; class: string; received_bytes_per_sec: number; sent_bytes_per_sec: number }) =>
@@ -954,7 +955,7 @@ export class StatusPage implements PageLike {
           'table',
           { class: 'data-table net-table' },
           h('caption', { class: 'sr-only' }, caption),
-          h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, '网卡'), h('th', { scope: 'col' }, '类型'), h('th', { scope: 'col', class: 'col-num-s' }, '下载'), h('th', { scope: 'col', class: 'col-num-s' }, '上传'))),
+          h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, t('tools.adapter')), h('th', { scope: 'col' }, t('common.type')), h('th', { scope: 'col', class: 'col-num-s' }, t('tools.download')), h('th', { scope: 'col', class: 'col-num-s' }, t('tools.upload')))),
           h('tbody', {}, ...items.map(row)),
         ),
       );
@@ -967,14 +968,14 @@ export class StatusPage implements PageLike {
       h(
         'ul',
         { class: 'mtiles' },
-        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? '下载合计（可能重复）' : '下载合计'), h('span', { class: 'mtile-value num' }, rate(n.received_bytes_per_sec))),
-        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? '上传合计（可能重复）' : '上传合计'), h('span', { class: 'mtile-value num' }, rate(n.sent_bytes_per_sec))),
+        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? t('tools.totalDownloadMayDouble') : t('tools.totalDownload')), h('span', { class: 'mtile-value num' }, rate(n.received_bytes_per_sec))),
+        h('li', { class: 'mtile' }, h('span', { class: 'mtile-label' }, n.may_double_count ? t('tools.totalUploadMayDouble') : t('tools.totalUpload')), h('span', { class: 'mtile-value num' }, rate(n.sent_bytes_per_sec))),
       ),
       n.may_double_count ? noticeLine(networkScope(n), 'warn') : h('p', { class: 'muted small' }, networkScope(n)),
-      n.counted.length ? table('计入合计的网卡', n.counted) : h('p', { class: 'muted small' }, '没有正在工作的物理网卡。'),
-      n.separate.length ? h('h3', { class: 'net-sub' }, '单独列出，不计入合计') : null,
-      active.length ? table('隧道与虚拟网卡', active) : null,
-      idle.length ? h('p', { class: 'muted small' }, `另有 ${idle.length} 个当前无流量：${idle.map((i) => `${i.name}（${NET_CLASS_WORD[i.class] ?? i.class}）`).join('、')}`) : null,
+      n.counted.length ? table(t('tools.adaptersTotal'), n.counted) : h('p', { class: 'muted small' }, t('tools.noActivePhysicalAdapters')),
+      n.separate.length ? h('h3', { class: 'net-sub' }, t('tools.listedSeparatelyNotTotal')) : null,
+      active.length ? table(t('tools.tunnelsVirtualAdapters'), active) : null,
+      idle.length ? h('p', { class: 'muted small' }, t('tools.lengthNoTrafficNow', { length: idle.length, join: idle.map((i) => t('common.nameP', { name: i.name, p: NET_CLASS_WORD[i.class] ?? i.class })).join(t('common.listSep')) })) : null,
     );
   }
 }
@@ -1005,15 +1006,15 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'agent', Capabi
         gate: 'cli_only',
         spec: 'MTR-01..05',
         gateName: 'G1',
-        does: [w().binListDoes, `把选中的项目冻结成“永久删除”计划；审阅时需要额外确认不可恢复。`, `在“分析 › 磁盘”中选择对象，生成“${w().moveToBin}”计划。`],
-        why: `手选${w().moveToBin}已经可用：在“分析 › 磁盘”选中对象后点“${w().moveToBin}…”。`,
-        whyMore: [`浏览和永久删除${w().bin}项目目前只在命令行提供，因为它需要一次单独的不可恢复确认，桌面版的确认界面还在开发。`],
-        safety: ['只按扫描中的条目编号选择对象，界面从不传递路径。', `目标卷没有可用的${w().bin}时计划失败，绝不改为永久删除。`, '受保护的子项会被列出并阻止整个文件夹进入计划。', ...(w().binPutBack ? [w().binPutBack!] : [])],
+        does: [w().binListDoes, t('tools.freezesSelectedItemsDelete'), t('tools.selectObjectsAnalyzeDisk', { moveToBin: w().moveToBin })],
+        why: t('tools.handPickedMovetobinAlready', { moveToBin: w().moveToBin, moveToBin2: w().moveToBin }),
+        whyMore: [t('tools.browsingBinPermanentlyDeleting', { bin: w().bin })],
+        safety: [t('tools.objectsSelectedOnlyEntry'), t('tools.ifTargetVolumeNo', { bin: w().bin }), t('tools.protectedChildrenListedKeep'), ...(w().binPutBack ? [w().binPutBack!] : [])],
         cli: [
-          { label: `列出${w().bin}`, command: 'cleanmanager trash list' },
-          { label: '生成永久删除计划', command: 'cleanmanager trash purge --item ID' },
+          { label: t('tools.listBin', { bin: w().bin }), command: 'cleanmanager trash list' },
+          { label: t('tools.createPermanentDeletePlan'), command: 'cleanmanager trash purge --item ID' },
         ],
-        actions: [h('button', { type: 'button', class: 'primary', onclick: () => app.navigate('disk') }, `去磁盘中选择要${w().moveToBin}的对象`)],
+        actions: [h('button', { type: 'button', class: 'primary', onclick: () => app.navigate('disk') }, t('tools.pickObjectsDiskMovetobin', { moveToBin: w().moveToBin }))],
       }),
     ),
     agent: new CapabilityPageView('agent', () =>
@@ -1021,16 +1022,16 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'agent', Capabi
         id: 'agent',
         title: 'Agent',
         gate: 'cli_only',
-        spec: 'CLI-01..12（agent-cli）',
+        spec: t('tools.cli0112Agent'),
         gateName: 'G1',
-        does: ['让脚本和 AI Agent 用 JSON 调用同样的扫描、分析、计划与执行。', '计划编号与摘要在桌面和终端之间通用：在任一入口批准都对另一入口有效。', '自动化调用不能批准计划，只能等待人工批准或已启用的有限策略。'],
-        why: 'Agent 接口就是命令行的 JSON 协议，现在可以直接使用。',
-        whyMore: ['桌面里没有单独的 Agent 运行界面，以免绕过人工审阅。'],
+        does: [t('tools.letsScriptsAiAgents'), t('tools.planIdsDigestsWork'), t('tools.automatedCallsCantApprove')],
+        why: t('tools.agentInterfaceCommandLines'),
+        whyMore: [t('tools.desktopNoSeparateAgent')],
         cli: [
-          { label: '查看能力', command: 'cleanmanager capabilities --json' },
-          { label: '只读预览清理候选', command: 'cleanmanager clean --dry-run --json' },
-          { label: '只读发现构建产物', command: 'cleanmanager purge --dry-run --json' },
-          { label: '审阅一份计划（人工）', command: 'cleanmanager plan review PLAN_ID' },
+          { label: t('tools.showCapabilities'), command: 'cleanmanager capabilities --json' },
+          { label: t('tools.previewCleanupCandidatesRead'), command: 'cleanmanager clean --dry-run --json' },
+          { label: t('tools.findBuildArtifactsRead'), command: 'cleanmanager purge --dry-run --json' },
+          { label: t('tools.reviewPlanPerson'), command: 'cleanmanager plan review PLAN_ID' },
         ],
       }),
     ),

@@ -197,8 +197,11 @@ mod discovery {
             .iter()
             .flat_map(|(_, _, a)| a.set.candidates.iter().zip(&a.facts).map(move |(c, f)| (a.set.candidate_set_id.as_str(), c, f)))
             .map(|(set_id, c, f)| {
-                let mut notes = vec![format!("recognized: {}", f.evidence), format!("candidate set: {set_id}")];
-                notes.push(plat::signer_note(f.kind, f.signer.as_deref()));
+                let mut notes = vec![f.recognition_note(), format!("candidate set: {set_id}")];
+                notes.extend(f.in_use_note());
+                if f.content_verified {
+                    notes.push(plat::signer_note(f.kind, f.signer.as_deref()));
+                }
                 if let Some(h) = &f.installed_hint {
                     notes.push(h.clone());
                 }

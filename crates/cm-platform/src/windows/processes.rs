@@ -35,6 +35,11 @@ fn raw(path: &str) -> Option<RawPath> {
     RawPath::windows(std::ffi::OsStr::new(path).encode_wide().collect()).ok()
 }
 
+/// A creation time (FILETIME ticks) as the RFC 3339 UTC time people read (`started_at_utc`).
+pub fn start_utc(ticks: u64) -> String {
+    cm_core::time::utc_from_unix(cm_core::time::filetime_to_unix(ticks))
+}
+
 /// An owned process handle.
 struct Proc(HANDLE);
 
@@ -327,6 +332,7 @@ pub fn list_with(window: Duration, verify: bool) -> Result<Vec<ProcessFacts>, St
             name: if pid == 0 { "System Idle Process".into() } else { r.name },
             image_path: r.image.as_deref().and_then(raw),
             started_at: r.created.map(|c| c.to_string()),
+            started_at_utc: r.created.map(start_utc),
             cpu_percent: if pid == 0 { None } else { cpu_percent },
             memory_bytes: r.private,
             disk_bytes_per_sec: disk,
@@ -357,6 +363,7 @@ fn facts_from_handle(h: &Proc, pid: u32) -> (Option<u64>, Option<String>, Proces
         name,
         image_path: image.as_deref().and_then(raw),
         started_at: created.map(|c| c.to_string()),
+        started_at_utc: created.map(start_utc),
         cpu_percent: None,
         memory_bytes: None,
         disk_bytes_per_sec: None,
@@ -383,6 +390,7 @@ impl ProcessActions for WindowsProcesses {
             name: a.name.clone(),
             image_path: None,
             started_at: None,
+            started_at_utc: None,
             cpu_percent: None,
             memory_bytes: None,
             disk_bytes_per_sec: None,

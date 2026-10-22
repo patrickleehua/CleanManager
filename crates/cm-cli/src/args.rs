@@ -16,7 +16,7 @@ use crate::Format;
 use crate::i18n::Lang;
 
 /// Options that take no value.
-const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running", "check", "add-to-path", "remove-user-data", "debug"];
+const FLAGS: &[&str] = &["json", "non-interactive", "dry-run", "all-default-selected", "watch", "detach", "no-color", "no-redact", "end-running", "check", "add-to-path", "remove-user-data", "debug", "repair-index"];
 
 /// Accepted by every command: output format, human-text language, no input waiting, no colour, and the
 /// stderr-only diagnostic trace (`--debug`, CLI-14) that never changes stdout or any decision.
@@ -151,7 +151,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     w(&["optimize", "restore"], None, &["store", "operation"], &[], "Plan restoring the prior values a maintenance run's setting changes backed up", "生成恢复维护运行设置变更前原值的计划"),
     c(&["completion", "print"], Some("SHELL"), &[], &[], "Print a completion script to stdout", "向标准输出打印补全脚本"),
     w(&["completion", "install"], Some("SHELL"), &["profile"], &[], "Preview, then append completion to a shell profile after terminal confirmation", "预览补全安装，终端确认后才写入配置文件"),
-    c(&["doctor"], None, &["store", "export"], &["no-redact"], "Read-only diagnostic report (redacted; export after preview)", "只读诊断报告（默认脱敏，预览后导出）"),
+    c(&["doctor"], None, &["store", "export"], &["no-redact", "repair-index"], "Diagnostic report (redacted; export after preview); --repair-index moves a damaged scan index aside and starts an empty one", "诊断报告（默认脱敏，预览后导出）；--repair-index 把损坏的扫描索引移到一旁并新建空索引"),
     // Product lifecycle (LIF-01/02, MVP 14.1): verified self-update, chosen install directory, reviewed self-uninstall.
     w(&["self", "update"], None, &["store", "manifest"], &["check"], "Verify the signed release manifest (--check) or update this copy; package-manager copies get their command", "校验签名发布清单（--check）或更新本副本；包管理器安装给出其命令"),
     w(&["self", "install"], None, &["store", "dir"], &["add-to-path"], "Preview copying this release into --dir; installs only after terminal confirmation, never over files", "预览把本发行版复制到 --dir；终端确认后才安装，绝不覆盖文件"),

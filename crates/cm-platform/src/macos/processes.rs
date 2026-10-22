@@ -346,6 +346,7 @@ fn facts_of(p: &ProcInfo, now: Option<&Usage>, before: Option<&Usage>, secs: f64
             name: p.name.clone(),
             image_path: p.path.as_deref().and_then(raw),
             started_at: start_key(p),
+            started_at_utc: p.started_at(),
             cpu_percent,
             memory_bytes: now.map(|u| u.footprint),
             disk_bytes_per_sec: rate(|u| u.disk_bytes),

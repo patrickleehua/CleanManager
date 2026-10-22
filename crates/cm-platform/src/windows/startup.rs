@@ -566,7 +566,7 @@ fn read_startup_folders(b: &mut Builder, env: &StartupEnv) {
         let approved = approvals(env, hive, "StartupFolder");
         match dir {
             Some(dir) => read_folder(b, env, &dir, scope, hive, &approved),
-            None => b.issue("known_folder_unavailable", &format!("{scope:?} Startup folder"), "the Startup folder location could not be resolved".into()),
+            None => b.issue("known_folder_unavailable", &format!("{} Startup folder", if scope == StartupScope::User { "Your" } else { "The all-users" }), "the Startup folder location could not be resolved".into()),
         }
     }
 }

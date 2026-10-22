@@ -156,6 +156,15 @@ pub fn image_attached(p: &Path, kind: InstallerKind) -> Option<bool> {
     }
 }
 
+/// Whether a plain local file (never a link, cloud placeholder or offline file) refuses an ordinary shared read open
+/// with a sharing violation: another process holds it open without read sharing, so its content cannot be read.
+pub fn held_without_read_sharing(p: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const SKIP: u32 = 0x400 | 0x1000 | 0x4_0000 | 0x40_0000; // reparse point, offline, recall on open / on data access
+    let plain = std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file() && m.file_attributes() & SKIP == 0);
+    plain && std::fs::OpenOptions::new().read(true).custom_flags(FLAG_OPEN_REPARSE_POINT).open(p).err().and_then(|e| e.raw_os_error()) == Some(ERROR_SHARING_VIOLATION)
+}
+
 /// Whether another process holds the file open (an exclusive read open is refused).
 pub fn open_elsewhere(p: &Path) -> Option<bool> {
     match std::fs::OpenOptions::new().read(true).share_mode(0).custom_flags(FLAG_OPEN_REPARSE_POINT).open(p) {
@@ -176,8 +185,12 @@ pub struct WinInstallerProbe;
 
 impl InstallerProbe for WinInstallerProbe {
     fn classify(&self, path: &RawPath) -> Verdict {
-        match os(path).as_deref().and_then(FileSource::open) {
+        let Some(p) = os(path) else { return Verdict::NotInstaller { reason: "not a Windows path".into() } };
+        match FileSource::open(&p) {
             Some(src) => classify(&src),
+            None if held_without_read_sharing(&p) => {
+                Verdict::InUse { reason: "another process holds the file open without read sharing, so its content could not be read".into() }
+            }
             None => Verdict::NotInstaller { reason: "not a readable plain local file (link, cloud placeholder or offline)".into() },
         }
     }
@@ -192,13 +205,18 @@ impl InstallerProbe for WinInstallerProbe {
         let p = os(path)?;
         let kind = match classify(&FileSource::open(&p)?) {
             Verdict::Installer { kind, .. } => kind,
-            Verdict::NotInstaller { .. } => return None,
+            Verdict::NotInstaller { .. } | Verdict::InUse { .. } => return None,
         };
         image_attached(&p, kind)
     }
 
     fn in_use(&self, path: &RawPath) -> Option<bool> {
         open_elsewhere(&os(path)?)
+    }
+
+    /// Restart Manager's list of holders (read-only; nothing is ended or opened).
+    fn holders(&self, path: &RawPath) -> Option<Vec<String>> {
+        super::restart_manager::holders(std::slice::from_ref(path)).ok().map(|h| h.iter().map(super::restart_manager::Holder::describe).collect())
     }
 }
 

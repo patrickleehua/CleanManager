@@ -8,7 +8,7 @@
 
 | 数据 | 文件 | 内容 | 保留 |
 | --- | --- | --- | --- |
-| 扫描索引 | `index.db` | 你扫描的目录树：路径、名称、大小、时间、文件标识；不含文件内容 | 可重建的缓存，卸载时默认删除 |
+| 扫描索引 | `index.db` | 你扫描的目录树：路径、名称、大小、时间、文件标识；不含文件内容 | 可重建的缓存，卸载时默认删除；`doctor --repair-index` 把不可用的旧索引改名为 `index.db.damaged-<时间>` 保留在存储目录（内容同上），确认不需要后可手动删除 |
 | 操作与恢复记录 | `audit.db`、`migrations.log`、`audit.db.pre-v*.bak` | 计划、授权、逐项结果、隔离清单、注册表/启动项备份、迁移日志 | 卸载时默认保留；待核对记录不会被普通清理移除 |
 | 隔离区 | `quarantine\`，或同卷根目录的 `.cleanmanager-quarantine\` | 你选择隔离的文件本身 | 只有你执行恢复或清空计划才变化；卸载从不删除 |
 | 设置 | `protection.json`、`purge-settings.json`、`app-updates.json`、`status-alerts.json`、`process-pins.json`、`diag-providers.json` | 保护名单、项目根、检查开关、提醒阈值、置顶进程、AI 提供方设置（不含密钥） | 卸载时默认保留 |

@@ -203,7 +203,7 @@ pub(crate) fn snapshots_insight(run: Result<ToolOutput, ToolError>, observed_at:
     }
     if out.exit_code != Some(0) || out.stdout_truncated {
         let err: String = String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("").chars().filter(|c| !c.is_control()).take(160).collect();
-        return unknown(format!("Snapshots could not be listed: tmutil exited with {:?} {err}", out.exit_code).trim_end().to_owned());
+        return unknown(format!("Snapshots could not be listed: tmutil exited with code {} {err}", cm_core::trace::exit(out.exit_code)).trim_end().to_owned());
     }
     match parse_tmutil(&String::from_utf8_lossy(&out.stdout)) {
         Ok(s) => {

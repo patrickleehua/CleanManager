@@ -120,7 +120,7 @@ fn protection(stores_dir: Option<&std::path::Path>) -> impl Fn(&str) -> Result<(
         let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
         match cm_core::protect::evaluate_task(task_id, user) {
             cm_core::protect::ProtectionDecision::Allowed => Ok(()),
-            denied => Err(format!("{denied:?}")),
+            denied => Err(denied.to_string()),
         }
     }
 }

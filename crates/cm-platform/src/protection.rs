@@ -157,7 +157,7 @@ pub fn checker(store_dir: &Path, rule_refs: Vec<String>) -> impl Fn(&ActionTarge
         let subject = cm_core::protect::Subject { path: target.path, chain: &chain, default_class: None, rule_id: None, recursive: false };
         match cm_core::protect::evaluate(&subject, &hard, user) {
             cm_core::protect::ProtectionDecision::Allowed => Ok(()),
-            denied => Err(format!("{denied:?}")),
+            denied => Err(denied.to_string()),
         }
     }
 }

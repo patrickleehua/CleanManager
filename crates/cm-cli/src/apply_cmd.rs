@@ -38,7 +38,7 @@ fn current_rule_set_digest(p: &Parsed) -> Result<String, String> {
 
 pub fn report_record(req: &str, r: &OperationReport) -> Value {
     trace_report(r);
-    record("operation_report", req, fields(json!({
+    let mut rec = record("operation_report", req, fields(json!({
         "operation_id": r.operation_id,
         "plan_id": r.plan_id,
         "plan_digest": r.plan_digest,
@@ -57,7 +57,12 @@ pub fn report_record(req: &str, r: &OperationReport) -> Value {
         "volume_free_before_bytes": r.volume_free_before_bytes,
         "volume_free_after_bytes": r.volume_free_after_bytes,
         "observed_free_delta_bytes": r.observed_free_delta_bytes,
-    })))
+    })));
+    // WFA-40: a reconciliation is its own fact next to the operation's (unchanged) authorization.
+    if let Some(at) = &r.reconciled_at {
+        rec["reconciled_at"] = json!(at);
+    }
+    rec
 }
 
 /// CLI-14: every operation report that leaves this process, with each action's outcome and skip reason, on stderr
@@ -85,13 +90,47 @@ pub fn exit_for(r: &OperationReport) -> ExitCode {
 }
 
 pub fn apply_error(req: &str, plan_id: &str, e: &ApplyError, p: &Parsed) -> ExitCode {
+    emit(&apply_error_record(req, plan_id, e, &e.to_string(), p), p.format);
+    ExitCode::from(ExitClass::Error(e.code()).code() as u8)
+}
+
+fn review_action(plan_id: &str) -> String {
+    format!("Review the plan in the desktop app or run `cleanmanager plan review {plan_id}` in a terminal")
+}
+
+fn apply_error_record(req: &str, plan_id: &str, e: &ApplyError, message: &str, p: &Parsed) -> Value {
     let required = match e {
-        ApplyError::NeedsApproval(_) => Some(format!("Review the plan in the desktop app or run `cleanmanager plan review {plan_id}` in a terminal")),
+        ApplyError::NeedsApproval(_) => Some(review_action(plan_id)),
         ApplyError::Stale(_) => Some("Create a new plan from a fresh analysis".to_string()),
+        // PRT-02: nothing was started or recorded, so the same approved plan can be applied after the repair.
+        ApplyError::ProtectionUnavailable(_) => {
+            let file = p.raw_option("store").map(std::path::PathBuf::from).or_else(cm_platform::paths::default_store_dir)
+                .map(|d| d.join(cm_platform::protection::PROTECTION_FILE).display().to_string())
+                .unwrap_or_else(|| cm_platform::protection::PROTECTION_FILE.to_string());
+            Some(format!("Repair or move aside {file} (`cleanmanager protect list` shows the problem), then apply plan {plan_id} again while it is still valid"))
+        }
         _ => None,
     };
     let details = ErrorDetails { plan_id: Some(plan_id.into()), operation_id: None, scope_id: None };
-    emit(&error_record(req, e.code(), &e.to_string(), required.as_deref(), details), p.format);
+    error_record(req, e.code(), message, required.as_deref(), details)
+}
+
+/// WFA-43: a cleanup plan that nothing authorizes says why: whether it was reviewed, and for every stored policy the
+/// condition that keeps it from applying (`details.policy_matches`).
+fn needs_approval_v1(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, e: &ApplyError) -> ExitCode {
+    let Ok(plan) = stores.audit.load_plan(plan_id) else { return apply_error(req, plan_id, e, p) };
+    let matches = cm_app::execute::policy_matches(stores, &plan, &current_principal(), now_unix()).unwrap_or_default();
+    let revoked = stores.audit.receipts_for(plan_id).unwrap_or_default().iter().any(|r| r.revoked_at.is_some());
+    let review = if revoked { "its approval was revoked" } else { "it has not been reviewed" };
+    let why = if matches.is_empty() {
+        "no policy is set up".to_string()
+    } else {
+        let each: Vec<String> = matches.iter().map(|m| format!("{}: {}", m.policy_id, m.message)).collect();
+        format!("no policy covers it ({})", each.join("; "))
+    };
+    let mut rec = apply_error_record(req, plan_id, e, &format!("plan {plan_id} needs approval: {review} and {why}"), p);
+    rec["details"]["policy_matches"] = json!(matches);
+    emit(&rec, p.format);
     ExitCode::from(ExitClass::Error(e.code()).code() as u8)
 }
 
@@ -118,7 +157,8 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
     };
     let principal = current_principal();
     let host = OsHostProbe.current("cli");
-    // An unknown plan id still reaches apply_plan, which reports it; protection is only consulted per action.
+    // An unknown plan id still reaches apply_plan, which reports it. The executor refuses before anything starts while the
+    // protection list is unusable (PRT-02) and re-checks protection per action.
     let rule_refs = stored.as_ref().map(|pl| pl.rule_refs.clone()).unwrap_or_default();
     let base = cm_platform::protection::checker(&stores.dir, rule_refs);
     // PUR-03: purge plans re-read version-control state per artifact before acting.
@@ -142,6 +182,7 @@ pub fn plan_apply(req: &str, p: &Parsed, plan_id: &str) -> ExitCode {
             emit(&report_record(req, &r), p.format);
             exit_for(&r)
         }
+        Err(e @ ApplyError::NeedsApproval(_)) => needs_approval_v1(req, p, &stores, plan_id, &e),
         Err(e) => apply_error(req, plan_id, &e, p),
     }
 }
@@ -163,8 +204,17 @@ pub fn operations_show(req: &str, p: &Parsed, id: &str) -> ExitCode {
             Err(e) => fail(req, ErrorCode::InternalError, &e.to_string(), p.format),
         },
         Ok(None) => match stores.audit.operation_state(id) {
-            Ok(state) if state == "reconciliation_required" => fail(req, ErrorCode::InternalError,
-                &format!("operation {id} stopped with unconfirmed actions; run `cleanmanager operations reconcile {id}`"), p.format),
+            // WFA-34: the host stopped before the report: a provisional report from the journal, marked
+            // reconciliation_required (exit 8); `operations reconcile` resolves it.
+            Ok(state) if state == "reconciliation_required" => match cm_app::execute::interrupted_report(&stores, id) {
+                Ok(r) => {
+                    let mut rec = report_record(req, &r);
+                    crate::uninstall_cmd::add_app_outcomes(&stores, &r, &mut rec);
+                    emit(&rec, p.format);
+                    exit_for(&r)
+                }
+                Err(e) => fail(req, e.code(), &format!("operation {id} stopped with unconfirmed actions and its journal cannot be read ({e}); run `cleanmanager operations reconcile {id}`"), p.format),
+            },
             Ok(state) => {
                 emit(&record("operation_status", req, fields(json!({"operation_id": id, "state": state}))), p.format);
                 ExitCode::SUCCESS
@@ -218,7 +268,7 @@ fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans:
         let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
         match cm_core::protect::evaluate_task(item_id, user) {
             cm_core::protect::ProtectionDecision::Allowed => Ok(()),
-            denied => Err(format!("{denied:?}")),
+            denied => Err(denied.to_string()),
         }
     };
     let processes = cm_platform::windows::processes::WindowsProcesses;
@@ -256,7 +306,7 @@ fn with_v2_backends<T>(stores: &cm_store::Stores, f: impl FnOnce(&cm_app::plans:
         let user = user.as_ref().map_err(|e| format!("protection_unavailable: {e}"))?;
         match cm_core::protect::evaluate_task(item_id, user) {
             cm_core::protect::ProtectionDecision::Allowed => Ok(()),
-            denied => Err(format!("{denied:?}")),
+            denied => Err(denied.to_string()),
         }
     };
     let holders = crate::trash_cmd::mac_holders();
@@ -311,6 +361,12 @@ fn v2_apply(req: &str, p: &Parsed, stores: &cm_store::Stores, plan_id: &str, kin
             crate::uninstall_cmd::add_app_outcomes(stores, &r, &mut rec);
             emit(&rec, p.format);
             exit_for(&r)
+        }
+        // WFA-43: say why no policy helps here.
+        Ok(Ok(Err(e @ ApplyError::NeedsApproval(_)))) => {
+            let message = format!("plan {plan_id} needs approval: {} plans are authorized only by a review of this exact plan; policies never apply to them", kind.as_str());
+            emit(&apply_error_record(req, plan_id, &e, &message, p), p.format);
+            ExitCode::from(ExitClass::Error(e.code()).code() as u8)
         }
         Ok(Ok(Err(e))) => apply_error(req, plan_id, &e, p),
     }

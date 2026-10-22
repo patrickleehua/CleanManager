@@ -135,7 +135,8 @@ fn doctor_is_read_only_redacted_and_exports_only_after_confirmation() {
         assert!(areas.contains(area), "missing {area} checks");
     }
     assert!(rec["checks"].as_array().unwrap().iter().any(|c| c["check"] == "store.open" && c["status"] == "ok"));
-    assert_eq!(rec["error_codes"].as_array().unwrap().len(), 13, "the full error-code table");
+    assert!(rec["checks"].as_array().unwrap().iter().any(|c| c["check"] == "store.index" && c["status"] == "ok"), "doctor checks the index fully");
+    assert_eq!(rec["error_codes"].as_array().unwrap().len(), cm_core::error::ErrorCode::ALL.len(), "the full error-code table");
     assert!(!rec["capabilities"].as_array().unwrap().is_empty());
     for forbidden in ["password", "token", "secret", "api_key", "PATH="] {
         assert!(!out.contains(forbidden), "{forbidden}");

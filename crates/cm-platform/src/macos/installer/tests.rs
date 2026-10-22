@@ -28,7 +28,7 @@ fn synthetic_pkg() -> Vec<u8> {
 fn kind_of(p: &Path) -> Option<InstallerKind> {
     match classify_file(p) {
         Verdict::Installer { kind, .. } => Some(kind),
-        Verdict::NotInstaller { .. } => None,
+        Verdict::NotInstaller { .. } | Verdict::InUse { .. } => None,
     }
 }
 

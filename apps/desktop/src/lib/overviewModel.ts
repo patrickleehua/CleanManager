@@ -6,11 +6,12 @@
 // - failed: the reason and the next step only — no coverage, no browse/candidates, no machine-wide cards;
 // - cancelled / interrupted: how much was kept.
 
-import { groupDigits, parseBytes } from './bytes';
+import { parseBytes } from './bytes';
 import { explainIssue, ROOT_REFUSALS, type ExplainedIssue } from './codes';
 import { sizeLabel, type BannerKind } from './display';
 import { isTerminal } from './format';
 import type { ScanStatus } from './types';
+import { t } from '../i18n';
 
 export type OverviewLayout = 'running' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -73,13 +74,13 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
   };
 
   if (!isTerminal(s.state)) {
-    const title = s.state === 'created' ? '正在准备扫描' : s.state === 'stopping' || s.cancel_requested ? '正在停止扫描' : '正在扫描';
+    const title = s.state === 'created' ? t('overviewModel.preparingScan') : s.state === 'stopping' || s.cancel_requested ? t('common.stoppingScan') : t('common.scanning');
     const sentence =
       s.state === 'created'
-        ? '正在打开所选文件夹。'
+        ? t('overviewModel.openingSelectedFolder')
         : s.state === 'stopping' || s.cancel_requested
-          ? '处理完当前目录后停止，已确认的结果会保留。'
-          : `已发现 ${groupDigits(n)} 个条目，切换页面不会中断扫描。`;
+          ? t('overviewModel.stoppingAfterCurrentFolder')
+          : t('overviewModel.nFoundSoFar', { n });
     return { ...base, layout: 'running', banner: { kind: 'running', title, sentence }, cancel: true };
   }
 
@@ -95,7 +96,7 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
     return {
       ...base,
       layout: 'failed',
-      banner: { kind: 'failed', title: '扫描失败', sentence: reason?.text ?? '扫描没有完成，也没有记录原因。请重新扫描。' },
+      banner: { kind: 'failed', title: t('overviewModel.scanFailed'), sentence: reason?.text ?? t('overviewModel.scanDidntFinishNo') },
       reason,
       chooseRoot: rootRefused ? 'primary' : 'secondary',
       rescan: rootRefused ? null : 'primary',
@@ -106,13 +107,13 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
   if (s.state === 'cancelled' || s.state === 'interrupted') {
     const kept = hasResults ? n : 0;
     // The size is the banner's figure; the sentence says how many entries were kept.
-    const keptText = kept > 0 ? `已保留 ${groupDigits(kept)} 个条目，结果不完整。` : '没有保留任何条目。';
+    const keptText = kept > 0 ? t('overviewModel.keptKeptResultIncomplete', { kept }) : t('overviewModel.noEntriesKept');
     const cancelled = s.state === 'cancelled';
     return {
       ...base,
       layout: cancelled ? 'cancelled' : 'interrupted',
-      banner: { kind: 'cancelled', title: cancelled ? '扫描已取消' : '扫描已中断', sentence: cancelled ? `取消前${keptText}` : `运行扫描的程序在完成前退出，${keptText}` },
-      space: kept > 0 && known !== null ? { text: sizeLabel(known, { atLeast: true }), bytes: known, atLeast: true, label: '已保留的部分' } : null,
+      banner: { kind: 'cancelled', title: cancelled ? t('overviewModel.scanCancelled') : t('overviewModel.scanInterrupted'), sentence: cancelled ? t('overviewModel.beforeCancellingKepttext', { keptText }) : t('overviewModel.scanningProcessExitedBefore', { keptText }) },
+      space: kept > 0 && known !== null ? { text: sizeLabel(known, { atLeast: true }), bytes: known, atLeast: true, label: t('overviewModel.keptResults') } : null,
       browse: kept > 0 ? 'kept' : null,
       rescan: 'primary',
     };
@@ -121,7 +122,7 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
   // completed / partial
   const pending = s.issues.some((i) => explainIssue(i).cause === 'privacy_prompt_pending');
   const atLeast = unknownTotal > 0;
-  const space = hasResults ? { text: sizeLabel(known, { atLeast }), bytes: known, atLeast, label: atLeast ? '已知部分的逻辑大小' : '逻辑大小' } : null;
+  const space = hasResults ? { text: sizeLabel(known, { atLeast }), bytes: known, atLeast, label: atLeast ? t('overviewModel.overviewPlan.label.logicalSizeKnownPart') : t('overviewModel.overviewPlan.label.logicalSize') } : null;
   const results = {
     space,
     browse: hasResults ? ('results' as const) : null,
@@ -135,13 +136,13 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
       layout: 'completed',
       banner: {
         kind: 'success',
-        title: '扫描完成',
-        sentence: unknownSizes > 0 ? `所选范围已读取完，其中 ${groupDigits(unknownSizes)} 个条目大小未知。` : `已读取所选范围内的 ${groupDigits(n)} 个条目。`,
+        title: t('overviewModel.scanComplete'),
+        sentence: unknownSizes > 0 ? t('overviewModel.selectedScopeFullyRead', { unknownSizes }) : t('overviewModel.readNSelectedScope', { n }),
       },
       gaps: unknownSizes > 0 ? { unread: 0, unknownSizes } : null,
     };
   }
-  const title = pending ? '等待 macOS 授权' : unread > 0 ? `部分完成：${groupDigits(unread)} 处位置无法读取` : unknownSizes > 0 ? `部分完成：${groupDigits(unknownSizes)} 个条目大小未知` : '部分完成';
+  const title = pending ? t('overviewModel.waitingMacosPermission') : unread > 0 ? t('overviewModel.partiallyCompletedUnreadCouldnt', { unread }) : unknownSizes > 0 ? t('overviewModel.partiallyCompletedUnknownsizes', { unknownSizes }) : t('overviewModel.partiallyCompleted');
   return {
     ...base,
     ...results,
@@ -149,7 +150,7 @@ export function overviewPlan(s: ScanStatus): OverviewPlan {
     banner: {
       kind: pending ? 'pending-permission' : 'partial',
       title,
-      sentence: pending ? '在 macOS 弹出的对话框中选择后重新扫描；已读到的部分可以先浏览。' : '已读到的部分可以浏览；没读到的位置不按 0 计算。',
+      sentence: pending ? t('overviewModel.makeChoiceMacosDialog') : t('overviewModel.whatReadBrowsedUnread'),
     },
     gaps: { unread, unknownSizes },
     rescan: pending ? 'primary' : 'secondary',

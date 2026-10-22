@@ -1,6 +1,8 @@
 // Byte values cross IPC as u64 decimal strings and stay BigInt in the UI. They are never
 // converted to a JS number, which would silently round above 2^53. Unknown is `null`, never 0.
 
+import { formatNumber, t } from '../i18n';
+
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB'] as const;
 const DECIMAL_RE = /^(0|[1-9][0-9]*)$/;
 const U64_MAX = (1n << 64n) - 1n;
@@ -20,7 +22,7 @@ export function parseBytes(value: string | null | undefined): bigint | null {
  * Human size with binary units and one decimal, rounded half-up using integer arithmetic only.
  * `null` renders as the unknown label, never as "0 B".
  */
-export function formatBytes(value: bigint | string | null | undefined, unknownLabel = '未知'): string {
+export function formatBytes(value: bigint | string | null | undefined, unknownLabel = t('common.unknown')): string {
   const n = typeof value === 'bigint' ? value : parseBytes(value ?? null);
   if (n === null) return unknownLabel;
   if (n < 1024n) return `${n} B`;
@@ -43,19 +45,16 @@ export function formatBytes(value: bigint | string | null | undefined, unknownLa
   return `${whole}.${frac} ${UNITS[unit]}`;
 }
 
-/** Exact count with digit grouping, e.g. "1,610,612,736 字节". */
-export function formatExactBytes(value: bigint | string | null | undefined, unknownLabel = '未知'): string {
+/** Exact count with digit grouping, e.g. "1,610,612,736 字节" / "1,610,612,736 bytes". */
+export function formatExactBytes(value: bigint | string | null | undefined, unknownLabel = t('common.unknown')): string {
   const n = typeof value === 'bigint' ? value : parseBytes(value ?? null);
   if (n === null) return unknownLabel;
-  return `${groupDigits(n)} 字节`;
+  return t('bytes.exact', { n });
 }
 
+/** A count grouped for the interface language (Intl.NumberFormat: "1,610,612,736" in 简体中文 and in English). */
 export function groupDigits(n: bigint | number): string {
-  const s = n.toString();
-  const neg = s.startsWith('-');
-  const digits = neg ? s.slice(1) : s;
-  const out = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return neg ? `-${out}` : out;
+  return formatNumber(n);
 }
 
 /**

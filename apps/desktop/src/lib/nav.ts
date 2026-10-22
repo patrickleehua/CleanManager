@@ -4,7 +4,8 @@
 
 import type { ActivityTab, Page } from './store';
 import type { GateRow } from './types';
-import { onPlatform, words } from './platform';
+import { words } from './platform';
+import { t } from '../i18n';
 
 export type ToolId = 'clean' | 'software' | 'optimize' | 'analyze' | 'status';
 export type ExtId = 'plans' | 'activity' | 'recovery' | 'agent' | 'diag' | 'settings';
@@ -40,89 +41,80 @@ export const TOOLS: Tool[] = [
   {
     id: 'clean',
     gate: 'G1',
-    label: '清理',
+    get label() { return t('nav.tools.clean.label'); },
     icon: 'tool-clean',
     key: '1',
-    blurb: '缓存、构建产物、安装包与回收站',
+    get blurb() { return t('nav.cachesBuildArtifactsInstallers', { bin: words().bin }); },
     sections: [
-      { page: 'cleanup', label: '规则清理' },
-      { page: 'purge', label: '构建产物' },
-      { page: 'installer', label: '安装包' },
-      { page: 'recyclebin', label: '回收站' },
+      { page: 'cleanup', get label() { return t('nav.tools.clean.sections.cleanup.label'); } },
+      { page: 'purge', get label() { return t('nav.tools.clean.sections.purge.label'); } },
+      { page: 'installer', get label() { return t('nav.tools.clean.sections.installer.label'); } },
+      { page: 'recyclebin', get label() { return words().bin; } },
     ],
   },
   {
     id: 'software',
     gate: 'G3',
-    label: '软件',
+    get label() { return t('nav.tools.software.label'); },
     icon: 'tool-software',
     key: '2',
-    blurb: '已安装应用、卸载、更新与启动项',
+    get blurb() { return t('nav.tools.software.blurb'); },
     sections: [
-      { page: 'apps', label: '应用' },
-      { page: 'uninstall', label: '卸载' },
-      { page: 'updates', label: '更新' },
-      { page: 'startup', label: '启动项' },
+      { page: 'apps', get label() { return t('nav.tools.software.sections.apps.label'); } },
+      { page: 'uninstall', get label() { return t('nav.tools.software.sections.uninstall.label'); } },
+      { page: 'updates', get label() { return t('nav.tools.software.sections.updates.label'); } },
+      { page: 'startup', get label() { return t('nav.tools.software.sections.startup.label'); } },
     ],
   },
   {
     id: 'optimize',
     gate: 'G3',
-    label: '优化',
+    get label() { return t('nav.tools.optimize.label'); },
     icon: 'tool-optimize',
     key: '3',
-    blurb: '系统维护任务与只读性能诊断',
+    get blurb() { return t('nav.tools.optimize.blurb'); },
     sections: [
-      { page: 'maintenance', label: '维护任务' },
-      { page: 'diagnosis', label: '性能诊断' },
+      { page: 'maintenance', get label() { return t('nav.tools.optimize.sections.maintenance.label'); } },
+      { page: 'diagnosis', get label() { return t('nav.tools.optimize.sections.diagnosis.label'); } },
     ],
   },
   {
     id: 'analyze',
     gate: 'G1',
-    label: '分析',
+    get label() { return t('nav.tools.analyze.label'); },
     icon: 'tool-analyze',
     key: '4',
-    blurb: '磁盘占用、空间洞察与手选回收站',
+    get blurb() { return t('nav.diskUsageSpaceInsights', { bin: words().bin }); },
     sections: [
-      { page: 'overview', label: '概览' },
-      { page: 'disk', label: '磁盘' },
-      { page: 'insights', label: '空间洞察' },
-      { page: 'scope', label: '扫描范围' },
+      { page: 'overview', get label() { return t('nav.tools.analyze.sections.overview.label'); } },
+      { page: 'disk', get label() { return t('nav.tools.analyze.sections.disk.label'); } },
+      { page: 'insights', get label() { return t('nav.tools.analyze.sections.insights.label'); } },
+      { page: 'scope', get label() { return t('nav.tools.analyze.sections.scope.label'); } },
     ],
   },
   {
     id: 'status',
     gate: 'G3',
-    label: '状态',
+    get label() { return t('nav.tools.status.label'); },
     icon: 'tool-status',
     key: '5',
-    blurb: '系统指标、进程与常驻工具',
+    get blurb() { return t('nav.tools.status.blurb'); },
     sections: [
-      { page: 'status', label: '系统状态' },
-      { page: 'processes', label: '进程' },
-      { page: 'resident', label: '常驻工具' },
+      { page: 'status', get label() { return t('nav.tools.status.sections.status.label'); } },
+      { page: 'processes', get label() { return t('nav.tools.status.sections.processes.label'); } },
+      { page: 'resident', get label() { return t('nav.tools.status.sections.resident.label'); } },
     ],
   },
 ];
 
 export const EXTENSIONS: Extension[] = [
-  { id: 'plans', label: '计划', icon: 'ext-plans', key: '6', page: 'activity', tab: 'plans' },
-  { id: 'activity', label: '活动', icon: 'ext-activity', key: '7', page: 'activity', tab: 'operations' },
-  { id: 'recovery', label: '恢复', icon: 'ext-recovery', key: '8', page: 'activity', tab: 'quarantine' },
+  { id: 'plans', get label() { return t('nav.extensions.plans.label'); }, icon: 'ext-plans', key: '6', page: 'activity', tab: 'plans' },
+  { id: 'activity', get label() { return t('nav.extensions.activity.label'); }, icon: 'ext-activity', key: '7', page: 'activity', tab: 'operations' },
+  { id: 'recovery', get label() { return t('nav.extensions.recovery.label'); }, icon: 'ext-recovery', key: '8', page: 'activity', tab: 'quarantine' },
   { id: 'agent', label: 'Agent', icon: 'ext-agent', key: '9', page: 'agent' },
-  { id: 'diag', label: 'AI 诊断', icon: 'diag', key: '0', page: 'diag' },
-  { id: 'settings', label: '设置', icon: 'settings', key: ',', page: 'settings' },
+  { id: 'diag', get label() { return t('nav.extensions.diag.label'); }, icon: 'diag', key: '0', page: 'diag' },
+  { id: 'settings', get label() { return t('nav.extensions.settings.label'); }, icon: 'settings', key: ',', page: 'settings' },
 ];
-
-// GUI-12: the bin keeps its place and its page; only its name follows the platform (回收站 / 废纸篓).
-onPlatform(() => {
-  const bin = words().bin;
-  const clean = TOOLS.find((t) => t.id === 'clean')!;
-  clean.blurb = `缓存、构建产物、安装包与${bin}`;
-  clean.sections.find((s) => s.page === 'recyclebin')!.label = bin;
-  TOOLS.find((t) => t.id === 'analyze')!.blurb = `磁盘占用、空间洞察与手选${bin}`;
-});
 
 /** Where a page sits in the navigation: its tool, or an extension entry. */
 export type NavPlace = { tool: ToolId } | { ext: ExtId } | null;
@@ -185,7 +177,7 @@ export function shortcutLabel(key: string, mod: string): string {
  * words: the gate id is not shown in the bar (设置 › 实验功能 lists each capability with its gate).
  */
 export function gateLabel(_tool: Tool): string {
-  return '实验功能';
+  return t('nav.experimental');
 }
 
 /** A section backed by a capability with a release gate (D15). */

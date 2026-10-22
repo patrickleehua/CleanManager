@@ -804,6 +804,20 @@ pub enum Group {
     System,
 }
 
+impl Group {
+    /// The protocol word (`caches_logs`, `personal_data`, ...), used in plan notes instead of debug text.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Group::Bundle => "bundle",
+            Group::CachesLogs => "caches_logs",
+            Group::Settings => "settings",
+            Group::PersonalData => "personal_data",
+            Group::Startup => "startup",
+            Group::System => "system",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Marker {
@@ -900,6 +914,9 @@ pub fn sensitive_warnings(path_or_name: &str) -> Vec<String> {
     SENSITIVE.iter().filter(|p| last.contains(*p)).map(|p| format!("sensitive: name matches \"{p}\" (credentials, keys or documents); review before selecting")).collect()
 }
 
+/// The protocol's leftover tiers (`uninstall_leftover.tier`); [`finish_leftover`] always yields one of them.
+pub const LEFTOVER_TIERS: &[&str] = &["default_selected", "review_only", "blocked", "kept"];
+
 /// UNI-05: tier and preselection of a leftover. Only caches and logs are preselected; sensitive objects never are.
 pub fn finish_leftover(mut l: Leftover) -> Leftover {
     if l.warnings.is_empty() {
@@ -912,6 +929,12 @@ pub fn finish_leftover(mut l: Leftover) -> Leftover {
     }
     if l.tier == "blocked" || matches!(l.binding, Binding::Manual { .. }) {
         l.selected = false;
+        // Guidance-only (manual) items are for a person to review: whatever tier the platform left unset (a startup
+        // entry whose program still exists, a desktop shortcut) reads `review_only`, never an empty or unknown tier
+        // and never preselected (WFA-113).
+        if !matches!(l.tier.as_str(), "blocked" | "kept" | "review_only") {
+            l.tier = "review_only".into();
+        }
         return l;
     }
     l.selected = l.group == Group::CachesLogs && l.warnings.is_empty() && !l.requires_admin;

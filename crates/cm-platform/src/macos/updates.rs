@@ -139,7 +139,7 @@ pub fn brew_outdated(exe: &Path, env: &AppsEnv) -> Result<String, String> {
     // `brew outdated` exits 1 when it lists outdated packages it was asked about by name; the JSON is the answer.
     match out.exit_code {
         Some(0 | 1) if !out.stdout.is_empty() => String::from_utf8(out.stdout).map_err(|_| "brew outdated output is not UTF-8".into()),
-        other => Err(format!("brew outdated exited with {other:?}: {}", tail(&out.stderr, 300))),
+        other => Err(format!("brew outdated exited with code {}: {}", cm_core::trace::exit(other), tail(&out.stderr, 300))),
     }
 }
 

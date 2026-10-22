@@ -447,3 +447,105 @@ fn a_protected_member_keeps_the_tree_out_of_the_recycle_bin() {
     assert_eq!((r.succeeded, r.skipped), (2, 2), "{r:?}");
     assert!(f.files.borrow().contains_key("/r/app/Cache/b") && f.dirs.borrow().contains_key("/r/app/Cache"));
 }
+
+fn enabled_policy(e: &Env, id: &str, mode: Mode) -> Policy {
+    let mut p = Policy::template(id, PRINCIPAL, "scope", vec!["cache@1.0.0".into()], mode, T0);
+    p.state = PolicyState::Enabled;
+    e.stores.audit.save_policy(&p, "t").unwrap();
+    p
+}
+
+/// BUG-WFA-03 / PRT-02: an unusable protection list stops the apply before a policy's quota is reserved or an operation
+/// registered; after the repair the same plan runs.
+#[test]
+fn an_unusable_protection_list_stops_before_quota_or_operation() {
+    let e = env("protection-down", Mode::Delete);
+    let f = fake();
+    enabled_policy(&e, "pol", Mode::Delete);
+    std::fs::write(e.stores.dir.join("protection.json"), b"{not json").unwrap();
+    let err = run(&e, &f, "p1", T0 + 10, None, None).unwrap_err();
+    assert!(matches!(err, ApplyError::ProtectionUnavailable(_)), "{err:?}");
+    assert_eq!(err.code(), cm_core::error::ErrorCode::ProtectionUnavailable);
+    assert_eq!(f.calls.get(), 0);
+    assert_eq!(e.stores.audit.policy_usage("pol", T0 + 10).unwrap().bytes, 0, "no quota was reserved");
+    let plan = e.stores.audit.load_plan("p1").unwrap();
+    assert!(e.stores.audit.operation_for_dedupe(&format!("p1#{}", plan.digest)).unwrap().is_none(), "no operation was registered");
+    std::fs::remove_file(e.stores.dir.join("protection.json")).unwrap();
+    let r = run(&e, &f, "p1", T0 + 20, None, None).unwrap();
+    assert_eq!((r.status.as_str(), r.succeeded), ("completed", 3));
+}
+
+/// WFA-33: a protection re-check that fails because the object is gone reports the missing precondition.
+#[test]
+fn a_target_gone_before_its_action_is_missing_not_protected() {
+    let e = env("gone", Mode::Delete);
+    let f = fake();
+    f.files.borrow_mut().remove("/r/app/Cache/b");
+    approve(&e, "p1");
+    let host = HostRef { kind: "cli".into(), pid: 1, started_at: "t".into() };
+    // As the platform checker answers for a missing object: its identity cannot be established (hard deny).
+    let ctx = ApplyContext {
+        principal: PRINCIPAL, host: &host, current_rule_set_digest: "rs", now: &|| T0 + 10, cancel: &|| false, fault: &|_, _| false,
+        protect: &|t| if t.path.lossy().ends_with("/b") { Err("Denied { layer: HardDeny, reason: \"object identity could not be established\" }".into()) } else { Ok(()) },
+    };
+    let r = apply_plan(&e.stores, &f, "p1", &ctx).unwrap();
+    let b = r.items.iter().find(|i| i.action_id == "a0000001").unwrap();
+    assert_eq!((b.status, b.code.as_str()), (ActionStatus::Skipped, "precondition_missing"), "{r:?}");
+}
+
+/// WFA-42/43: every policy is evaluated read-only against the plan: the covering one says so, the others name the
+/// failing condition, and a used-up window is `quota_exceeded`.
+#[test]
+fn policy_matches_say_which_policy_covers_and_why_others_do_not() {
+    let e = env("matches", Mode::Delete);
+    enabled_policy(&e, "pol_a", Mode::Delete);
+    enabled_policy(&e, "pol_b", Mode::Quarantine);
+    let mut paused = Policy::template("pol_c", PRINCIPAL, "scope", vec!["cache@1.0.0".into()], Mode::Delete, T0);
+    paused.single_max_items = 2;
+    e.stores.audit.save_policy(&paused, "t").unwrap();
+    let plan = e.stores.audit.load_plan("p1").unwrap();
+    let m = policy_matches(&e.stores, &plan, PRINCIPAL, T0 + 10).unwrap();
+    let by = |id: &str| m.iter().find(|x| x.policy_id == id).unwrap().clone();
+    assert!(by("pol_a").covers && by("pol_a").reason.is_none(), "{m:?}");
+    assert_eq!(by("pol_b").reason, Some("mode_differs"));
+    assert!(by("pol_b").message.contains("delete") && by("pol_b").message.contains("quarantine"), "{m:?}");
+    assert_eq!(by("pol_c").reason, Some("not_enabled"));
+    assert!(by("pol_c").message.contains("paused"), "{m:?}");
+    // Nothing was reserved by looking.
+    assert_eq!(e.stores.audit.policy_usage("pol_a", T0 + 10).unwrap().bytes, 0);
+    let mut tight = enabled_policy(&e, "pol_d", Mode::Delete);
+    tight.single_max_items = 2;
+    e.stores.audit.save_policy(&tight, "t").unwrap();
+    let mut window = enabled_policy(&e, "pol_e", Mode::Delete);
+    window.window_max_bytes = 100;
+    e.stores.audit.save_policy(&window, "t").unwrap();
+    let m = policy_matches(&e.stores, &plan, PRINCIPAL, T0 + 10).unwrap();
+    let by = |id: &str| m.iter().find(|x| x.policy_id == id).unwrap().clone();
+    assert_eq!(by("pol_d").reason, Some("single_limit"));
+    assert!(by("pol_d").message.contains("3 items"), "{m:?}");
+    assert_eq!(by("pol_e").reason, Some("quota_exceeded"));
+    assert!(by("pol_e").message.contains("of 100 bytes"), "{m:?}");
+}
+
+/// WFA-40: reconciling a policy-authorized operation keeps `policy:ID@VERSION` as its authorization source and records
+/// the reconciliation separately; reconciling again with nothing left to resolve returns the same report.
+#[test]
+fn reconciling_keeps_the_authorization_source_and_records_the_reconciliation() {
+    let e = env("reconcile-source", Mode::Delete);
+    let f = fake();
+    enabled_policy(&e, "pol", Mode::Delete);
+    assert!(matches!(run(&e, &f, "p1", T0 + 10, None, Some((FaultPoint::AfterAction, "a0000001"))), Err(ApplyError::Crashed(_))));
+    let moved = e.stores.audit.reconcile_hosts(|_| cm_core::host::Liveness::Exited).unwrap();
+    // Before reconciling: a provisional report from the journal, marked for reconciliation.
+    let shown = interrupted_report(&e.stores, &moved[0]).unwrap();
+    assert_eq!((shown.status.as_str(), shown.succeeded, shown.unknown, shown.not_started), ("reconciliation_required", 1, 1, 1), "{shown:?}");
+    assert!(shown.authorization_source.starts_with("policy:pol@"), "{shown:?}");
+    let host = HostRef { kind: "cli".into(), pid: 2, started_at: "t".into() };
+    let ctx = ApplyContext { principal: PRINCIPAL, host: &host, current_rule_set_digest: "rs", now: &|| T0 + 20, cancel: &|| false, fault: &|_, _| false, protect: &|_| Ok(()) };
+    let r = reconcile_operation(&e.stores, &f, &moved[0], &ctx).unwrap();
+    assert!(r.authorization_source.starts_with("policy:pol@"), "the policy stays the authorization: {r:?}");
+    assert_eq!(r.reconciled_at.as_deref(), Some(utc_from_unix(T0 + 20).as_str()));
+    assert_eq!(r.started_at, utc_from_unix(T0 + 10), "the registration time, not the reconciliation's");
+    let ctx = ApplyContext { now: &|| T0 + 30, ..ctx };
+    assert_eq!(reconcile_operation(&e.stores, &f, &moved[0], &ctx).unwrap(), r, "nothing left to resolve: unchanged");
+}

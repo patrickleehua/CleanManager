@@ -560,6 +560,9 @@ fieldset.scope-panel { margin: 0; min-width: 0; padding: var(--sp-5); }
 .seg span { display: block; padding: 5px 11px; border-radius: var(--radius-sm); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px #213b2414; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Settings › Language (LIF-05): the same segmented choice; wraps on narrow windows instead of overflowing. */
+.lang-seg { flex-wrap: wrap; margin: var(--sp-1) 0 var(--sp-2); }
+.lang-note { max-width: 76ch; }
 input[type='search'], select {
   border: 1px solid var(--control-line); border-radius: var(--radius); background: var(--surface);
   padding: 7px 10px; font-size: 13px; min-width: 0;

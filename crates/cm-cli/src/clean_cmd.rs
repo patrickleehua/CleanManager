@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cm_core::adapter::{ADAPTERS, AdapterPreview, adapter};
-use cm_core::analysis::{Candidate, CandidateState, CatalogFacts, apply_probes, default_selected, plannable};
+use cm_core::analysis::{Candidate, CandidateState, CatalogFacts, IndexView, apply_probes, default_selected, plannable};
+use cm_core::model::ObjectKind;
 use cm_core::capability::Platform;
 use cm_core::catalog::{CATALOG_VERSION, CATEGORIES, CatalogContext, RegistryStatus, SkipReason, category_status};
 use cm_core::error::ErrorCode;
@@ -156,10 +157,10 @@ fn refusal(c: &Candidate, f: Option<&CatalogFacts>, mode: Mode) -> Option<String
     if !plannable(c, f) {
         return Some(format!("not plannable: {}", c.reasons.join(", ")));
     }
-    (!c.allowed_modes.contains(&mode)).then(|| format!("mode {mode:?} is not allowed for this row"))
+    (!c.allowed_modes.contains(&mode)).then(|| format!("mode {} is not allowed for this row", mode.as_str()))
 }
 
-fn preview_item(c: &Candidate, f: Option<&CatalogFacts>, mode: Option<Mode>) -> Value {
+fn preview_item(c: &Candidate, f: Option<&CatalogFacts>, mode: Option<Mode>, rules: &[cm_core::rules::Rule]) -> Value {
     let rule = c.rules.first();
     let probes: Vec<Value> = f
         .map(|f| f.tier_inputs.probes.iter().map(|p| json!({"probe": p.probe, "result": snake!(p.state)})).collect())
@@ -169,7 +170,9 @@ fn preview_item(c: &Candidate, f: Option<&CatalogFacts>, mode: Option<Mode>) -> 
     if let Some(spec) = f.and_then(|f| f.adapter_ref.as_deref()).and_then(adapter) {
         impact = format!("{impact} Cleanup is delegated to {} ({}): {}", spec.tool_name, spec.cleanup_argv.join(" "), spec.cleanup_effect);
     }
-    json!({
+    // ANA-02: the same explanation as `candidates list` (tier reason, rebuild and offline cost, age basis, recovery).
+    let explained = crate::analysis_cmd::explanation(c, rules);
+    let mut item = json!({
         "object_id": c.candidate_id,
         "entry_id": c.entry_id.to_string(),
         "path": c.path,
@@ -177,7 +180,7 @@ fn preview_item(c: &Candidate, f: Option<&CatalogFacts>, mode: Option<Mode>) -> 
         "rule_id": rule.map(|r| r.rule_id.clone()),
         "rule_version": rule.map(|r| r.version.clone()),
         "tier": snake!(c.tier),
-        "tier_reason": if c.reasons.is_empty() { "matched rule".to_string() } else { c.reasons.join(", ") },
+        "tier_reason": explained["tier_reason"],
         "rebuild_class": snake!(f.and_then(|f| f.rebuild_class).unwrap_or(RebuildClass::NotRebuildable)),
         "registry_status": registry_wire(f.map(|f| f.registry_status).unwrap_or(RegistryStatus::NotRegistered)),
         "selected_by_default": selected,
@@ -186,7 +189,11 @@ fn preview_item(c: &Candidate, f: Option<&CatalogFacts>, mode: Option<Mode>) -> 
         "logical_bytes": c.logical.exact().map(|b| b.to_string()),
         "reclaimable_estimate_bytes": null,
         "impact": impact,
-    })
+    });
+    for key in ["regeneration", "offline_effect", "age_threshold", "recovery_limits"] {
+        item[key] = explained[key].clone();
+    }
+    item
 }
 
 /// `clean --scan ID [--dry-run]`.
@@ -248,7 +255,7 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         };
         let page: Vec<&Candidate> = order.iter().skip(offset).take(page_size).map(|i| &a.set.candidates[*i]).collect();
         let next = (offset + page.len() < order.len()).then(|| format!("{}:{}", a.set.candidate_set_id, offset + page.len()));
-        let items: Vec<Value> = page.iter().map(|c| preview_item(c, a.catalog.facts.get(&c.candidate_id), mode)).collect();
+        let items: Vec<Value> = page.iter().map(|c| preview_item(c, a.catalog.facts.get(&c.candidate_id), mode, &a.rules)).collect();
         for i in items.iter().filter(|i| !i["skip_reason"].is_null()) {
             cm_core::debug_trace!("clean.skip", "{} tier={} skip_reason={}", i["object_id"], i["tier"], i["skip_reason"]);
         }
@@ -279,38 +286,58 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         return fail(req, ErrorCode::ProtectionUnavailable, &format!("protection list unavailable: {problem}"), p.format);
     }
     let facts = |c: &Candidate| a.catalog.facts.get(&c.candidate_id);
-    let selected: Vec<String> = match p.option("candidates") {
+    // The live probes decide only after the re-check below: a probe of an object that changed or vanished since the
+    // scan says nothing about it (WFA-50), so selection first ignores their skips.
+    let unprobed = |c: &Candidate| facts(c).map(|f| CatalogFacts { skip: None, ..f.clone() });
+    let candidate = |id: &str| a.set.candidates.iter().find(|c| c.candidate_id == id);
+    let explicit = p.option("candidates").is_some();
+    let wanted: Vec<String> = match p.option("candidates") {
         Some(list) => {
             let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
             for id in &ids {
-                let Some(c) = a.set.candidates.iter().find(|c| c.candidate_id == *id) else {
+                let Some(c) = candidate(id) else {
                     return fail(req, ErrorCode::InvalidArgument, &format!("candidate {id} is not in this scan's catalog analysis"), p.format);
                 };
-                if let Some(why) = refusal(c, facts(c), mode) {
+                if let Some(why) = refusal(c, unprobed(c).as_ref(), mode) {
                     return fail(req, ErrorCode::PolicyDenied, &format!("candidate {id} cannot be planned: {why}"), p.format);
                 }
             }
             ids.into_iter().map(str::to_owned).collect()
         }
-        // CLI-12: without explicit IDs only unskipped default_selected rows, never review-only ones.
-        None => order.iter().map(|i| &a.set.candidates[*i]).filter(|c| default_selected(c, facts(c)) && c.allowed_modes.contains(&mode)).map(|c| c.candidate_id.clone()).collect(),
+        // CLI-12: without explicit IDs only default_selected rows, never review-only ones.
+        None => order.iter().map(|i| &a.set.candidates[*i]).filter(|c| default_selected(c, unprobed(c).as_ref()) && c.allowed_modes.contains(&mode)).map(|c| c.candidate_id.clone()).collect(),
     };
-    if selected.is_empty() {
+    if wanted.is_empty() {
         return fail(req, ErrorCode::PolicyDenied, "nothing to plan: no row is default-selected, unskipped and allowed for this mode", p.format);
-    }
-    // CLI-11: rows whose observed state changed since the scan are listed as stale, never planned.
-    let (selected, stale) = split_stale(&a.set.candidates, selected);
-    cm_core::debug_trace!("clean", "selected={} stale={} explicit_ids={}", selected.len(), stale.len(), p.option("candidates").is_some());
-    for s in &stale {
-        cm_core::debug_trace!("clean.skip", "{} stale reason={} detail=\"{}\"", s.object_id, s.reason, s.detail);
-    }
-    if selected.is_empty() {
-        return fail(req, ErrorCode::PlanStale, &format!("every selected row changed since the scan ({}); scan again and preview", stale_summary(&stale)), p.format);
     }
     let view = match stores.index.view(scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),
     };
+    // CLI-11: rows whose observed state changed since the scan (a folder: any file in it) are listed as stale, never
+    // planned; the rest are planned.
+    let (unchanged, stale) = split_stale(&a.set.candidates, &view, wanted);
+    for s in &stale {
+        cm_core::debug_trace!("clean.skip", "{} stale reason={} detail=\"{}\"", s.object_id, s.reason, s.detail);
+    }
+    // Live probes of the unchanged rows (CAT-06): an explicitly named row in use is refused with its reason, as before;
+    // a default row in use is left out, as the preview shows it skipped.
+    let mut selected = Vec::new();
+    for id in unchanged {
+        let Some(c) = candidate(&id) else { continue };
+        match refusal(c, facts(c), mode) {
+            None => selected.push(id),
+            Some(why) if explicit => return fail(req, ErrorCode::PolicyDenied, &format!("candidate {id} cannot be planned: {why}"), p.format),
+            Some(why) => cm_core::debug_trace!("clean.skip", "{id} {why}"),
+        }
+    }
+    cm_core::debug_trace!("clean", "selected={} stale={} explicit_ids={explicit}", selected.len(), stale.len());
+    if selected.is_empty() && !stale.is_empty() {
+        return fail(req, ErrorCode::PlanStale, &format!("every selected row changed since the scan ({}); scan again and preview", stale_summary(&stale)), p.format);
+    }
+    if selected.is_empty() {
+        return fail(req, ErrorCode::PolicyDenied, "nothing to plan: no row is default-selected, unskipped and allowed for this mode", p.format);
+    }
     let policies = stores.audit.policies().unwrap_or_default();
     let pdigest = cm_core::c14n::digest(&serde_json::to_value(&policies).unwrap_or(Value::Null)).expect("plain JSON");
     let plan_id = format!("p_{}", &req[4..]);
@@ -325,6 +352,10 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         Ok(plan) => plan,
         Err(e) => return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format),
     };
+    // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume; refused before the plan is stored.
+    if let Err(c) = crate::trash_cmd::plan_bins_ready(req, p, &a.set, &selected, mode) {
+        return c;
+    }
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }
@@ -339,32 +370,87 @@ pub(crate) struct Stale {
     pub detail: String,
 }
 
-/// Live, read-only check of one candidate against its scan observation: gone, or a file whose size changed.
-/// Everything else is re-verified per item by the executor before any action.
-pub(crate) fn stale_reason(c: &Candidate) -> Option<(&'static str, String)> {
+/// The local path of a recorded path on this platform.
+fn live_path(p: &cm_core::path::RawPath) -> Option<PathBuf> {
     #[cfg(windows)]
-    let os = cm_platform::windows::purge::os(&c.path);
+    let os = cm_platform::windows::purge::os(p);
     #[cfg(unix)]
-    let os = match &c.path {
+    let os = match p {
         cm_core::path::RawPath::Unix(b) => Some(PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b))),
         _ => None,
     };
-    let os = os?;
-    match std::fs::symlink_metadata(&os) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(("missing", format!("{} no longer exists", c.path.display()))),
-        Ok(m) if m.is_file() && c.logical.unknown_count == 0 && m.len() != c.logical.known.0 => {
-            Some(("changed", format!("{} is {} bytes now, {} when scanned", c.path.display(), m.len(), c.logical.known.0)))
-        }
+    os
+}
+
+/// How a file's live metadata differs from its scan observation (size, then whole-second modification time, as the
+/// executor compares them), if it does.
+fn file_drift(m: &std::fs::Metadata, logical: Option<u64>, modified_unix: Option<i64>) -> Option<String> {
+    if !m.is_file() {
+        return Some("is no longer a regular file".into());
+    }
+    if let Some(b) = logical
+        && m.len() != b
+    {
+        return Some(format!("is {} bytes now, {b} when scanned", m.len()));
+    }
+    let now = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+    match (modified_unix, now) {
+        (Some(then), Some(now)) if then != now => Some("was modified after the scan".into()),
         _ => None,
     }
 }
 
-/// Split a selection into plannable ids and stale rows, keeping order.
-pub(crate) fn split_stale(candidates: &[Candidate], selected: Vec<String>) -> (Vec<String>, Vec<Stale>) {
+/// Live, read-only check of one candidate against its scan observation (metadata only; the object is not followed):
+/// gone (`missing`), a file whose size or modification time changed, or — for a folder — any file observed under it
+/// that is gone or changed (`changed`, WFA-50): the plan would freeze those files with their scanned sizes. Links and
+/// mount points inside were never traversed and are not followed here. Everything is re-verified per item by the
+/// executor before any action.
+pub(crate) fn stale_reason(c: &Candidate, view: &dyn IndexView) -> Option<(&'static str, String)> {
+    let top = match std::fs::symlink_metadata(live_path(&c.path)?) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(("missing", format!("{} no longer exists", c.path.display()))),
+        Err(_) => return None,
+        Ok(m) => m,
+    };
+    let f = view.info(c.entry_id);
+    if c.kind != ObjectKind::Directory {
+        let logical = if c.logical.unknown_count == 0 { Some(c.logical.known.0) } else { f.logical };
+        return file_drift(&top, logical, f.modified_unix).map(|why| ("changed", format!("{} {why}", c.path.display())));
+    }
+    if !top.is_dir() || top.file_type().is_symlink() {
+        return Some(("changed", format!("{} is no longer a folder", c.path.display())));
+    }
+    let mut stack = vec![c.entry_id];
+    while let Some(e) = stack.pop() {
+        let ef = view.info(e);
+        if ef.boundary {
+            continue;
+        }
+        match ef.kind {
+            ObjectKind::Directory => stack.extend_from_slice(view.children(e)),
+            ObjectKind::File => {
+                let path = view.path(e);
+                let Some(os) = live_path(&path) else { continue };
+                let why = match std::fs::symlink_metadata(&os) {
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some("no longer exists".to_string()),
+                    Err(_) => None,
+                    Ok(m) => file_drift(&m, ef.logical, ef.modified_unix),
+                };
+                if let Some(why) = why {
+                    return Some(("changed", format!("{} changed since the scan: {} {why}", c.path.display(), path.display())));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split a selection into plannable ids and stale rows, keeping order. `view`: the scan the candidates come from.
+pub(crate) fn split_stale(candidates: &[Candidate], view: &dyn IndexView, selected: Vec<String>) -> (Vec<String>, Vec<Stale>) {
     let mut keep = Vec::new();
     let mut stale = Vec::new();
     for id in selected {
-        match candidates.iter().find(|c| c.candidate_id == id).and_then(stale_reason) {
+        match candidates.iter().find(|c| c.candidate_id == id).and_then(|c| stale_reason(c, view)) {
             Some((reason, detail)) => stale.push(Stale { object_id: id, reason, detail }),
             None => keep.push(id),
         }

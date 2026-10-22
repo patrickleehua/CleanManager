@@ -172,6 +172,8 @@ pub struct Analysis {
     pub issues: Vec<Value>,
     pub status: ScanStatusView,
     pub user_problem: Option<String>,
+    /// The rule pack the analysis used (explanations look up each candidate's rule in it).
+    pub rules: Vec<Rule>,
 }
 
 pub fn run_analysis(req: &str, p: &Parsed, stores: &Stores, scan_id: &str, volume: Option<PathBuf>) -> Result<Analysis, ExitCode> {
@@ -204,7 +206,7 @@ pub fn run_analysis(req: &str, p: &Parsed, stores: &Stores, scan_id: &str, volum
     let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
     let (set, catalog) = analyze_catalog(&view, &rules, &input, &prot, &ctx);
     stores.index.save_candidates(&set).map_err(|e| store_error(req, &e, p.format))?;
-    Ok(Analysis { set, catalog, issues, status, user_problem })
+    Ok(Analysis { set, catalog, issues, status, user_problem, rules: rules.rules })
 }
 
 /// Issues every analysis reports alongside its result.
@@ -300,15 +302,66 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Map a core candidate to the protocol `candidate_item`.
-pub fn candidate_item(c: &Candidate, scan_id: &str, revision: u32) -> Value {
+/// The rules of the current pack that matched a candidate (same id and version), in the candidate's rule order. A rule
+/// the pack no longer has at that version is simply absent: its explanation fields are then left out, never guessed.
+pub fn rules_of<'r>(c: &Candidate, rules: &'r [Rule]) -> Vec<&'r Rule> {
+    c.rules.iter().filter_map(|rr| rules.iter().find(|r| r.rule_id == rr.rule_id && r.version == rr.version)).collect()
+}
+
+/// Modes a candidate offers to a plan here (protected-reviewable objects only through a per-object review flow).
+fn offered_modes(c: &Candidate) -> Vec<cm_core::rules::Mode> {
+    if c.tier == Tier::Blocked || c.state == CandidateState::ProtectedReviewable { vec![] } else { c.allowed_modes.clone() }
+}
+
+/// ANA-02 explanation fields shared by `candidates list` and the `clean` preview: why the tier (rule ceiling and
+/// every lowering reason), what rebuilding and being offline cost, the rule's age threshold and the time it measures,
+/// the recovery limits of each offered mode, and the rule's evidence references.
+pub fn explanation(c: &Candidate, rules: &[Rule]) -> serde_json::Map<String, Value> {
+    use cm_core::catalog::{age_threshold, recovery_limits, tier_reason, worst_rebuild};
+    let found = rules_of(c, rules);
+    let first = found.first().copied().filter(|r| c.rules.first().is_some_and(|rr| rr.rule_id == r.rule_id));
+    let joined = |f: fn(&Rule) -> &str| -> Value {
+        let mut texts: Vec<&str> = found.iter().map(|r| f(r).trim()).filter(|t| !t.is_empty()).collect();
+        texts.dedup();
+        if texts.is_empty() { Value::Null } else { Value::String(texts.join(" ")) }
+    };
+    let mut m = serde_json::Map::new();
+    m.insert("tier".into(), serde_json::to_value(c.tier).unwrap_or(Value::Null));
+    m.insert("tier_reason".into(), Value::String(tier_reason(&c.reasons, first)));
+    // Only when every matching rule is known: a partial answer could understate the cost.
+    if found.len() == c.rules.len()
+        && let Some(r) = worst_rebuild(found.iter().copied())
+    {
+        m.insert("rebuild_class".into(), serde_json::to_value(r).unwrap_or(Value::Null));
+    }
+    m.insert("regeneration".into(), joined(|r| r.impact.regeneration.as_str()));
+    m.insert("offline_effect".into(), joined(|r| r.impact.offline_effect.as_str()));
+    m.insert("age_threshold".into(), first.and_then(age_threshold).map_or(Value::Null, |(days, basis)| json!({"min_age_days": days, "basis": basis})));
+    m.insert("recovery_limits".into(), serde_json::to_value(recovery_limits(&offered_modes(c))).unwrap_or(Value::Null));
+    let mut refs: Vec<&String> = found.iter().flat_map(|r| &r.evidence_refs).collect();
+    refs.sort();
+    refs.dedup();
+    m.insert("evidence_refs".into(), json!(refs));
+    m
+}
+
+/// Map a core candidate to the protocol `candidate_item`. `rules`: the current rule pack, for the explanation fields
+/// (WFA-17); the original fields keep their meaning, and `reason` now states the rule's own match basis first.
+pub fn candidate_item(c: &Candidate, scan_id: &str, revision: u32, rules: &[Rule]) -> Value {
     let risk = match c.tier {
         Tier::DefaultSelected => "low",
         Tier::ReviewOnly => "medium",
         Tier::Blocked => "blocked",
     };
     let rule = c.rules.first();
-    json!({
+    let basis = rules_of(c, rules).first().filter(|r| rule.is_some_and(|rr| rr.rule_id == r.rule_id)).map(|r| cm_core::catalog::match_reason(r));
+    let reason = match (basis, c.reasons.is_empty()) {
+        (Some(b), true) => b,
+        (Some(b), false) => format!("{b}; {}", c.reasons.join(", ")),
+        (None, true) => "matched rule".to_string(),
+        (None, false) => c.reasons.join(", "),
+    };
+    let mut item = json!({
         "candidate_id": c.candidate_id,
         "scan_id": scan_id,
         "scan_revision": revision,
@@ -317,15 +370,19 @@ pub fn candidate_item(c: &Candidate, scan_id: &str, revision: u32) -> Value {
         "rule_version": rule.map(|r| r.version.clone()).unwrap_or_default(),
         "risk": risk,
         "path": c.path,
-        "reason": if c.reasons.is_empty() { "matched rule".to_string() } else { c.reasons.join(", ") },
+        "reason": reason,
         "impact": c.impact,
         "logical_bytes": c.logical.known.to_string(),
         "allocated_bytes": null,
         "reclaimable_estimate_bytes": null,
         "estimate_basis": if c.logical.unknown_count > 0 { "not_computed" } else { "shared_blocks_unknown" },
-        // Protected-reviewable objects are planned only by a per-object review flow, never here.
-        "allowed_modes": if c.tier == Tier::Blocked || c.state == CandidateState::ProtectedReviewable { vec![] } else { c.allowed_modes.clone() },
-    })
+        "allowed_modes": offered_modes(c),
+        "category": c.category,
+    });
+    if let Value::Object(m) = &mut item {
+        m.extend(explanation(c, rules));
+    }
+    item
 }
 
 pub fn candidates_list(req: &str, p: &Parsed) -> ExitCode {
@@ -351,11 +408,13 @@ pub fn candidates_list(req: &str, p: &Parsed) -> ExitCode {
         Err(e) => return store_error(req, &e, p.format),
     };
     let by_id: BTreeMap<&str, &Candidate> = set.candidates.iter().map(|c| (c.candidate_id.as_str(), c)).collect();
+    // The rule pack for the explanation fields; when it cannot be loaded they are left out (the page still lists).
+    let rules = load_rules(&default_rules_dir()).map(|s| s.rules).unwrap_or_default();
     let items: Vec<Value> = page
         .iter()
         .filter_map(|v| v["candidate_id"].as_str())
         .filter_map(|id| by_id.get(id))
-        .map(|c| candidate_item(c, &set.scan_id, set.revision))
+        .map(|c| candidate_item(c, &set.scan_id, set.revision, &rules))
         .collect();
     emit(
         &record("candidates_page", req, fields(json!({

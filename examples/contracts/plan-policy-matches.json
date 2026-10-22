@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "kind": "plan",
+  "request_id": "req_synthetic",
+  "body": {
+    "engine_contract": "plan/v1",
+    "plan_id": "p_demo",
+    "scope_id": "scope_demo",
+    "scan_id": "s_demo",
+    "scan_revision": 1,
+    "rule_set_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "created_at": "2026-10-14T12:01:00Z",
+    "expires_at": "2026-10-14T12:16:00Z",
+    "mode": "trash",
+    "items": [
+      {
+        "action_id": "a_demo",
+        "candidate_id": "c_demo",
+        "entry_id": "e_demo",
+        "path": {
+          "platform": "windows",
+          "display": "C:\\Users\\Example\\AppData\\Local\\ExampleApp\\Cache\\old.tmp",
+          "raw_encoding": "windows_utf16le_base64",
+          "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAEEAcABwAEQAYQB0AGEAXABMAG8AYwBhAGwAXABFAHgAYQBtAHAAbABlAEEAcABwAFwAQwBhAGMAaABlAFwAbwBsAGQALgB0AG0AcAA="
+        },
+        "identity": {
+          "volume_id": "synthetic-volume",
+          "file_id": "ntfs64:3b9c358f36f0a31b",
+          "generation": null,
+          "quality": "strong",
+          "observed_at": "2026-10-14T12:00:02Z"
+        },
+        "observed_fingerprint_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "logical_bytes": "104857600",
+        "allocated_bytes": "104857600",
+        "must_not_follow_links": true
+      }
+    ]
+  },
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "authorization_status": "required",
+  "authorized_by": null,
+  "policy_matches": [
+    {
+      "policy_id": "pol_demo",
+      "policy_version": "2",
+      "state": "enabled",
+      "covers": true,
+      "reason": null,
+      "message": "would authorize this plan when it is applied (the last 24 hours used 0 of 2147483648 bytes and 0 of 2000 items; this plan needs 104857600 bytes and 1 items)"
+    },
+    {
+      "policy_id": "pol_other",
+      "policy_version": "1",
+      "state": "enabled",
+      "covers": false,
+      "reason": "mode_differs",
+      "message": "the plan's mode trash is not the policy's mode quarantine"
+    }
+  ]
+}

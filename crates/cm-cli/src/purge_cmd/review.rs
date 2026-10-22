@@ -160,6 +160,10 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         Ok(s) => s,
         Err(c) => return c,
     };
+    // PRT-02: no plan while the protection list is unusable (a set analyzed before the outage stays unplannable).
+    if let Err(c) = crate::plan_cmd::require_protection(req, p, &stores) {
+        return c;
+    }
     let ids: Vec<String> = match p.option("set") {
         Some(id) => vec![id.to_owned()],
         None => last_run_sets(&stores.dir, last_run),
@@ -208,15 +212,16 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         }
         _ => return fail(req, ErrorCode::InvalidArgument, "pass exactly one of --candidates ID,ID or --all-default-selected (installer: or --source LABEL)", p.format),
     };
-    // CLI-11: previewed rows whose observed state changed since discovery are listed as stale, not planned.
-    let (selected, stale) = crate::clean_cmd::split_stale(&set.candidates, selected);
-    if selected.is_empty() {
-        return fail(req, ErrorCode::PlanStale, &format!("every selected item changed since discovery ({}); run the preview again", crate::clean_cmd::stale_summary(&stale)), p.format);
-    }
     let view = match stores.index.view(&set.scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),
     };
+    // CLI-11: previewed rows whose observed state changed since discovery (a folder: any file in it) are listed as
+    // stale, not planned.
+    let (selected, stale) = crate::clean_cmd::split_stale(&set.candidates, &view, selected);
+    if selected.is_empty() {
+        return fail(req, ErrorCode::PlanStale, &format!("every selected item changed since discovery ({}); run the preview again", crate::clean_cmd::stale_summary(&stale)), p.format);
+    }
     let status = match stores.index.scan_status(&set.scan_id) {
         Ok(s) => s,
         Err(e) => return store_error(req, &e, p.format),
@@ -235,6 +240,10 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         Ok(p) => p,
         Err(e) => return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format),
     };
+    // MTR-03 / WFA-35: trash mode (the default here) needs a usable bin on every target's volume.
+    if let Err(c) = crate::trash_cmd::plan_bins_ready(req, p, set, &selected, mode) {
+        return c;
+    }
     if let Err(e) = stores.audit.save_plan(&plan) {
         return store_error(req, &e, p.format);
     }

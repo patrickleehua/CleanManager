@@ -236,10 +236,16 @@ fn index_persists_across_restart_and_rebuild_keeps_audit() {
     let stores = Stores::open(&dir).unwrap();
     assert_eq!(stores.index.scan_status("s1").unwrap().state, ScanState::Completed);
     drop(stores);
-    let rebuilt = Stores::rebuild_index(&dir).unwrap();
+    let (rebuilt, kept) = Stores::rebuild_index(&dir).unwrap();
     assert!(matches!(rebuilt.scan_status("s1"), Err(StoreError::NotFound(_))));
     let audit = AuditStore::open(&dir.join("audit.db")).unwrap();
     assert_eq!(audit.operation_state("op1").unwrap(), "created", "rebuild never touches audit records");
+    // The old index is kept under a new name, never deleted, and still holds its scan.
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    let name = kept[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.starts_with("index.db.damaged-"), "{name}");
+    let old = IndexStore::open(&kept[0]).unwrap();
+    assert_eq!(old.scan_status("s1").unwrap().state, ScanState::Completed);
 }
 
 #[test]
@@ -248,7 +254,7 @@ fn incompatible_or_damaged_index_is_reported_not_silently_reset() {
     let path = dir.join("index.db");
     {
         let store = IndexStore::open(&path).unwrap();
-        store.conn.execute("UPDATE meta SET value='99' WHERE key='schema_version'", []).unwrap();
+        store.conn().execute("UPDATE meta SET value='99' WHERE key='schema_version'", []).unwrap();
     }
     assert!(matches!(IndexStore::open(&path), Err(StoreError::IndexIncompatible { .. })));
     let garbage = dir.join("garbage.db");
@@ -435,4 +441,154 @@ fn scans_are_listed_newest_first_with_their_root() {
     assert!(matches!(store.list_scans(3, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to page size");
     assert!(matches!(store.list_scans(0, None), Err(StoreError::InvalidArgument(_))));
     assert_eq!(store.latest_candidate_set("s1").unwrap(), None);
+}
+
+/// Overwrite `len` bytes at `offset` of a closed database file.
+fn garble(path: &std::path::Path, offset: u64, len: usize) {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    f.seek(SeekFrom::Start(offset)).unwrap();
+    f.write_all(&vec![0xA5u8; len]).unwrap();
+}
+
+/// One small published scan in a closed database whose WAL was checkpointed into the file; returns
+/// the root page of `entries` (the whole table fits in it).
+fn small_index(path: &std::path::Path) -> u64 {
+    let store = IndexStore::open(path).unwrap();
+    let rev = begin(&store, "s1");
+    store.write_batch("s1", rev, &[obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::File, Some(9))],
+        &[ent(1, None, "/r", 1, ObjectKind::Directory), ent(2, Some(1), "a", 2, ObjectKind::File)], &[]).unwrap();
+    store.publish("s1", rev, ScanState::Completed, "t").unwrap();
+    assert_eq!(store.conn().query_row("PRAGMA page_size", [], |r| r.get::<_, i64>(0)).unwrap(), 4096);
+    store.conn().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    store.conn().query_row("SELECT rootpage FROM sqlite_master WHERE name='entries'", [], |r| r.get::<_, i64>(0)).unwrap() as u64
+}
+
+#[test]
+fn a_damaged_index_leaves_history_and_recovery_usable_and_is_repaired_by_moving_it_aside() {
+    let dir = scratch("damaged-header");
+    {
+        let stores = Stores::open(&dir).unwrap();
+        let rev = begin(&stores.index, "s1");
+        stores.index.publish("s1", rev, ScanState::Completed, "t").unwrap();
+        stores.audit.begin_operation("op1", "p", "d", "k", &host(), "t").unwrap();
+    }
+    // The acceptance repro (WFA-16): the first 92 bytes of index.db overwritten, audit.db intact.
+    garble(&dir.join("index.db"), 0, 92);
+    // A WAL left by a crash belongs to the damaged file: no open may delete it, and it moves with the file
+    // (it must never be replayed into the new index).
+    std::fs::write(dir.join("index.db-wal"), b"stale wal").unwrap();
+    let stores = Stores::open(&dir).expect("the audit store opens without the index");
+    assert_eq!(stores.audit.operation_state("op1").unwrap(), "created", "history stays readable");
+    let e = stores.index.scan_status("s1").unwrap_err();
+    assert!(matches!(e, StoreError::IndexCorrupt(_)), "{e:?}");
+    assert_eq!(e.code(), cm_core::error::ErrorCode::IndexUnavailable);
+    assert_eq!(e.required_action(), Some(crate::REPAIR_INDEX_COMMAND));
+    // Every later call reports the same typed error.
+    assert!(matches!(stores.index.list_scans(5, None), Err(StoreError::IndexCorrupt(_))));
+    assert!(matches!(stores.index.begin_scan(&ScanInit { scan_id: "s2".into(), scope_id: "x".into(), root: unix("/r"), backend: "t".into(),
+        host: host(), started_at: "t".into() }), Err(StoreError::IndexCorrupt(_))), "a new scan needs the index");
+
+    assert_eq!(std::fs::read(dir.join("index.db-wal")).unwrap(), b"stale wal", "a failed open leaves the WAL alone");
+    let before = std::fs::read(dir.join("index.db")).unwrap();
+    let repair = Stores::repair_index(&dir).unwrap();
+    assert_eq!((repair.previous_state, repair.repaired), ("corrupt", true), "{repair:?}");
+    assert!(repair.problem.as_deref().is_some_and(|p| p.contains("damaged")), "{repair:?}");
+    let names: Vec<String> = repair.kept.iter().map(|k| k.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(names[0].starts_with("index.db.damaged-") && names[1] == format!("{}-wal", names[0]), "{names:?}");
+    assert_eq!(std::fs::read(&repair.kept[0]).unwrap(), before, "moved, never rewritten or deleted");
+    assert_eq!(std::fs::read(&repair.kept[1]).unwrap(), b"stale wal");
+    // The same handle sees the new, empty index (the file changed): scans must be run again.
+    assert!(matches!(stores.index.scan_status("s1"), Err(StoreError::NotFound(_))));
+    assert_eq!(stores.audit.operation_state("op1").unwrap(), "created", "the repair never touches the audit store");
+    // A healthy index is left alone; nothing is moved.
+    let again = Stores::repair_index(&dir).unwrap();
+    assert_eq!((again.previous_state, again.repaired, again.kept.len()), ("healthy", false, 0));
+    let empty = scratch("damaged-header-none");
+    assert_eq!(Stores::repair_index(&empty).unwrap().previous_state, "missing");
+}
+
+#[test]
+fn integrity_is_checked_when_due_and_damage_found_later_is_still_the_typed_error() {
+    let dir = scratch("integrity-due");
+    let path = dir.join("index.db");
+    let entries_root = small_index(&path);
+    assert!(!dir.join("index.db-wal").exists() || std::fs::metadata(dir.join("index.db-wal")).unwrap().len() == 0);
+    garble(&path, (entries_root - 1) * 4096, 4096);
+    // The fresh index recorded its check, so this open reads only the header and `meta`...
+    let store = IndexStore::open(&path).expect("no check is due");
+    // ...and the damage surfaces on the first query that reads the page, as the typed index error.
+    let e = store.list_entries(&query(Sort::LogicalDesc, 5, None)).unwrap_err();
+    assert!(matches!(e, StoreError::IndexCorrupt(_)), "{e:?}");
+    assert_eq!(e.code(), cm_core::error::ErrorCode::IndexUnavailable);
+    assert!(store.integrity_status().unwrap().1.is_some(), "the damage marks the index for a full check");
+    drop(store);
+    // The next open checks every page and refuses.
+    assert!(matches!(IndexStore::open(&path), Err(StoreError::IndexCorrupt(m)) if m.contains("integrity check")));
+}
+
+#[test]
+fn a_scheduled_check_runs_at_most_once_per_interval_and_doctor_always_checks() {
+    let dir = scratch("integrity-interval");
+    let path = dir.join("index.db");
+    drop(IndexStore::open(&path).unwrap());
+    let checked = |s: &IndexStore| s.integrity_status().unwrap().0.expect("a check was recorded");
+    let set = |s: &IndexStore, at: i64| s.conn().execute("UPDATE meta SET value=?1 WHERE key='integrity_checked_unix'", [at.to_string()]).unwrap();
+    let store = IndexStore::open(&path).unwrap();
+    let first = checked(&store);
+    set(&store, first - 60);
+    drop(store);
+    let store = IndexStore::open(&path).unwrap();
+    assert_eq!(checked(&store), first - 60, "checked less than RECHECK_DAYS ago: an open does not check again");
+    set(&store, first - crate::integrity::RECHECK_DAYS * 86_400 - 1);
+    drop(store);
+    let store = IndexStore::open(&path).unwrap();
+    assert!(checked(&store) >= first, "an older check runs again at the next open and is recorded");
+    set(&store, first - 60);
+    store.verify().unwrap();
+    assert!(checked(&store) >= first, "doctor's check always runs and is recorded");
+}
+
+#[test]
+fn a_host_killed_after_recording_its_own_report_is_still_explained_as_host_exited() {
+    let dir = scratch("host-late");
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    let rev = begin(&store, "s1");
+    store.write_batch("s1", rev, &[obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::File, Some(9))],
+        &[ent(1, None, "/r", 1, ObjectKind::Directory), ent(2, Some(1), "a", 2, ObjectKind::File)], &[]).unwrap();
+    // BUG-WFA-06: every row was confirmed and the host recorded its report, then it was killed before publishing.
+    let own = cm_core::scan::ScanReport { state: ScanState::Completed, backend: "win.directory".into(), backend_reason: "NTFS volume".into(),
+        entries: 2, skipped_ranges: 0, boundaries: 0, elevated_read: vec![], issues: vec![] };
+    store.record_report("s1", &own).unwrap();
+    assert_eq!(store.reconcile_hosts(|_| Liveness::Exited, "t2").unwrap(), vec!["s1".to_string()]);
+    let report = store.scan_report("s1").unwrap().unwrap();
+    assert_eq!(report["state"], "interrupted", "{report}");
+    assert_eq!((report["backend"].as_str(), report["entries"].as_u64()), (Some("win.directory"), Some(2)), "the host's own facts are kept: {report}");
+    let codes: Vec<&str> = report["issues"].as_array().unwrap().iter().map(|i| i["code"].as_str().unwrap()).collect();
+    assert_eq!(codes, ["host_exited"]);
+    let status = store.scan_status("s1").unwrap();
+    assert_eq!((status.state, status.completeness.as_deref()), (ScanState::Interrupted, Some("partial_scope")));
+    assert!(store.integrity_status().unwrap().1.is_some_and(|m| m.contains("s1")), "an unclean shutdown marks the index for a full check");
+    assert!(store.reconcile_hosts(|_| Liveness::Exited, "t3").unwrap().is_empty());
+    assert_eq!(store.scan_report("s1").unwrap().unwrap()["issues"].as_array().unwrap().len(), 1, "the issue is added once");
+}
+
+/// SQLite on Windows opens its files without FILE_SHARE_DELETE, so a damaged index another process
+/// still holds cannot be moved: the repair reports it and changes nothing.
+#[cfg(windows)]
+#[test]
+fn a_held_index_is_not_moved_and_nothing_changes() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = scratch("repair-held");
+    let path = dir.join("index.db");
+    drop(IndexStore::open(&path).unwrap());
+    garble(&path, 0, 92);
+    let holder = std::fs::OpenOptions::new().read(true).share_mode(0x1 | 0x2).open(&path).unwrap();
+    let err = Stores::repair_index(&dir).unwrap_err();
+    assert!(matches!(err, StoreError::Io(_)), "{err:?}");
+    drop(holder);
+    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(names.iter().all(|n| !n.contains("damaged")), "{names:?}");
+    assert!(matches!(IndexStore::open(&path), Err(StoreError::IndexCorrupt(_))), "the damaged file is still in place");
 }

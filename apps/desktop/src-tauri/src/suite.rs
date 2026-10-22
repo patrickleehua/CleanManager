@@ -261,8 +261,11 @@ pub fn purge_item(set_id: &str, c: &Candidate, f: &cm_core::purge::PurgeFacts, r
 }
 
 pub fn installer_item(set_id: &str, c: &Candidate, f: &cm_core::installer::InstallerFacts, fixture: bool) -> CatalogItemDto {
-    let mut notes = vec![format!("recognized: {}", f.evidence)];
-    notes.push(crate::plat::signer_note(f.kind, f.signer.as_deref()));
+    let mut notes = vec![f.recognition_note()];
+    notes.extend(f.in_use_note());
+    if f.content_verified {
+        notes.push(crate::plat::signer_note(f.kind, f.signer.as_deref()));
+    }
     if let Some(h) = &f.installed_hint {
         notes.push(h.clone());
     }
@@ -660,6 +663,8 @@ pub(crate) mod imp {
             policy_digest: &pdigest,
         };
         let plan = cm_core::plan::build_plan(&view, &set, &keep, mode, &input).map_err(|e| ipc(ErrorCode::PolicyDenied, "plan_refused", e.to_string()))?;
+        // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume.
+        crate::cleanup::bins_ready(&set, &keep, mode)?;
         stores.audit.save_plan(&plan)?;
         Ok(CreatedPlanDto { plan_id, stale_items: stale })
     }

@@ -8,7 +8,7 @@
 // with six outcomes per task; there is no undo. The diagnosis only reads.
 
 import type { App } from '../main';
-import { formatBytes, groupDigits } from '../lib/bytes';
+import { formatBytes } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
@@ -20,6 +20,7 @@ import { LongProgress, ensureReady, noticeLine, outcomeMark, outcomeTally, selec
 import { emptyState, errorLine, pageHead, pill } from './parts';
 import { learnMore, techBlock } from './ui';
 import { unknownCodeText } from '../lib/codes';
+import { t } from '../i18n';
 
 export function taskTitle(id: string, fallback: string): string {
   return TASK_WORDS[id]?.title ?? fallback;
@@ -117,7 +118,7 @@ export class MaintenancePage {
         const r = await this.searchGate.latest(this.app.backend.maintenanceSearch(text));
         if (r.stale) return;
         this.search = r.value;
-        if (!r.value.task_ids.length && r.value.prohibited.length) this.app.announce(`没有这项任务：${prohibitedWords(r.value.prohibited[0]).title}，原因见下方`);
+        if (!r.value.task_ids.length && r.value.prohibited.length) this.app.announce(t('maintenance.noTaskTitleSee', { title: prohibitedWords(r.value.prohibited[0]).title }));
       } catch (e) {
         this.error = toIpcError(e);
       }
@@ -127,7 +128,7 @@ export class MaintenancePage {
 
   private async createPlan(): Promise<void> {
     if (this.creating || !this.selected.size) return;
-    if (!(await ensureReady(this.app, 'maintenance', '维护任务'))) return;
+    if (!(await ensureReady(this.app, 'maintenance', t('maintenance.maintenanceTasks')))) return;
     this.creating = true;
     this.createError = null;
     this.update();
@@ -136,7 +137,7 @@ export class MaintenancePage {
       const ids = [...this.selected].sort((a, b) => order.indexOf(a) - order.indexOf(b));
       const r = await this.app.backend.maintenancePlan(ids);
       this.selected.clear();
-      this.app.announce('维护计划已生成，尚未执行。请审阅后批准');
+      this.app.announce(t('maintenance.maintenancePlanCreatedNothing'));
       this.app.openPlan(r.plan_id, 'maintenance');
     } catch (e) {
       this.createError = toIpcError(e);
@@ -150,32 +151,32 @@ export class MaintenancePage {
 
   private render(): void {
     const c = this.catalog;
-    const refresh = h('button', { type: 'button', id: 'maint-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在探测…' : '重新探测');
+    const refresh = h('button', { type: 'button', id: 'maint-refresh', disabled: this.loading }, icon('refresh'), this.loading ? t('maintenance.probing') : t('maintenance.probeAgain'));
     refresh.addEventListener('click', () => void this.load());
     if (c && !c.supported) {
-      replace(this.body, pageHead({ id: 'maint-title', title: '维护任务' }), emptyState('此平台暂不提供', notOnThisPlatform('这一版的维护任务目录只包含 Windows 任务。'), null));
+      replace(this.body, pageHead({ id: 'maint-title', title: t('maintenance.maintenanceTasks') }), emptyState(t('common.notAvailablePlatformYet'), notOnThisPlatform(t('maintenance.versionMaintenanceTaskCatalog')), null));
       return;
     }
     replace(
       this.body,
       pageHead({
         id: 'maint-title',
-        title: '维护任务',
-        meta: c ? [`${groupDigits(c.items.length)} 项任务`, c.is_admin ? `以${words().admin}运行` : words().maintAdminMeta, '执行前只读探测'] : ['执行前只读探测'],
+        title: t('maintenance.maintenanceTasks'),
+        meta: c ? [t('maintenance.taskCount', { length: c.items.length }), c.is_admin ? t('maintenance.runsAdmin', { admin: words().admin }) : words().maintAdminMeta, t('maintenance.readOnlyProbeBefore')] : [t('maintenance.readOnlyProbeBefore')],
         actions: [refresh],
       }),
       errorLine(this.error),
       c
         ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.searchPanel(c), this.tasksPanel(c), this.prohibitedPanel(c), this.historyPanel()), this.draft(c))
         : !this.error
-          ? h('p', { class: 'muted', role: 'status' }, '正在读取任务目录并探测适用性…')
+          ? h('p', { class: 'muted', role: 'status' }, t('maintenance.readingTaskCatalogProbing'))
           : null,
       c ? this.bar() : null,
     );
   }
 
   private searchPanel(c: MaintenanceCatalog): HTMLElement {
-    const input = h('input', { type: 'search', id: 'maint-search', placeholder: words().maintSearchExample, 'aria-label': '搜索维护任务', 'aria-describedby': 'maint-search-help', value: this.query }) as HTMLInputElement;
+    const input = h('input', { type: 'search', id: 'maint-search', placeholder: words().maintSearchExample, 'aria-label': t('maintenance.searchMaintenanceTasks'), 'aria-describedby': 'maint-search-help', value: this.query }) as HTMLInputElement;
     input.addEventListener('input', () => this.onSearch(input.value));
     const s = this.search;
     const hits = s ? c.items.filter((t) => s.task_ids.includes(t.task_id)) : [];
@@ -183,15 +184,15 @@ export class MaintenancePage {
       'div',
       { class: 'maint-search' },
       input,
-      h('p', { id: 'maint-search-help', class: 'sr-only' }, '搜索任务；没有对应任务的操作会显示不提供的原因'),
+      h('p', { id: 'maint-search-help', class: 'sr-only' }, t('maintenance.searchTasksThingsNo')),
       s && s.query.trim()
         ? h(
             'div',
             { class: 'search-result', role: 'status' },
-            hits.length ? h('p', { class: 'small' }, `匹配的任务：${hits.map((t) => taskTitle(t.task_id, t.title)).join('、')}`) : s.prohibited.length ? null : h('p', { class: 'small' }, '没有匹配的任务。'),
+            hits.length ? h('p', { class: 'small' }, t('maintenance.matchingTasksJoin', { join: hits.map((t) => taskTitle(t.task_id, t.title)).join(t('common.listSep')) })) : s.prohibited.length ? null : h('p', { class: 'small' }, t('maintenance.noMatchingTasks')),
             ...s.prohibited.map((p) => {
               const w = prohibitedWords(p);
-              return h('div', { class: 'notice warn prohibited-hit' }, h('span', {}, h('b', {}, `不提供：${w.title}`), h('span', { class: 'block' }, w.reason)));
+              return h('div', { class: 'notice warn prohibited-hit' }, h('span', {}, h('b', {}, t('maintenance.notOfferedTitle', { title: w.title })), h('span', { class: 'block' }, w.reason)));
             }),
           )
         : null,
@@ -202,25 +203,25 @@ export class MaintenancePage {
     const s = this.search;
     const items = s && s.query.trim() ? c.items.filter((t) => s.task_ids.includes(t.task_id)) : c.items;
     const selectable = c.items.filter(taskSelectable);
-    const pickAll = h('button', { type: 'button', class: 'quiet', id: 'maint-select-applicable', disabled: !selectable.length }, `选择全部适用的任务（${selectable.length}）`);
+    const pickAll = h('button', { type: 'button', class: 'quiet', id: 'maint-select-applicable', disabled: !selectable.length }, t('maintenance.selectAllApplicableTasks', { length: selectable.length }));
     pickAll.addEventListener('click', () => {
       selectable.forEach((t) => this.selected.add(t.task_id));
-      this.app.announce(`已选择 ${selectable.length} 项适用的任务`);
+      this.app.announce(t('maintenance.selectedLength', { length: selectable.length }));
       this.update();
     });
-    const rows = items.map((t) => {
-      const id = `mt-${t.task_id.replace(/[^a-z0-9]+/gi, '-')}`;
-      const can = taskSelectable(t);
-      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !can, 'aria-label': `选择 ${taskTitle(t.task_id, t.title)}` }) as HTMLInputElement;
-      check.checked = this.selected.has(t.task_id);
+    const rows = items.map((task) => {
+      const id = `mt-${task.task_id.replace(/[^a-z0-9]+/gi, '-')}`;
+      const can = taskSelectable(task);
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !can, 'aria-label': t('maintenance.selectTaskId', { task_id: taskTitle(task.task_id, task.title) }) }) as HTMLInputElement;
+      check.checked = this.selected.has(task.task_id);
       check.addEventListener('change', () => {
-        if (check.checked) this.selected.add(t.task_id);
-        else this.selected.delete(t.task_id);
+        if (check.checked) this.selected.add(task.task_id);
+        else this.selected.delete(task.task_id);
         this.createError = null;
         this.update();
       });
-      const w = TASK_WORDS[t.task_id];
-      const ap = t.user_protected ? { label: '受保护', tone: 'muted' as const } : APPLICABILITY[t.applicability];
+      const w = TASK_WORDS[task.task_id];
+      const ap = task.user_protected ? { label: t('maintenance.tasksPanel.label'), tone: 'muted' as const } : APPLICABILITY[task.applicability];
       return h(
         'tr',
         { class: `crow${check.checked ? ' selected' : ''}${can ? '' : ' locked'}` },
@@ -228,22 +229,22 @@ export class MaintenancePage {
         h(
           'td',
           { class: 'col-object' },
-          h('label', { for: `${id}-check`, class: 'obj-name' }, taskTitle(t.task_id, t.title)),
-          h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '解决：'), w?.problem ?? t.problem),
-          h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '影响：'), w?.impact ?? t.impact),
+          h('label', { for: `${id}-check`, class: 'obj-name' }, taskTitle(task.task_id, task.title)),
+          h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, t('maintenance.fixes')), w?.problem ?? task.problem),
+          h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, t('maintenance.impact')), w?.impact ?? task.impact),
           // The task id is a machine fact: a tooltip here, the full id in the plan and the run record.
-          h('span', { class: 'obj-path', title: `${t.task_id}@${t.task_version}` }, `约 ${t.estimated_seconds} 秒`, h('span', { class: 'meta-sep', 'aria-hidden': 'true' }), t.reversible ? '可还原原来的设置' : '不可撤销'),
+          h('span', { class: 'obj-path', title: `${task.task_id}@${task.task_version}` }, t('maintenance.aboutEstimatedSeconds', { estimated_seconds: task.estimated_seconds }), h('span', { class: 'meta-sep', 'aria-hidden': 'true' }), task.reversible ? t('maintenance.originalSettingsRestored') : t('maintenance.cantUndone')),
         ),
         h(
           'td',
           { class: 'col-status' },
           pill(ap.label, ap.tone),
-          t.requires_admin ? h('span', { class: 'row-tag block-tag' }, '需要管理员') : null,
+          task.requires_admin ? h('span', { class: 'row-tag block-tag' }, t('common.needsAdministrator')) : null,
           // The probe's own sentence is shown only when it is in words; a raw host reason is the tooltip.
           h(
             'span',
-            { class: 'small muted block', title: isRawHostText(t.applicability_reason) ? t.applicability_reason : null },
-            t.user_protected ? '你把它加入了保护，执行时一律跳过' : t.applicability_reason && !isRawHostText(t.applicability_reason) ? t.applicability_reason : (w?.applies ?? t.applies_when),
+            { class: 'small muted block', title: isRawHostText(task.applicability_reason) ? task.applicability_reason : null },
+            task.user_protected ? t('maintenance.addedProtectionListSo') : task.applicability_reason && !isRawHostText(task.applicability_reason) ? task.applicability_reason : (w?.applies ?? task.applies_when),
           ),
         ),
       );
@@ -251,8 +252,8 @@ export class MaintenancePage {
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'maint-tasks-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'maint-tasks-title' }, '任务目录'), pickAll),
-      h('p', { class: 'muted small' }, '没有预先勾选任何任务。适用性是刚才的只读探测结果，执行前每项还会再探测一次。'),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'maint-tasks-title' }, t('maintenance.taskCatalog')), pickAll),
+      h('p', { class: 'muted small' }, t('maintenance.noTasksPreselectedApplicability')),
       items.length
         ? h(
             'div',
@@ -260,12 +261,12 @@ export class MaintenancePage {
             h(
               'table',
               { class: 'data-table ctable maint-table' },
-              h('caption', { class: 'sr-only' }, '维护任务、解决的问题、影响与适用性'),
-              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '任务'), h('th', { scope: 'col', class: 'col-status' }, '适用性'))),
+              h('caption', { class: 'sr-only' }, t('maintenance.maintenanceTasksProblemsThey')),
+              h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('maintenance.task')), h('th', { scope: 'col', class: 'col-status' }, t('maintenance.applicability')))),
               h('tbody', {}, ...rows),
             ),
           )
-        : h('p', { class: 'small' }, s?.prohibited.length ? `“${s.query.trim()}”没有对应的任务，原因见上方。` : '没有匹配的任务。'),
+        : h('p', { class: 'small' }, s?.prohibited.length ? t('maintenance.noTaskTrimSee', { trim: s.query.trim() }) : t('maintenance.noMatchingTasks')),
     );
   }
 
@@ -273,7 +274,7 @@ export class MaintenancePage {
     return h(
       'details',
       { class: 'panel prohibited-panel' },
-      h('summary', {}, h('h2', { class: 'inline-h2' }, `不提供的操作（${c.prohibited.length}）`), h('span', { class: 'muted small' }, '这些不是任务，以后也不会成为任务')),
+      h('summary', {}, h('h2', { class: 'inline-h2' }, t('maintenance.notOfferedLength', { length: c.prohibited.length })), h('span', { class: 'muted small' }, t('maintenance.arentTasksNever'))),
       h(
         'ul',
         { class: 'prohibited-list' },
@@ -290,14 +291,14 @@ export class MaintenancePage {
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'maint-history-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'maint-history-title' }, '运行记录'), h('span', { class: 'muted small' }, '维护操作没有撤销；每次运行逐项记录结果与原因')),
-      runs.length ? h('ol', { class: 'run-history' }, ...runs.map((r) => this.run(r))) : h('p', { class: 'muted small' }, '还没有运行记录。'),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'maint-history-title' }, t('maintenance.runHistory')), h('span', { class: 'muted small' }, t('maintenance.maintenanceCantUndoneEvery'))),
+      runs.length ? h('ol', { class: 'run-history' }, ...runs.map((r) => this.run(r))) : h('p', { class: 'muted small' }, t('maintenance.noRunsYet')),
     );
   }
 
   private run(r: MaintenanceReport): HTMLElement {
     const open = this.openRuns.has(r.operation_id);
-    const toggle = h('button', { type: 'button', class: 'link-btn', 'aria-expanded': open ? 'true' : 'false' }, open ? '收起逐项结果' : '逐项结果');
+    const toggle = h('button', { type: 'button', class: 'link-btn', 'aria-expanded': open ? 'true' : 'false' }, open ? t('maintenance.hidePerTaskResults') : t('maintenance.perTaskResults'));
     toggle.addEventListener('click', () => {
       if (open) this.openRuns.delete(r.operation_id);
       else this.openRuns.add(r.operation_id);
@@ -309,10 +310,10 @@ export class MaintenancePage {
       h(
         'div',
         { class: 'run-entry-head' },
-        h('span', { class: 'run-main' }, h('b', {}, formatTime(r.started_at)), h('span', { class: 'muted small' }, `${r.entry === 'desktop' ? '桌面' : '命令行'} · ${ELEVATION_WORD[r.elevation] ?? r.elevation}`)),
-        allDone(r) ? pill('全部执行或无需改变', 'good') : pill('有需要跟进或没有执行的', 'warn'),
+        h('span', { class: 'run-main' }, h('b', {}, formatTime(r.started_at)), h('span', { class: 'muted small' }, `${r.entry === 'desktop' ? t('maintenance.desktop') : t('maintenance.commandLine')} · ${ELEVATION_WORD[r.elevation] ?? r.elevation}`)),
+        allDone(r) ? pill(t('maintenance.allRanNothingChange'), 'good') : pill(t('maintenance.someNeedFollowUp'), 'warn'),
       ),
-      outcomeTally(r.counts, '这次运行的结果'),
+      outcomeTally(r.counts, t('maintenance.resultsRun')),
       toggle,
       open
         ? h(
@@ -327,21 +328,21 @@ export class MaintenancePage {
   private draft(c: MaintenanceCatalog): HTMLElement {
     const chosen = c.items.filter((t) => this.selected.has(t.task_id));
     const admin = chosen.filter((t) => t.requires_admin).length;
-    const create = h('button', { type: 'button', class: 'primary wide', id: 'maint-create', disabled: !chosen.length || this.creating }, this.creating ? '正在冻结计划…' : chosen.length ? `生成维护计划（${chosen.length} 项）` : '先选择任务');
+    const create = h('button', { type: 'button', class: 'primary wide', id: 'maint-create', disabled: !chosen.length || this.creating }, this.creating ? t('common.freezingPlan') : chosen.length ? t('maintenance.createMaintenancePlanLength', { length: chosen.length }) : t('maintenance.selectTasksFirst'));
     create.addEventListener('click', () => void this.createPlan());
     return h(
       'aside',
       { class: 'panel work-aside draft', 'aria-labelledby': 'maint-draft-title' },
-      h('h2', { id: 'maint-draft-title' }, '运行草稿'),
+      h('h2', { id: 'maint-draft-title' }, t('maintenance.runSelection')),
       chosen.length
-        ? h('ul', { class: 'draft-list' }, ...chosen.map((t) => h('li', {}, h('span', {}, taskTitle(t.task_id, t.title)), t.requires_admin ? h('span', { class: 'row-tag' }, '管理员') : null)))
-        : h('p', { class: 'muted small' }, '勾选要运行的任务。生成计划只记录这份清单，不运行任何东西。'),
+        ? h('ul', { class: 'draft-list' }, ...chosen.map((task) => h('li', {}, h('span', {}, taskTitle(task.task_id, task.title)), task.requires_admin ? h('span', { class: 'row-tag' }, t('maintenance.admin')) : null)))
+        : h('p', { class: 'muted small' }, t('maintenance.checkTasksRunCreating')),
       admin && !c.is_admin
         ? noticeLine(words().maintAdminDraft(admin), 'warn')
         : null,
       errorLine(this.createError),
       create,
-      h('p', { class: 'muted small aside-note' }, '维护不是“一键加速”：每项任务只说明它解决的问题，并在结束后逐项报告六种结果之一。维护操作没有通用撤销。'),
+      h('p', { class: 'muted small aside-note' }, t('maintenance.maintenanceNotOneClick')),
     );
   }
 
@@ -351,10 +352,10 @@ export class MaintenancePage {
       sum: null,
       onClear: () => {
         this.selected.clear();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
-      action: { id: 'maint-bar-go', text: '生成维护计划并审阅', disabled: this.creating, onClick: () => void this.createPlan() },
+      action: { id: 'maint-bar-go', text: t('maintenance.createMaintenancePlanReview'), disabled: this.creating, onClick: () => void this.createPlan() },
     });
   }
 }
@@ -369,7 +370,7 @@ export class DiagnosisPage {
   private error: IpcError | null = null;
   private running = false;
   private gate = new RequestGate();
-  private progress = new LongProgress('性能诊断');
+  private progress = new LongProgress(() => t('maintenance.performanceDiagnosis'));
 
   constructor(private app: App) {
     this.body = h('div', { class: 'diagnosis-body' });
@@ -384,13 +385,13 @@ export class DiagnosisPage {
     if (this.running) return;
     this.running = true;
     this.error = null;
-    this.progress.start('正在两次读取每个进程的处理器时间（间隔 2 秒）以及内存与磁盘读数…');
+    this.progress.start(t('maintenance.readingEachProcesssCpu'));
     this.update();
     try {
       const r = await this.gate.latest(this.app.backend.maintenanceDiagnose());
       if (!r.stale) {
         this.data = r.value;
-        this.app.announce(`诊断完成：${r.value.findings.length} 项发现`);
+        this.app.announce(t('maintenance.diagnosisCompleteLength', { length: r.value.findings.length }));
       }
     } catch (e) {
       this.error = toIpcError(e);
@@ -403,23 +404,23 @@ export class DiagnosisPage {
 
   private render(): void {
     const d = this.data;
-    const go = h('button', { type: 'button', class: d ? '' : 'primary', id: 'mdiag-run', disabled: this.running }, this.running ? '正在采样…' : d ? '重新诊断' : '开始诊断');
+    const go = h('button', { type: 'button', class: d ? '' : 'primary', id: 'mdiag-run', disabled: this.running }, this.running ? t('common.sampling') : d ? t('common.diagnoseAgain') : t('maintenance.startDiagnosis'));
     go.addEventListener('click', () => void this.run());
     replace(
       this.body,
-      pageHead({ id: 'mdiag-title', title: '性能诊断', meta: [d?.sampled_at ? `采样于 ${formatTime(d.sampled_at)}` : '还没有诊断', '只读：不结束进程，不改任何设置'], actions: [go] }),
+      pageHead({ id: 'mdiag-title', title: t('maintenance.performanceDiagnosis'), meta: [d?.sampled_at ? t('common.sampledSampled', { sampled_at: formatTime(d.sampled_at) }) : t('maintenance.noDiagnosisYet'), t('maintenance.readOnlyEndsNo')], actions: [go] }),
       this.progress.el,
       errorLine(this.error),
-      d && !d.supported ? emptyState('此平台暂不提供', notOnThisPlatform('性能诊断目前只在 Windows 上实现。'), null) : null,
+      d && !d.supported ? emptyState(t('common.notAvailablePlatformYet'), notOnThisPlatform(t('maintenance.performanceDiagnosisCurrentlyOnly')), null) : null,
       d && d.supported
         ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.findings(d), this.top(d)), this.aside(d))
         : !d && !this.running
           ? h(
               'section',
               { class: 'panel catalog-intro', 'aria-labelledby': 'mdiag-intro' },
-              h('h2', { id: 'mdiag-intro' }, '电脑变慢时先看看原因'),
-              h('p', { class: 'lede' }, '用 2 秒读取一次负载与空间，列出值得注意的发现；只读取，不更改任何设置。'),
-              learnMore(h('p', {}, '读取每个进程的处理器占用、内存负载、提交量、磁盘可用空间、启动项数量和仍挂载的磁盘映像，并指向可以查看的地方。诊断不结束任何进程。')),
+              h('h2', { id: 'mdiag-intro' }, t('maintenance.whenComputerSlowsDown')),
+              h('p', { class: 'lede' }, t('maintenance.readsLoadSpaceOver')),
+              learnMore(h('p', {}, t('maintenance.readsPerProcessCpu'))),
             )
           : null,
     );
@@ -428,16 +429,16 @@ export class DiagnosisPage {
   private findings(d: MaintenanceDiagnosis): HTMLElement {
     const next = (step: string): HTMLElement | null => {
       const go = (label: string, fn: () => void) => h('button', { type: 'button', class: 'quiet', onclick: fn }, label);
-      if (step === 'status.processes') return go('在“进程”中查看', () => this.app.navigate('processes'));
-      if (step === 'analyze') return go('去分析磁盘', () => this.app.navigate('overview'));
-      if (step === 'startup.list') return go('查看启动项', () => this.app.navigate('startup'));
-      if (step === 'status.memory') return go('查看系统状态', () => this.app.navigate('status'));
+      if (step === 'status.processes') return go(t('maintenance.viewProcesses'), () => this.app.navigate('processes'));
+      if (step === 'analyze') return go(t('common.analyzeDisk'), () => this.app.navigate('overview'));
+      if (step === 'startup.list') return go(t('maintenance.viewStartupItems'), () => this.app.navigate('startup'));
+      if (step === 'status.memory') return go(t('maintenance.viewSystemStatus'), () => this.app.navigate('status'));
       return null;
     };
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'mdiag-findings' },
-      h('h2', { id: 'mdiag-findings' }, `发现（${d.findings.length}）`),
+      h('h2', { id: 'mdiag-findings' }, t('maintenance.findingsLength', { length: d.findings.length })),
       d.findings.length
         ? h(
             'ul',
@@ -460,7 +461,7 @@ export class DiagnosisPage {
               );
             }),
           )
-        : h('p', { class: 'small' }, '这次采样没有值得注意的发现。'),
+        : h('p', { class: 'small' }, t('maintenance.nothingWorthNotingSample')),
     );
   }
 
@@ -469,20 +470,20 @@ export class DiagnosisPage {
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'mdiag-top' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'mdiag-top' }, '采样窗口内最忙的进程'), h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('processes') }, '打开进程列表')),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'mdiag-top' }, t('maintenance.busiestProcessesSampleWindow')), h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('processes') }, t('maintenance.openProcessList'))),
       h(
         'div',
         { class: 'table-wrap' },
         h(
           'table',
           { class: 'data-table diag-top' },
-          h('caption', { class: 'sr-only' }, '处理器占用最高的进程'),
-          h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, '进程'), h('th', { scope: 'col', class: 'col-size' }, '处理器（单核 %）'), h('th', { scope: 'col', class: 'col-size' }, '内存'))),
+          h('caption', { class: 'sr-only' }, t('maintenance.processesHighestCpuUse')),
+          h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, t('common.process')), h('th', { scope: 'col', class: 'col-size' }, t('maintenance.cpuOneCore')), h('th', { scope: 'col', class: 'col-size' }, t('common.memory')))),
           h(
             'tbody',
             {},
             ...d.top_processes.map((p) =>
-              h('tr', {}, h('td', { class: 'col-object' }, h('span', { class: 'obj-name' }, `${p.name}（PID ${p.process_id}）`), p.image ? h('span', { class: 'obj-path path' }, p.image) : null), h('td', { class: 'col-size num' }, `${p.cpu_core_percent.toFixed(1)}%`), h('td', { class: 'col-size num' }, formatBytes(p.working_set_bytes))),
+              h('tr', {}, h('td', { class: 'col-object' }, h('span', { class: 'obj-name' }, t('maintenance.namePidProcessId', { name: p.name, process_id: p.process_id })), p.image ? h('span', { class: 'obj-path path' }, p.image) : null), h('td', { class: 'col-size num' }, `${p.cpu_core_percent.toFixed(1)}%`), h('td', { class: 'col-size num' }, formatBytes(p.working_set_bytes))),
             ),
           ),
         ),
@@ -491,14 +492,14 @@ export class DiagnosisPage {
   }
 
   private aside(d: MaintenanceDiagnosis): HTMLElement {
-    const pct = (v: number | null | undefined) => (v === null || v === undefined ? '不可用' : `${v.toFixed(0)}%`);
+    const pct = (v: number | null | undefined) => (v === null || v === undefined ? t('common.unavailable') : `${v.toFixed(0)}%`);
     return h(
       'aside',
       { class: 'panel work-aside', 'aria-labelledby': 'mdiag-aside' },
-      h('h2', { id: 'mdiag-aside' }, '采样'),
-      h('dl', { class: 'facts-list' }, h('dt', {}, '窗口'), h('dd', {}, `${d.window_seconds ?? 2} 秒`), h('dt', {}, '内存负载'), h('dd', { class: 'num' }, pct(d.memory_load_percent)), h('dt', {}, '提交量'), h('dd', { class: 'num' }, pct(d.commit_used_percent))),
-      h('p', { class: 'muted small' }, '处理器占用按单个核心计算（4 核满载为 400%）。阈值是本产品的设计值，诊断从不承诺“加速”百分比。'),
-      h('p', { class: 'muted small' }, '要结束一个进程，请在“状态 › 进程”中为它生成单独的计划并审阅。'),
+      h('h2', { id: 'mdiag-aside' }, t('maintenance.sample')),
+      h('dl', { class: 'facts-list' }, h('dt', {}, t('maintenance.window')), h('dd', {}, t('maintenance.seconds', { p: d.window_seconds ?? 2 })), h('dt', {}, t('maintenance.memoryLoad')), h('dd', { class: 'num' }, pct(d.memory_load_percent)), h('dt', {}, t('maintenance.commitCharge')), h('dd', { class: 'num' }, pct(d.commit_used_percent))),
+      h('p', { class: 'muted small' }, t('maintenance.cpuUseMeasuredPer')),
+      h('p', { class: 'muted small' }, t('maintenance.endProcessCreateSeparate')),
     );
   }
 }

@@ -62,8 +62,8 @@
 
 | 数据 | 文件 | 损坏或版本不兼容时 |
 | --- | --- | --- |
-| 扫描、revision、实体、目录项、跳过范围、子树汇总 | `index.db` | 打开时报告 `IndexCorrupt` / `IndexIncompatible`，不自动重置；`rebuild_index` 只删除 `index.db` 及其 WAL/SHM，然后需重新扫描 |
-| 操作、去重键、逐项意图/结果日志（后续扩展授权与隔离清单） | `audit.db` | 报告 `AuditUnavailable` 并阻止写操作，**从不**删除或重建；保留原文件供修复 |
+| 扫描、revision、实体、目录项、跳过范围、子树汇总 | `index.db` | 首次需要时才打开（`Stores::open` 只打开审计库，新存储才立即建空索引），因此索引不可用时历史、隔离与恢复照常可用；需要索引的调用报告 `IndexCorrupt` / `IndexIncompatible`（协议码 `index_unavailable`，`required_action` 为 `cleanmanager doctor --repair-index`），运行中 SQLite 报告的损坏同样归为 `IndexCorrupt`；不自动重置。`repair_index`/`rebuild_index` 把 `index.db` 及其 WAL/SHM 改名为 `index.db.damaged-<时间>` 保留（从不删除）并新建空索引，然后需重新扫描。完整性检查按需运行（从未检查、超过 7 天、非正常结束标记、迁移前、`doctor`），见 `cm-store/src/integrity.rs` |
+| 操作、去重键、逐项意图/结果日志（后续扩展授权与隔离清单） | `audit.db` | 随存储立即打开，每次打开都做 SQLite quick_check；报告 `AuditUnavailable` 并阻止写操作，**从不**删除或重建；保留原文件供修复 |
 
 宿主进程以 PID + 进程创建时间标识。宿主确认退出后：运行中的扫描以 `interrupted` 发布已提交批次（`partial_scope`），未结束的操作进入 `reconciliation_required`；无法判断存活（如权限不足）时保持原状态，不推断结束。存储目录不得位于任何扫描根内。操作日志与恢复记录需要独立的可靠保存策略。存储路径按系统用户数据目录解析，数据库限制为当前用户访问；日志默认不包含文件内容或凭据。
 

@@ -69,7 +69,7 @@ pub enum DiagError {
     PayloadTooLarge(usize),
     #[error("invalid answer structure: {0}")]
     InvalidAnswer(String),
-    #[error("invalid lifecycle transition {from:?} -> {to:?}")]
+    #[error("invalid lifecycle transition {} -> {}", .from.as_str(), .to.as_str())]
     Transition { from: DiagState, to: DiagState },
 }
 
@@ -627,6 +627,17 @@ pub enum DiagState {
 impl DiagState {
     pub fn is_terminal(self) -> bool {
         !matches!(self, DiagState::Running)
+    }
+
+    /// The protocol word (`running`, `completed`, ...), also used in messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DiagState::Running => "running",
+            DiagState::Completed => "completed",
+            DiagState::Cancelled => "cancelled",
+            DiagState::Failed => "failed",
+            DiagState::Expired => "expired",
+        }
     }
 
     /// Allowed transitions; a late provider answer for a cancelled run is refused here.

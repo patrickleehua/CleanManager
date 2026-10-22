@@ -303,7 +303,7 @@ fn uninstall_entry(key: &Key, key_name: &[u16], hive: RegistryHive, view: Regist
     app.publisher = key.text("Publisher");
     app.protected_class = protected_reason(&app.name, app.publisher.as_deref(), system_component);
     if let Some(reason) = app.protected_class {
-        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, format!("{reason:?}")));
+        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, reason.as_str()));
     }
     app.evidence = evidence;
     Some(app)
@@ -399,7 +399,7 @@ fn package_entry(key: &Key, full_name: &str) -> Option<AppInstance> {
         protected_reason(&app.name, None, false).or_else(|| protected_reason(pkg_name, None, false))
     };
     if let Some(reason) = app.protected_class {
-        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, format!("{reason:?}")));
+        evidence.push(Evidence::new(EvidenceKind::ProtectedClass, reason.as_str()));
     }
     app.evidence = evidence;
     Some(app)

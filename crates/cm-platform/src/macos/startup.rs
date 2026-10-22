@@ -324,7 +324,7 @@ fn launchctl(args: &[&str]) -> Result<String, String> {
     if !out.success() {
         let (err, std) = (String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
         let first = err.lines().chain(std.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_owned();
-        return Err(format!("launchctl {} exited {:?}{}", args.join(" "), out.exit_code, if first.is_empty() { String::new() } else { format!(": {first}") }));
+        return Err(format!("launchctl {} exited with code {}{}", args.join(" "), cm_core::trace::exit(out.exit_code), if first.is_empty() { String::new() } else { format!(": {first}") }));
     }
     if out.stdout_truncated {
         return Err(format!("launchctl {} printed more than the output cap", args.join(" ")));

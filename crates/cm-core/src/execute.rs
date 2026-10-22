@@ -44,6 +44,26 @@ pub enum LiveCheck {
     Unknown(String),
 }
 
+/// What a person reads when a re-observation stops an action (never Rust debug text such as `MetadataChanged("…")`).
+impl std::fmt::Display for LiveCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LiveCheck::Match => f.write_str("unchanged since the plan was made"),
+            LiveCheck::Missing => f.write_str("it no longer exists"),
+            LiveCheck::IdentityChanged => f.write_str("a different object is at the planned path now"),
+            LiveCheck::ParentChanged => f.write_str("a folder above it was replaced or moved"),
+            LiveCheck::MetadataChanged(what) if what.is_empty() => f.write_str("it changed since the plan was made"),
+            LiveCheck::MetadataChanged(what) => write!(f, "it changed since the plan was made ({what})"),
+            LiveCheck::InUse => f.write_str("it is in use by another program"),
+            LiveCheck::OwnerRunning => f.write_str("the application it belongs to is running; close it and apply again"),
+            LiveCheck::LinkOrReparse => f.write_str("it is now a link or reparse point, which is never followed"),
+            LiveCheck::Protected(why) => write!(f, "it is protected ({why})"),
+            LiveCheck::Unsupported(why) => write!(f, "not supported here ({why})"),
+            LiveCheck::Unknown(why) => write!(f, "its state could not be checked ({why})"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Recovery {

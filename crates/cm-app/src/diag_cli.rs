@@ -176,7 +176,7 @@ fn run_in(
     let stdout = reader.join().unwrap_or_default();
     let stderr = err_reader.join().unwrap_or_default();
     // Exit code and sizes only: the CLI's output can echo the prompt, and its environment may carry credentials.
-    cm_core::debug_trace!("process", "\"{}\" exit={:?} in {}ms stdout_bytes={}", exe.display(), status.code(), start.elapsed().as_millis(), stdout.len());
+    cm_core::debug_trace!("process", "\"{}\" exit={} in {}ms stdout_bytes={}", exe.display(), cm_core::trace::exit(status.code()), start.elapsed().as_millis(), stdout.len());
     if over.load(Ordering::Acquire) {
         return Err(RunError::Failed(failure(FailureCode::OutputTooLarge, "CLI 输出超过上限，结果已丢弃。")));
     }
@@ -317,7 +317,8 @@ pub fn claude_argv(model: &str, system: &str, check: &CliCheck) -> Vec<String> {
 pub fn claude_result(out: &Output) -> Result<String, cm_core::diag::Failure> {
     if out.status != Some(0) {
         let excerpt: String = scrub(&out.stderr, None).chars().filter(|c| !c.is_control()).take(160).collect();
-        return Err(failure(FailureCode::ProcessFailed, format!("CLI 退出码 {:?}：{excerpt}", out.status)));
+        let code = out.status.map_or_else(|| "无（进程未正常结束）".to_owned(), |c| c.to_string());
+        return Err(failure(FailureCode::ProcessFailed, format!("CLI 退出码 {code}：{excerpt}")));
     }
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| failure(FailureCode::InvalidStructure, "CLI 输出不是预期的 JSON 结果。"))?;
     if v["type"] != "result" || v["is_error"].as_bool() != Some(false) {

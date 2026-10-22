@@ -218,6 +218,18 @@ pub enum ProtectedReason {
     OsPackage,
 }
 
+impl ProtectedReason {
+    /// The protocol word (`system_component`, `shared_runtime`, ...), used in evidence text instead of debug text.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtectedReason::SystemComponent => "system_component",
+            ProtectedReason::SharedRuntime => "shared_runtime",
+            ProtectedReason::EndpointSecurityOrManagement => "endpoint_security_or_management",
+            ProtectedReason::OsPackage => "os_package",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppInstance {
     pub instance_id: String,

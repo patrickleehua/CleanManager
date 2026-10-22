@@ -85,24 +85,67 @@ pub struct Inputs<'a> {
     pub resident_startup: Option<String>,
 }
 
-const CACHE_FILES: &[&str] = &["index.db", "index.db-wal", "index.db-shm", "installer-last-run.json", "purge-last-run.json"];
-const CONFIG_FILES: &[&str] = &["purge-settings.json", "app-updates.json", "status-alerts.json", "process-pins.json", "diag-providers.json", cm_core::resident::SETTINGS_FILE];
-const PROTECTION_FILES: &[&str] = &["protection.json", "protection.json.lock"];
-const HISTORY_FILES: &[&str] = &["audit.db", "audit.db-wal", "audit.db-shm", cm_store::migrate::LOG_FILE];
+// Every file and folder CleanManager itself creates in its store directory, by the kind of data it holds (BUG-WFA-18).
+// A name not listed here is not ours and is kept. `lifecycle.lock` is handled separately (held while the plan runs).
+/// Rebuildable: the scan index and the last discovery runs of `purge` / `installer`.
+const CACHE_FILES: &[&str] = &[cm_store::INDEX_FILE, "index.db-wal", "index.db-shm", "installer-last-run.json", "purge-last-run.json"];
+/// This tool's own settings: purge roots, update checks, alerts, pins, AI providers, resident tools, experimental features.
+const CONFIG_FILES: &[&str] = &[
+    cm_core::purge::SETTINGS_FILE,
+    cm_app::updates::UPDATES_FILE,
+    cm_app::processes::ALERTS_FILE,
+    cm_app::processes::PINS_FILE,
+    cm_app::diag::CONFIG_FILE,
+    cm_core::resident::SETTINGS_FILE,
+    cm_app::features::FEATURES_FILE,
+];
+const PROTECTION_FILES: &[&str] = &[cm_platform::protection::PROTECTION_FILE, "protection.json.lock"];
+const HISTORY_FILES: &[&str] = &[cm_store::AUDIT_FILE, "audit.db-wal", "audit.db-shm", cm_store::migrate::LOG_FILE];
+/// Folders: saved AI diagnoses (history) and the quarantine (kept by its own rules).
+const HISTORY_DIRS: &[&str] = &[cm_app::diag::DIAG_DIR];
+const QUARANTINE_DIR: &str = "quarantine";
 
-fn classify(name: &str) -> Option<&'static str> {
+/// What kind of CleanManager data a top-level store entry is (`None`: not ours).
+fn classify(name: &str, is_dir: bool) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
-    if CACHE_FILES.contains(&lower.as_str()) {
+    if is_dir {
+        return if lower == QUARANTINE_DIR {
+            Some("quarantine")
+        } else if HISTORY_DIRS.contains(&lower.as_str()) {
+            Some("history")
+        } else {
+            None
+        };
+    }
+    let known = |list: &[&str], n: &str| list.iter().any(|k| k.eq_ignore_ascii_case(n));
+    if known(CACHE_FILES, &lower) {
         Some("caches")
-    } else if CONFIG_FILES.contains(&lower.as_str()) {
+    } else if known(CONFIG_FILES, &lower) {
         Some("configuration")
-    } else if PROTECTION_FILES.contains(&lower.as_str()) {
+    } else if known(PROTECTION_FILES, &lower) {
         Some("protection_list")
-    } else if HISTORY_FILES.contains(&lower.as_str()) || (lower.starts_with("audit.db.pre-v") && lower.ends_with(".bak")) {
+    } else if known(HISTORY_FILES, &lower) || (lower.starts_with("audit.db.pre-v") && lower.ends_with(".bak")) {
         Some("history")
+    } else if (lower.starts_with("index.db.pre-v") && lower.ends_with(".bak")) || lower.starts_with("index.db.damaged-") {
+        // Copies of the rebuildable index: a migration backup, or a damaged index moved aside by a repair (with its
+        // `-wal`/`-shm`).
+        Some("caches")
+    } else if let Some(stem) = transient_of(&lower) {
+        // An atomic write interrupted before its rename (`features.json.tmp`, `purge-last-run.json.1234.tmp`): a
+        // partial copy of one of our files, never the file itself.
+        [CACHE_FILES, CONFIG_FILES, PROTECTION_FILES].iter().any(|l| known(l, stem)).then_some("caches")
     } else {
         None
     }
+}
+
+/// `name.tmp` or `name.<pid>.tmp` → `name`.
+fn transient_of(lower: &str) -> Option<&str> {
+    let stem = lower.strip_suffix(".tmp")?;
+    Some(match stem.rsplit_once('.') {
+        Some((head, pid)) if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => stem,
+    })
 }
 
 /// Count and size of objects still held in quarantine, and operations awaiting reconciliation.
@@ -311,9 +354,34 @@ pub fn plan(inp: &Inputs<'_>) -> Plan {
             if name == crate::instance_lock::LOCK_FILE {
                 continue;
             }
-            match classify(name) {
-                Some("caches") if path.is_file() => push("caches", "remove_file", path.clone(), display(path), release::sha256_file(path).ok().map(|(h, _)| h)),
-                Some(_) if remove_data && path.is_file() => push("user_data", "remove_file", path.clone(), display(path), release::sha256_file(path).ok().map(|(h, _)| h)),
+            let plain = std::fs::symlink_metadata(path).ok();
+            let (is_file, is_dir) = (plain.as_ref().is_some_and(|m| m.is_file()), plain.as_ref().is_some_and(|m| m.is_dir()));
+            match classify(name, is_dir) {
+                Some("caches") if is_file => push("caches", "remove_file", path.clone(), display(path), release::sha256_file(path).ok().map(|(h, _)| h)),
+                Some("quarantine") => {
+                    removes_all = false;
+                    if !kept_kinds.contains(&"quarantine") {
+                        kept_kinds.push("quarantine");
+                    }
+                }
+                Some(_) if remove_data && is_file => push("user_data", "remove_file", path.clone(), display(path), release::sha256_file(path).ok().map(|(h, _)| h)),
+                // A folder of our own records (saved AI diagnoses): its plain files, then the folders they leave empty.
+                // Anything else inside (a link, an unreadable entry) stays, and so do the folders holding it.
+                Some(_) if remove_data && is_dir => {
+                    let (mut files, mut dirs) = (Vec::new(), Vec::new());
+                    files_below(path, &mut files, &mut dirs);
+                    for f in files.iter().filter(|f| std::fs::symlink_metadata(f).is_ok_and(|m| m.is_file())) {
+                        match release::sha256_file(f) {
+                            Ok((h, _)) => push("user_data", "remove_file", f.clone(), display(f), Some(h)),
+                            Err(_) => removes_all = false,
+                        }
+                    }
+                    dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()).then_with(|| a.cmp(b)));
+                    dirs.push(path.clone());
+                    for d in dirs {
+                        push("user_data", "remove_empty_dir", d.clone(), display(&d), None);
+                    }
+                }
                 Some(kind) => {
                     removes_all = false;
                     if !kept_kinds.contains(&kind) {
@@ -322,13 +390,7 @@ pub fn plan(inp: &Inputs<'_>) -> Plan {
                 }
                 None => {
                     removes_all = false;
-                    if name == "quarantine" {
-                        if !kept_kinds.contains(&"quarantine") {
-                            kept_kinds.push("quarantine");
-                        }
-                    } else {
-                        notes.push(format!("{} is not recognised as CleanManager data and is kept", display(path)));
-                    }
+                    notes.push(format!("{} is not recognised as CleanManager data and is kept", display(path)));
                 }
             }
         }
@@ -350,9 +412,9 @@ pub fn plan(inp: &Inputs<'_>) -> Plan {
         }
         for kind in kept_kinds {
             let what = match kind {
-                "configuration" => "settings (update checks, alerts, pins, purge roots, AI providers and their keys)",
+                "configuration" => "settings (update checks, alerts, pins, purge roots, resident tools, experimental features, AI providers and their keys)",
                 "protection_list" => "your protection list",
-                "history" => "operation history, plans and authorizations",
+                "history" => "operation history, plans, authorizations and saved AI diagnoses",
                 "quarantine" => "quarantined objects and their manifests",
                 _ => "registry and startup backups needed to restore earlier removals",
             };

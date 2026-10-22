@@ -289,7 +289,10 @@ export interface ProcessRow {
   parent_name: string | null;
   name: string;
   image_path: string | null;
+  /** Exact start key that identifies the instance (Windows FILETIME ticks, macOS microseconds); never shown. */
   started_at: string | null;
+  /** The same start time as RFC 3339 UTC (WFA-93): what the page shows, in local time. Absent from older hosts. */
+  started_at_utc?: string | null;
   cpu_percent: number | null;
   memory_bytes: string | null;
   disk_bytes_per_sec: number | null;

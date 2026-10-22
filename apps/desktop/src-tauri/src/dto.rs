@@ -329,6 +329,11 @@ mod tests {
         assert_eq!((e.code, e.reason), (ErrorCode::CursorStale, "cursor_stale"));
         let e: IpcError = StoreError::InvalidState("staging".into()).into();
         assert_eq!(e.reason, "not_published");
+        // BUG-WFA-01: the same typed code as the CLI; the reason keeps the UI text apart.
+        let e: IpcError = StoreError::IndexCorrupt("x".into()).into();
+        assert_eq!((e.code, e.reason), (ErrorCode::IndexUnavailable, "index_corrupt"));
+        let e: IpcError = StoreError::IndexIncompatible { found: "9".into(), expected: "2".into() }.into();
+        assert_eq!((e.code, e.reason), (ErrorCode::IndexUnavailable, "index_incompatible"));
         let e: IpcError = ArgError("bad".into()).into();
         assert_eq!(e.code, ErrorCode::InvalidArgument);
     }

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "kind": "error",
+  "request_id": "req_synthetic",
+  "code": "index_unavailable",
+  "message": "index database is damaged: file is not a database (the SQLite header is damaged); history and recovery are not affected: repair the index with `cleanmanager doctor --repair-index` (the damaged file is kept) and scan again",
+  "retryable": false,
+  "required_action": "cleanmanager doctor --repair-index",
+  "details": {
+    "plan_id": null,
+    "operation_id": null,
+    "scope_id": null
+  }
+}

@@ -274,6 +274,20 @@ impl ScanState {
     pub fn is_terminal(self) -> bool {
         !matches!(self, ScanState::Created | ScanState::Running | ScanState::Stopping)
     }
+
+    /// The protocol word (`completed`, `partial`, ...), also used in messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScanState::Created => "created",
+            ScanState::Running => "running",
+            ScanState::Stopping => "stopping",
+            ScanState::Completed => "completed",
+            ScanState::Partial => "partial",
+            ScanState::Cancelled => "cancelled",
+            ScanState::Failed => "failed",
+            ScanState::Interrupted => "interrupted",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

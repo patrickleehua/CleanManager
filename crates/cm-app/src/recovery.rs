@@ -22,7 +22,7 @@ use cm_store::audit::{OperationRow, QuarantineEntry};
 use cm_store::{StoreError, Stores};
 use serde::Deserialize;
 
-use crate::execute::{ActionResult, ActionStatus, ApplyError, FaultPoint, OperationReport, final_status, summarize};
+use crate::execute::{ActionResult, ActionStatus, ApplyError, Authorization, FaultPoint, OperationReport, final_status, summarize};
 
 pub struct RecoveryContext<'a> {
     pub principal: &'a str,
@@ -263,13 +263,14 @@ pub fn apply_recovery_plan(stores: &Stores, actions: &dyn RecoveryActions, plan_
         record(stores, &operation_id, &r, (ctx.now)())?;
         results.push(r);
     }
-    finish(stores, actions, &plan, &operation_id, &started_at, results, cancelled, free_before, "interactive_review", ctx)
+    let auth = Authorization { source: "interactive_review", reconciled_at: None };
+    finish(stores, actions, &plan, &operation_id, &started_at, results, cancelled, free_before, &auth, ctx)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn finish(
     stores: &Stores, actions: &dyn RecoveryActions, plan: &RecoveryPlan, operation_id: &str, started_at: &str, results: Vec<ActionResult>,
-    cancelled: bool, free_before: Option<u64>, auth_source: &str, ctx: &RecoveryContext<'_>,
+    cancelled: bool, free_before: Option<u64>, auth: &Authorization<'_>, ctx: &RecoveryContext<'_>,
 ) -> Result<OperationReport, ApplyError> {
     for r in results.iter().filter(|r| r.status == ActionStatus::NotStarted) {
         record(stores, operation_id, r, (ctx.now)())?;
@@ -297,7 +298,8 @@ fn finish(
         volume_free_before_bytes: free_before.map(|b| b.to_string()),
         volume_free_after_bytes: free_before.and(free_after).map(|b| b.to_string()),
         observed_free_delta_bytes: free_before.zip(free_after).map(|(b, a)| (i128::from(a) - i128::from(b)).to_string()),
-        authorization_source: auth_source.into(),
+        authorization_source: auth.source.into(),
+        reconciled_at: auth.reconciled_at.clone(),
     };
     // Locks stay while outcomes are unknown so no other plan touches those objects (EXE-04/05).
     if unknown == 0 {
@@ -313,6 +315,8 @@ pub fn reconcile_recovery_operation(stores: &Stores, actions: &dyn RecoveryActio
     let plan = stores.audit.load_recovery_plan(&stores.audit.operation_plan(operation_id)?)?;
     let journal = stores.audit.journal(operation_id)?;
     let kind = plan.body.recovery_kind;
+    let prior = crate::execute::prior_report(stores, operation_id)?;
+    let mut resolved = false;
     let mut results = Vec::with_capacity(plan.body.items.len());
     for item in &plan.body.items {
         let id = item.action_id.as_str();
@@ -322,6 +326,7 @@ pub fn reconcile_recovery_operation(stores: &Stores, actions: &dyn RecoveryActio
             (_, Some(r)) if r.status != ActionStatus::Unknown => r,
             (None, _) => result(id, ActionStatus::NotStarted, "never_started", "no action was started", "quarantine"),
             (Some(_), _) => {
+                resolved = true;
                 let r = match actions.reconcile(&QuarantinedObject::from_item(item), kind) {
                     Reconciled::NotPerformed => result(id, ActionStatus::NotStarted, "reconciled_not_performed", "object still in quarantine", "quarantine"),
                     Reconciled::Performed => {
@@ -336,9 +341,21 @@ pub fn reconcile_recovery_operation(stores: &Stores, actions: &dyn RecoveryActio
         };
         results.push(r);
     }
-    let started = stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str::<OperationReport>(&j).ok()).map(|r| r.started_at)
-        .unwrap_or_else(|| utc_from_unix((ctx.now)()));
-    finish(stores, actions, &plan, operation_id, &started, results, false, None, "reconciliation", ctx)
+    // Nothing was unconfirmed: the recorded report stands as it is.
+    if let Some(report) = prior.as_ref().filter(|_| !resolved) {
+        return Ok(report.clone());
+    }
+    let now = utc_from_unix((ctx.now)());
+    let started = match &prior {
+        Some(r) => r.started_at.clone(),
+        None => stores.audit.operation_times(operation_id).map(|(s, _)| s).unwrap_or_else(|_| now.clone()),
+    };
+    // Recovery plans are authorized only by an interactive review; a reconciliation never replaces that (WFA-40).
+    let source = prior.as_ref().map(|r| r.authorization_source.clone()).filter(|s| s != crate::execute::LEGACY_RECONCILIATION_SOURCE)
+        .unwrap_or_else(|| "interactive_review".into());
+    let reconciled_at = if resolved { Some(now) } else { prior.as_ref().and_then(|r| r.reconciled_at.clone()) };
+    let auth = Authorization { source: &source, reconciled_at };
+    finish(stores, actions, &plan, operation_id, &started, results, false, None, &auth, ctx)
 }
 
 // ---------------------------------------------------------------------------------------------

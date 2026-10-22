@@ -333,5 +333,96 @@ pub fn compute_tier(i: &TierInputs) -> TierDecision {
     TierDecision { tier, skip, reasons }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Explanations (ANA-02, CAT-02): why a row has its tier, what matched it and what removing it costs. One wording for
+// `candidates list` and the `clean` preview, so a reader sees the same reasons wherever the row is shown.
+
+/// What rebuilding costs, in words.
+pub fn rebuild_text(r: RebuildClass) -> &'static str {
+    match r {
+        RebuildClass::LocalRebuild => "rebuilt locally by its owner when needed",
+        RebuildClass::NetworkRedownload => "rebuilding it needs a network download",
+        RebuildClass::NotRebuildable => "its owner does not rebuild it",
+    }
+}
+
+/// The stricter rebuild class of the rules that matched one object (the stored candidate names its rules only).
+pub fn worst_rebuild<'r>(rules: impl IntoIterator<Item = &'r Rule>) -> Option<RebuildClass> {
+    let rank = |r: RebuildClass| match r {
+        RebuildClass::LocalRebuild => 0,
+        RebuildClass::NetworkRedownload => 1,
+        RebuildClass::NotRebuildable => 2,
+    };
+    rules.into_iter().map(|r| r.rebuild_class).max_by_key(|r| rank(*r))
+}
+
+/// Why a row has its tier: the matching rule's ceiling and what rebuilding costs, then every machine reason that
+/// lowered or blocked it (codes kept verbatim, e.g. `version_untested`, `probe:open_file_handle:unknown`,
+/// `protected:database`). `rule`: the first matching rule, when the current rule pack still has that version.
+pub fn tier_reason(reasons: &[String], rule: Option<&Rule>) -> String {
+    let ceiling = match rule {
+        Some(r) => {
+            let what = match r.max_tier {
+                Tier::DefaultSelected => "allows default selection",
+                Tier::ReviewOnly => "lists it for review only",
+                Tier::Blocked => "never selects it",
+            };
+            format!("rule {}@{} {what} ({})", r.rule_id, r.version, rebuild_text(r.rebuild_class))
+        }
+        None => "matched rule".to_string(),
+    };
+    if reasons.is_empty() { ceiling } else { format!("{ceiling}; {}", reasons.join(", ")) }
+}
+
+/// The rule's own basis for matching an object: its description and, for an age threshold, the time it measures.
+/// A modification (or creation) time is reported as such; this tool never knows when a file was last used.
+pub fn match_reason(rule: &Rule) -> String {
+    let mut s = format!("{}@{}: {}", rule.rule_id, rule.version, rule.impact.summary.trim().trim_end_matches('.'));
+    if let Some(days) = rule.thresholds.min_age_days {
+        let (verb, basis) = match rule.thresholds.age_basis.as_deref() {
+            Some("created_time") => ("created", "creation time"),
+            _ => ("modified", "modification time"),
+        };
+        s.push_str(&format!(". Age threshold: {verb} at least {days} day(s) before the analysis, by its {basis} (when it was last used is not known)"));
+    }
+    s
+}
+
+/// The age threshold a rule applies: days and the time it measures (`modified_time` or `created_time`).
+pub fn age_threshold(rule: &Rule) -> Option<(u32, &str)> {
+    rule.thresholds.min_age_days.map(|d| (d, rule.thresholds.age_basis.as_deref().unwrap_or("modified_time")))
+}
+
+/// What getting an object back is possible after one mode, and its limits (shown before anything is planned).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecoveryLimit {
+    pub mode: crate::rules::Mode,
+    /// The history's recovery vocabulary: `system_recycle_bin`, `in_app_restore` or `unavailable`.
+    pub recovery: &'static str,
+    pub limit: String,
+}
+
+/// Recovery limits of each allowed mode, in the order given.
+pub fn recovery_limits(modes: &[crate::rules::Mode]) -> Vec<RecoveryLimit> {
+    use crate::rules::Mode;
+    let bin = crate::manual_trash::BIN_NAME;
+    modes
+        .iter()
+        .map(|m| match m {
+            Mode::Trash => RecoveryLimit {
+                mode: *m,
+                recovery: "system_recycle_bin",
+                limit: format!("restored only with the system's own {bin} tools; emptying the {bin}, or the {bin} discarding old items when it is full, makes it unrecoverable; frees no space until the {bin} is emptied; a volume without a usable {bin} refuses the plan"),
+            },
+            Mode::Quarantine => RecoveryLimit {
+                mode: *m,
+                recovery: "in_app_restore",
+                limit: "kept in CleanManager's quarantine on the same volume and restored with `recovery plan create --restore`; frees no space until purged; a restore never replaces something now at the original path".into(),
+            },
+            Mode::Delete => RecoveryLimit { mode: *m, recovery: "unavailable", limit: "permanent delete: there is no undo".into() },
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

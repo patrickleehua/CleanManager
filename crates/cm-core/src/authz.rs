@@ -98,6 +98,54 @@ pub enum PolicyMismatch {
     QuotaExceeded,
 }
 
+impl PolicyMismatch {
+    /// Protocol `policy_match.reason` (the serde tag).
+    pub fn code(&self) -> &'static str {
+        match self {
+            PolicyMismatch::NotEnabled => "not_enabled",
+            PolicyMismatch::Expired => "expired",
+            PolicyMismatch::OtherPrincipal => "other_principal",
+            PolicyMismatch::ScopeDiffers => "scope_differs",
+            PolicyMismatch::ModeDiffers => "mode_differs",
+            PolicyMismatch::RuleNotCovered(_) => "rule_not_covered",
+            PolicyMismatch::TierNotDefaultSelected => "tier_not_default_selected",
+            PolicyMismatch::SizeUnknown => "size_unknown",
+            PolicyMismatch::SingleLimit => "single_limit",
+            PolicyMismatch::QuotaExceeded => "quota_exceeded",
+        }
+    }
+
+    /// The failing condition in words, with the policy's and the plan's values, so a refusal says why a policy does
+    /// not apply (WFA-43). `QuotaExceeded` needs the store's window usage; callers add the numbers.
+    pub fn explain(&self, policy: &Policy, plan: &Plan) -> String {
+        match self {
+            PolicyMismatch::NotEnabled if policy.state == PolicyState::Revoked => "the policy is revoked".into(),
+            PolicyMismatch::NotEnabled => format!("the policy is paused (enable it in a terminal: `cleanmanager policy enable {}`)", policy.policy_id),
+            PolicyMismatch::Expired => format!("the policy expired at {}", policy.expires_at),
+            PolicyMismatch::OtherPrincipal => "the policy belongs to another user".into(),
+            PolicyMismatch::ScopeDiffers => format!("the plan's scope {} is not the policy's scope {}", plan.body.scope_id, policy.scope_id),
+            PolicyMismatch::ModeDiffers => format!("the plan's mode {} is not the policy's mode {}", plan.body.mode.as_str(), policy.mode.as_str()),
+            PolicyMismatch::RuleNotCovered(r) => format!("rule {r} is not one of the policy's rules ({})", policy.rules.join(", ")),
+            PolicyMismatch::TierNotDefaultSelected => {
+                let n = plan.tiers.iter().filter(|t| **t != Tier::DefaultSelected).count();
+                format!("{n} of the plan's {} items are not default-selected; a policy only covers default-selected items", plan.body.items.len())
+            }
+            PolicyMismatch::SizeUnknown => "the plan's total size is unknown; a policy only covers plans of known size".into(),
+            PolicyMismatch::SingleLimit => format!(
+                "the plan has {} items and {} bytes; the policy allows at most {} items and {} bytes per plan",
+                plan.body.items.len(),
+                plan.body.total_logical().map_or_else(|| "unknown".into(), |b| b.0.to_string()),
+                policy.single_max_items,
+                policy.single_max_bytes
+            ),
+            PolicyMismatch::QuotaExceeded => format!(
+                "the policy's rolling 24-hour quota ({} bytes, {} items) has no room for this plan",
+                policy.window_max_bytes, policy.window_max_items
+            ),
+        }
+    }
+}
+
 /// Whether a policy covers a whole plan (quota is checked atomically by the store afterwards).
 pub fn policy_covers(policy: &Policy, plan: &Plan, principal: &str, now_unix: i64) -> Result<(), PolicyMismatch> {
     if policy.state != PolicyState::Enabled {

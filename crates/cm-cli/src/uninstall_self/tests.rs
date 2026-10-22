@@ -238,6 +238,88 @@ fn removing_all_user_data_also_removes_the_store_while_its_lock_is_held() {
     assert!(!f.store.exists(), "the store directory is gone");
 }
 
+/// BUG-WFA-18: every file and folder CleanManager itself writes into its store is recognized — written through the
+/// real writers where they exist, by their constants otherwise — and classified as caches, configuration, protection
+/// list, history or quarantine; none is reported "not recognised". With `--remove-user-data` they all go, and so does
+/// the store directory.
+#[test]
+fn every_store_entry_cleanmanager_creates_is_recognized() {
+    let f = fixture("known-entries");
+    std::fs::remove_file(f.store.join("notes-by-user.txt")).unwrap();
+    // Real writers: experimental switch, pins, alerts, update results.
+    cm_app::features::set_experimental(&f.store, true).unwrap();
+    cm_app::processes::set_pin(&f.store, "code.exe", true).unwrap();
+    cm_app::processes::save_alerts(&f.store, &cm_core::alerts::AlertSettings::default()).unwrap();
+    cm_app::updates::save(&f.store, &cm_app::updates::UpdateStore::default()).unwrap();
+    // The rest by the names their owners use.
+    let files = [
+        (cm_core::purge::SETTINGS_FILE, "configuration"),
+        (cm_app::diag::CONFIG_FILE, "configuration"),
+        (cm_core::resident::SETTINGS_FILE, "configuration"),
+        ("protection.json.lock", "protection_list"),
+        (cm_store::migrate::LOG_FILE, "history"),
+        ("audit.db.pre-v3-20261015T000000Z.bak", "history"),
+        ("installer-last-run.json", "caches"),
+        ("index.db.damaged-20261022T101500Z", "caches"),
+        ("index.db.damaged-20261022T101500Z-wal", "caches"),
+        ("features.json.tmp", "caches"),
+        ("purge-last-run.json.4242.tmp", "caches"),
+    ];
+    for (name, _) in files {
+        std::fs::write(f.store.join(name), b"{}").unwrap();
+    }
+    let diag = f.store.join(cm_app::diag::DIAG_DIR);
+    std::fs::create_dir_all(&diag).unwrap();
+    std::fs::write(diag.join("dg_0001.json"), b"{\"diagnosis_id\":\"dg_0001\"}").unwrap();
+    std::fs::create_dir_all(f.store.join("quarantine")).unwrap();
+    #[cfg(any(windows, target_os = "macos"))]
+    assert_eq!(
+        ["installer-last-run.json", "purge-last-run.json"],
+        [crate::installer_cmd::LAST_RUN_INSTALLER, crate::purge_cmd::LAST_RUN_PURGE],
+        "the cache names are the commands' own"
+    );
+    let expected = [
+        (cm_app::features::FEATURES_FILE, "configuration"),
+        (cm_app::processes::PINS_FILE, "configuration"),
+        (cm_app::processes::ALERTS_FILE, "configuration"),
+        (cm_app::updates::UPDATES_FILE, "configuration"),
+        (cm_platform::protection::PROTECTION_FILE, "protection_list"),
+        (cm_store::AUDIT_FILE, "history"),
+        (cm_store::INDEX_FILE, "caches"),
+        ("purge-last-run.json", "caches"),
+    ];
+    for (name, kind) in expected.iter().chain(files.iter()) {
+        assert_eq!(classify(name, false), Some(*kind), "{name}");
+    }
+    assert_eq!((classify(cm_app::diag::DIAG_DIR, true), classify("quarantine", true)), (Some("history"), Some("quarantine")));
+    assert_eq!((classify("notes-by-user.txt", false), classify("my-notes.tmp", false), classify("photos", true)), (None, None, None), "other names are not ours");
+    let d = standalone();
+    let p = plan(&inputs(&f, &d, false));
+    assert!(!p.notes.iter().any(|n| n.contains("not recognised")), "{:?}", p.notes);
+    let kept: Vec<_> = p.keep.iter().map(|k| k.data).collect();
+    for kind in ["configuration", "protection_list", "history", "quarantine"] {
+        assert!(kept.contains(&kind), "{kind}: {kept:?}");
+    }
+    let a = actions(&p);
+    for cache in ["index.db", "installer-last-run.json", "features.json.tmp", "purge-last-run.json.4242.tmp"] {
+        assert!(a.contains(&(cache.into(), "caches", "remove_file")), "{cache}: {a:?}");
+    }
+    assert!(!a.iter().any(|x| x.1 == "user_data"), "user data stays by default: {a:?}");
+    // With --remove-user-data (empty quarantine, nothing pending): every known entry goes, then the store itself.
+    std::fs::remove_dir(f.store.join("quarantine")).unwrap();
+    let p = plan(&inputs(&f, &d, true));
+    assert!(!p.notes.iter().any(|n| n.contains("not recognised")), "{:?}", p.notes);
+    let a = actions(&p);
+    for name in [cm_app::features::FEATURES_FILE, cm_app::processes::PINS_FILE, cm_store::AUDIT_FILE, "dg_0001.json"] {
+        assert!(a.contains(&(name.into(), "user_data", "remove_file")), "{name}: {a:?}");
+    }
+    assert!(a.contains(&(cm_app::diag::DIAG_DIR.into(), "user_data", "remove_empty_dir")), "{a:?}");
+    assert!(p.items.iter().any(|i| i.action == "remove_empty_dir" && i.path == f.store), "{a:?}");
+    let done = execute(&p, &f.install, &effects(&f));
+    assert!(done.iter().all(|x| x.outcome == "removed"), "{done:?}");
+    assert!(!f.store.exists(), "the store directory is gone");
+}
+
 /// The resident Run value exists only on Windows; on macOS the resident component is not available (see startup_note).
 #[cfg(windows)]
 #[test]

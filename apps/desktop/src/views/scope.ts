@@ -5,16 +5,38 @@
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { refusalText } from '../lib/codes';
-import { h, icon, keepFocus, replace } from '../lib/dom';
+import { h, icon, keepFocus, live, liveChildren, replace } from '../lib/dom';
 import { formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import type { IpcError, RecentScan, RootOffer } from '../lib/types';
 import { learnMore, pathText } from './ui';
+import { t } from '../i18n';
 
 const GROUPS: { kinds: RootOffer['kind'][]; label: string }[] = [
-  { kinds: ['user_folder', 'user_home'], label: '你的文件夹' },
-  { kinds: ['volume'], label: '整个卷' },
-  { kinds: ['chosen'], label: '你选择的文件夹' },
+  { kinds: ['user_folder', 'user_home'], get label() { return t('scope.groups.0.label'); } },
+  { kinds: ['volume'], get label() { return t('scope.groups.1.label'); } },
+  { kinds: ['chosen'], get label() { return t('scope.groups.2.label'); } },
 ];
+
+/**
+ * The name of a suggested scan root in the interface language. The host names its suggestions in Chinese; the ones it
+ * always makes (the user folders by their folder name, the home folder, drive letters, the system volume) are put in
+ * words here, anything else (a volume name such as "Macintosh HD", a chosen folder) is shown as sent.
+ */
+export function rootLabel(o: { label: string; kind: string; path_display: string }): string {
+  if (o.kind === 'user_folder') {
+    const leaf = o.path_display.split(/[\\/]/).filter(Boolean).pop() ?? '';
+    const known: Record<string, () => string> = { Downloads: () => t('scope.root.downloads'), Documents: () => t('scope.root.documents'), Desktop: () => t('scope.root.desktop') };
+    return known[leaf]?.() ?? o.label;
+  }
+  if (o.kind === 'user_home') return t('scope.root.home');
+  if (o.kind === 'volume') {
+    const letter = /^([A-Za-z]): /.exec(o.label)?.[1];
+    if (letter) return t('scope.root.drive', { letter });
+    // The host's own word for "/" (a real volume name such as "Macintosh HD" is kept).
+    if (o.path_display === '/' && /\p{Script=Han}/u.test(o.label)) return t('scope.root.systemVolume');
+  }
+  return o.label;
+}
 
 export class ScopePage {
   el: HTMLElement;
@@ -43,22 +65,20 @@ export class ScopePage {
       h(
         'div',
         { class: 'scope-main' },
-        h(
-          'div',
-          { class: 'scope-head' },
-          h('h1', { id: 'scope-title' }, '选择要扫描的文件夹'),
-          h('p', { class: 'lede' }, '只读取名称、大小和时间，不会打开、移动或删除文件。'),
+        liveChildren(h('div', { class: 'scope-head' }), () => [
+          h('h1', { id: 'scope-title' }, t('scope.chooseFolderScan')),
+          h('p', { class: 'lede' }, t('scope.onlyNamesSizesTimes')),
           learnMore(
             h(
               'ul',
               { class: 'facts' },
-              h('li', {}, h('b', {}, '普通权限'), '读不到的位置记为缺口，不会自动提权，也不会按 0 计算。'),
-              h('li', {}, h('b', {}, '只在本机'), '索引保存在本机的用户数据目录里，不上传。'),
-              h('li', {}, h('b', {}, '随时可停'), '取消后保留已确认的结果，并明确标为“已取消”。'),
+              h('li', {}, h('b', {}, t('scope.standardRights')), t('scope.locationsCantReadRecorded')),
+              h('li', {}, h('b', {}, t('scope.staysComputer')), t('scope.indexKeptUserData')),
+              h('li', {}, h('b', {}, t('scope.stopAnyTime')), t('scope.cancellingKeepsConfirmedResults')),
             ),
           ),
-        ),
-        h('fieldset', { class: 'scope-panel panel' }, h('legend', { class: 'sr-only' }, '扫描范围'), this.list, this.feedback, this.actions),
+        ]),
+        h('fieldset', { class: 'scope-panel panel' }, live(h('legend', { class: 'sr-only' }), () => t('common.scanScope')), this.list, this.feedback, this.actions),
       ),
       this.aside,
     );
@@ -146,7 +166,7 @@ export class ScopePage {
       this.update();
     });
     const last = this.lastScanOf(o);
-    const kind = o.kind === 'user_home' ? '用户目录' : null;
+    const kind = o.kind === 'user_home' ? t('scope.userFolder') : null;
     return h(
       'label',
       { class: `root-option${o.problem ? ' blocked' : ''}${input.checked ? ' checked' : ''}`, for: id },
@@ -154,7 +174,7 @@ export class ScopePage {
       h(
         'span',
         { class: 'root-text' },
-        h('span', { class: 'root-label' }, o.label, kind ? h('span', { class: 'root-kind' }, kind) : null),
+        h('span', { class: 'root-label' }, rootLabel(o), kind ? h('span', { class: 'root-kind' }, kind) : null),
         pathText(o.path_display, { max: 58, className: 'root-path' }),
         h(
           'span',
@@ -162,7 +182,7 @@ export class ScopePage {
           o.problem
             ? h('span', { class: 'root-problem' }, icon('warn'), refusalText(o.problem))
             : last?.state
-              ? h('span', { class: 'root-last' }, `上次扫描 ${formatTime(last.started_at)}，${STATE_LABEL[last.state]}`)
+              ? h('span', { class: 'root-last' }, t('scope.lastScannedStartedP', { started_at: formatTime(last.started_at), p: STATE_LABEL[last.state] }))
               : null,
         ),
       ),
@@ -172,9 +192,9 @@ export class ScopePage {
   private render(): void {
     const s = this.app.store.state;
     if (this.loading && !this.loaded) {
-      replace(this.list, h('p', { class: 'muted', role: 'status' }, '正在检查可选位置…'));
+      replace(this.list, h('p', { class: 'muted', role: 'status' }, t('scope.checkingAvailableLocations')));
     } else if (this.loadError) {
-      replace(this.list, h('p', { class: 'form-error', role: 'alert' }, `无法列出位置：${refusalText(this.loadError)}`));
+      replace(this.list, h('p', { class: 'form-error', role: 'alert' }, t('scope.couldntListLocationsLoaderror', { loadError: refusalText(this.loadError) })));
     } else {
       replace(
         this.list,
@@ -205,18 +225,18 @@ export class ScopePage {
           ? h(
               'div',
               { class: 'notice' },
-              h('span', {}, `这个范围在 ${formatTime(match.started_at)} 扫描过，结果为“${STATE_LABEL[match.state]}”。`),
-              h('button', { type: 'button', class: 'link', id: 'scope-open-existing', onclick: () => void this.app.openScan(match.scan_id, 'overview') }, '查看结果'),
+              h('span', {}, t('scope.scopeScannedStartedResult', { started_at: formatTime(match.started_at), p: STATE_LABEL[match.state] })),
+              h('button', { type: 'button', class: 'link', id: 'scope-open-existing', onclick: () => void this.app.openScan(match.scan_id, 'overview') }, t('scope.viewResults')),
             )
           : null,
     );
 
     const running = s.task && !isTerminal(s.task.state);
-    const startBtn = h('button', { type: 'button', id: 'scope-start', class: 'primary', disabled: !this.selected || !!offer?.problem || this.starting || !!running }, this.starting ? '正在开始…' : match ? '重新扫描' : '开始只读扫描');
+    const startBtn = h('button', { type: 'button', id: 'scope-start', class: 'primary', disabled: !this.selected || !!offer?.problem || this.starting || !!running }, this.starting ? t('scope.starting') : match ? t('common.scanAgain') : t('scope.startReadOnlyScan'));
     startBtn.addEventListener('click', () => void this.start());
-    const chooseBtn = h('button', { type: 'button', id: 'scope-choose' }, this.refused ? '重新选择文件夹…' : '选择其他文件夹…');
+    const chooseBtn = h('button', { type: 'button', id: 'scope-choose' }, this.refused ? t('scope.chooseFolderAgain') : t('scope.chooseAnotherFolder'));
     chooseBtn.addEventListener('click', () => void this.choose());
-    replace(this.actions, startBtn, chooseBtn, running ? h('p', { class: 'muted' }, '已有扫描在运行；结束或取消后可以开始新的扫描。') : null);
+    replace(this.actions, startBtn, chooseBtn, running ? h('p', { class: 'muted' }, t('scope.scanAlreadyRunningStart')) : null);
 
     this.renderAside();
   }
@@ -228,7 +248,7 @@ export class ScopePage {
     if (!recent.length) return;
     replace(
       this.aside,
-      h('h2', { id: 'scope-recent-title' }, '最近的扫描'),
+      h('h2', { id: 'scope-recent-title' }, t('scope.recentScans')),
       h(
         'ul',
         { class: 'recent-list' },

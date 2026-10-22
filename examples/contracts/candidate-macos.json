@@ -15,7 +15,7 @@
     "raw_encoding": "unix_bytes_base64",
     "raw_base64": "L1VzZXJzL2V4YW1wbGUvTGlicmFyeS9DYWNoZXMvRXhhbXBsZUFwcC9vbGQudG1w"
   },
-  "reason": "Synthetic verified-owner cache example",
+  "reason": "example.cache@0.1.0: Synthetic verified-owner cache files. Age threshold: modified at least 7 day(s) before the analysis, by its modification time (when it was last used is not known)",
   "impact": "Cache would need rebuilding",
   "logical_bytes": "104857600",
   "allocated_bytes": "104857600",
@@ -23,5 +23,25 @@
   "estimate_basis": "not_computed",
   "allowed_modes": [
     "trash"
+  ],
+  "category": "app_caches",
+  "tier": "default_selected",
+  "tier_reason": "rule example.cache@0.1.0 allows default selection (rebuilt locally by its owner when needed)",
+  "rebuild_class": "local_rebuild",
+  "regeneration": "Rebuilt by the example app on its next start.",
+  "offline_effect": "None: the cache is rebuilt from local data.",
+  "age_threshold": {
+    "min_age_days": 7,
+    "basis": "modified_time"
+  },
+  "recovery_limits": [
+    {
+      "mode": "trash",
+      "recovery": "system_recycle_bin",
+      "limit": "restored only with the system's own Trash tools; emptying the Trash, or the Trash discarding old items when it is full, makes it unrecoverable; frees no space until the Trash is emptied; a volume without a usable Trash refuses the plan"
+    }
+  ],
+  "evidence_refs": [
+    "synthetic_fixture"
   ]
 }

@@ -5,13 +5,14 @@
 // and every tile has an equivalent table row (GUI-02/05). Rendering failures fall back to a message
 // while the table keeps working.
 
-import { formatBytes, formatShare, groupDigits, parseBytes } from '../lib/bytes';
+import { formatBytes, formatShare, parseBytes } from '../lib/bytes';
 import { CATEGORY_LABEL, categoryOf, type Category } from '../lib/category';
 import { neighborTile, tileForEntry, type TileMove, type TileRef } from '../lib/diskModel';
-import { h, replace } from '../lib/dom';
+import { h, live, replace } from '../lib/dom';
 import { layoutTreemap, MERGED_ID, type TreemapLayout } from '../lib/treemap';
 import type { Entry, TreemapLayer } from '../lib/types';
 import { canOpen } from './grid';
+import { t } from '../i18n';
 
 export const REST_ID = '__rest__';
 const GAP = 3;
@@ -19,25 +20,25 @@ const MIN_TILE_AREA = 260;
 
 /** Words of the chart (one table for the language switch). */
 export const TREEMAP_TEXT = {
-  label: '空间分布图',
-  legend: '颜色表示文件类别（不表示是否可以删除）',
-  merged: (n: number) => `其他 ${groupDigits(n)} 项`,
-  rest: (n: number) => `其余 ${groupDigits(n)} 项`,
-  share: (s: string) => `占此层已知合计 ${s}`,
-  restNote: '未单独绘制，可在表格中继续加载',
-  folder: '文件夹，按 Enter 打开',
-  aria: (n: number, total: string) => `空间分布图：${n} 个图块，面积按已知逻辑大小，合计 ${total}。方向键在图块间移动，Enter 打开文件夹，空格选择，Backspace 返回上一级；同样的条目在表格中逐项列出。`,
-  noTiles: '此文件夹中没有已知大小大于 0 的条目，无法按面积绘制。',
-  emptyFolder: '此文件夹是空的。',
-  failed: (e: string) => `图表无法显示（${e}）。表格仍可排序、过滤和分页浏览全部结果。`,
-  gapsTitle: '没有画进图中的部分',
-  unknown: (n: number) => `${groupDigits(n)} 个条目大小未知`,
-  unknownNote: '不计入面积，也不按 0 计算。',
-  unread: (n: number) => `此文件夹下 ${groupDigits(n)} 处位置无法读取`,
-  unreadNote: '其中内容的大小未知，原因在概览中。',
-  zero: (n: number) => `${groupDigits(n)} 个条目已知大小为 0，未绘制。`,
-  restPartial: '此文件夹的直接子项过多，“其余”图块只汇总了已读取的部分。',
-  more: (n: number) => `等 ${groupDigits(n)} 项`,
+  get label() { return t('treemapView.label'); },
+  get legend() { return t('treemapView.legend'); },
+  merged: (n: number) => t('treemapView.merged', { n }),
+  rest: (n: number) => t('treemapView.rest', { n }),
+  share: (s: string) => t('treemapView.share', { s }),
+  get restNote() { return t('treemapView.restNote'); },
+  get folder() { return t('treemapView.folder'); },
+  aria: (n: number, total: string) => t('treemapView.aria', { n, total }),
+  get noTiles() { return t('treemapView.noTiles'); },
+  get emptyFolder() { return t('treemapView.emptyFolder'); },
+  failed: (e: string) => t('treemapView.failed', { e }),
+  get gapsTitle() { return t('treemapView.gapsTitle'); },
+  unknown: (n: number) => t('treemapView.unknown', { n }),
+  get unknownNote() { return t('treemapView.unknownNote'); },
+  unread: (n: number) => t('treemapView.unread', { n }),
+  get unreadNote() { return t('treemapView.unreadNote'); },
+  zero: (n: number) => t('treemapView.zero', { n }),
+  get restPartial() { return t('treemapView.restPartial'); },
+  more: (n: number) => t('treemapView.more', { n }),
 } as const;
 
 export interface TreemapCallbacks {
@@ -66,8 +67,8 @@ export class TreemapView {
   private frame = 0;
 
   constructor(private cb: TreemapCallbacks) {
-    this.canvas = h('div', { class: 'treemap', role: 'listbox', tabindex: '0', 'aria-label': TREEMAP_TEXT.label, 'aria-orientation': 'horizontal' });
-    this.legend = h('ul', { class: 'legend', 'aria-label': TREEMAP_TEXT.legend });
+    this.canvas = live(h('div', { class: 'treemap', role: 'listbox', tabindex: '0', 'aria-orientation': 'horizontal' }), null, { 'aria-label': () => TREEMAP_TEXT.label });
+    this.legend = live(h('ul', { class: 'legend' }), null, { 'aria-label': () => TREEMAP_TEXT.legend });
     this.gaps = h('div', { class: 'gaps' });
     this.el = h('div', { class: 'treemap-wrap' }, this.canvas, this.legend, this.gaps);
     this.canvas.addEventListener('keydown', (e) => this.onKey(e));
@@ -167,6 +168,11 @@ export class TreemapView {
     e.preventDefault();
   }
 
+  /** LIF-05: draw the tiles, legend and gaps again in the new language. */
+  relocalize(): void {
+    this.schedule();
+  }
+
   private schedule(): void {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
@@ -198,40 +204,40 @@ export class TreemapView {
     const total = layout.areaTotal;
     const cats = new Set<Category>();
     this.tiles = layout.tiles.map((t) => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h, members: t.members }));
-    const tiles = layout.tiles.map((t, i) => {
-      const entry = this.byId.get(t.id);
-      const isMerged = t.id === MERGED_ID;
-      const isRest = t.id === REST_ID;
+    const tiles = layout.tiles.map((tile, i) => {
+      const entry = this.byId.get(tile.id);
+      const isMerged = tile.id === MERGED_ID;
+      const isRest = tile.id === REST_ID;
       const cat: Category | 'merged' = entry ? categoryOf(entry) : 'merged';
       if (entry) cats.add(cat as Category);
-      const name = entry ? entry.name : isMerged ? T.merged(t.members?.length ?? 0) : T.rest(layer.rest.count);
-      const size = formatBytes(t.bytes);
-      const share = formatShare(t.bytes, total);
+      const name = entry ? entry.name : isMerged ? T.merged(tile.members?.length ?? 0) : T.rest(layer.rest.count);
+      const size = formatBytes(tile.bytes);
+      const share = formatShare(tile.bytes, total);
       const folder = !!entry && canOpen(entry);
-      const big = t.w > 74 && t.h > 36;
+      const big = tile.w > 74 && tile.h > 36;
       const el = h(
         'div',
         {
           class: 'tile',
-          id: this.tileDomId(t.id),
+          id: this.tileDomId(tile.id),
           role: 'option',
           'aria-selected': 'false',
-          'aria-label': `${name}，${size}，${T.share(share)}${folder ? `，${T.folder}` : ''}${isRest ? `，${T.restNote}` : ''}`,
-          'data-id': t.id,
+          'aria-label': t('treemapView.nameSizeShareP', { name, size, share: T.share(share), p: folder ? t('treemapView.folderSuffix', { folder: T.folder }) : '', p2: isRest ? t('treemapView.restnote', { restNote: T.restNote }) : '' }),
+          'data-id': tile.id,
           'data-cat': cat,
           'data-shade': String(i % 3),
-          'data-members': t.members ? t.members.join(',') : null,
-          title: `${name}\n${size} · ${T.share(share)}${isRest ? `\n（${T.restNote}）` : ''}`,
+          'data-members': tile.members ? tile.members.join(',') : null,
+          title: `${name}\n${size} · ${T.share(share)}${isRest ? t('treemapView.restNoteLine', { restNote: T.restNote }) : ''}`,
         },
         big ? h('span', { class: 'tile-name', 'aria-hidden': 'true' }, name) : null,
-        big && t.h > 52 ? h('span', { class: 'tile-size', 'aria-hidden': 'true' }, size, t.h > 70 && t.w > 110 ? h('span', { class: 'tile-share' }, share) : null) : null,
+        big && tile.h > 52 ? h('span', { class: 'tile-size', 'aria-hidden': 'true' }, size, tile.h > 70 && tile.w > 110 ? h('span', { class: 'tile-share' }, share) : null) : null,
       );
-      el.style.left = `${t.x + GAP / 2}px`;
-      el.style.top = `${t.y + GAP / 2}px`;
-      el.style.width = `${Math.max(0, t.w - GAP)}px`;
-      el.style.height = `${Math.max(0, t.h - GAP)}px`;
+      el.style.left = `${tile.x + GAP / 2}px`;
+      el.style.top = `${tile.y + GAP / 2}px`;
+      el.style.width = `${Math.max(0, tile.w - GAP)}px`;
+      el.style.height = `${Math.max(0, tile.h - GAP)}px`;
       el.addEventListener('click', () => {
-        this.choose(t.id, 'pointer');
+        this.choose(tile.id, 'pointer');
         this.focus();
       });
       el.addEventListener('dblclick', () => {
@@ -270,7 +276,7 @@ export class TreemapView {
             'span',
             { class: 'gap-text' },
             h('b', {}, T.unknown(unknown.length + restUnknown)),
-            h('span', { class: 'muted' }, `：${T.unknownNote}`),
+            h('span', { class: 'muted' }, t('treemapView.unknownnote', { unknownNote: T.unknownNote })),
             unknown.length
               ? h(
                   'span',
@@ -287,7 +293,7 @@ export class TreemapView {
         ),
       );
     }
-    if (unread) items.push(h('li', { 'data-mark': 'unread' }, h('span', { class: 'gap-mark', 'aria-hidden': 'true' }), h('span', { class: 'gap-text' }, h('b', {}, T.unread(unread)), h('span', { class: 'muted' }, `：${T.unreadNote}`))));
+    if (unread) items.push(h('li', { 'data-mark': 'unread' }, h('span', { class: 'gap-mark', 'aria-hidden': 'true' }), h('span', { class: 'gap-text' }, h('b', {}, T.unread(unread)), h('span', { class: 'muted' }, t('treemapView.unreadnote', { unreadNote: T.unreadNote })))));
     if (layout.zeroIds.length) items.push(h('li', { 'data-mark': 'zero' }, h('span', { class: 'gap-mark', 'aria-hidden': 'true' }), h('span', { class: 'gap-text muted' }, T.zero(layout.zeroIds.length))));
     if (!layer.rest.complete) items.push(h('li', { 'data-mark': 'zero' }, h('span', { class: 'gap-mark', 'aria-hidden': 'true' }), h('span', { class: 'gap-text muted' }, T.restPartial)));
     replace(this.gaps, items.length ? h('h3', { class: 'gaps-title' }, T.gapsTitle) : null, items.length ? h('ul', {}, ...items) : null);

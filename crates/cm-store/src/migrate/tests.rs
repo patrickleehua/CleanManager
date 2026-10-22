@@ -148,8 +148,9 @@ fn an_unmigratable_index_is_reported_as_rebuildable_and_never_touches_the_audit_
     drop(IndexStore::open(&index).unwrap());
     Connection::open(&index).unwrap().execute("UPDATE meta SET value='0' WHERE key='schema_version'", []).unwrap();
     assert!(matches!(IndexStore::open(&index), Err(StoreError::IndexIncompatible { .. })));
-    let rebuilt = crate::Stores::rebuild_index(&dir);
-    assert!(rebuilt.is_ok());
+    let (_, kept) = crate::Stores::rebuild_index(&dir).unwrap();
+    assert!(!kept.is_empty() && kept.iter().all(|k| k.exists()), "the incompatible index is kept, never deleted: {kept:?}");
+    assert_eq!(log_events(&dir).last().map(String::as_str), Some("rebuilt"), "the rebuild is logged with the kept names");
     assert_eq!(snapshot(&audit), ("reconciliation_required".into(), "recoverable".into(), None, "1".into()));
     assert_eq!(store_versions(&dir), (Some(crate::index::INDEX_SCHEMA_VERSION.into()), Some("1".into())));
 }

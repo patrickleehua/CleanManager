@@ -54,7 +54,7 @@ describe('软件 › 卸载 on macOS (UNI-01)', () => {
     const pages = list.items.find((a) => a.name === 'Pages')!;
     const word = list.items.find((a) => a.name === 'Microsoft Word')!;
     const p = uninstallRowWords(pages, true);
-    expect(p).toMatchObject({ label: '需要管理员', tone: 'warn', settingsButton: false, reason: null });
+    expect(p).toMatchObject({ label: '需要管理员', tone: 'warn', settingsButton: false, reason: null, needsAdmin: true });
     expect(p.guidance).toMatch(/启动台中按住 Option/);
     const w = uninstallRowWords(word, true);
     expect(w.guidance).toMatch(/访达中移到废纸篓（访达会要求管理员密码）/);
@@ -68,7 +68,7 @@ describe('软件 › 卸载 on macOS (UNI-01)', () => {
   });
 
   it('Windows rows keep the Settings button and their words', () => {
-    expect(uninstallRowWords({ state: 'unverified', source: 'registry_uninstall', reason: 'script host' }, false)).toEqual({ label: '无法验证', tone: 'warn', settingsButton: true, guidance: null, reason: 'script host' });
+    expect(uninstallRowWords({ state: 'unverified', source: 'registry_uninstall', reason: 'script host' }, false)).toEqual({ label: '无法验证', tone: 'warn', settingsButton: true, guidance: null, reason: 'script host', needsAdmin: false });
     expect(uninstallRowWords({ state: 'unsupported', source: 'registry_uninstall', reason: 'agent' }, false)).toMatchObject({ label: '受保护', settingsButton: false });
   });
 

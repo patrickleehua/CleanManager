@@ -300,7 +300,7 @@ fn cleanup_op(s: &Stores, mode: Mode, n: u8) -> String {
         finished_at: utc_from_unix(T0), succeeded: 1, skipped: 0, failed: 0, not_started: 0, unknown: 0,
         items: vec![result("a0000000", ActionStatus::Succeeded, "done", "", "x")], processed_logical_bytes: "1".into(), quarantined_logical_bytes: "0".into(),
         estimated_freed_bytes: "0".into(), volume_free_before_bytes: None, volume_free_after_bytes: None, observed_free_delta_bytes: None,
-        authorization_source: "interactive_review".into(),
+        authorization_source: "interactive_review".into(), reconciled_at: None,
     };
     s.audit.finish_operation(&op, "completed", &serde_json::to_string(&report).unwrap(), &utc_from_unix(T0)).unwrap();
     op

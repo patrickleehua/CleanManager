@@ -21,6 +21,7 @@
         "action_type": "process_end",
         "pid": 4242,
         "started_at": "134050000000000000",
+        "started_at_utc": "2025-10-15T11:06:40Z",
         "name": "example.exe",
         "image_path": {
           "platform": "windows",
@@ -32,6 +33,6 @@
       }
     ]
   },
-  "plan_digest": "056adc3b53b427baf8ee4d0ab4a3eb6bee2e06230c4581470d810491a7f69c8f",
+  "plan_digest": "17a35c8c87fae11ab50eabc8a8207768d29db73abb1e370548946ff7d13289ec",
   "authorization_status": "required"
 }

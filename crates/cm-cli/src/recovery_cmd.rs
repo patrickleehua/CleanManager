@@ -208,7 +208,7 @@ pub fn plan_review(req: &str, p: &Parsed, stores: &Stores, id: &str) -> ExitCode
         return fail(req, ErrorCode::PlanStale, "plan expired; create a new recovery plan", p.format);
     }
     let kind = plan.body.recovery_kind;
-    println!("Recovery plan {}  kind={kind:?}  items={}", plan.body.plan_id, plan.body.items.len());
+    println!("Recovery plan {}  kind={}  items={}", plan.body.plan_id, kind.as_str(), plan.body.items.len());
     println!("Expires: {}   Digest: {}", plan.body.expires_at, plan.digest);
     match kind {
         RecoveryKind::Restore => println!("Moves each item back to its original folder. An occupied name is skipped; nothing is overwritten."),
@@ -273,7 +273,7 @@ pub fn operations_reconcile(req: &str, p: &Parsed, stores: &Stores, operation_id
 /// Protocol `operation_summary`.
 fn history_item(h: &HistoryItem) -> Value {
     let counts = h.report.as_ref().map(|r| json!({"succeeded": r.succeeded, "skipped": r.skipped, "failed": r.failed, "not_started": r.not_started, "unknown": r.unknown}));
-    json!({
+    let mut item = json!({
         "operation_id": h.row.operation_id,
         "plan_id": h.row.plan_id,
         "plan_contract": h.contract,
@@ -286,7 +286,12 @@ fn history_item(h: &HistoryItem) -> Value {
         "counts": counts,
         "processed_logical_bytes": h.report.as_ref().map(|r| r.processed_logical_bytes.clone()),
         "recovery": {"availability": h.availability, "guidance": h.guidance},
-    })
+    });
+    // WFA-40: the reconciliation is listed next to the (kept) authorization source, never in its place.
+    if let Some(at) = h.report.as_ref().and_then(|r| r.reconciled_at.as_ref()) {
+        item["reconciled_at"] = json!(at);
+    }
+    item
 }
 
 /// `operations list`: history newest first, with truthful recovery availability (REC-04).

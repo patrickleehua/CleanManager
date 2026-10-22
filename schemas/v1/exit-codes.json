@@ -15,6 +15,7 @@
     "io_error": 8,
     "internal_error": 8,
     "protection_unavailable": 8,
+    "index_unavailable": 8,
     "cancelled": 130
   }
 }

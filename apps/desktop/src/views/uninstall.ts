@@ -9,11 +9,11 @@
 // uninstaller, result and leftover section, and one that fails stops nothing else.
 
 import type { App } from '../main';
-import { groupDigits } from '../lib/bytes';
+
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate, SubjectGate } from '../lib/gate';
-import { notOnThisPlatform, onPlatform, words } from '../lib/platform';
+import { notOnThisPlatform, words } from '../lib/platform';
 import type { Leftover, Leftovers, UninstallApp, UninstallList } from '../lib/suiteTypes';
 import { LEFTOVER_GROUP, MARKER_WORD, SOURCE_WORD, adapterText, leftoverAction, leftoverTier, uninstallRowWords, whyNotWord } from '../lib/suiteWords';
 import type { IpcError } from '../lib/types';
@@ -22,28 +22,22 @@ import { LongProgress, atLeast, ensureReady, selectionBar, stageSteps, sumSizes,
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, sizeText } from './parts';
 import { APP_OUTCOME, MAX_BATCH, batchActionText, batchSelectable, batchSelection, leftoverSections, leftoversTitle, type LeftoverSection } from './uninstallBatch';
 import { issueList, learnMore } from './ui';
+import { t } from '../i18n';
 
 type Filter = 'all' | 'available' | 'settings' | 'protected';
 
 const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'available', label: '可卸载' },
-  { key: 'settings', label: '需在设置中卸载' },
-  { key: 'protected', label: '受保护' },
-];
-
-export const UNINSTALL_STEPS: Step[] = [
-  { title: '卸载程序', note: '先请应用退出，再运行它自己的卸载程序，最后重新检查安装目录和登记。' },
-  { title: '残留', note: '卸载后单独审阅确实留下的文件、注册表项和启动项。' },
+  { key: 'all', get label() { return t('uninstall.filters.all.label'); } },
+  { key: 'available', get label() { return t('uninstall.filters.available.label'); } },
+  { key: 'settings', get label() { return words().uninstallElsewhereFilter; } },
+  { key: 'protected', get label() { return t('uninstall.filters.protected.label'); } },
 ];
 
 // GUI-12: the two steps keep their titles; what each does follows the platform (Trash and Homebrew on macOS).
-onPlatform(() => {
-  const w = words();
-  UNINSTALL_STEPS[0].note = w.uninstallStep1;
-  UNINSTALL_STEPS[1].note = w.uninstallStep2;
-  FILTERS[2].label = w.uninstallElsewhereFilter;
-});
+export const UNINSTALL_STEPS: Step[] = [
+  { get title() { return t('uninstall.uninstallSteps.0.title'); }, get note() { return words().uninstallStep1; } },
+  { get title() { return t('uninstall.uninstallSteps.1.title'); }, get note() { return words().uninstallStep2; } },
+];
 
 function matches(a: UninstallApp, f: Filter, q: string): boolean {
   const inFilter = f === 'all' || (f === 'available' && a.state === 'available') || (f === 'settings' && a.state === 'unverified') || (f === 'protected' && a.state === 'unsupported');
@@ -73,7 +67,7 @@ export class UninstallPage {
   private collapsed = new Set<string>();
   private creating = false;
   private createError: IpcError | null = null;
-  private progress = new LongProgress('读取残留');
+  private progress = new LongProgress(() => t('uninstall.readingLeftovers'));
 
   constructor(private app: App) {
     this.body = h('div', { class: 'uninstall-body' });
@@ -113,7 +107,7 @@ export class UninstallPage {
     if (this.chosen.has(a.app_instance_id)) this.chosen.delete(a.app_instance_id);
     else if (batchSelectable(a) && this.chosen.size < MAX_BATCH) this.chosen.add(a.app_instance_id);
     this.batchError = null;
-    this.app.announce(this.chosen.has(a.app_instance_id) ? `已选择 ${a.name}，共 ${this.chosen.size} 个应用` : `已取消选择 ${a.name}，共 ${this.chosen.size} 个应用`);
+    this.app.announce(this.chosen.has(a.app_instance_id) ? t('uninstall.selectedNameSizeTotal', { name: a.name, size: this.chosen.size }) : t('uninstall.deselectedNameSizeTotal', { name: a.name, size: this.chosen.size }));
     this.update();
   }
 
@@ -121,7 +115,7 @@ export class UninstallPage {
   private async planSelected(): Promise<void> {
     const apps = batchSelection(this.list?.items ?? [], this.chosen);
     if (this.planning || !apps.length) return;
-    const what = apps.length === 1 ? `卸载 ${apps[0].name}` : `卸载 ${apps.length} 个应用`;
+    const what = apps.length === 1 ? t('uninstall.uninstallName', { name: apps[0].name }) : t('uninstall.uninstallLength', { length: apps.length });
     if (!(await ensureReady(this.app, 'uninstall', what))) return;
     this.planning = true;
     this.batchError = null;
@@ -131,8 +125,8 @@ export class UninstallPage {
       const r = await this.app.backend.uninstallPlan(apps.map((a) => a.app_instance_id));
       for (const x of r.refused) this.rowError.set(x.app_instance_id, { code: x.reason, reason: x.reason, message: x.message });
       this.chosen.clear();
-      const names = r.apps.map((a) => a.name).join('、');
-      this.app.announce(`已生成卸载计划（${r.apps.length} 个应用：${names}），尚未执行。${r.refused.length ? `另有 ${r.refused.length} 个应用不能卸载，未放入计划。` : ''}请审阅后批准`);
+      const names = r.apps.map((a) => a.name).join(t('common.listSep'));
+      this.app.announce(t('uninstall.createdUninstallPlanLength', { length: r.apps.length, names, p: r.refused.length ? t('uninstall.othersNotUninstallable', { length: r.refused.length }) : '' }));
       this.app.openPlan(r.plan_id, 'uninstall');
     } catch (e) {
       // One application: the reason belongs on its row; several: every one was refused, the reasons are in the message.
@@ -160,7 +154,7 @@ export class UninstallPage {
     this.loError = null;
     this.selected.clear();
     this.createError = null;
-    this.progress.start('正在重新检查卸载后留下的对象…');
+    this.progress.start(t('uninstall.recheckingWhatLeftBehind'));
     this.loGate.show(op);
     this.render();
     try {
@@ -169,7 +163,7 @@ export class UninstallPage {
       this.leftovers = r.value;
       // UNI-05: only what the core preselected (caches and logs) starts selected; the person may clear it.
       for (const g of r.value.groups) for (const i of g.items) if (i.selected && i.selectable) this.selected.set(i.object_id, i);
-      this.app.announce(`找到 ${groupDigits(r.value.groups.reduce((n, g) => n + g.items.length, 0))} 个残留对象，已选中缓存与日志 ${this.selected.size} 项`);
+      this.app.announce(t('uninstall.foundGroupdigitsSizeSelected', { groupDigits: r.value.groups.reduce((n, g) => n + g.items.length, 0), size: this.selected.size }));
     } catch (e) {
       if (this.loGate.current === op) this.loError = toIpcError(e);
     } finally {
@@ -182,20 +176,20 @@ export class UninstallPage {
     if (this.selected.has(i.object_id)) this.selected.delete(i.object_id);
     else if (i.selectable) this.selected.set(i.object_id, i);
     this.createError = null;
-    this.app.announce(this.selected.has(i.object_id) ? `已选择 ${tail(i.display)}` : `已取消选择 ${tail(i.display)}`);
+    this.app.announce(this.selected.has(i.object_id) ? t('uninstall.selectedDisplay', { display: tail(i.display) }) : t('uninstall.deselectedDisplay', { display: tail(i.display) }));
     this.update();
   }
 
   private async createLeftoversPlan(): Promise<void> {
     const l = this.leftovers;
     if (!l || this.creating || !this.selected.size) return;
-    if (!(await ensureReady(this.app, 'uninstall', '处理卸载残留'))) return;
+    if (!(await ensureReady(this.app, 'uninstall', t('uninstall.handleUninstallLeftovers')))) return;
     this.creating = true;
     this.createError = null;
     this.update();
     try {
       const r = await this.app.backend.uninstallLeftoversPlan(l.operation_id, [...this.selected.keys()]);
-      this.app.announce('残留计划已生成，尚未执行。请审阅完整清单');
+      this.app.announce(t('uninstall.leftoverPlanCreatedNothing'));
       this.app.openPlan(r.plan_id, 'uninstall');
     } catch (e) {
       this.createError = toIpcError(e);
@@ -214,10 +208,10 @@ export class UninstallPage {
 
   private renderList(): void {
     const d = this.list;
-    const refresh = h('button', { type: 'button', id: 'uninstall-refresh', disabled: this.loading }, icon('refresh'), this.loading ? '正在读取…' : '重新读取');
+    const refresh = h('button', { type: 'button', id: 'uninstall-refresh', disabled: this.loading }, icon('refresh'), this.loading ? t('common.reading') : t('common.reload'));
     refresh.addEventListener('click', () => void this.load());
     if (d && !d.supported) {
-      replace(this.body, pageHead({ id: 'uninstall-title', title: '卸载' }), emptyState('此平台暂不提供', notOnThisPlatform('应用卸载目前只在 Windows 上实现。'), null));
+      replace(this.body, pageHead({ id: 'uninstall-title', title: t('common.uninstall') }), emptyState(t('common.notAvailablePlatformYet'), notOnThisPlatform(t('uninstall.appUninstallOnlyImplemented')), null));
       return;
     }
     const available = d?.items.filter((a) => a.state === 'available').length ?? 0;
@@ -225,16 +219,16 @@ export class UninstallPage {
       this.body,
       pageHead({
         id: 'uninstall-title',
-        title: '卸载',
-        meta: d ? [`${groupDigits(d.items.length)} 个应用`, `可卸载 ${groupDigits(available)} 个`, d.is_admin ? `以${words().admin}运行` : '以当前用户运行', '只读清单'] : ['只读清单'],
+        title: t('common.uninstall'),
+        meta: d ? [t('uninstall.appsCount', { length: d.items.length }), t('uninstall.availableUninstalled', { available }), d.is_admin ? t('common.runningAdmin', { admin: words().admin }) : t('common.runningCurrentUser'), t('common.readOnlyList')] : [t('common.readOnlyList')],
         actions: [refresh],
       }),
-      stageSteps('卸载分两步，每步单独审阅', UNINSTALL_STEPS, 0),
+      stageSteps(t('uninstall.uninstallingTakesTwoSteps'), UNINSTALL_STEPS, 0),
       errorLine(this.listError),
       d
         ? h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.recentPanel(d), this.appsPanel(d)), this.howPanel())
         : !this.listError
-          ? h('p', { class: 'muted', role: 'status' }, '正在读取已安装的应用…')
+          ? h('p', { class: 'muted', role: 'status' }, t('uninstall.readingInstalledApps'))
           : null,
       d ? this.appsBar(d) : null,
     );
@@ -248,16 +242,16 @@ export class UninstallPage {
       onClear: () => {
         this.chosen.clear();
         this.batchError = null;
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
-      action: { id: 'uninstall-bar-go', text: this.planning ? '正在核验…' : batchActionText(n), disabled: this.planning, onClick: () => void this.planSelected() },
-      note: n > 1 ? '每个应用单独退出、单独卸载、单独报告结果；一个失败不影响其他' : null,
+      action: { id: 'uninstall-bar-go', text: this.planning ? t('uninstall.verifying') : batchActionText(n), disabled: this.planning, onClick: () => void this.planSelected() },
+      note: n > 1 ? t('uninstall.eachAppQuitsUninstalls') : null,
     });
   }
 
   private appsPanel(d: UninstallList): HTMLElement {
-    const search = h('input', { type: 'search', id: 'uninstall-search', placeholder: '按名称或发布者查找', 'aria-label': '查找应用', value: this.query }) as HTMLInputElement;
+    const search = h('input', { type: 'search', id: 'uninstall-search', placeholder: t('uninstall.findNamePublisher'), 'aria-label': t('uninstall.findApps'), value: this.query }) as HTMLInputElement;
     search.addEventListener('input', () => {
       this.query = search.value;
       this.update();
@@ -265,7 +259,7 @@ export class UninstallPage {
     const seg = h(
       'fieldset',
       { class: 'seg' },
-      h('legend', { class: 'sr-only' }, '筛选应用'),
+      h('legend', { class: 'sr-only' }, t('uninstall.filterApps')),
       ...FILTERS.map((f) => {
         const input = h('input', { type: 'radio', name: 'uninstall-filter', id: `uninstall-filter-${f.key}`, value: f.key }) as HTMLInputElement;
         input.checked = this.filter === f.key;
@@ -282,21 +276,21 @@ export class UninstallPage {
     return h(
       'section',
       { class: 'panel', 'aria-labelledby': 'uninstall-apps-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'uninstall-apps-title' }, '已安装的应用'), h('div', { class: 'list-tools' }, seg, search)),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'uninstall-apps-title' }, t('uninstall.installedApps')), h('div', { class: 'list-tools' }, seg, search)),
       h(
         'p',
         { class: 'muted small' },
-        n ? `已选 ${n} 个应用。` : '',
-        `勾选一个或多个可卸载的应用，生成一份卸载计划（最多 ${MAX_BATCH} 个）。每个应用单独审阅、单独执行；受保护的应用不能勾选。`,
+        n ? t('uninstall.appsSelected', { n }) : '',
+        t('uninstall.selectOneMoreApps', { MAX_BATCH }),
       ),
       errorLine(this.batchError),
-      items.length ? this.appsTable(items) : h('p', { class: 'muted small' }, '没有符合条件的应用。'),
+      items.length ? this.appsTable(items) : h('p', { class: 'muted small' }, t('common.noAppsMatch')),
       d.issues.length
         ? h(
             'details',
             { class: 'issues-details' },
-            h('summary', {}, `未能读取的登记（${d.issues.length}）——清单可能不完整`),
-            issueList(d.issues, { label: '记录的问题' }),
+            h('summary', {}, t('uninstall.registrationsCouldntReadLength', { length: d.issues.length })),
+            issueList(d.issues, { label: t('common.recordedIssues') }),
           )
         : null,
     );
@@ -312,23 +306,23 @@ export class UninstallPage {
         type: 'checkbox',
         id: `${id}-check`,
         disabled: !can || this.planning || (!this.chosen.has(a.app_instance_id) && this.chosen.size >= MAX_BATCH),
-        'aria-label': `选择 ${a.name}`,
+        'aria-label': t('common.selectName', { name: a.name }),
       }) as HTMLInputElement;
       check.checked = can && this.chosen.has(a.app_instance_id);
       check.addEventListener('change', () => this.toggleApp(a));
       let action: HTMLElement;
       if (a.state === 'available') {
-        action = h('span', { class: 'muted small' }, check.checked ? (this.planning ? '正在核验…' : '已选择') : '勾选后卸载');
+        action = h('span', { class: 'muted small' }, check.checked ? (this.planning ? t('uninstall.verifying') : t('uninstall.selected')) : t('uninstall.selectUninstall'));
       } else if (st.settingsButton) {
-        const btn = h('button', { type: 'button', class: 'quiet', id: `${id}-settings` }, icon('external'), '在设置中卸载');
+        const btn = h('button', { type: 'button', class: 'quiet', id: `${id}-settings` }, icon('external'), t('uninstall.uninstallSettings'));
         btn.addEventListener('click', () => void this.app.backend.openSystemPage('apps_features'));
         action = btn;
       } else if (st.guidance) {
-        action = h('span', { class: 'muted small' }, st.tone === 'warn' && st.label === '需要管理员' ? '在启动台或访达中删除' : '在访达中处理');
+        action = h('span', { class: 'muted small' }, st.needsAdmin ? t('uninstall.deleteLaunchpadFinder') : t('uninstall.handleFinder'));
       } else {
-        action = h('span', { class: 'muted small' }, '没有卸载入口');
+        action = h('span', { class: 'muted small' }, t('uninstall.noUninstallRoute'));
       }
-      const facts = [a.publisher ?? '发布者未知', a.version ? `版本 ${a.version}` : null, SOURCE_WORD[a.source] ?? a.source, a.last_used_at ? `上次使用 ${formatTime(a.last_used_at)}` : null].filter(Boolean).join(' · ');
+      const facts = [a.publisher ?? t('common.unknownPublisher'), a.version ? t('common.versionVersion', { version: a.version }) : null, SOURCE_WORD[a.source] ?? a.source, a.last_used_at ? t('uninstall.lastUsedLastUsed', { last_used_at: formatTime(a.last_used_at) }) : null].filter(Boolean).join(' · ');
       return h(
         'tr',
         { class: `crow${check.checked ? ' selected' : ''}${can ? '' : ' locked'}` },
@@ -338,7 +332,7 @@ export class UninstallPage {
           { class: 'col-object' },
           can ? h('label', { for: `${id}-check`, class: 'obj-name' }, a.name) : h('span', { class: 'obj-name' }, a.name),
           h('span', { class: 'obj-path' }, facts),
-          a.adapter ? h('span', { class: 'obj-reason muted' }, '方式：', adapterText(a.adapter)) : null,
+          a.adapter ? h('span', { class: 'obj-reason muted' }, t('uninstall.method'), adapterText(a.adapter)) : null,
           st.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not' }, st.reason) : null,
           st.guidance ? h('span', { class: 'obj-reason' }, st.guidance) : null,
           errorLine(err ?? null),
@@ -353,8 +347,8 @@ export class UninstallPage {
       h(
         'table',
         { class: 'data-table uninstall-table' },
-        h('caption', { class: 'sr-only' }, '已安装的应用、卸载方式与可用操作；勾选可卸载的应用放入同一份计划'),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '应用与卸载方式'), h('th', { scope: 'col', class: 'col-flags' }, '状态'), h('th', { scope: 'col', class: 'col-status' }, '操作'))),
+        h('caption', { class: 'sr-only' }, t('uninstall.installedAppsHowThey')),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('uninstall.appUninstallMethod')), h('th', { scope: 'col', class: 'col-flags' }, t('common.status')), h('th', { scope: 'col', class: 'col-status' }, t('common.action')))),
         h('tbody', {}, ...rows),
       ),
     );
@@ -366,44 +360,44 @@ export class UninstallPage {
       // UNI-11: leftovers exist only for applications whose own uninstaller succeeded.
       const reviewable = r.stage === 'uninstall' && r.leftovers_reviewable;
       const go = reviewable
-        ? h('button', { type: 'button', class: 'quiet', onclick: () => this.openLeftovers(r.operation_id) }, '审阅残留')
-        : h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openOperation(r.operation_id, 'uninstall') }, '查看结果');
+        ? h('button', { type: 'button', class: 'quiet', onclick: () => this.openLeftovers(r.operation_id) }, t('common.reviewLeftovers'))
+        : h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openOperation(r.operation_id, 'uninstall') }, t('common.viewResult'));
       return h(
         'li',
         { class: 'run-row' },
-        h('span', { class: 'run-main' }, h('b', {}, r.app_name), h('span', { class: 'muted small' }, `${r.stage === 'uninstall' ? `第 1 步 · 卸载程序${r.app_count > 1 ? `（${r.app_count} 个应用）` : ''}` : '第 2 步 · 残留'} · ${formatTime(r.started_at)}`)),
+        h('span', { class: 'run-main' }, h('b', {}, r.app_name), h('span', { class: 'muted small' }, `${r.stage === 'uninstall' ? t('uninstall.step1UninstallerP', { p: r.app_count > 1 ? t('uninstall.appCount', { app_count: r.app_count }) : '' }) : t('uninstall.step2Leftovers')} · ${formatTime(r.started_at)}`)),
         pill(OPERATION_STATE_LABEL[r.state] ?? r.state, operationTone(r.state)),
         go,
       );
     });
-    return h('section', { class: 'panel', 'aria-labelledby': 'uninstall-recent-title' }, h('h2', { id: 'uninstall-recent-title' }, '最近的卸载'), h('ul', { class: 'run-list' }, ...rows));
+    return h('section', { class: 'panel', 'aria-labelledby': 'uninstall-recent-title' }, h('h2', { id: 'uninstall-recent-title' }, t('uninstall.recentUninstalls')), h('ul', { class: 'run-list' }, ...rows));
   }
 
   private howPanel(): HTMLElement {
     return h(
       'aside',
       { class: 'panel work-aside', 'aria-labelledby': 'uninstall-how' },
-      h('h2', { id: 'uninstall-how' }, '卸载怎样进行'),
+      h('h2', { id: 'uninstall-how' }, t('uninstall.howUninstallingWorks')),
       h('p', { class: 'small' }, words().uninstallHowReview),
       learnMore(
         h('p', {}, words().uninstallHowRescan),
-        h('p', {}, '一次选择多个应用时，它们在同一份计划中依次执行：每个应用单独退出、单独卸载、单独报告结果。一个应用没有退出或卸载失败，不影响其他应用；它的残留也不会进入第 2 步。'),
+        h('p', {}, t('uninstall.whenSelectSeveralApps')),
       ),
       h(
         'div',
         { class: 'aside-section' },
-        h('h3', {}, '应用还在运行时'),
+        h('h3', {}, t('uninstall.ifAppStillRunning')),
         h('p', { class: 'small' }, words().uninstallHowRunning),
         learnMore(
-          h('p', {}, '确实需要结束仍在运行的进程时，只能在终端中创建一份单独审阅的计划，执行时还要输入 END 确认：'),
-          copyField('在终端中（需要人工确认）', 'cleanmanager apps uninstall plan create --instance <应用编号> --end-running'),
+          h('p', {}, t('uninstall.ifReallyNeedEnd')),
+          copyField(t('uninstall.terminalNeedsManualConfirmation'), t('uninstall.cleanmanagerAppsUninstallPlan')),
         ),
       ),
       h(
         'div',
         { class: 'aside-section' },
-        h('h3', {}, '没有卸载入口的应用'),
-        h('p', { class: 'small' }, '安全软件、系统组件、共享运行库和 CleanManager 自己不能在这里卸载。'),
+        h('h3', {}, t('uninstall.appsWithoutUninstallRoute')),
+        h('p', { class: 'small' }, t('uninstall.securitySoftwareSystemComponents')),
         learnMore(h('p', {}, words().uninstallManually)),
       ),
     );
@@ -413,7 +407,7 @@ export class UninstallPage {
 
   private renderLeftovers(): void {
     const l = this.leftovers;
-    const back = { label: '返回卸载', onClick: () => this.closeLeftovers() };
+    const back = { label: t('uninstall.renderLeftovers.label'), onClick: () => this.closeLeftovers() };
     const all = l ? l.groups.flatMap((g) => g.items) : [];
     // UNI-11: a batch is reviewed application by application; a single uninstall keeps one flat review.
     const sections = l && l.apps.length > 1 ? leftoverSections(l) : null;
@@ -425,10 +419,10 @@ export class UninstallPage {
         title: leftoversTitle(l),
         back,
         meta: l
-          ? [h('code', { class: 'selectable' }, l.operation_id), `${groupDigits(all.length)} 个对象`, `默认选中 ${groupDigits(l.default_selected)} 项（缓存与日志）`, l.is_admin ? `以${words().admin}运行` : '以当前用户运行']
+          ? [h('code', { class: 'selectable' }, l.operation_id), t('common.objectCount', { length: all.length }), t('uninstall.defaultSelectedSelectedDefault', { default_selected: l.default_selected }), l.is_admin ? t('common.runningAdmin', { admin: words().admin }) : t('common.runningCurrentUser')]
           : [],
       }),
-      stageSteps('卸载分两步，每步单独审阅', UNINSTALL_STEPS, 1),
+      stageSteps(t('uninstall.uninstallingTakesTwoSteps'), UNINSTALL_STEPS, 1),
       this.progress.el,
       errorLine(this.loError),
       l
@@ -447,7 +441,7 @@ export class UninstallPage {
               ),
               this.loDraft(l),
             )
-          : h('div', { class: 'panel' }, emptyState('没有残留', `重新检查没有找到与这个应用相关的${words().leftoverKindsOr}。`, h('button', { type: 'button', onclick: back.onClick }, back.label)))
+          : h('div', { class: 'panel' }, emptyState(t('uninstall.noLeftovers'), t('uninstall.recheckFoundNoLeftoverkindsor', { leftoverKindsOr: words().leftoverKindsOr }), h('button', { type: 'button', onclick: back.onClick }, back.label)))
         : null,
       l ? this.loBar() : null,
     );
@@ -460,15 +454,15 @@ export class UninstallPage {
     return h(
       'section',
       { class: 'panel catalog-summary', 'aria-labelledby': 'lo-sum' },
-      h('h2', { id: 'lo-sum', class: 'sr-only' }, '摘要'),
+      h('h2', { id: 'lo-sum', class: 'sr-only' }, t('uninstall.summary')),
       h(
         'dl',
         { class: 'tier-summary' },
-        h('div', {}, h('dt', {}, tierBadge('default_selected')), h('dd', { class: 'num' }, `${groupDigits(count((i) => i.tier === 'default_selected'))} 项`, h('small', {}, '缓存与日志，默认选中'))),
-        h('div', {}, h('dt', {}, tierBadge('review_only')), h('dd', { class: 'num' }, `${groupDigits(count((i) => i.tier === 'review_only'))} 项`, h('small', {}, '设置、个人数据等，逐项确认'))),
-        h('div', {}, h('dt', {}, tierBadge('blocked')), h('dd', { class: 'num' }, `${groupDigits(count((i) => !i.selectable))} 项`, h('small', {}, '保留、已阻止或需手动处理'))),
+        h('div', {}, h('dt', {}, tierBadge('default_selected')), h('dd', { class: 'num' }, t('common.groupdigits', { groupDigits: count((i) => i.tier === 'default_selected') }), h('small', {}, t('uninstall.cachesLogsSelectedDefault')))),
+        h('div', {}, h('dt', {}, tierBadge('review_only')), h('dd', { class: 'num' }, t('common.groupdigits', { groupDigits: count((i) => i.tier === 'review_only') }), h('small', {}, t('uninstall.settingsPersonalDataMore')))),
+        h('div', {}, h('dt', {}, tierBadge('blocked')), h('dd', { class: 'num' }, t('common.groupdigits', { groupDigits: count((i) => !i.selectable) }), h('small', {}, t('uninstall.keptBlockedNeedsManual')))),
       ),
-      keys ? h('p', { class: 'muted small lo-keys' }, `其中 ${keys} 个注册表项：执行时先把整棵键备份到 CleanManager 的记录中，备份失败就不删除；之后可以生成还原计划。`) : null,
+      keys ? h('p', { class: 'muted small lo-keys' }, t('uninstall.keysBeforeDeletionWhole', { keys })) : null,
     );
   }
 
@@ -482,7 +476,7 @@ export class UninstallPage {
         'div',
         { class: 'panel-head' },
         h('h2', { id: `lo-app${ai}` }, sec.name),
-        h('span', {}, pill(st.label, st.tone), ' ', h('span', { class: 'small muted num' }, sec.reviewable ? `${groupDigits(sec.objects)} 个残留对象` : '全部保留')),
+        h('span', {}, pill(st.label, st.tone), ' ', h('span', { class: 'small muted num' }, sec.reviewable ? t('uninstall.objects', { objects: sec.objects }) : t('uninstall.allKept'))),
       ),
       h('p', { class: sec.reviewable ? 'small muted' : 'small' }, sec.reason),
     );
@@ -501,7 +495,7 @@ export class UninstallPage {
       { type: 'button', class: 'group-toggle', id: `${id}-toggle`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-body` },
       h('span', { class: 'chev-icon', 'aria-hidden': 'true' }, icon('chevron')),
       h('span', { class: 'group-title' }, meta.title),
-      h('span', { class: 'group-count num' }, `${groupDigits(items.length)} 项`),
+      h('span', { class: 'group-count num' }, t('common.itemCount', { length: items.length })),
       h('span', { class: 'group-size num' }, files.length ? atLeast(sum) : '—'),
     );
     toggle.addEventListener('click', () => {
@@ -520,13 +514,13 @@ export class UninstallPage {
   private loTable(items: Leftover[], caption: string): HTMLElement {
     const rows = items.map((i) => {
       const id = `lo-${i.object_id}`;
-      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !i.selectable, 'aria-label': `选择 ${tail(i.display)}`, 'aria-describedby': `${id}-why` }) as HTMLInputElement;
+      const check = h('input', { type: 'checkbox', id: `${id}-check`, disabled: !i.selectable, 'aria-label': t('uninstall.selectDisplay', { display: tail(i.display) }), 'aria-describedby': `${id}-why` }) as HTMLInputElement;
       check.checked = this.selected.has(i.object_id);
       check.addEventListener('change', () => this.toggle(i));
       const tags: HTMLElement[] = [];
-      if (i.action === 'registry_backup_delete') tags.push(h('span', { class: 'row-tag' }, '先备份'));
-      if (i.action === 'startup_toggle') tags.push(h('span', { class: 'row-tag' }, '先备份'));
-      if (i.requires_admin) tags.push(h('span', { class: 'row-tag' }, `需要${words().admin}`));
+      if (i.action === 'registry_backup_delete') tags.push(h('span', { class: 'row-tag' }, t('uninstall.backedUpFirst')));
+      if (i.action === 'startup_toggle') tags.push(h('span', { class: 'row-tag' }, t('uninstall.backedUpFirst')));
+      if (i.requires_admin) tags.push(h('span', { class: 'row-tag' }, t('common.needsAdmin', { admin: words().admin })));
       return h(
         'tr',
         { class: `crow${check.checked ? ' selected' : ''}${i.selectable ? '' : ' locked'}` },
@@ -536,10 +530,10 @@ export class UninstallPage {
           { class: 'col-object' },
           h('label', { for: `${id}-check`, class: 'obj-name' }, tail(i.display)),
           h('span', { class: 'obj-path path' }, i.display),
-          h('span', { class: 'obj-reason', id: `${id}-why` }, ...tags, i.evidence.join('；')),
+          h('span', { class: 'obj-reason', id: `${id}-why` }, ...tags, i.evidence.join(t('common.clauseSep'))),
           ...i.warnings.map((w) => h('span', { class: 'why-not' }, w)),
           i.note ? h('span', { class: 'obj-reason muted' }, i.note) : null,
-          i.marker ? h('span', { class: 'obj-reason muted' }, `保留：${MARKER_WORD[i.marker] ?? i.marker}。`) : null,
+          i.marker ? h('span', { class: 'obj-reason muted' }, t('uninstall.keptP', { p: MARKER_WORD[i.marker] ?? i.marker })) : null,
           i.guidance ? h('span', { class: 'obj-reason muted' }, i.guidance) : null,
         ),
         h('td', { class: 'col-size num', title: exactTitle(i.logical_bytes) }, i.kind === 'registry_key' || i.kind === 'startup_entry' || i.kind === 'service' ? '—' : sizeText(i.logical_bytes, i.logical_bytes === null ? 1 : 0)),
@@ -552,8 +546,8 @@ export class UninstallPage {
       h(
         'table',
         { class: 'data-table ctable' },
-        h('caption', { class: 'sr-only' }, `${caption}：对象、依据、大小与处理方式`),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '对象与依据'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col' }, '档位与处理'))),
+        h('caption', { class: 'sr-only' }, t('uninstall.captionObjectsEvidenceSize', { caption })),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('uninstall.objectEvidence')), h('th', { scope: 'col', class: 'col-size' }, t('common.logicalSize')), h('th', { scope: 'col' }, t('uninstall.tierAction')))),
         h('tbody', {}, ...rows),
       ),
     );
@@ -564,8 +558,8 @@ export class UninstallPage {
     return h(
       'section',
       { class: 'panel refs-panel', 'aria-labelledby': 'lo-refs' },
-      h('h2', { id: 'lo-refs' }, '只读提示：这些配置文件提到了安装目录'),
-      h('p', { class: 'muted small' }, '它们属于你自己或其他工具，不会被修改，也不能放入计划。卸载后其中的路径可能失效，请自行检查。'),
+      h('h2', { id: 'lo-refs' }, t('uninstall.readOnlyNoticeConfig')),
+      h('p', { class: 'muted small' }, t('uninstall.theyBelongOtherTools')),
       h('ul', { class: 'plain-list path small' }, ...l.external_references.map((r) => h('li', {}, r))),
     );
   }
@@ -576,34 +570,34 @@ export class UninstallPage {
     const keys = items.filter((i) => i.action === 'registry_backup_delete').length;
     const startup = items.filter((i) => i.action === 'startup_toggle').length;
     const files = items.length - keys - startup;
-    const create = h('button', { type: 'button', class: 'primary wide', id: 'lo-create', disabled: !items.length || this.creating }, this.creating ? '正在冻结计划…' : items.length ? `生成残留计划（${items.length} 项）` : '先选择对象');
+    const create = h('button', { type: 'button', class: 'primary wide', id: 'lo-create', disabled: !items.length || this.creating }, this.creating ? t('common.freezingPlan') : items.length ? t('uninstall.createLeftoverPlanLength', { length: items.length }) : t('common.selectObjectsFirst'));
     create.addEventListener('click', () => void this.createLeftoversPlan());
     return h(
       'aside',
       { class: 'panel work-aside draft', 'aria-labelledby': 'lo-draft-title' },
-      h('h2', { id: 'lo-draft-title' }, '残留计划草稿'),
+      h('h2', { id: 'lo-draft-title' }, t('uninstall.leftoverPlanDraft')),
       items.length
         ? h(
             'div',
             { class: 'draft-sum' },
-            h('p', { class: 'draft-figure num' }, files ? atLeast(sum) : `${items.length} 项`),
+            h('p', { class: 'draft-figure num' }, files ? atLeast(sum) : t('uninstall.itemCount', { length: items.length })),
             h(
               'ul',
               { class: 'draft-list' },
-              files ? h('li', {}, h('span', {}, `文件与文件夹 ${files} 项`), h('span', { class: 'muted' }, words().moveToBin)) : null,
-              keys ? h('li', {}, h('span', {}, `注册表项 ${keys} 个`), h('span', { class: 'muted' }, '先备份再删除')) : null,
-              startup ? h('li', {}, h('span', {}, `启动项 ${startup} 个`), h('span', { class: 'muted' }, '先备份再移除')) : null,
+              files ? h('li', {}, h('span', {}, t('uninstall.files', { files })), h('span', { class: 'muted' }, words().moveToBin)) : null,
+              keys ? h('li', {}, h('span', {}, t('uninstall.keys', { keys })), h('span', { class: 'muted' }, t('uninstall.backUpDelete'))) : null,
+              startup ? h('li', {}, h('span', {}, t('uninstall.startup', { startup })), h('span', { class: 'muted' }, t('uninstall.backUpRemove'))) : null,
             ),
           )
-        : h('p', { class: 'muted small' }, '没有选择任何对象。缓存与日志默认选中，其他对象需要你逐项勾选。'),
+        : h('p', { class: 'muted small' }, t('uninstall.nothingSelectedCachesLogs')),
       errorLine(this.createError),
       create,
-      h('p', { class: 'muted small aside-note' }, `这是与卸载计划分开的第二份计划，单独审阅、单独批准。文件夹只移走其中的内容；所有移动都可以在${words().bin}中还原。`),
+      h('p', { class: 'muted small aside-note' }, t('uninstall.secondPlanSeparateUninstall', { bin: words().bin })),
       l.apps.some((a) => !a.leftovers_reviewable)
-        ? h('p', { class: 'muted small aside-note' }, `卸载没有完成的应用（${l.apps.filter((a) => !a.leftovers_reviewable).map((a) => a.app.name).join('、')}）仍然安装着，它们的任何对象都不会进入这份计划。`)
+        ? h('p', { class: 'muted small aside-note' }, t('uninstall.appsWhoseUninstallDidnt', { join: l.apps.filter((a) => !a.leftovers_reviewable).map((a) => a.app.name).join(t('common.listSep')) }))
         : null,
       l.groups.some((g) => g.items.some((i) => i.why_not === 'needs_admin'))
-        ? h('p', { class: 'muted small aside-note' }, `所有用户共用位置中的残留需要${words().admin}。CleanManager 不会自动提权：需要时请以${words().admin}重新启动后再审阅。`)
+        ? h('p', { class: 'muted small aside-note' }, t('uninstall.leftoversLocationsSharedAll', { admin: words().admin, admin2: words().admin }))
         : null,
     );
   }
@@ -615,11 +609,11 @@ export class UninstallPage {
       sum: sumSizes(items.filter((i) => i.action === 'fs_trash').map((i) => ({ bytes: i.logical_bytes }))),
       onClear: () => {
         this.selected.clear();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
-      action: { id: 'lo-bar-go', text: '生成残留计划并审阅', disabled: this.creating, onClick: () => void this.createLeftoversPlan() },
-      note: items.some((i) => i.action !== 'fs_trash') ? '注册表项与启动项不计大小' : null,
+      action: { id: 'lo-bar-go', text: t('uninstall.createLeftoverPlanReview'), disabled: this.creating, onClick: () => void this.createLeftoversPlan() },
+      note: items.some((i) => i.action !== 'fs_trash') ? t('uninstall.registryKeysStartupItems') : null,
     });
   }
 }

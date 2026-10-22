@@ -6,34 +6,35 @@
 
 import { words } from './platform';
 import type { CleanableHint, Entry } from './types';
+import { t } from '../i18n';
 
 /** Short word on the row marker. */
-export const HINT_LABEL = '可手动清理';
+export const hintLabel = () => t('cleanable.hintLabel');
 
 /** The verified evidence, in words. */
 export function hintBasisText(h: CleanableHint): string {
   switch (h.basis) {
     case 'build_artifact':
-      return `构建产物：所在项目有 ${h.detail}，可由项目重新生成`;
+      return t('cleanable.buildArtifactProjectDetail', { detail: h.detail });
     case 'catalog_rule':
-      return h.rule_id ? `清理规则 ${h.rule_id} 覆盖的缓存位置` : '清理规则覆盖的缓存位置';
+      return h.rule_id ? t('cleanable.cacheLocationCoveredCleanup', { rule_id: h.rule_id }) : t('cleanable.cacheLocationCoveredCleanup2');
     case 'cachedir_tag':
-      return '文件夹内有有效的 CACHEDIR.TAG 缓存标记';
+      return t('cleanable.folderValidCachedirTag');
   }
 }
 
 /** Tooltip of the row marker. */
 export function hintTitle(h: CleanableHint): string {
-  return `${HINT_LABEL}（依据：${hintBasisText(h)}）。只是提示，不会替你选中。`;
+  return t('cleanable.hintLabelBasisH', { label: hintLabel(), h: hintBasisText(h) });
 }
 
 /** The review flow the detail pane offers. */
 export function hintAction(h: CleanableHint): { flow: CleanableHint['flow']; label: string; note: string } {
   if (h.flow === 'purge') {
-    return { flow: 'purge', label: '打开构建产物清理', note: '在构建产物页扫描项目后逐项审阅，那里会再检查版本控制、保护与最近修改。' };
+    return { flow: 'purge', label: t('cleanable.openBuildArtifactCleanup'), note: t('cleanable.scanProjectsBuildArtifacts') };
   }
   const w = words();
-  return { flow: 'manual_trash', label: `将此文件夹${w.moveToBin}…`, note: `只针对这一项打开${w.moveToBin}的审阅，先逐项检查保护与占用，批准后才会移动。` };
+  return { flow: 'manual_trash', label: t('cleanable.movetobinFolder'), note: t('cleanable.opensMovetobinReviewItem', { moveToBin: w.moveToBin }) };
 }
 
 /** The hint a row shows: only real directories (never files, links or boundaries). */

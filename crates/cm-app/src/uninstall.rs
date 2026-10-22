@@ -645,7 +645,7 @@ mod win {
                 Binding::Path { path } => {
                     for (a, m) in file_actions(stores, env, host, plan_id, n, path, &guard, now, policy_digest)? {
                         items.push(a);
-                        meta.push(ActionMeta { note: Some(app(format!("{:?}: {}", l.group, l.display))), ..m });
+                        meta.push(ActionMeta { note: Some(app(format!("{}: {}", l.group.as_str(), l.display))), ..m });
                     }
                 }
                 Binding::Registry { location } => {
@@ -709,7 +709,7 @@ mod win {
         let backend = cm_platform::windows::directory::DirectoryBackend;
         let outcome = crate::scan::run_scan(&stores.index, &backend, &request, &cm_core::scan::ScanOptions::default())?;
         if outcome.state != cm_core::model::ScanState::Completed {
-            return Err(Refused::new("conflict", format!("{path} could not be read completely ({:?}); it is not planned", outcome.state)));
+            return Err(Refused::new("conflict", format!("{path} could not be read completely ({}); it is not planned", outcome.state.as_str())));
         }
         let status = stores.index.scan_status(&scan_id)?;
         let view = stores.index.view(&scan_id)?;

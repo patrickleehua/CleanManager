@@ -602,6 +602,93 @@
           },
           "minItems": 0,
           "uniqueItems": true
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "enum": [
+            "default_selected",
+            "review_only",
+            "blocked"
+          ]
+        },
+        "tier_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rebuild_class": {
+          "enum": [
+            "local_rebuild",
+            "network_redownload",
+            "not_rebuildable"
+          ]
+        },
+        "regeneration": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offline_effect": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "age_threshold": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "min_age_days": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "basis": {
+                  "enum": [
+                    "modified_time",
+                    "created_time"
+                  ]
+                }
+              },
+              "required": [
+                "min_age_days",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery_limits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery_limit"
+          },
+          "minItems": 0
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -717,6 +804,93 @@
           },
           "minItems": 0,
           "uniqueItems": true
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "enum": [
+            "default_selected",
+            "review_only",
+            "blocked"
+          ]
+        },
+        "tier_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rebuild_class": {
+          "enum": [
+            "local_rebuild",
+            "network_redownload",
+            "not_rebuildable"
+          ]
+        },
+        "regeneration": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offline_effect": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "age_threshold": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "min_age_days": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "basis": {
+                  "enum": [
+                    "modified_time",
+                    "created_time"
+                  ]
+                }
+              },
+              "required": [
+                "min_age_days",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery_limits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery_limit"
+          },
+          "minItems": 0
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -735,6 +909,35 @@
         "reclaimable_estimate_bytes",
         "estimate_basis",
         "allowed_modes"
+      ],
+      "additionalProperties": false
+    },
+    "recovery_limit": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "trash",
+            "quarantine",
+            "delete"
+          ]
+        },
+        "recovery": {
+          "enum": [
+            "system_recycle_bin",
+            "in_app_restore",
+            "unavailable"
+          ]
+        },
+        "limit": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode",
+        "recovery",
+        "limit"
       ],
       "additionalProperties": false
     },
@@ -1441,6 +1644,11 @@
             "guidance"
           ],
           "additionalProperties": false
+        },
+        "reconciled_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
         }
       },
       "required": [
@@ -3086,6 +3294,11 @@
               "type": "null"
             }
           ]
+        },
+        "started_at_utc": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
         }
       },
       "required": [
@@ -3872,6 +4085,65 @@
             "additionalProperties": false
           },
           "minItems": 0
+        },
+        "policy_matches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/policy_match"
+          },
+          "minItems": 0
+        },
+        "authorized_by": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "enum": [
+                    "interactive_review",
+                    "policy"
+                  ]
+                },
+                "policy_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "policy_version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "authorized_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "Z$"
+                }
+              },
+              "required": [
+                "source",
+                "policy_id",
+                "policy_version",
+                "authorized_at"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -4118,6 +4390,11 @@
             "additionalProperties": false
           },
           "minItems": 1
+        },
+        "reconciled_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
         }
       },
       "required": [
@@ -4172,7 +4449,8 @@
             "io_error",
             "internal_error",
             "cancelled",
-            "protection_unavailable"
+            "protection_unavailable",
+            "index_unavailable"
           ]
         },
         "message": {
@@ -4228,6 +4506,13 @@
                   "type": "null"
                 }
               ]
+            },
+            "policy_matches": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/policy_match"
+              },
+              "minItems": 0
             }
           },
           "required": [
@@ -4249,6 +4534,88 @@
         "details"
       ],
       "additionalProperties": false
+    },
+    "policy_match": {
+      "type": "object",
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "enabled",
+            "paused",
+            "revoked"
+          ]
+        },
+        "covers": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "not_enabled",
+                "expired",
+                "other_principal",
+                "scope_differs",
+                "mode_differs",
+                "rule_not_covered",
+                "tier_not_default_selected",
+                "size_unknown",
+                "single_limit",
+                "quota_exceeded"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "policy_id",
+        "policy_version",
+        "state",
+        "covers",
+        "reason",
+        "message"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "covers": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "progress": {
       "type": "object",
@@ -5579,6 +5946,9 @@
       "properties": {
         "redact": {
           "type": "boolean"
+        },
+        "repair_index": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6753,6 +7123,63 @@
           "items": {
             "type": "string",
             "minLength": 1
+          },
+          "minItems": 0
+        },
+        "regeneration": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offline_effect": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "age_threshold": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "min_age_days": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "basis": {
+                  "enum": [
+                    "modified_time",
+                    "created_time"
+                  ]
+                }
+              },
+              "required": [
+                "min_age_days",
+                "basis"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery_limits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recovery_limit"
           },
           "minItems": 0
         }
@@ -9480,7 +9907,8 @@
                   "io_error",
                   "internal_error",
                   "cancelled",
-                  "protection_unavailable"
+                  "protection_unavailable",
+                  "index_unavailable"
                 ]
               },
               "exit_code": {
@@ -9560,6 +9988,44 @@
               "type": "null"
             }
           ]
+        },
+        "index_repair": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "repaired",
+                "not_needed"
+              ]
+            },
+            "previous_state": {
+              "enum": [
+                "healthy",
+                "missing",
+                "corrupt",
+                "incompatible"
+              ]
+            },
+            "kept_files": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "status",
+            "previous_state",
+            "kept_files",
+            "message"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -10366,6 +10832,18 @@
             }
           ]
         },
+        "started_at_utc": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "cpu_percent": {
           "anyOf": [
             {
@@ -10526,6 +11004,7 @@
         "name",
         "image_path",
         "started_at",
+        "started_at_utc",
         "cpu_percent",
         "memory_bytes",
         "disk_bytes_per_sec",

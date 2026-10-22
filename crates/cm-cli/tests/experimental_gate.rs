@@ -164,3 +164,32 @@ fn a_stored_plan_of_a_gated_kind_refuses_review_and_apply() {
     assert_ne!(code, 0);
     let _ = std::fs::remove_dir_all(&s);
 }
+
+/// WFA-03 / BUG-WFA-07: arguments are checked before the gate, so an unknown option or a missing ID is
+/// `invalid_argument` (exit 2) whether the switch is off or on; the check reads and writes nothing, and the gate
+/// still refuses every well-formed gated command.
+#[test]
+fn malformed_arguments_are_invalid_argument_with_the_switch_off_or_on() {
+    let s = scratch("args");
+    let malformed: &[&[&str]] = &[
+        &["clean", "list", "--bogus", "x"],
+        &["status", "--experimental", "1"],
+        &["process", "show"],
+        &["diag", "list", "--dry-run"],
+        &["startup", "disable"],
+    ];
+    for args in malformed {
+        let (code, e) = run(&s, args);
+        assert_eq!((code, e["code"].as_str()), (2, Some("invalid_argument")), "{args:?}: {e}");
+    }
+    let names: Vec<String> = std::fs::read_dir(&s).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(names.is_empty(), "nothing is opened or created before the gate: {names:?}");
+    let (code, e) = run(&s, &["clean", "list"]);
+    assert_off(code, &e, "clean.catalog", "G1");
+    run(&s, &["experimental", "--state", "on"]);
+    for args in malformed {
+        let (code, e) = run(&s, args);
+        assert_eq!((code, e["code"].as_str()), (2, Some("invalid_argument")), "{args:?}: {e}");
+    }
+    let _ = std::fs::remove_dir_all(&s);
+}

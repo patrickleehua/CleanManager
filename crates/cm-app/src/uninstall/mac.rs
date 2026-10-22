@@ -258,7 +258,7 @@ pub fn create_leftovers_plan(
             Binding::Path { path } => {
                 for (a, m) in file_actions(stores, env, host, plan_id, n, path, &guard, now, policy_digest)? {
                     items.push(a);
-                    meta.push(ActionMeta { note: Some(app(format!("{:?}: {}", l.group, l.display))), ..m });
+                    meta.push(ActionMeta { note: Some(app(format!("{}: {}", l.group.as_str(), l.display))), ..m });
                 }
             }
             Binding::Registry { .. } | Binding::Startup { .. } => return Err(Refused::new("unsupported", format!("{}: registry and startup changes are not made on macOS", l.display))),
@@ -309,7 +309,7 @@ pub fn create_orphans_plan(stores: &Stores, env: &UninstallEnv, items: &[String]
         if let Binding::Path { path } = &l.binding {
             for (a, m) in file_actions(stores, env, host, plan_id, n, path, &guard, now, policy_digest)? {
                 actions.push(a);
-                meta.push(ActionMeta { note: Some(format!("orphan · {:?}: {}", l.group, l.display)), ..m });
+                meta.push(ActionMeta { note: Some(format!("orphan · {}: {}", l.group.as_str(), l.display)), ..m });
             }
         }
     }
@@ -354,7 +354,7 @@ fn file_actions(
     let request = crate::scan::ScanRequest { scan_id: scan_id.clone(), scope_id: format!("scope_{plan_id}_{n}"), root: raw_root, host: host.clone() };
     let outcome = crate::scan::run_scan(&stores.index, &cm_platform::macos::posix::PosixBackend, &request, &cm_core::scan::ScanOptions::default())?;
     if outcome.state != cm_core::model::ScanState::Completed {
-        return Err(Refused::new("conflict", format!("{path} could not be read completely ({:?}); it is not planned", outcome.state)));
+        return Err(Refused::new("conflict", format!("{path} could not be read completely ({}); it is not planned", outcome.state.as_str())));
     }
     let status = stores.index.scan_status(&scan_id)?;
     let view = stores.index.view(&scan_id)?;

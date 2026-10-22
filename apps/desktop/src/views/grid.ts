@@ -3,12 +3,13 @@
 // points at a recycled node (GUI-05). Selection is by entry_id and lives outside the grid, so
 // it survives paging, re-sorting and filtering.
 
-import { formatBytes, formatExactBytes, groupDigits, parseBytes, ratio } from '../lib/bytes';
+import { formatBytes, formatExactBytes, parseBytes, ratio } from '../lib/bytes';
 import { categoryOf } from '../lib/category';
-import { HINT_LABEL, hintBasisText, hintOf, hintTitle } from '../lib/cleanable';
-import { h, replace } from '../lib/dom';
+import { hintLabel, hintBasisText, hintOf, hintTitle } from '../lib/cleanable';
+import { h, live, replace } from '../lib/dom';
 import { kindLabel } from '../lib/format';
 import type { Entry, SortKey } from '../lib/types';
+import { t } from '../i18n';
 
 export const ROW_HEIGHT = 38;
 const OVERSCAN = 8;
@@ -52,19 +53,17 @@ export class EntryGrid {
 
   constructor(
     private idPrefix: string,
-    label: string,
+    label: () => string,
     private cb: GridCallbacks,
   ) {
     this.head = h('div', { class: 'grid-row grid-head', role: 'row', 'aria-rowindex': '1' });
     this.spacer = h('div', { class: 'grid-spacer', role: 'presentation' });
     this.body = h('div', { class: 'grid-body', role: 'rowgroup' }, this.spacer);
     this.empty = h('div', { class: 'grid-empty', hidden: true });
-    this.el = h(
-      'div',
-      { class: 'grid', role: 'grid', 'aria-label': label, 'aria-multiselectable': 'true', 'aria-colcount': '5', tabindex: '0' },
-      h('div', { role: 'rowgroup', class: 'grid-headgroup' }, this.head),
-      this.body,
-      this.empty,
+    this.el = live(
+      h('div', { class: 'grid', role: 'grid', 'aria-multiselectable': 'true', 'aria-colcount': '5', tabindex: '0' }, h('div', { role: 'rowgroup', class: 'grid-headgroup' }, this.head), this.body, this.empty),
+      null,
+      { 'aria-label': label },
     );
     this.body.addEventListener('scroll', () => this.schedule());
     this.body.addEventListener('mouseleave', () => this.cb.onHover?.(null));
@@ -137,6 +136,12 @@ export class EntryGrid {
     else if (top + ROW_HEIGHT > this.body.scrollTop + view) this.body.scrollTop = top + ROW_HEIGHT - view;
   }
 
+  /** LIF-05: draw the head and the visible rows again in the new language. */
+  relocalize(): void {
+    this.renderHead();
+    this.schedule();
+  }
+
   private schedule(): void {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
@@ -155,11 +160,11 @@ export class EntryGrid {
     };
     replace(
       this.head,
-      sortBtn('名称', 'name_asc'),
-      sortBtn('逻辑大小', 'logical_desc'),
-      sortBtn('分配大小', 'allocated_desc'),
-      sortBtn('类型', null),
-      sortBtn('说明', null),
+      sortBtn(t('common.name'), 'name_asc'),
+      sortBtn(t('common.logicalSize'), 'logical_desc'),
+      sortBtn(t('grid.allocated'), 'allocated_desc'),
+      sortBtn(t('common.type'), null),
+      sortBtn(t('common.notes'), null),
     );
     this.head.firstElementChild?.classList.add('col-name');
     (this.head.children[1] as HTMLElement).classList.add('col-num');
@@ -181,7 +186,7 @@ export class EntryGrid {
     const nodes: HTMLElement[] = [];
     for (const i of [...wanted].sort((a, b) => a - b)) nodes.push(this.renderRow(rows[i], i));
     if (!this.data.complete) {
-      const loader = h('div', { class: 'grid-loader', role: 'row', 'aria-rowindex': String(rows.length + 2) }, h('div', { role: 'gridcell' }, this.data.loading ? '正在加载更多…' : '向下滚动加载更多'));
+      const loader = h('div', { class: 'grid-loader', role: 'row', 'aria-rowindex': String(rows.length + 2) }, h('div', { role: 'gridcell' }, this.data.loading ? t('grid.loadingMore') : t('grid.scrollDownLoadMore')));
       loader.style.top = `${rows.length * ROW_HEIGHT}px`;
       nodes.push(loader);
     }
@@ -197,15 +202,15 @@ export class EntryGrid {
     const logical = parseBytes(e.logical_bytes);
     const share = this.data.shareBase && logical !== null ? ratio(logical, this.data.shareBase) : 0;
     const note: string[] = [];
-    if (e.size_basis === 'unknown') note.push('大小未知');
-    else if (e.unknown_descendants) note.push(`${groupDigits(e.unknown_descendants)} 项未知`);
-    if (e.identity_quality === 'weak') note.push('身份较弱');
+    if (e.size_basis === 'unknown') note.push(t('common.sizeUnknown'));
+    else if (e.unknown_descendants) note.push(t('grid.unknownDescendants', { unknown_descendants: e.unknown_descendants }));
+    if (e.identity_quality === 'weak') note.push(t('grid.weakIdentity'));
     const bar = h('span', { class: 'share', 'aria-hidden': 'true' });
     bar.style.setProperty('--share', String(share));
     // DIN-05: read-only marker; the basis is in the tooltip and for screen readers. It never selects.
     const hint = hintOf(e);
     const hintTag = hint
-      ? h('span', { class: 'hint-tag', title: hintTitle(hint) }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), HINT_LABEL, h('span', { class: 'sr-only' }, `，依据：${hintBasisText(hint)}`))
+      ? h('span', { class: 'hint-tag', title: hintTitle(hint) }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), hintLabel(), h('span', { class: 'sr-only' }, t('grid.basisHint', { hint: hintBasisText(hint) })))
       : null;
     const row = h(
       'div',
@@ -229,7 +234,7 @@ export class EntryGrid {
       h('div', { role: 'gridcell', class: 'col col-num', title: formatExactBytes(logical) }, h('span', {}, formatBytes(logical))),
       h('div', { role: 'gridcell', class: 'col col-num col-alloc', title: formatExactBytes(e.allocated_bytes) }, formatBytes(e.allocated_bytes)),
       h('div', { role: 'gridcell', class: 'col col-kind', title: kindLabel(e) }, kindLabel(e)),
-      h('div', { role: 'gridcell', class: 'col col-note', title: note.join('，') || null }, note.join('，')),
+      h('div', { role: 'gridcell', class: 'col col-note', title: note.join(t('common.commaSep')) || null }, note.join(t('common.commaSep'))),
     );
     row.style.top = `${i * ROW_HEIGHT}px`;
     // The share bar runs along the row's bottom edge (a fill of the divider), so it never reads as an underline.

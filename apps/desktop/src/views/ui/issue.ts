@@ -2,10 +2,11 @@
 // message sit in a collapsed "技术详情". Issues with the same meaning are one line with a count.
 
 import { groupIssues, type ExplainedIssue, type IssueGroup } from '../../lib/codes';
-import { groupDigits } from '../../lib/bytes';
+
 import { h, icon } from '../../lib/dom';
 import type { Issue } from '../../lib/types';
 import { pathText } from './path';
+import { t } from '../../i18n';
 
 const SHOWN_SCOPES = 3;
 
@@ -28,13 +29,13 @@ export function issueLine(g: IssueGroup, opts: { pathMax?: number } = {}): HTMLE
     h(
       'div',
       { class: 'il-body' },
-      h('p', { class: 'il-text' }, g.issue.text, g.count > 1 ? h('span', { class: 'il-count num' }, `${groupDigits(g.count)} 处`) : null),
+      h('p', { class: 'il-text' }, g.issue.text, g.count > 1 ? h('span', { class: 'il-count num' }, t('ui.issue.count', { count: g.count })) : null),
       scopes.length
         ? h(
             'ul',
-            { class: 'il-scopes', 'aria-label': '涉及的位置' },
+            { class: 'il-scopes', 'aria-label': t('ui.issue.affectedLocations') },
             ...scopes.map((s) => h('li', {}, pathText(s, { max: opts.pathMax ?? 64 }))),
-            more > 0 ? h('li', { class: 'muted' }, `另有 ${groupDigits(more)} 处`) : null,
+            more > 0 ? h('li', { class: 'muted' }, t('ui.issue.more', { more })) : null,
           )
         : null,
       techDetails(g),
@@ -47,15 +48,15 @@ function techDetails(g: IssueGroup): HTMLElement {
   return h(
     'details',
     { class: 'tech' },
-    h('summary', {}, '技术详情'),
+    h('summary', {}, t('common.technicalDetails')),
     h(
       'dl',
       { class: 'tech-list' },
-      h('dt', {}, '代码'),
+      h('dt', {}, t('common.code')),
       h('dd', {}, h('code', { class: 'selectable' }, g.issue.rawCode), g.issue.cause ? h('code', { class: 'selectable' }, ` permission_cause=${g.issue.cause}`) : null),
-      ...raws.flatMap((r) => [h('dt', {}, '系统消息'), h('dd', { class: 'selectable' }, r.message || '（无）')]),
+      ...raws.flatMap((r) => [h('dt', {}, t('common.systemMessage')), h('dd', { class: 'selectable' }, r.message || t('common.none'))]),
     ),
-    g.raws.length > raws.length ? h('p', { class: 'muted small' }, `另有 ${groupDigits(g.raws.length - raws.length)} 条相同代码的消息。`) : null,
+    g.raws.length > raws.length ? h('p', { class: 'muted small' }, t('ui.issue.groupdigitsSameCode', { groupDigits: g.raws.length - raws.length })) : null,
   );
 }
 

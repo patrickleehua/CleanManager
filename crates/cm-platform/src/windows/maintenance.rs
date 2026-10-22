@@ -588,7 +588,7 @@ fn run_system_tool(exe: &str, args: &[&str], timeout: Duration) -> Result<i32, S
     loop {
         match child.try_wait() {
             Ok(Some(s)) => {
-                cm_core::debug_trace!("process", "{exe} {args:?} exit={:?} in {}ms", s.code(), started.elapsed().as_millis());
+                cm_core::debug_trace!("process", "{exe} {args:?} exit={} in {}ms", cm_core::trace::exit(s.code()), started.elapsed().as_millis());
                 return Ok(s.code().unwrap_or(-1));
             }
             Ok(None) if Instant::now() >= deadline => {

@@ -56,6 +56,8 @@ Five tools, one consistent flow: scan, review, plan, approve, apply, recover.
 
 Plus **Plans**, **Activity** and **Recovery** history, an **Agent** page for the CLI and Skill, and optional **AI diagnosis**. AI diagnosis uses your own provider and only sends data after you preview it.
 
+The desktop app and the CLI speak **简体中文 and English**: the desktop follows the system language and switches in Settings without a restart; the CLI takes `--lang en|zh-CN`. JSON fields, codes and states are identical in every language.
+
 ## Platform support
 
 | | Windows 11 x64 | macOS (Apple Silicon) |

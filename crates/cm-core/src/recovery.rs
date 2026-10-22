@@ -25,6 +25,16 @@ pub enum RecoveryKind {
     Purge,
 }
 
+impl RecoveryKind {
+    /// The protocol word (`restore`, `purge`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RecoveryKind::Restore => "restore",
+            RecoveryKind::Purge => "purge",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetKind {

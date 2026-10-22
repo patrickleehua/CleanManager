@@ -68,9 +68,53 @@ pub fn store_updates_uri(channel: Option<Channel>) -> &'static str {
     if channel == Some(Channel::MacAppStore) { mac::MAC_APP_STORE_UPDATES_URI } else { STORE_UPDATES_URI }
 }
 
-/// Channels that never answer a version question themselves (detection only): they cannot be `up_to_date`.
+/// Channels that never answer a version question themselves (detection only): they cannot be `up_to_date`. Microsoft
+/// Store apps are among them: the Store checks its own apps, and a `winget list` row from the `msstore` source that
+/// shows no newer version is not an answer (UPD-01, WFA-78).
 fn detection_only(channel: Option<Channel>) -> bool {
-    matches!(channel, Some(Channel::SelfUpdater | Channel::Electron | Channel::MacAppStore))
+    matches!(channel, Some(Channel::SelfUpdater | Channel::Electron | Channel::MacAppStore | Channel::MicrosoftStore))
+}
+
+impl Channel {
+    /// The protocol word (`winget`, `microsoft_store`, ...), also used in messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Channel::Winget => "winget",
+            Channel::MicrosoftStore => "microsoft_store",
+            Channel::Scoop => "scoop",
+            Channel::SelfUpdater => "self_updater",
+            Channel::Sparkle => "sparkle",
+            Channel::MacAppStore => "mac_app_store",
+            Channel::Homebrew => "homebrew",
+            Channel::Electron => "electron",
+        }
+    }
+
+    /// Name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Channel::Winget => "winget",
+            Channel::MicrosoftStore => "Microsoft Store",
+            Channel::Scoop => "Scoop",
+            Channel::SelfUpdater => "the app's own updater",
+            Channel::Sparkle => "Sparkle",
+            Channel::MacAppStore => "Mac App Store",
+            Channel::Homebrew => "Homebrew",
+            Channel::Electron => "the app's Electron updater",
+        }
+    }
+}
+
+impl UpdateState {
+    /// The protocol word (`update_available`, `up_to_date`, `cannot_check`, `not_checked`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpdateState::UpdateAvailable => "update_available",
+            UpdateState::UpToDate => "up_to_date",
+            UpdateState::CannotCheck => "cannot_check",
+            UpdateState::NotChecked => "not_checked",
+        }
+    }
 }
 
 /// Channels whose package manager verifies the download itself before installing (Homebrew checks the artifact's
@@ -102,7 +146,7 @@ impl UpdateCheck {
         app: &AppInstance, channel: Option<Channel>, channel_id: Option<String>, available: Option<String>, state: UpdateState, reason: Option<String>,
         checked_at: Option<String>, route: Route,
     ) -> Self {
-        let mut c = UpdateCheck {
+        UpdateCheck {
             app_instance_id: app.instance_id.clone(),
             name: app.name.clone(),
             current_version: app.version.clone(),
@@ -114,19 +158,27 @@ impl UpdateCheck {
             checked_at,
             route,
             official_url: None,
-        };
+        }
+        .enforced()
+    }
+
+    /// The UPD-01 invariant on any result, also one read back from an older store (a cached Microsoft Store row saved
+    /// as `up_to_date` before the Store became detection-only is shown as `cannot_check`).
+    pub fn enforced(mut self) -> Self {
+        let c = &mut self;
         let answered = matches!(c.state, UpdateState::UpToDate | UpdateState::UpdateAvailable);
         if answered && (c.channel.is_none() || c.checked_at.is_none() || detection_only(c.channel)) {
             let mac = matches!(c.channel, Some(Channel::Electron | Channel::MacAppStore));
+            let store = c.channel == Some(Channel::MicrosoftStore);
             c.state = UpdateState::CannotCheck;
             c.available_version = None;
-            c.reason = Some(if mac { mac::MAC_NO_CHANNEL } else { NO_CHANNEL }.into());
-            c.route = Route::None;
+            c.reason = Some(if store { STORE_SELF } else if mac { mac::MAC_NO_CHANNEL } else { NO_CHANNEL }.into());
+            c.route = if store { Route::OpenStore } else { Route::None };
         }
         if c.state != UpdateState::UpdateAvailable && c.route == Route::PackageManager {
             c.route = Route::None;
         }
-        c
+        self
     }
 
     pub fn to_wire(&self) -> serde_json::Value {
@@ -313,11 +365,18 @@ pub fn detect(input: &DetectInput<'_>) -> Vec<UpdateCheck> {
             _ => None,
         };
         let mut check = match (row, &input.winget) {
-            (Some(r), _) if r.source.as_deref() == Some("winget") || r.source.as_deref() == Some("msstore") => {
-                let channel = if r.source.as_deref() == Some("msstore") { Channel::MicrosoftStore } else { Channel::Winget };
-                let route = if channel == Channel::MicrosoftStore { Route::OpenStore } else { Route::PackageManager };
+            (Some(r), _) if r.source.as_deref() == Some("winget") => {
                 let state = if r.available.is_some() { UpdateState::UpdateAvailable } else { UpdateState::UpToDate };
-                UpdateCheck::new(app, Some(channel), Some(r.id.clone()), r.available.clone(), state, None, Some(input.checked_at.into()), route)
+                UpdateCheck::new(app, Some(Channel::Winget), Some(r.id.clone()), r.available.clone(), state, None, Some(input.checked_at.into()), Route::PackageManager)
+            }
+            // A row from winget's `msstore` source belongs to the Store channel: the Store checks its own apps, so the
+            // row never makes an app `up_to_date` (UPD-01); a newer version winget saw is named in the reason only.
+            (Some(r), _) if r.source.as_deref() == Some("msstore") => {
+                let reason = match &r.available {
+                    Some(v) => format!("{STORE_SELF} (winget's msstore source lists version {v})"),
+                    None => STORE_SELF.to_owned(),
+                };
+                UpdateCheck::new(app, Some(Channel::MicrosoftStore), Some(r.id.clone()), None, UpdateState::CannotCheck, Some(reason), Some(input.checked_at.into()), Route::OpenStore)
             }
             _ if matches!(app.source, AppSource::Msix { .. }) => UpdateCheck::new(
                 app,
@@ -387,7 +446,7 @@ fn scoop_check(app: &AppInstance, s: &ScoopApp, checked_at: &str) -> UpdateCheck
 pub fn when_disabled(apps: &[AppInstance], cached: &[UpdateCheck]) -> Vec<UpdateCheck> {
     apps.iter()
         .map(|app| match cached.iter().find(|c| c.app_instance_id == app.instance_id) {
-            Some(c) => c.clone(),
+            Some(c) => c.clone().enforced(),
             None => UpdateCheck::new(app, None, None, None, UpdateState::NotChecked, Some(CHECKS_OFF.into()), None, Route::None),
         })
         .collect()
@@ -618,7 +677,10 @@ fn verify_download(b: &dyn UpdateBackend, a: &crate::plan::v2::ToolAdapterAction
     };
     match b.run(exe, &download, a.timeout_seconds) {
         Ok(o) if o.exit_code == Some(0) && !o.timed_out => {}
-        Ok(o) => return skip("download_failed", format!("the package could not be downloaded for verification (exit {:?}): {}", o.exit_code, tail(&o.output, 300))),
+        Ok(o) => {
+            let exit = o.exit_code.map_or_else(|| "no exit code".to_owned(), |c| format!("exit code {c}"));
+            return skip("download_failed", format!("the package could not be downloaded for verification ({exit}): {}", tail(&o.output, 300)));
+        }
         Err(e) => return skip("download_failed", format!("the package could not be downloaded for verification: {e}")),
     }
     let files = b.downloaded(t, &dir);

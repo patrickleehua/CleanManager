@@ -12,6 +12,7 @@ import type { DiagStatus, ProbeReport, ProviderStatus } from '../lib/diagTypes';
 import { CREDENTIAL_LABEL, PROVIDER_LABEL, SUPPORT_LABEL } from '../lib/diagWords';
 import { errorText, pill } from './parts';
 import { words } from '../lib/platform';
+import { t } from '../i18n';
 
 type Form = { kind: 'anthropic' | 'openai_compatible' } | { kind: 'cli' } | null;
 
@@ -49,7 +50,7 @@ export class DiagSettings {
       this.note = ok;
       this.app.announce(ok);
     } catch (e) {
-      this.error = `未保存：${errorText(toIpcError(e))}`;
+      this.error = t('diagSettings.notSavedErrortext', { errorText: errorText(toIpcError(e)) });
     } finally {
       this.busy = false;
       this.render();
@@ -60,20 +61,20 @@ export class DiagSettings {
     const st = this.status;
     replace(
       this.el,
-      h('h2', { id: 'set-diag-title', tabindex: '-1' }, 'AI 诊断（可选）'),
+      h('h2', { id: 'set-diag-title', tabindex: '-1' }, t('common.aiDiagnosisOptional')),
       h(
         'p',
         { class: 'muted' },
-        '用你自己的 API 或已安装的 CLI 解释单个文件或文件夹。不配置也能完整使用扫描、规则、计划、执行与恢复。它和清理页的「AI 与开发者」类目（AI 工具自己的缓存与会话）无关。',
+        t('diagSettings.explainSingleFileFolder'),
       ),
       this.error ? h('p', { class: 'form-error', role: 'alert' }, this.error) : null,
       this.note ? h('p', { class: 'small', role: 'status' }, this.note) : null,
       !st
-        ? h('p', { class: 'muted', role: 'status' }, '正在读取…')
+        ? h('p', { class: 'muted', role: 'status' }, t('common.reading'))
         : st.providers.length
           ? h('ul', { class: 'prov-list' }, ...st.providers.map((p) => this.row(p, st)))
-          : h('p', { class: 'small' }, '还没有配置提供方。诊断入口会显示“未配置”，不会发送任何内容。'),
-      st ? h('p', { class: 'small muted' }, `密钥保存在：${st.credential_store === 'windows_credential_manager' ? 'Windows 凭据管理器' : st.credential_store === 'macos_keychain' ? '钥匙串（登录钥匙串）' : st.credential_store}。设置文件只记录端点、模型和可执行文件位置，不含密钥。`) : null,
+          : h('p', { class: 'small' }, t('diagSettings.noProviderSetUp')),
+      st ? h('p', { class: 'small muted' }, t('diagSettings.keysStoredPSettings', { p: st.credential_store === 'windows_credential_manager' ? t('diagSettings.windowsCredentialManager') : st.credential_store === 'macos_keychain' ? t('diagSettings.keychainLoginKeychain') : st.credential_store })) : null,
       this.addButtons(),
       this.formView(),
     );
@@ -86,25 +87,25 @@ export class DiagSettings {
     const actions: (HTMLElement | null)[] = [];
     if (p.mode === 'api' && st.key_prompt_available)
       actions.push(
-        btn(p.credential === 'present' ? '更换密钥…' : '保存密钥…', 'key', () =>
+        btn(p.credential === 'present' ? t('diagSettings.changeKey') : t('diagSettings.saveKey'), 'key', () =>
           void this.act(async () => {
             const saved = await this.app.backend.diagSetKey(p.provider_id);
-            if (!saved) throw { code: 'cancelled', reason: 'cancelled', message: '已取消，没有更改密钥' };
+            if (!saved) throw { code: 'cancelled', reason: 'cancelled', message: t('diagSettings.cancelledKeyNotChanged') };
             return this.app.backend.diagStatus();
-          }, `已把 ${p.label} 的密钥保存到系统凭据`),
+          }, t('diagSettings.savedKeyLabelSystem', { label: p.label })),
         ),
       );
-    if (p.mode === 'api' && p.credential === 'present') actions.push(btn('移除密钥', 'forget', () => void this.act(() => this.app.backend.diagForgetKey(p.provider_id), `已从系统凭据移除 ${p.label} 的密钥`), 'quiet'));
+    if (p.mode === 'api' && p.credential === 'present') actions.push(btn(t('diagSettings.removeKey'), 'forget', () => void this.act(() => this.app.backend.diagForgetKey(p.provider_id), t('diagSettings.removedKeyLabelSystem', { label: p.label })), 'quiet'));
     actions.push(
-      btn('测试连接', 'probe', () =>
+      btn(t('diagSettings.testConnection'), 'probe', () =>
         void this.act(async () => {
           const r = await this.app.backend.diagProbe(p.provider_id);
           this.probes.set(p.provider_id, r);
-        }, '连接测试已完成（没有发送任何文件资料）'),
+        }, t('diagSettings.connectionTestFinishedNo')),
       ),
     );
-    if (!isDefault) actions.push(btn('设为默认', 'default', () => void this.act(() => this.makeDefault(p), `默认提供方：${p.label}`), 'quiet'));
-    actions.push(btn('移除', 'remove', () => void this.act(() => this.app.backend.diagRemoveProvider(p.provider_id), `已移除 ${p.label}，其密钥也已从系统凭据删除`), 'danger-quiet'));
+    if (!isDefault) actions.push(btn(t('diagSettings.makeDefault'), 'default', () => void this.act(() => this.makeDefault(p), t('diagSettings.defaultProviderLabel', { label: p.label })), 'quiet'));
+    actions.push(btn(t('common.remove'), 'remove', () => void this.act(() => this.app.backend.diagRemoveProvider(p.provider_id), t('diagSettings.removedLabelDeletedKey', { label: p.label })), 'danger-quiet'));
     return h(
       'li',
       { class: 'prov-row' },
@@ -112,24 +113,24 @@ export class DiagSettings {
         'div',
         { class: 'prov-head' },
         h('b', {}, p.label),
-        isDefault ? pill('默认', 'good') : null,
+        isDefault ? pill(t('common.default'), 'good') : null,
         pill(SUPPORT_LABEL[p.support.state] ?? p.support.state, p.support.state === 'supported' ? 'good' : p.support.state === 'unsupported' ? 'bad' : 'busy'),
       ),
       h(
         'dl',
         { class: 'facts-list small' },
-        h('dt', {}, '方式'),
+        h('dt', {}, t('diagSettings.type')),
         h('dd', {}, PROVIDER_LABEL[p.kind]),
-        h('dt', {}, '模型'),
+        h('dt', {}, t('common.model')),
         h('dd', {}, p.model),
-        h('dt', {}, p.mode === 'cli' ? '可执行文件' : '端点'),
+        h('dt', {}, p.mode === 'cli' ? t('diagSettings.executable') : t('diagSettings.endpoint')),
         h('dd', { class: 'path' }, p.executable ?? p.endpoint ?? ''),
-        h('dt', {}, '凭据'),
+        h('dt', {}, t('diagSettings.credential')),
         h('dd', {}, CREDENTIAL_LABEL[p.credential] ?? p.credential),
-        p.support.reason ? h('dt', {}, '说明') : null,
+        p.support.reason ? h('dt', {}, t('common.notes')) : null,
         p.support.reason ? h('dd', {}, p.support.reason) : null,
-        probe ? h('dt', {}, '连接测试') : null,
-        probe ? h('dd', {}, pill(probe.ok ? '成功' : '失败', probe.ok ? 'good' : 'bad'), ' ', probe.detail, h('small', {}, `${formatTime(probe.checked_at)}，未发送文件资料`)) : null,
+        probe ? h('dt', {}, t('diagSettings.connectionTest')) : null,
+        probe ? h('dd', {}, pill(probe.ok ? t('diagSettings.succeeded') : t('diagSettings.failed'), probe.ok ? 'good' : 'bad'), ' ', probe.detail, h('small', {}, t('diagSettings.checkedNoFileDetails', { checked_at: formatTime(probe.checked_at) }))) : null,
       ),
       h('div', { class: 'card-actions' }, ...actions),
     );
@@ -150,65 +151,65 @@ export class DiagSettings {
     return h(
       'div',
       { class: 'card-actions' },
-      h('button', { type: 'button', id: 'diag-add-anthropic', disabled: this.busy, onclick: open({ kind: 'anthropic' }) }, '添加 Anthropic API'),
-      h('button', { type: 'button', id: 'diag-add-openai', disabled: this.busy, onclick: open({ kind: 'openai_compatible' }) }, '添加兼容端点（含本机）'),
-      h('button', { type: 'button', id: 'diag-add-cli', disabled: this.busy, onclick: open({ kind: 'cli' }) }, '使用已安装的 CLI'),
+      h('button', { type: 'button', id: 'diag-add-anthropic', disabled: this.busy, onclick: open({ kind: 'anthropic' }) }, t('diagSettings.addAnthropicApi')),
+      h('button', { type: 'button', id: 'diag-add-openai', disabled: this.busy, onclick: open({ kind: 'openai_compatible' }) }, t('diagSettings.addCompatibleEndpointLocal')),
+      h('button', { type: 'button', id: 'diag-add-cli', disabled: this.busy, onclick: open({ kind: 'cli' }) }, t('diagSettings.useInstalledCli')),
     );
   }
 
   private formView(): HTMLElement | null {
     const f = this.form;
     if (!f) return null;
-    const cancel = h('button', { type: 'button', class: 'quiet', onclick: () => ((this.form = null), this.render()) }, '取消');
+    const cancel = h('button', { type: 'button', class: 'quiet', onclick: () => ((this.form = null), this.render()) }, t('common.cancel'));
     if (f.kind === 'cli') {
-      const kind = h('select', { id: 'diag-form-first', 'aria-label': 'CLI 类型' }, h('option', { value: 'claude_code_cli' }, 'Claude Code（claude -p，关闭全部工具）'), h('option', { value: 'codex_cli' }, 'Codex（无法关闭 shell 工具，不支持）')) as HTMLSelectElement;
-      const model = h('input', { type: 'text', id: 'diag-cli-model', placeholder: 'default', 'aria-label': '模型（可留空）' }) as HTMLInputElement;
-      const go = h('button', { type: 'button', class: 'primary', disabled: this.busy }, '选择可执行文件…');
+      const kind = h('select', { id: 'diag-form-first', 'aria-label': t('diagSettings.cliType') }, h('option', { value: 'claude_code_cli' }, t('diagSettings.claudeCodeClaudeP')), h('option', { value: 'codex_cli' }, t('diagSettings.codexShellToolCant'))) as HTMLSelectElement;
+      const model = h('input', { type: 'text', id: 'diag-cli-model', placeholder: 'default', 'aria-label': t('diagSettings.modelOptional') }) as HTMLInputElement;
+      const go = h('button', { type: 'button', class: 'primary', disabled: this.busy }, t('diagSettings.chooseExecutable'));
       go.addEventListener('click', () =>
         void this.act(async () => {
           const r = await this.app.backend.diagChooseCli(kind.value as 'claude_code_cli' | 'codex_cli', model.value.trim(), false);
           if (r) this.form = null;
           return r;
-        }, '已保存 CLI 接入；每次诊断前会用 --help 检查它能否被约束'),
+        }, t('diagSettings.cliSavedBeforeEach')),
       );
       return h(
         'div',
-        { class: 'diag-form', role: 'group', 'aria-label': '使用已安装的 CLI' },
+        { class: 'diag-form', role: 'group', 'aria-label': t('diagSettings.useInstalledCli') },
         h('label', { class: 'diag-label', for: 'diag-form-first' }, 'CLI'),
         kind,
-        h('label', { class: 'diag-label', for: 'diag-cli-model' }, '模型（可留空，使用 CLI 默认）'),
+        h('label', { class: 'diag-label', for: 'diag-cli-model' }, t('diagSettings.modelOptionalBlankUses')),
         model,
         h('p', { class: 'small muted' }, words().cliExecutable),
         h('div', { class: 'card-actions' }, go, cancel),
       );
     }
     const anthropic = f.kind === 'anthropic';
-    const label = h('input', { type: 'text', id: 'diag-form-first', value: anthropic ? 'Anthropic API' : '本机模型', maxlength: 80 }) as HTMLInputElement;
+    const label = h('input', { type: 'text', id: 'diag-form-first', value: anthropic ? 'Anthropic API' : t('diagSettings.localModel'), maxlength: 80 }) as HTMLInputElement;
     const base = h('input', { type: 'url', id: 'diag-base', value: anthropic ? 'https://api.anthropic.com' : 'http://127.0.0.1:11434/v1', spellcheck: 'false' }) as HTMLInputElement;
     const model = h('input', { type: 'text', id: 'diag-model', value: anthropic ? 'claude-opus-5-5' : '', spellcheck: 'false', maxlength: 120 }) as HTMLInputElement;
     const pid = anthropic ? 'anthropic-default' : 'local-endpoint';
-    const save = h('button', { type: 'button', class: 'primary', disabled: this.busy }, '保存');
+    const save = h('button', { type: 'button', class: 'primary', disabled: this.busy }, t('diagSettings.save'));
     save.addEventListener('click', () =>
       void this.act(async () => {
         const r = await this.app.backend.diagSaveProvider({ provider_id: pid, label: label.value.trim(), kind: f.kind as 'anthropic' | 'openai_compatible', base_url: base.value.trim(), model: model.value.trim(), make_default: !this.status?.default_provider_id });
         this.form = null;
         return r;
-      }, anthropic ? '已保存 Anthropic API 设置；接着用「保存密钥…」在系统凭据窗口里填写密钥' : '已保存兼容端点'),
+      }, anthropic ? t('diagSettings.anthropicApiSettingsSaved') : t('diagSettings.compatibleEndpointSaved')),
     );
     return h(
       'div',
-      { class: 'diag-form', role: 'group', 'aria-label': anthropic ? '添加 Anthropic API' : '添加兼容端点' },
-      h('label', { class: 'diag-label', for: 'diag-form-first' }, '名称'),
+      { class: 'diag-form', role: 'group', 'aria-label': anthropic ? t('diagSettings.addAnthropicApi') : t('diagSettings.addCompatibleEndpoint') },
+      h('label', { class: 'diag-label', for: 'diag-form-first' }, t('common.name')),
       label,
-      h('label', { class: 'diag-label', for: 'diag-base' }, anthropic ? 'API 地址' : '端点（OpenAI 兼容，…/v1）'),
+      h('label', { class: 'diag-label', for: 'diag-base' }, anthropic ? t('diagSettings.apiUrl') : t('diagSettings.endpointOpenaiCompatibleV1')),
       base,
-      h('label', { class: 'diag-label', for: 'diag-model' }, '模型'),
+      h('label', { class: 'diag-label', for: 'diag-model' }, t('common.model')),
       model,
       h(
         'p',
         { class: 'small muted' },
-        '只接受 https://；本机端点可以用 http://127.0.0.1 或 localhost。失败时不会自动改用其他提供方或模型。',
-        anthropic ? words().keyPrompt : ' 本机端点通常不需要密钥。',
+        t('diagSettings.onlyHttpsAcceptedLocal'),
+        anthropic ? words().keyPrompt : t('diagSettings.localEndpointsUsuallyDont'),
       ),
       h('div', { class: 'card-actions' }, save, cancel),
     );

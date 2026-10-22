@@ -7,6 +7,9 @@
 //! `<user>`/`<host>` wherever they appear. `--export PATH` previews the exact redacted report
 //! and writes the file only after a person types `export` in an interactive text terminal;
 //! machine callers only ever receive the preview.
+//!
+//! `--repair-index` is the one change doctor can make: an unusable scan index is moved aside (kept, never
+//! deleted) and replaced by an empty one; a healthy index is left alone (see `repair_index`).
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -103,9 +106,17 @@ fn store_checks(dir: &Path, checks: &mut Vec<Value>, recent: &mut BTreeMap<Strin
         return;
     }
     match Stores::open(dir) {
-        Err(e) => checks.push(check("store", "store.open", "failed", format!("{} ({:?})", e, e.code()))),
+        Err(e) => checks.push(check("store", "store.open", "failed", format!("{e} ({})", e.code().as_str()))),
         Ok(stores) => {
-            checks.push(check("store", "store.open", "ok", format!("index and audit stores at {} passed SQLite quick_check and schema version checks", dir.display())));
+            checks.push(check("store", "store.open", "ok", format!("audit store at {} passed SQLite quick_check and its schema version check", dir.display())));
+            // Doctor always runs the index's full check; other commands only when it is due (PERF-WFA-01).
+            match stores.index.verify() {
+                Ok(()) => checks.push(check("store", "store.index", "ok", "scan index passed SQLite quick_check and its schema version check")),
+                Err(e) => checks.push(check("store", "store.index", "failed", match e.required_action() {
+                    Some(action) => format!("{e} ({}); history, quarantine and recovery are not affected. Run `{action}`: the damaged file is kept as index.db.damaged-<time>, an empty index is created and scans must be run again", e.code().as_str()),
+                    None => format!("{e} ({})", e.code().as_str()),
+                })),
+            }
             match stores.index.list_scans(1, None) {
                 Ok((items, _)) => checks.push(check("store", "store.index.scans", "ok", match items.first() {
                     Some(s) => format!("latest scan {} is {}", s.scan_id, serde_json::to_value(s.state).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()),
@@ -153,7 +164,7 @@ fn store_checks(dir: &Path, checks: &mut Vec<Value>, recent: &mut BTreeMap<Strin
 fn report(req: &str, store: Option<PathBuf>) -> Value {
     let host = cm_platform::host();
     let mut checks = Vec::new();
-    checks.push(check("platform", "platform.engine", "ok", format!("engine {} on {:?}, schema {}", cm_core::ENGINE_VERSION, host.platform(), cm_core::SCHEMA_VERSION)));
+    checks.push(check("platform", "platform.engine", "ok", format!("engine {} on {}, schema {}", cm_core::ENGINE_VERSION, host.platform().as_str(), cm_core::SCHEMA_VERSION)));
     #[cfg(windows)]
     match cm_platform::windows::privileges::enabled_bypass_privileges() {
         Ok(p) if p.is_empty() => checks.push(check("permissions", "permissions.bypass_privileges", "ok", "ordinary-permission context: no ACL-bypass privilege is enabled")),
@@ -191,9 +202,63 @@ fn report(req: &str, store: Option<PathBuf>) -> Value {
     })))
 }
 
+/// `doctor --repair-index` (BUG-WFA-01): a full check of the scan index; only an unusable one is moved aside
+/// (kept as `index.db.damaged-<time>`, never deleted) and replaced by an empty index. The audit store, and with it
+/// history, quarantine and recovery, is never touched. Runs before the report, so the report shows the result.
+fn repair_index(req: &str, p: &Parsed) -> Result<Value, ExitCode> {
+    let Some(dir) = store_dir(p) else {
+        return Err(fail(req, ErrorCode::InvalidArgument, "no store directory; pass --store or set CM_STORE_DIR", p.format));
+    };
+    let unchanged = |state: &str, message: &str| json!({"status": "not_needed", "previous_state": state, "kept_files": [], "message": message});
+    if !dir.is_dir() {
+        return Ok(unchanged("missing", "There is no store yet; nothing was changed."));
+    }
+    // CleanManager's own files change: no update may replace the program meanwhile (LIF-01).
+    let _lifecycle = match crate::instance_lock::shared(&dir) {
+        Ok(g) => g,
+        Err(e @ crate::instance_lock::LockError::Busy(_)) => return Err(fail(req, ErrorCode::Conflict, &e.to_string(), p.format)),
+        Err(crate::instance_lock::LockError::Io(..)) => None,
+    };
+    match Stores::repair_index(&dir) {
+        Ok(r) if r.repaired => {
+            let kept: Vec<String> = r.kept.iter().map(|k| k.display().to_string()).collect();
+            Ok(json!({
+                "status": "repaired",
+                "previous_state": r.previous_state,
+                "kept_files": kept,
+                "message": format!(
+                    "The scan index was unusable ({}). It was moved aside as {} and an empty index was created. Operation history, quarantine and recovery were not touched. Earlier scans and candidate sets are no longer available: run scan again.",
+                    r.problem.unwrap_or_default(), kept.join(", ")
+                ),
+            }))
+        }
+        Ok(r) if r.previous_state == "missing" => Ok(unchanged("missing", "There is no scan index yet; nothing was changed (the next scan creates it).")),
+        Ok(r) => Ok(unchanged(r.previous_state, "The scan index passed the full integrity check; nothing was changed.")),
+        // The file could not be moved: on Windows another process holds it open. Everything moved was put back.
+        Err(cm_store::StoreError::Io(e)) => Err(fail(
+            req,
+            ErrorCode::Conflict,
+            &format!("{e}. Another CleanManager process (a running scan or the desktop app) may hold the index open; close it and run doctor --repair-index again. Nothing was changed."),
+            p.format,
+        )),
+        Err(e) => Err(crate::commands::store_error(req, &e, p.format)),
+    }
+}
+
 pub fn doctor(req: &str, p: &Parsed) -> ExitCode {
     let redact = !p.flag("no-redact");
+    let repair = if p.flag("repair-index") {
+        match repair_index(req, p) {
+            Ok(r) => Some(r),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
     let mut v = report(req, store_dir(p));
+    if let Some(r) = repair {
+        v["index_repair"] = r;
+    }
     if redact {
         v = Redactor::from_env().value(&v);
         v["redacted"] = json!(true);

@@ -13,7 +13,8 @@
 //!   rebuilt, which never touches the audit store.
 //! - **Logs kept.** Every attempt appends a JSON line to `migrations.log` in the store directory
 //!   (started / completed / failed / refused) and is flushed before the result is returned; a
-//!   rollback never removes a log line.
+//!   rollback never removes a log line. An index rebuild (`Stores::rebuild_index`) logs `rebuilt`
+//!   with the names the damaged files were kept under.
 //! - **Never replays old actions.** The facts that decide what may run again — operations and
 //!   their states, the action journal and its results, quarantine records, registry/startup
 //!   backups, plans and receipts — are fingerprinted before and after the steps inside the same
@@ -266,7 +267,7 @@ fn fingerprint(conn: &Connection, kind: StoreKind) -> rusqlite::Result<String> {
 /// Append one JSON line to `migrations.log` and flush it. Logging problems never change the
 /// outcome of a migration (the result is still returned), but they are not silent either: the
 /// line goes to stderr when the file cannot be written.
-fn log(dir: &Path, kind: StoreKind, from: &str, to: u32, event: &str, detail: Option<&str>) {
+pub(crate) fn log(dir: &Path, kind: StoreKind, from: &str, to: u32, event: &str, detail: Option<&str>) {
     let line = serde_json::json!({
         "at": cm_core::time::now_utc(),
         "store": kind.as_str(),

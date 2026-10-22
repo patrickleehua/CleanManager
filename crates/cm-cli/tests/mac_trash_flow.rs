@@ -174,9 +174,16 @@ fn inspect_and_plan_on_fixtures_without_touching_anything() {
     // A plain file: trashable, guidance names Finder's Put Back, holders were queried (none here).
     let big = e(&data.join("big.bin"));
     let (_, ins) = fx.cli(&["trash", "inspect", "--scan", &scan, "--entry", &big]);
-    assert_eq!((ins["trashable"].as_bool(), ins["logical_bytes"].as_str()), (Some(true), Some("65536")), "{ins}");
-    assert_eq!(ins["available_actions"], serde_json::json!(["show_path", "copy_path", "move_to_trash"]));
-    assert!(ins["guidance"].as_str().unwrap().contains("Put Back"), "{ins}");
+    assert_eq!(ins["logical_bytes"].as_str(), Some("65536"), "{ins}");
+    if ins["refusal"]["reason"] == "trash_unavailable" {
+        // WFA-35: the runner's volume has no Trash; inspection says so up front (the plan below is refused the same way).
+        assert_eq!((ins["trashable"].as_bool(), ins["refusal"]["code"].as_str()), (Some(false), Some("unsupported")), "{ins}");
+        assert!(ins["refusal"]["message"].as_str().unwrap().starts_with("trash_unavailable: "), "{ins}");
+    } else {
+        assert_eq!(ins["trashable"].as_bool(), Some(true), "{ins}");
+        assert_eq!(ins["available_actions"], serde_json::json!(["show_path", "copy_path", "move_to_trash"]));
+        assert!(ins["guidance"].as_str().unwrap().contains("Put Back"), "{ins}");
+    }
     assert!(ins["holders"].as_array().is_some_and(|h| h.is_empty()), "{ins}");
 
     // MTR-01: only a plan, and it needs a review.

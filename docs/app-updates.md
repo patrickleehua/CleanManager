@@ -9,7 +9,7 @@
 | 通道 | 检测方式 | 结果 |
 | --- | --- | --- |
 | winget | 运行 App Installer 包内的 `winget.exe list`（无 shell、无窗口、限时、输出有上限），按显示列宽解析表格（任意界面语言） | 来源为 `winget` 的行：`update_available` 或 `up_to_date`；`msstore` 来源的行归商店通道 |
-| Microsoft Store | MSIX 包与 winget 标为 `msstore` 的行 | 商店自行检查其应用：`cannot_check` 并给出 `ms-windows-store://downloadsandupdates` |
+| Microsoft Store | MSIX 包与 winget 标为 `msstore` 的行 | 商店自行检查其应用：一律 `cannot_check` 并给出 `ms-windows-store://downloadsandupdates`（`channel_id` 为商店产品 ID）；`msstore` 行没有“可用”版本不代表已是最新，有可用版本时只写进原因，从不为 `up_to_date` 或包管理器更新（构造函数同样强制） |
 | Scoop | 只读本地 Scoop 目录：已安装 `manifest.json`/`install.json` 与所在 bucket 的清单，不联网 | 与本地 bucket 副本比较，说明中写明该副本的更新时间 |
 | 自更新应用（Squirrel/Electron） | 安装目录有 `Update.exe` 与 `app-*`，或 `resources\app-update.yml` | `cannot_check`：其更新源无法验证，请在应用内更新 |
 | 其他 | — | `cannot_check`：“没有更新通道” |

@@ -142,6 +142,43 @@ fn installers_open_elsewhere_are_skipped() {
     assert_eq!((item["skip_reason"].as_str(), item["selected_by_default"].as_bool()), (Some("in_use"), Some(false)), "{preview}");
     let (code, err) = cli(&["installer", "plan", "create", "--candidates", item["object_id"].as_str().unwrap()], &store, &locations);
     assert_eq!((code, err["code"].as_str()), (3, Some("policy_denied")), "an in-use installer cannot be planned now: {err}");
+    // BUG-WFA-19: the refusal is written for people, not as Rust debug text.
+    let message = err["message"].as_str().unwrap();
+    assert!(message.contains("pending_evidence:") && !message.contains("PendingEvidence"), "{message}");
     drop(holder);
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// WFA-58 (INC-04): an installer another process holds open without read sharing (`FileShare.None`) cannot be read,
+/// yet it is listed as in use, names its holder, counts in the summary and cannot be planned.
+#[test]
+fn installers_held_without_read_sharing_are_listed_in_use_with_their_holder() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let base = scratch("held");
+    let (store, dl) = (base.join("store"), base.join("Downloads"));
+    std::fs::create_dir_all(&dl).unwrap();
+    std::fs::write(dl.join("held.msi"), msi()).unwrap();
+    std::fs::write(dl.join("held-notes.pdf"), b"%PDF-1.7 a document held open by a viewer, never an installer......").unwrap();
+    let locations = format!("downloads={}", dl.display());
+    let holders: Vec<_> = ["held.msi", "held-notes.pdf"].iter().map(|n| std::fs::OpenOptions::new().read(true).share_mode(0).open(dl.join(n)).unwrap()).collect();
+    let (code, preview) = cli(&["installer", "scan"], &store, &locations);
+    assert_eq!(code, 0, "{preview}");
+    let items = preview["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "only the file whose name suggests an installer is listed: {preview}");
+    let item = &items[0];
+    assert!(item["path"]["display"].as_str().unwrap().ends_with("held.msi"), "{item}");
+    assert_eq!((item["skip_reason"].as_str(), item["selected_by_default"].as_bool(), item["tier"].as_str()), (Some("in_use"), Some(false), Some("review_only")), "{item}");
+    let notes: Vec<&str> = item["notes"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
+    let me = format!("pid {}", std::process::id());
+    assert!(notes.iter().any(|n| n.starts_with("in use by") && n.contains(&me)), "the holder is named: {notes:?}");
+    assert!(notes.iter().any(|n| n.starts_with("not recognized by content:")), "{notes:?}");
+    assert_eq!((preview["summary"]["skipped_count"].as_u64(), preview["convertible_to_plan"].as_bool()), (Some(1), Some(false)), "{preview}");
+    let (code, err) = cli(&["installer", "plan", "create", "--candidates", item["object_id"].as_str().unwrap()], &store, &locations);
+    assert_eq!((code, err["code"].as_str()), (3, Some("policy_denied")), "{err}");
+    drop(holders);
+    // Released, it is recognized by content again.
+    let (_, preview) = cli(&["installer", "scan"], &store, &locations);
+    let item = &preview["items"][0];
+    assert_eq!((item["skip_reason"].as_str(), item["rule_id"].as_str()), (None, Some("installer.msi")), "{preview}");
     std::fs::remove_dir_all(&base).ok();
 }

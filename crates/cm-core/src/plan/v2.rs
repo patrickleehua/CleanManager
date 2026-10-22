@@ -261,6 +261,18 @@ pub enum StartupOperation {
     Restore,
 }
 
+impl StartupOperation {
+    /// The protocol word (`enable`, `disable`, `remove_with_backup`, `restore`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StartupOperation::Enable => "enable",
+            StartupOperation::Disable => "disable",
+            StartupOperation::RemoveWithBackup => "remove_with_backup",
+            StartupOperation::Restore => "restore",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartupToggleAction {
@@ -302,8 +314,10 @@ pub struct SettingsChangeAction {
     pub restore_on_exit: bool,
 }
 
-/// End one process instance (STS-04). `pid` plus `started_at` (creation time, FILETIME ticks as a decimal string)
-/// name exactly one process: a reused PID is a different process and is never ended. `image_sha256` binds the
+/// End one process instance (STS-04). `pid` plus `started_at` (creation time in the platform's exact form: Windows
+/// FILETIME ticks, macOS microseconds since the epoch, as a decimal string) name exactly one process: a reused PID is
+/// a different process and is never ended. `started_at_utc` is the same time for people (RFC 3339, informational and
+/// digest-covered; absent in plans made before it existed, which keeps their digests). `image_sha256` binds the
 /// executable observed at planning time when it could be read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -311,6 +325,8 @@ pub struct ProcessEndAction {
     pub action_id: String,
     pub pid: u32,
     pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_utc: Option<String>,
     pub name: String,
     pub image_path: Option<RawPath>,
     pub image_sha256: Option<String>,
@@ -569,7 +585,7 @@ pub enum BuildError {
 /// What makes a stored or built plan unusable.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanProblem {
-    #[error("plan is stale: {0:?}")]
+    #[error("plan is stale: {0}")]
     Stale(StaleReason),
     #[error(transparent)]
     Kind(#[from] KindError),

@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod host;
 pub mod paths;
 pub mod protection;
+pub mod trash_readiness;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(windows)]

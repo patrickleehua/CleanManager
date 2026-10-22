@@ -1,7 +1,8 @@
 // Display helpers shared by every page: paths shortened in the middle (the drive and the last name stay
 // readable) and sizes where unknown is always "未知", never 0.
 
-import { formatBytes, formatExactBytes, groupDigits, parseBytes } from './bytes';
+import { formatBytes, formatExactBytes, parseBytes } from './bytes';
+import { t } from '../i18n';
 
 /** The six states a status banner shows, each with its own shape (views/ui/status.ts). */
 export type BannerKind = 'success' | 'partial' | 'failed' | 'cancelled' | 'running' | 'pending-permission';
@@ -54,16 +55,16 @@ export function middleEllipsis(text: string, max = 56): string {
 /** Size text: "1.2 GiB", "至少 1.2 GiB" when part is unknown, "未知" when nothing is known. Never "0 B" for unknown. */
 export function sizeLabel(bytes: string | bigint | null | undefined, opts: { unknownCount?: number; atLeast?: boolean } = {}): string {
   const n = typeof bytes === 'bigint' ? bytes : safeParse(bytes);
-  if (n === null) return '未知';
+  if (n === null) return t('common.unknown');
   const partial = opts.atLeast || (opts.unknownCount ?? 0) > 0;
-  if (partial && n === 0n) return '未知';
-  return partial ? `至少 ${formatBytes(n)}` : formatBytes(n);
+  if (partial && n === 0n) return t('common.unknown');
+  return partial ? t('display.leastN', { n: formatBytes(n) }) : formatBytes(n);
 }
 
 /** Exact bytes for a tooltip ("71,393,594,448 字节"), or "大小未知". */
 export function sizeTitle(bytes: string | bigint | null | undefined): string {
   const n = typeof bytes === 'bigint' ? bytes : safeParse(bytes);
-  return n === null ? '大小未知' : formatExactBytes(n);
+  return n === null ? t('common.sizeUnknown') : formatExactBytes(n);
 }
 
 /** Byte strings that are malformed read as unknown here (the grid and tests still use the strict parser). */
@@ -75,7 +76,7 @@ function safeParse(v: string | null | undefined): bigint | null {
   }
 }
 
-/** "1,487 个条目". */
-export function countLabel(n: number, unit = '个条目'): string {
-  return `${groupDigits(n)} ${unit}`;
+/** "1,487 个条目" / "1,487 entries" (a plural form in English). */
+export function countLabel(n: number): string {
+  return t('display.entries', { n });
 }

@@ -201,6 +201,7 @@ CleanManager 是一个“先看后删”的磁盘与系统整理工具，主要�
 | 参数 | 作用 |
 | --- | --- |
 | `?platform=macos` | macOS 文字、macOS 路径与 macOS 宿主的回答（`lib/mockMac.ts`） |
+| `?lang=en` / `?lang=zh-CN` / `?lang=system` | 这一次访问的界面语言（不保存；保存的选择在 设置 › 界面语言，见“界面文字与语言”） |
 | `?scan=completed` | 完成的扫描（没有缺口） |
 | `?scan=partial`（默认） | 部分完成：一处权限不足、一个大小未知 |
 | `?scan=partial-pending` | 部分完成且 macOS 授权对话框尚未回答（与 `?platform=macos` 一起看） |
@@ -211,7 +212,7 @@ CleanManager 是一个“先看后删”的磁盘与系统整理工具，主要�
 | `?scan=none` | 还没有任何扫描 |
 | `?choose=file` / `?choose=link` | 扫描范围页第一次“选择其他文件夹…”返回文件 / 链接，显示提交前的校验错误 |
 
-参数可以和页面锚点组合，例如 `?platform=macos&scan=partial-pending#overview`、`?choose=file#scope`。
+参数可以和页面锚点组合，例如 `?platform=macos&scan=partial-pending#overview`、`?choose=file#scope`、`?lang=en&platform=macos#cleanup`。
 
 ## 对比度检查
 
@@ -318,7 +319,7 @@ Windows 用 Ctrl，macOS 用 ⌘；应用内按 `?` 显示同一张表。
 
 ## 平台惯用语（GUI-12）
 
-同一份计划在两个平台的字段与结果含义相同（模式键始终是 `trash`），只有词语按平台表替换（`lib/platform.ts`）：
+同一份计划在两个平台的字段与结果含义相同（模式键始终是 `trash`），只有词语按平台表替换（`lib/platform.ts`；词语本身在语言资源的 `platform.*` 键中，`键@macos` 是 macOS 读法，两种语言都有）：
 
 | 概念 | Windows | macOS |
 | --- | --- | --- |
@@ -335,6 +336,55 @@ Windows 用 Ctrl，macOS 用 ⌘；应用内按 `?` 显示同一张表。
 | 卸载路径 | 应用自己的卸载程序 / winget / Scoop / MSIX | 移到废纸篓 / Homebrew；App Store 与 root 所有的应用指向启动台或访达 |
 
 规则：Windows 的每一条文字保持此前的原样（`lib/platform.test.ts` 逐字核对）；macOS 文字不得借用 Windows 惯用语。视图不直接写“Windows”“回收站”“Ctrl”，而是取 `words()` 中的条目；只有 macOS 宿主才报告的状态（`*_macos` 不提供项、`unavailable_devices`、Service Management 行、`permission_required` 卸载行、僵尸进程数）在各自视图中按平台渲染。浏览器预览用 `?platform=macos` 查看 macOS 文字（`lib/mockMac.ts`）。
+
+## 界面文字与语言（LIF-05）
+
+桌面界面的每一句人类可读文字都来自两份资源：`apps/desktop/src/i18n/zh-CN.ts`（简体中文，保留此前页面上的原文，逐字）和 `apps/desktop/src/i18n/en.ts`（英文）。两份资源的键相同；`en.ts` 的类型是 `Record<MessageKey, string>`，少一个键或多一个键都无法编译。代码、状态值、字段名和 CLI/JSON 输出从不翻译。
+
+**取文字**：`t(key, params)`（`src/i18n/index.ts`）。键按文件与表命名：`cleanup.summary`（页面词表 `CLEANUP_TEXT.summary`）、`words.modeLabel.quarantine`（`MODE_LABEL.quarantine`）、`codes.issueText.<code>`（代码表）、`common.*`（多个页面共用的同一句话）。以 `@macos` 结尾的键是前一个键在 macOS 上的读法，`t` 在 macOS 上自动选用；`platform.*` 是平台惯用语表（`PLATFORM_WORDS`）的来源。于是一句话可以同时按平台与语言变化：
+
+| | Windows | macOS |
+| --- | --- | --- |
+| 简体中文 | `platform.bin` → 回收站 | `platform.bin@macos` → 废纸篓 |
+| English | `platform.bin` → Recycle Bin | `platform.bin@macos` → Trash |
+
+**消息语法**（ICU MessageFormat 的子集，由 Intl 实现，没有新依赖）：`{name}` 原样插入值；`{n, number}` 按当前语言分组数字；`{n, plural, =0 {No files} one {# file} other {# files}}` 按 `Intl.PluralRules` 选复数形式，`#` 是分组后的数字。中文通常写 `{n, number} 个文件`，英文写复数形式。
+
+**格式**：数字用 `formatNumber`/`groupDigits`（Intl.NumberFormat）；时间用 `formatTime`（Intl.DateTimeFormat：中文 `2026-10-22 14:05`，英文 `Oct 22, 2026, 2:05 PM`）；字节大小在两种语言中都用二进制单位（KiB/MiB/GiB）。
+
+**切换不需要重启**：页面词表与代码表的条目是读取资源的 getter；页面在 `update()` 中重绘时读到新语言。构造时建好、之后不再重绘的元素（外壳导航、页面标题、长操作进度条）用 `live()` / `liveChildren()`（`lib/dom.ts`）绑定，语言切换后由外壳统一刷新。不要在模块顶层把资源文字算成常量（`const X = t(…)`、`{ ...TABLE }`），那样会停在启动时的语言。
+
+**宿主文字**：主文字永远来自“代码 → 资源”；宿主发来的原始消息只放在“技术详情”或提示里（`isRawHostText`：中文界面按是否含中文判断，英文界面按是否是资源文字判断）。宿主固定用中文命名的少数对象（扫描范围页的建议位置、内置电池）按其类别换成资源文字（`rootLabel`、`batteryName`）。
+
+**设置**：设置 › 界面语言提供“跟随系统”（默认：`navigator.language` 以 zh 开头为简体中文，否则 English）、“简体中文”、“English”；选择保存在 `localStorage` 的 `cm.lang`（与主题的 `cm.theme` 并列，跟随系统时不保存），立即生效并设置 `<html lang>`。两个语言名称在两种语言下都写成它自己的语言。
+
+**添加或修改文字**：
+
+1. 在 `zh-CN.ts` 和 `en.ts` 中加同一个键，两边使用同一组占位符；英文写自然、简洁的句子，术语见下表；平台不同的句子再加 `键@macos`（两种语言都要）。
+2. 代码中写 `t('键', { … })`，不要写中文字面量；词表条目写成 getter（`get title() { return t('…'); }`）。
+3. 运行 `npx vitest run src/i18n`：守卫测试在以下情况失败——一个键只在一份资源中、占位符不一致、值为空、英文中出现中文或全角标点、`src/views/**`、`src/main.ts` 或 `src/lib/**` 的字符串字面量中出现中文（注释不算）、某个键没有被任何代码使用。
+
+**英文术语**（两种平台、所有页面一致）：
+
+| 中文 | English |
+| --- | --- |
+| 清理 / 软件 / 优化 / 分析 / 状态 / 更多 | Clean / Software / Optimize / Analyze / Status / More |
+| 计划 / 生成计划 / 审阅 / 批准 / 执行 | plan / Create plan / review / approve / run |
+| 摘要 / 摘要前 8 位 | digest / first 8 characters of the digest |
+| 候选 / 处理方式 / 选择草稿 | candidate / action / Selection |
+| 回收站 / 移到回收站（Windows） | Recycle Bin / Move to Recycle Bin |
+| 废纸篓 / 移到废纸篓 / 放回原处（macOS） | Trash / Move to Trash / Put Back |
+| 隔离区 / 永久删除 / 永久清空 | quarantine / Delete permanently / Empty permanently |
+| 低风险 / 需要审阅 / 待判断 / 不可选择 | Low risk / Needs review / Pending / Not selectable |
+| 保护清单 / 受保护 / 硬拒绝 | protection list / Protected / hard-denied |
+| 实验功能 / 默认关闭 | Experimental features (badge: Experimental) / Off by default |
+| 常驻工具 / 托盘 / 菜单栏图标 | Resident tools / tray / menu bar icon |
+| 维护任务 / 性能诊断 / 启动项 / 残留 | Maintenance tasks / Performance diagnosis / startup items / leftovers |
+| 逻辑大小 / 大小未知 / 部分完成 / 需要核对 | logical size / Size unknown / Partially completed / Needs reconciliation |
+| 资源管理器 / 任务管理器 / 商店 | File Explorer / Task Manager / Microsoft Store |
+| 访达 / 活动监视器 / 系统设置 | Finder / Activity Monitor / System Settings |
+
+**仍是中文的宿主文字**（不在前端资源中，属于宿主）：托盘/菜单栏菜单的条目、系统文件选择对话框的标题、凭据管理器提示，以及宿主在原始消息中写的中文。浏览器预览的模拟数据（`lib/mock*.ts`）里有中文文件名与中文“宿主消息”，它们代表数据，不随界面语言变化。
 
 ## 统一选择 / 审阅 / 结果（GUI-09/10）
 

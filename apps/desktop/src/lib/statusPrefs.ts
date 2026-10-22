@@ -5,12 +5,13 @@
 // validated; a missing, corrupt or older record falls back to the defaults field by field.
 
 import type { ProcessSort } from './suiteTypes';
+import { t } from '../i18n';
 
 export type StatusPanel = 'health' | 'metrics' | 'network';
 
 export const PANELS: readonly StatusPanel[] = ['health', 'metrics', 'network'];
 
-export const PANEL_LABEL: Record<StatusPanel, string> = { health: '健康分', metrics: '指标', network: '网络' };
+export const PANEL_LABEL: Record<StatusPanel, string> = { get health() { return t('statusPrefs.panelLabel.health'); }, get metrics() { return t('statusPrefs.panelLabel.metrics'); }, get network() { return t('statusPrefs.panelLabel.network'); } };
 
 /** Narrow panels share a row with the wide panel next to them. */
 const NARROW: ReadonlySet<StatusPanel> = new Set(['health']);

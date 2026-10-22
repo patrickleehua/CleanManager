@@ -28,7 +28,7 @@ use cm_core::startup::{RegValue, StartupActions, StartupBackup, StartupObservati
 use cm_core::time::utc_from_unix;
 use cm_store::{StoreError, Stores};
 
-use crate::execute::{ActionResult, ActionStatus, ApplyContext, ApplyError, FaultPoint, OperationReport, final_status, summarize};
+use crate::execute::{ActionResult, ActionStatus, ApplyContext, ApplyError, Authorization, FaultPoint, OperationReport, final_status, summarize};
 
 /// How a stored plan is handled, from its authoritative stored contract (and kind).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +132,10 @@ fn trash_one(b: &V2Backends<'_>, ctx: &ApplyContext<'_>, a: &FsAction, m: &Actio
     // PRT-01: the object and, for a folder, everything moved with it pass the protection re-check.
     for t in std::iter::once(&target).chain(members.iter().map(|(t, _)| t)) {
         if let Err(why) = (ctx.protect)(t) {
-            return res(id, ActionStatus::Skipped, "protected", format!("{} is protected: {why}", t.path.display()), "not_applicable");
+            // An object that is gone (e.g. another plan moved it) is missing, not protected (WFA-33).
+            let (code, message) = crate::execute::skipped_protected(b.files, t, format!("{} is protected: {why}", t.path.display()));
+            let message = if code == "protected" { message } else { format!("{} no longer exists at its planned place; nothing was moved", t.path.display()) };
+            return res(id, ActionStatus::Skipped, &code, message, "not_applicable");
         }
     }
     let holders = || {
@@ -148,7 +151,7 @@ fn trash_one(b: &V2Backends<'_>, ctx: &ApplyContext<'_>, a: &FsAction, m: &Actio
             LiveCheck::InUse => return res(id, ActionStatus::Failed, "in_use", in_use_message(holders()), "not_applicable"),
             other => {
                 let code = serde_json::to_value(&other).ok().and_then(|v| v["check"].as_str().map(str::to_owned)).unwrap_or_else(|| "precondition".into());
-                return res(id, ActionStatus::Skipped, &format!("precondition_{code}"), format!("{other:?}; nothing was moved"), "not_applicable");
+                return res(id, ActionStatus::Skipped, &format!("precondition_{code}"), format!("{other}; nothing was moved"), "not_applicable");
             }
         }
     };
@@ -182,7 +185,8 @@ fn purge_one(b: &V2Backends<'_>, ctx: &ApplyContext<'_>, a: &FsAction, m: &Actio
     }
     let target = observation_target(a, m, &[]);
     if let Err(why) = (ctx.protect)(&target) {
-        return res(id, ActionStatus::Skipped, "protected", why, "not_applicable");
+        let (code, message) = crate::execute::skipped_protected(b.files, &target, why);
+        return res(id, ActionStatus::Skipped, &code, message, "not_applicable");
     }
     let outcome = if a.target.kind == ItemKind::Directory {
         b.files.remove_empty_dir(&target)
@@ -192,7 +196,7 @@ fn purge_one(b: &V2Backends<'_>, ctx: &ApplyContext<'_>, a: &FsAction, m: &Actio
             LiveCheck::InUse => return res(id, ActionStatus::Failed, "in_use", in_use_message((b.holders)(std::slice::from_ref(&a.target.path))), "trash"),
             other => {
                 let code = serde_json::to_value(&other).ok().and_then(|v| v["check"].as_str().map(str::to_owned)).unwrap_or_else(|| "precondition".into());
-                return res(id, ActionStatus::Skipped, &format!("precondition_{code}"), format!("{other:?}; nothing was deleted"), "trash");
+                return res(id, ActionStatus::Skipped, &format!("precondition_{code}"), format!("{other}; nothing was deleted"), "trash");
             }
         }
     };
@@ -374,6 +378,8 @@ pub fn apply_plan_v2_with_settings(
     if !executable(plan.body.plan_kind) {
         return Err(ApplyError::PolicyDenied(format!("plan kind {} cannot be applied by this build", plan.body.plan_kind.as_str())));
     }
+    // PRT-02: every write stops while the protection list is unusable, before an operation is registered.
+    crate::execute::require_protection(stores)?;
     // Only an interactive review of this exact plan; policies are never consulted for plan/v2 kinds.
     let authorized = |now: i64| -> Result<bool, StoreError> { Ok(authorization(stores, &plan, ctx.principal, now)?.0 == "authorized") };
     if !authorized((ctx.now)())? {
@@ -449,13 +455,14 @@ pub fn apply_plan_v2_with_settings(
         record(&r)?;
         results.push(r);
     }
-    finish(stores, b, &plan, &operation_id, &started_at, results, cancelled, free_before, "interactive_review", ctx)
+    let auth = Authorization { source: "interactive_review", reconciled_at: None };
+    finish(stores, b, &plan, &operation_id, &started_at, results, cancelled, free_before, &auth, ctx)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn finish(
     stores: &Stores, b: &V2Backends<'_>, plan: &PlanV2, operation_id: &str, started_at: &str, results: Vec<ActionResult>, cancelled: bool,
-    free_before: Option<u64>, auth_source: &str, ctx: &ApplyContext<'_>,
+    free_before: Option<u64>, auth: &Authorization<'_>, ctx: &ApplyContext<'_>,
 ) -> Result<OperationReport, ApplyError> {
     for r in results.iter().filter(|r| r.status == ActionStatus::NotStarted) {
         stores.audit.record_result(operation_id, &r.action_id, "not_started", &serde_json::to_string(r).expect("result serializes"), &utc_from_unix((ctx.now)()))?;
@@ -487,7 +494,8 @@ fn finish(
         volume_free_before_bytes: free_before.map(|v| v.to_string()),
         volume_free_after_bytes: free_before.and(free_after).map(|v| v.to_string()),
         observed_free_delta_bytes: free_before.zip(free_after).map(|(bf, af)| (i128::from(af) - i128::from(bf)).to_string()),
-        authorization_source: auth_source.into(),
+        authorization_source: auth.source.into(),
+        reconciled_at: auth.reconciled_at.clone(),
     };
     // Locks stay while outcomes are unknown so no other plan touches those objects (EXE-04/05).
     if unknown == 0 {
@@ -501,6 +509,8 @@ fn finish(
 pub fn reconcile_operation_v2(stores: &Stores, b: &V2Backends<'_>, operation_id: &str, ctx: &ApplyContext<'_>) -> Result<OperationReport, ApplyError> {
     let plan = stores.audit.load_plan_v2(&stores.audit.operation_plan(operation_id)?)?;
     let journal = stores.audit.journal(operation_id)?;
+    let prior = crate::execute::prior_report(stores, operation_id)?;
+    let mut resolved = false;
     let mut results = Vec::with_capacity(plan.body.items.len());
     for (idx, a) in plan.body.items.iter().enumerate() {
         let id = a.action_id();
@@ -510,6 +520,7 @@ pub fn reconcile_operation_v2(stores: &Stores, b: &V2Backends<'_>, operation_id:
             (_, Some(r)) if r.status != ActionStatus::Unknown => r,
             (None, _) => res(id, ActionStatus::NotStarted, "never_started", "no action was started", "not_applicable"),
             (Some(_), _) => {
+                resolved = true;
                 let verdict = reconcile_one(stores, b, a, &plan.meta[idx]);
                 let r = match verdict {
                     Reconciled::NotPerformed => res(id, ActionStatus::NotStarted, "reconciled_not_performed", "the object or entry is still as planned", "not_applicable"),
@@ -533,9 +544,16 @@ pub fn reconcile_operation_v2(stores: &Stores, b: &V2Backends<'_>, operation_id:
         };
         results.push(r);
     }
-    let started = stores.audit.operation_report(operation_id)?.and_then(|j| serde_json::from_str::<OperationReport>(&j).ok()).map(|r| r.started_at)
-        .unwrap_or_else(|| utc_from_unix((ctx.now)()));
-    finish(stores, b, &plan, operation_id, &started, results, false, None, "reconciliation", ctx)
+    // Nothing was unconfirmed: the recorded report stands as it is.
+    if let Some(report) = prior.as_ref().filter(|_| !resolved) {
+        return Ok(report.clone());
+    }
+    let started = crate::execute::started_at(stores, operation_id, prior.as_ref(), ctx);
+    // plan/v2 kinds are authorized only by an interactive review; a reconciliation never replaces that (WFA-40).
+    let source = prior.as_ref().map(|r| r.authorization_source.clone()).filter(|s| s != crate::execute::LEGACY_RECONCILIATION_SOURCE)
+        .unwrap_or_else(|| "interactive_review".into());
+    let auth = Authorization { source: &source, reconciled_at: crate::execute::reconciled_at(resolved, prior.as_ref(), ctx) };
+    finish(stores, b, &plan, operation_id, &started, results, false, None, &auth, ctx)
 }
 
 fn reconcile_one(stores: &Stores, b: &V2Backends<'_>, a: &PlanAction, m: &ActionMeta) -> Reconciled {

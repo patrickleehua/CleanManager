@@ -361,7 +361,7 @@ pub fn item_rows(plan: &PlanV2) -> Vec<PlanItemDto> {
                 PlanAction::ProcessEnd(p) => {
                     let image = p.image_path.as_ref().map(cm_core::path::RawPath::display).unwrap_or_default();
                     let mut row = base(format!("{} (PID {})", p.name, p.pid), image, "process", None);
-                    row.detail = Some(json!({"pid": p.pid, "started_at": p.started_at, "image_bound": p.image_sha256.is_some(), "note": m.note}));
+                    row.detail = Some(json!({"pid": p.pid, "started_at": p.started_at, "started_at_utc": p.started_at_utc, "image_bound": p.image_sha256.is_some(), "note": m.note}));
                     row
                 }
                 PlanAction::MaintenanceTask(t) => {
@@ -607,10 +607,19 @@ mod tests {
 
     #[test]
     fn process_and_maintenance_rows_name_what_they_act_on() {
-        let p = PlanAction::ProcessEnd(ProcessEndAction { action_id: "e01".into(), pid: 4242, started_at: "2026-10-15T00:00:00Z".into(), name: "code.exe".into(), image_path: None, image_sha256: None });
+        let p = PlanAction::ProcessEnd(ProcessEndAction {
+            action_id: "e01".into(),
+            pid: 4242,
+            started_at: "134050000000000000".into(),
+            started_at_utc: Some("2025-10-15T11:06:40Z".into()),
+            name: "code.exe".into(),
+            image_path: None,
+            image_sha256: None,
+        });
         let plan = build(&header(PlanKind::Process), vec![p], vec![ActionMeta::default()]).unwrap();
         let row = &item_rows(&plan)[0];
         assert_eq!((row.name.as_str(), row.item_kind.as_str()), ("code.exe (PID 4242)", "process"));
+        assert_eq!(row.detail.as_ref().unwrap()["started_at_utc"], "2025-10-15T11:06:40Z", "WFA-93: the review shows the start time in UTC");
         let t = PlanAction::MaintenanceTask(MaintenanceTaskAction { action_id: "m01".into(), task_id: "windows.dns-flush".into(), task_version: "1.0.0".into(), requires_admin: false, volume: None });
         let plan = build(&header(PlanKind::Maintenance), vec![t], vec![ActionMeta::default()]).unwrap();
         let row = &item_rows(&plan)[0];

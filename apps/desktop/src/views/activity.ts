@@ -14,13 +14,14 @@ import { ACTION_LABEL, AUTH_LABEL, AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STA
 import { emptyState, errorLine, exactTitle, pageHead, pill, tabList } from './parts';
 import { words } from '../lib/platform';
 import { pathText } from './ui';
+import { t } from '../i18n';
 
 /** The page heading per entry (one table for the language switch). */
 const ACTIVITY_HEAD: Record<ActivityTab, { title: string; meta: string }> = {
-  operations: { title: '活动', meta: '执行、计划和扫描的持久记录；CLI 与桌面端发起的记录都在这里' },
-  scans: { title: '活动', meta: '执行、计划和扫描的持久记录；CLI 与桌面端发起的记录都在这里' },
-  plans: { title: '计划', meta: '已冻结的计划：审阅、批准，或查看它们的执行结果' },
-  quarantine: { title: '恢复', meta: '隔离区中的对象：恢复到原位置，或另建计划永久清空' },
+  operations: { get title() { return t('activity.head.operations.title'); }, get meta() { return t('activity.head.operations.meta'); } },
+  scans: { get title() { return t('activity.head.scans.title'); }, get meta() { return t('activity.head.scans.meta'); } },
+  plans: { get title() { return t('activity.head.plans.title'); }, get meta() { return t('activity.head.plans.meta'); } },
+  quarantine: { get title() { return t('activity.head.quarantine.title'); }, get meta() { return t('activity.head.quarantine.meta'); } },
 };
 
 const PAGE = 50;
@@ -123,7 +124,7 @@ export class ActivityPage {
     this.update();
     try {
       const r = await this.app.backend.createRecoveryPlan(kind, [...this.qSelected.keys()]);
-      this.app.announce(kind === 'restore' ? '恢复计划已生成，尚未执行' : '永久清空计划已生成，尚未执行');
+      this.app.announce(kind === 'restore' ? t('activity.restorePlanCreatedNothing') : t('activity.purgePlanCreatedNothing'));
       this.app.openPlan(r.plan_id, 'activity');
     } catch (e) {
       this.createError = toIpcError(e);
@@ -140,18 +141,18 @@ export class ActivityPage {
     const tab = s.activityTab;
     const held = this.qMeta?.held_count;
     const tabs = tabList<ActivityTab>(
-      '活动记录类别',
+      t('activity.activityRecordTypes'),
       [
-        { key: 'operations', label: '执行' },
-        { key: 'plans', label: '计划' },
-        { key: 'scans', label: '扫描' },
-        { key: 'quarantine', label: '隔离区', count: held ? groupDigits(held) : undefined },
+        { key: 'operations', label: t('activity.runs') },
+        { key: 'plans', label: t('activity.plans') },
+        { key: 'scans', label: t('activity.scans') },
+        { key: 'quarantine', label: t('activity.quarantine'), count: held ? groupDigits(held) : undefined },
       ],
       tab,
       (k) => this.app.store.set({ activityTab: k }),
     );
     const reconcile = s.caps?.operations_to_reconcile.length
-      ? h('div', { class: 'notice warn', role: 'status' }, h('span', {}, `启动时发现 ${s.caps.operations_to_reconcile.length} 个执行在宿主退出时没有完成，结果需要核对。它们标为“需要核对”，不会自动重试。`))
+      ? h('div', { class: 'notice warn', role: 'status' }, h('span', {}, t('activity.startupLengthFoundUnfinished', { length: s.caps.operations_to_reconcile.length })))
       : null;
     const panel =
       tab === 'operations' ? this.operations() : tab === 'plans' ? this.planList() : tab === 'scans' ? this.scans() : this.quarantinePanel();
@@ -167,14 +168,14 @@ export class ActivityPage {
 
   private moreButton<T>(l: Listing<T>, tab: ActivityTab): HTMLElement | null {
     if (!l.next) return null;
-    return h('button', { type: 'button', class: 'quiet more', disabled: l.loading, onclick: () => void this.loadTab(tab, true) }, l.loading ? '正在加载…' : '显示更多');
+    return h('button', { type: 'button', class: 'quiet more', disabled: l.loading, onclick: () => void this.loadTab(tab, true) }, l.loading ? t('common.loading') : t('activity.showMore'));
   }
 
   private operations(): HTMLElement {
     const l = this.ops;
-    if (!l.loaded) return h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, '正在读取执行记录…'));
+    if (!l.loaded) return h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, t('activity.readingRunRecords')));
     if (!l.items.length)
-      return h('div', { class: 'panel' }, emptyState('还没有执行记录', '批准并执行一份计划后，每一次执行都会记录在这里，包括逐项结果和恢复方式。', h('button', { type: 'button', onclick: () => this.app.navigate('cleanup') }, '前往清理')));
+      return h('div', { class: 'panel' }, emptyState(t('activity.noRunsYet'), t('activity.eachTimeApproveRun'), h('button', { type: 'button', onclick: () => this.app.navigate('cleanup') }, t('activity.goClean'))));
     return h(
       'div',
       { class: 'panel list-panel' },
@@ -183,7 +184,7 @@ export class ActivityPage {
         { class: 'timeline' },
         ...l.items.map((o) => {
           const c = o.counts;
-          const counts = c ? `成功 ${c.succeeded}，跳过 ${c.skipped}，失败 ${c.failed}${c.unknown ? `，未知 ${c.unknown}` : ''}${c.not_started ? `，未开始 ${c.not_started}` : ''}` : '结果尚未记录';
+          const counts = c ? t('activity.succeededSucceededSkippedSkipped', { succeeded: c.succeeded, skipped: c.skipped, failed: c.failed, p: c.unknown ? t('activity.unknownUnknown', { unknown: c.unknown }) : '', p2: c.not_started ? t('activity.notStartedNotStarted', { not_started: c.not_started }) : '' }) : t('activity.noResultsRecordedYet');
           const b = h(
             'button',
             { type: 'button', class: 'tl-row', id: `op-${o.operation_id}` },
@@ -191,7 +192,7 @@ export class ActivityPage {
             h(
               'span',
               { class: 'tl-main' },
-              h('span', { class: 'tl-title' }, ACTION_LABEL[o.action ?? ''] ?? '未知动作', o.processed_logical_bytes && o.processed_logical_bytes !== '0' ? h('span', { class: 'muted num' }, formatBytes(o.processed_logical_bytes)) : null),
+              h('span', { class: 'tl-title' }, ACTION_LABEL[o.action ?? ''] ?? t('activity.unknownAction'), o.processed_logical_bytes && o.processed_logical_bytes !== '0' ? h('span', { class: 'muted num' }, formatBytes(o.processed_logical_bytes)) : null),
               h('span', { class: 'tl-sub' }, counts),
             ),
             h('span', { class: 'tl-side' }, pill(OPERATION_STATE_LABEL[o.state] ?? o.state, operationTone(o.state)), h('span', { class: 'tl-note' }, AVAILABILITY_LABEL[o.availability])),
@@ -207,8 +208,8 @@ export class ActivityPage {
 
   private planList(): HTMLElement {
     const l = this.plans;
-    if (!l.loaded) return h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, '正在读取计划…'));
-    if (!l.items.length) return h('div', { class: 'panel' }, emptyState('还没有计划', '在清理页或 CLI 生成的计划都会列在这里，可以按编号打开审阅。'));
+    if (!l.loaded) return h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, t('activity.readingPlans')));
+    if (!l.items.length) return h('div', { class: 'panel' }, emptyState(t('activity.noPlansYet'), t('activity.plansCreatedCleanPage')));
     return h(
       'div',
       { class: 'panel list-panel' },
@@ -217,12 +218,12 @@ export class ActivityPage {
         { class: 'timeline' },
         ...l.items.map((p) => {
           const what = p.kind === 'cleanup' ? (p.mode ? MODE_LABEL[p.mode] : PLAN_KIND_LABEL.cleanup) : PLAN_KIND_LABEL[p.kind];
-          const status = p.operation_id ? pill('已执行', 'muted') : p.authorization ? pill(p.expired && p.authorization !== 'authorized' ? AUTH_LABEL.expired : AUTH_LABEL[p.authorization], p.authorization === 'authorized' ? 'good' : p.expired ? 'muted' : 'busy') : pill('无法读取', 'bad');
+          const status = p.operation_id ? pill(t('activity.executed'), 'muted') : p.authorization ? pill(p.expired && p.authorization !== 'authorized' ? AUTH_LABEL.expired : AUTH_LABEL[p.authorization], p.authorization === 'authorized' ? 'good' : p.expired ? 'muted' : 'busy') : pill(t('activity.unreadable'), 'bad');
           const b = h(
             'button',
             { type: 'button', class: 'tl-row', id: `plan-${p.plan_id}` },
             h('span', { class: 'tl-time' }, formatTime(p.created_at)),
-            h('span', { class: 'tl-main' }, h('span', { class: 'tl-title' }, what, p.item_count !== null ? h('span', { class: 'muted num' }, `${groupDigits(p.item_count)} 项`) : null), h('code', { class: 'tl-sub' }, p.plan_id)),
+            h('span', { class: 'tl-main' }, h('span', { class: 'tl-title' }, what, p.item_count !== null ? h('span', { class: 'muted num' }, t('activity.itemCount', { item_count: p.item_count })) : null), h('code', { class: 'tl-sub' }, p.plan_id)),
             h('span', { class: 'tl-side' }, status, p.problem ? h('span', { class: 'tl-note' }, p.problem) : null),
           );
           b.addEventListener('click', () => this.app.openPlan(p.plan_id, 'activity'));
@@ -236,7 +237,7 @@ export class ActivityPage {
 
   private scans(): HTMLElement {
     const recent = this.app.store.state.recent;
-    if (!recent.length) return h('div', { class: 'panel' }, emptyState('还没有扫描', '开始一次只读扫描后，它会出现在这里。', h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('scope') }, '选择扫描范围')));
+    if (!recent.length) return h('div', { class: 'panel' }, emptyState(t('activity.noScansYet'), t('activity.startReadOnlyScan'), h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('scope') }, t('common.chooseWhatScan'))));
     return h(
       'div',
       { class: 'panel list-panel' },
@@ -248,8 +249,8 @@ export class ActivityPage {
             'button',
             { type: 'button', class: 'tl-row', id: `scan-${r.scan_id}` },
             h('span', { class: 'tl-time' }, formatTime(r.started_at)),
-            h('span', { class: 'tl-main' }, h('span', { class: 'tl-title path' }, r.root_display), h('span', { class: 'tl-sub' }, r.host_kind === 'cli' ? '由 CLI 运行' : '由桌面端运行')),
-            h('span', { class: 'tl-side' }, r.state ? pill(STATE_LABEL[r.state], stateTone(r.state) === 'good' ? 'good' : stateTone(r.state)) : pill('记录不可用', 'bad')),
+            h('span', { class: 'tl-main' }, h('span', { class: 'tl-title path' }, r.root_display), h('span', { class: 'tl-sub' }, r.host_kind === 'cli' ? t('activity.runCli') : t('activity.runDesktop'))),
+            h('span', { class: 'tl-side' }, r.state ? pill(STATE_LABEL[r.state], stateTone(r.state) === 'good' ? 'good' : stateTone(r.state)) : pill(t('common.recordUnavailable'), 'bad')),
           );
           b.addEventListener('click', () => void this.app.openScan(r.scan_id, 'overview'));
           return h('li', {}, b);
@@ -267,14 +268,14 @@ export class ActivityPage {
       h(
         'span',
         {},
-        h('b', {}, '同卷隔离仍占用此卷空间。'),
-        meta?.held_count ? ` 当前隔离 ${groupDigits(meta.held_count)} 项，共 ${formatBytes(meta.held_logical_bytes)}。` : ' ',
-        '隔离区不是备份：设备损坏、外部删除或权限变化都可能影响恢复。到达提醒时间只会提示你查看，不会自动删除。',
+        h('b', {}, t('activity.sameVolumeQuarantineStill')),
+        meta?.held_count ? t('activity.heldCountQuarantineHeld', { held_count: meta.held_count, held_logical_bytes: formatBytes(meta.held_logical_bytes) }) : ' ',
+        t('activity.quarantineNotBackupDevice'),
       ),
     );
-    if (!l.loaded) return h('div', {}, head, h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, '正在读取隔离区…')));
+    if (!l.loaded) return h('div', {}, head, h('div', { class: 'panel' }, l.error ? errorLine(l.error) : h('p', { class: 'muted', role: 'status' }, t('activity.readingQuarantine'))));
     if (!l.items.length)
-      return h('div', {}, h('div', { class: 'panel' }, emptyState('隔离区是空的', `选择“移入同卷隔离区”执行的文件会出现在这里，可以创建恢复计划送回原位，或创建永久清空计划释放空间。系统${words().bin}中的内容不会被导入。`)));
+      return h('div', {}, h('div', { class: 'panel' }, emptyState(t('activity.quarantineEmpty'), t('activity.filesProcessedMoveQuarantine', { bin: words().bin }))));
     const rows = l.items.map((q) => {
       const check = h('input', { type: 'checkbox', id: `q-${q.quarantine_id}`, disabled: !q.actionable || q.state !== 'recoverable', 'aria-describedby': `q-${q.quarantine_id}-state` }) as HTMLInputElement;
       check.checked = this.qSelected.has(q.quarantine_id);
@@ -291,7 +292,7 @@ export class ActivityPage {
         h('td', { class: 'col-check' }, check),
         h('td', { class: 'col-object' }, h('label', { for: `q-${q.quarantine_id}`, class: 'obj-name' }, q.name), pathText(q.original_path_display, { max: 64, className: 'obj-path' })),
         h('td', { class: 'col-size num', title: exactTitle(q.logical_bytes) }, formatBytes(q.logical_bytes)),
-        h('td', { class: 'col-when' }, formatTime(q.quarantined_at), q.reminder_due ? h('span', { class: 'why-not' }, '已到提醒时间') : null),
+        h('td', { class: 'col-when' }, formatTime(q.quarantined_at), q.reminder_due ? h('span', { class: 'why-not' }, t('activity.reminderDateReached')) : null),
         h('td', { class: 'col-status', id: `q-${q.quarantine_id}-state` }, pill(QUARANTINE_STATE_LABEL[q.state] ?? q.state, ok ? 'good' : q.state === 'target_conflict' ? 'warn' : 'bad')),
       );
     });
@@ -307,15 +308,15 @@ export class ActivityPage {
           { class: 'work-main' },
           h(
             'section',
-            { class: 'panel items-panel', 'aria-label': '隔离项' },
+            { class: 'panel items-panel', 'aria-label': t('activity.quarantinedItems') },
             h(
               'div',
               { class: 'table-wrap' },
               h(
                 'table',
                 { class: 'data-table' },
-                h('caption', { class: 'sr-only' }, '隔离区中的对象，按隔离时间排序'),
-                h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '原位置'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col', class: 'col-when' }, '隔离于'), h('th', { scope: 'col', class: 'col-status' }, '状态'))),
+                h('caption', { class: 'sr-only' }, t('activity.objectsQuarantineSortedQuarantine')),
+                h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('activity.originalLocation')), h('th', { scope: 'col', class: 'col-size' }, t('common.logicalSize')), h('th', { scope: 'col', class: 'col-when' }, t('activity.quarantined')), h('th', { scope: 'col', class: 'col-status' }, t('common.status')))),
                 h('tbody', {}, ...rows),
               ),
             ),
@@ -332,29 +333,29 @@ export class ActivityPage {
     const n = this.qSelected.size;
     let total = 0n;
     for (const q of this.qSelected.values()) total += BigInt(q.logical_bytes);
-    const restore = h('button', { type: 'button', id: 'q-restore', class: 'primary wide', disabled: !n || this.creating }, n ? `创建恢复计划（${n} 项）` : '先选择隔离项');
+    const restore = h('button', { type: 'button', id: 'q-restore', class: 'primary wide', disabled: !n || this.creating }, n ? t('activity.createRestorePlanN', { n }) : t('activity.selectQuarantinedItemsFirst'));
     restore.addEventListener('click', () => void this.createRecovery('restore'));
-    const purge = h('button', { type: 'button', id: 'q-purge', class: 'danger-quiet wide', disabled: !n || this.creating }, n ? `创建永久清空计划（${n} 项）` : '永久清空所选');
+    const purge = h('button', { type: 'button', id: 'q-purge', class: 'danger-quiet wide', disabled: !n || this.creating }, n ? t('activity.createPurgePlanN', { n }) : t('activity.emptySelectedPermanently'));
     purge.addEventListener('click', () => void this.createRecovery('purge'));
     const meta = this.qMeta;
     return h(
       'aside',
       { class: 'panel work-aside', 'aria-labelledby': 'q-aside-title' },
-      h('h2', { id: 'q-aside-title' }, '恢复或清空'),
+      h('h2', { id: 'q-aside-title' }, t('activity.restoreEmpty')),
       n ? h('p', { class: 'draft-figure num' }, formatBytes(total)) : null,
-      h('p', { class: 'muted small' }, n ? `已选 ${n} 项。` : '只有状态为“可恢复”的项目可以选择。'),
+      h('p', { class: 'muted small' }, n ? t('activity.nSelected', { n }) : t('activity.onlyItemsMarkedRestorable')),
       restore,
-      h('p', { class: 'muted small' }, '恢复把对象移回原文件夹。原位置已有同名对象时跳过该项，从不覆盖，也不改名到别处。'),
+      h('p', { class: 'muted small' }, t('activity.restoringMovesObjectsBack')),
       purge,
-      h('p', { class: 'muted small' }, '永久清空释放这些对象占用的空间，无法撤销。它需要单独审阅批准，不继承当初的隔离授权。'),
+      h('p', { class: 'muted small' }, t('activity.emptyingPermanentlyFreesSpace')),
       errorLine(this.createError),
       meta && (meta.metadata_preserved.length || meta.metadata_limits.length)
         ? h(
             'details',
             { class: 'aside-section' },
-            h('summary', {}, '恢复会保留什么'),
-            meta.metadata_preserved.length ? h('p', { class: 'small' }, `保留：${meta.metadata_preserved.join('、')}`) : null,
-            meta.metadata_limits.length ? h('p', { class: 'small muted' }, `限制：${meta.metadata_limits.join('；')}`) : null,
+            h('summary', {}, t('activity.whatRestoreKeeps')),
+            meta.metadata_preserved.length ? h('p', { class: 'small' }, t('activity.keptJoin', { join: meta.metadata_preserved.join(t('common.listSep')) })) : null,
+            meta.metadata_limits.length ? h('p', { class: 'small muted' }, t('activity.limitsJoin', { join: meta.metadata_limits.join(t('common.clauseSep')) })) : null,
           )
         : null,
     );

@@ -3,6 +3,7 @@
 
 import type { BannerKind } from '../../lib/display';
 import { h } from '../../lib/dom';
+import { t } from '../../i18n';
 
 type Child = Node | string | null | undefined | false;
 
@@ -10,12 +11,12 @@ export type { BannerKind };
 
 /** The state word a banner kind stands for (read by screen readers before the headline when the headline omits it). */
 export const BANNER_WORD: Record<BannerKind, string> = {
-  success: '完成',
-  partial: '部分完成',
-  failed: '失败',
-  cancelled: '已停止',
-  running: '进行中',
-  'pending-permission': '等待授权',
+  get success() { return t('ui.status.bannerWord.success'); },
+  get partial() { return t('ui.status.bannerWord.partial'); },
+  get failed() { return t('ui.status.bannerWord.failed'); },
+  get cancelled() { return t('ui.status.bannerWord.cancelled'); },
+  get running() { return t('ui.status.bannerWord.running'); },
+  get 'pending-permission'() { return t('ui.status.bannerWord.pending-permission'); },
 };
 
 export interface BannerOpts {
@@ -46,7 +47,7 @@ export function stateLine(o: { kind: BannerKind; text: string; actions?: Child[]
     'div',
     { class: `state-line${o.className ? ` ${o.className}` : ''}`, 'data-kind': o.kind },
     h('span', { class: 'sb-mark', 'aria-hidden': 'true' }),
-    h('p', { class: 'sl-text' }, h('span', { class: 'sr-only' }, `${BANNER_WORD[o.kind]}：`), o.text),
+    h('p', { class: 'sl-text' }, h('span', { class: 'sr-only' }, t('common.labelColon', { p: BANNER_WORD[o.kind] })), o.text),
     actions.length ? h('div', { class: 'sl-actions' }, ...actions) : null,
   );
 }

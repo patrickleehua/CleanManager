@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "kind": "doctor_report",
+  "request_id": "req_synthetic",
+  "generated_at": "2026-10-14T12:00:02Z",
+  "redacted": true,
+  "engine_version": "0.0.0-design-example",
+  "platform": "windows",
+  "capabilities": [
+    {
+      "name": "uninstall.registry",
+      "state": "unverified",
+      "reason": "Synthetic report"
+    }
+  ],
+  "checks": [
+    {
+      "area": "store",
+      "check": "store.open",
+      "status": "ok",
+      "detail": "Synthetic audit store check"
+    },
+    {
+      "area": "store",
+      "check": "store.index",
+      "status": "ok",
+      "detail": "Synthetic index check after the repair"
+    }
+  ],
+  "error_codes": [
+    {
+      "code": "index_unavailable",
+      "exit_code": 8,
+      "retryable": false
+    }
+  ],
+  "recent_errors": [],
+  "export": null,
+  "index_repair": {
+    "status": "repaired",
+    "previous_state": "corrupt",
+    "kept_files": [
+      "~\\AppData\\Local\\CleanManager\\store\\index.db.damaged-20261022T101500Z"
+    ],
+    "message": "Synthetic: the scan index was moved aside and an empty one was created; run scan again"
+  }
+}

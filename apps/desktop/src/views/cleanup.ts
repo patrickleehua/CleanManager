@@ -9,7 +9,7 @@
 
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
-import { formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
+import { formatExactBytes, parseBytes } from '../lib/bytes';
 import { protectionText } from '../lib/codes';
 import { sizeLabel } from '../lib/display';
 import { h, icon, keepFocus, replace } from '../lib/dom';
@@ -20,69 +20,70 @@ import { GROUP_EXPLAIN, GROUP_LABEL, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LAB
 import { errorLine, errorText, exactTitle, groupMark, pageHead } from './parts';
 import { atLeast, modeOptions, selectionBar, sumSizes, summaryStrip, tierBadge } from './kit';
 import { emptyBlock, issueList, learnMore, pathText, stateLine, statusBanner } from './ui';
+import { t } from '../i18n';
 
 const PAGE = 50;
 const GROUPS: Group[] = ['low', 'review', 'pending', 'blocked'];
 
 /** Words of the cleanup page that are not data (one table for the language switch). */
 export const CLEANUP_TEXT = {
-  title: '清理',
-  candidates: '清理候选',
-  noScanTitle: '先扫描一个文件夹',
-  noScanBody: '候选只来自已发布的扫描结果；扫描前这里不会显示任何“可清理”数字。',
-  chooseScope: '选择扫描范围',
-  unpublishedTitle: '扫描还没有发布结果',
-  unpublishedBody: '扫描结束（或取消）并发布已确认的部分后才能按规则分析；进行中的数据不参与判断。',
-  viewProgress: '查看扫描进度',
-  loading: '正在读取分析结果…',
-  noRoot: '（范围不可用）',
-  analyze: '按规则分析这次扫描',
-  analyzing: '正在分析…',
-  analyzingLabel: '正在按规则分析，总量未知',
-  reanalyze: '重新分析',
-  notAnalyzedTitle: '还没有分析这次扫描',
-  notAnalyzedBody: '分析只读取扫描索引，用已启用的规则找出缓存、临时文件等候选。',
-  notAnalyzedMore: '每个候选都标出风险、影响和保护情况。分析不会触碰任何文件，也不会授权任何操作；生成计划之前没有任何东西会被处理。',
-  noneTitle: '当前规则没有找到可处理项',
-  noneBody: '这只说明已启用的规则在本次扫描范围内没有匹配，不代表磁盘上没有可以清理的数据。',
-  browseDisk: '浏览磁盘',
-  summary: (n: number) => `按规则找到 ${groupDigits(n)} 个候选`,
-  summarySize: (size: string) => `低风险与需审阅合计 ${size}`,
-  summaryNote: '没有预先勾选任何项目；大小未知的不按 0 计算，排在已知大小之后。',
-  summaryLabel: '各风险组的候选数与已知大小',
-  dismiss: '知道了',
-  rulesChanged: '规则包在分析之后已更新，基于旧规则的候选不能执行；请重新分析。',
-  partialScope: '这次扫描只覆盖了部分范围：未读取区域里的候选显示为“待判断”，不会进入计划。',
-  issues: (n: number) => `分析说明（${n}）`,
-  issuesLabel: '记录的问题',
-  unknownIn: (n: number) => `${groupDigits(n)} 项未知`,
-  selectLow: '选择全部可选的低风险项',
-  groupEmpty: '没有这一类候选。',
-  loadingMore: '正在加载…',
-  showMore: (shown: number, total: number) => `显示更多（已显示 ${shown} / ${total}）`,
-  loadingRows: '正在加载候选…',
-  hideBasis: '收起依据',
-  showBasis: '依据与影响',
-  hintTag: '提示',
-  adapterTag: '工具清理',
-  draft: '选择草稿',
-  draftEmpty: '没有预先勾选任何项目。勾选候选后，在这里选择处理方式。',
-  draftCount: (n: number) => `${groupDigits(n)} 个候选的已知逻辑大小`,
-  draftMore: (n: number) => `另外 ${n} 项`,
-  clear: '清空选择',
-  freezing: '正在冻结计划…',
-  pickFirst: '先选择候选',
-  pickMode: '再选择处理方式',
-  create: (n: number) => `生成计划（${n} 个候选）`,
-  createNote: '生成计划只冻结清单，不会执行；下一步由你逐项审阅并批准。',
+  get title() { return t('cleanup.title'); },
+  get candidates() { return t('cleanup.candidates'); },
+  get noScanTitle() { return t('cleanup.noScanTitle'); },
+  get noScanBody() { return t('cleanup.noScanBody'); },
+  get chooseScope() { return t('cleanup.chooseScope'); },
+  get unpublishedTitle() { return t('cleanup.unpublishedTitle'); },
+  get unpublishedBody() { return t('cleanup.unpublishedBody'); },
+  get viewProgress() { return t('cleanup.viewProgress'); },
+  get loading() { return t('cleanup.loading'); },
+  get noRoot() { return t('cleanup.noRoot'); },
+  get analyze() { return t('cleanup.analyze'); },
+  get analyzing() { return t('cleanup.analyzing'); },
+  get analyzingLabel() { return t('cleanup.analyzingLabel'); },
+  get reanalyze() { return t('cleanup.reanalyze'); },
+  get notAnalyzedTitle() { return t('cleanup.notAnalyzedTitle'); },
+  get notAnalyzedBody() { return t('cleanup.notAnalyzedBody'); },
+  get notAnalyzedMore() { return t('cleanup.notAnalyzedMore'); },
+  get noneTitle() { return t('cleanup.noneTitle'); },
+  get noneBody() { return t('cleanup.noneBody'); },
+  get browseDisk() { return t('cleanup.browseDisk'); },
+  summary: (n: number) => t('cleanup.summary', { n }),
+  summarySize: (size: string) => t('cleanup.summarySize', { size }),
+  get summaryNote() { return t('cleanup.summaryNote'); },
+  get summaryLabel() { return t('cleanup.summaryLabel'); },
+  get dismiss() { return t('cleanup.dismiss'); },
+  get rulesChanged() { return t('cleanup.rulesChanged'); },
+  get partialScope() { return t('cleanup.partialScope'); },
+  issues: (n: number) => t('cleanup.issues', { n }),
+  get issuesLabel() { return t('cleanup.issuesLabel'); },
+  unknownIn: (n: number) => t('cleanup.unknownIn', { n }),
+  get selectLow() { return t('cleanup.selectLow'); },
+  get groupEmpty() { return t('cleanup.groupEmpty'); },
+  get loadingMore() { return t('cleanup.loadingMore'); },
+  showMore: (shown: number, total: number) => t('cleanup.showMore', { shown, total }),
+  get loadingRows() { return t('cleanup.loadingRows'); },
+  get hideBasis() { return t('cleanup.hideBasis'); },
+  get showBasis() { return t('cleanup.showBasis'); },
+  get hintTag() { return t('cleanup.hintTag'); },
+  get adapterTag() { return t('cleanup.adapterTag'); },
+  get draft() { return t('cleanup.draft'); },
+  get draftEmpty() { return t('cleanup.draftEmpty'); },
+  draftCount: (n: number) => t('cleanup.draftCount', { n }),
+  draftMore: (n: number) => t('cleanup.draftMore', { n }),
+  get clear() { return t('cleanup.clear'); },
+  get freezing() { return t('cleanup.freezing'); },
+  get pickFirst() { return t('cleanup.pickFirst'); },
+  get pickMode() { return t('cleanup.pickMode'); },
+  create: (n: number) => t('cleanup.create', { n }),
+  get createNote() { return t('cleanup.createNote'); },
 } as const;
 
 /** One short note per group in the summary strip. */
 const GROUP_NOTE: Record<Group, string> = {
-  low: '可以选择',
-  review: '逐项确认',
-  pending: '证据不完整',
-  blocked: '只能查看',
+  get low() { return t('cleanup.groupNote.low'); },
+  get review() { return t('cleanup.groupNote.review'); },
+  get pending() { return t('cleanup.groupNote.pending'); },
+  get blocked() { return t('cleanup.groupNote.blocked'); },
 };
 
 interface GroupView {
@@ -166,13 +167,13 @@ export class CleanupPage {
     this.analyzing = true;
     this.infoError = null;
     this.update();
-    this.app.announce('正在按规则分析扫描结果');
+    this.app.announce(t('cleanup.analyzingScanResultsRules'));
     try {
       const info = await this.app.backend.analyzeScan(scanId);
       if (this.scanId !== scanId) return;
       this.setInfo(info);
       const total = GROUPS.reduce((a, g) => a + info.groups[g].count, 0);
-      this.app.announce(`分析完成：${total} 个候选，未预先勾选任何项目`);
+      this.app.announce(t('cleanup.analysisCompleteTotalNothing', { total }));
     } catch (e) {
       this.infoError = toIpcError(e);
     } finally {
@@ -212,7 +213,7 @@ export class CleanupPage {
     let added = 0;
     for (const c of items) if (this.draft && !this.draft.has(c.candidate_id) && this.draft.add(c)) added += 1;
     this.syncMode();
-    this.app.announce(added ? `已选择 ${added} 个低风险项目` : '没有可添加的低风险项目');
+    this.app.announce(added ? t('cleanup.selectedAdded', { added }) : t('cleanup.noLowRiskItems'));
     this.update();
   }
 
@@ -220,7 +221,7 @@ export class CleanupPage {
     if (!this.draft) return;
     const on = this.draft.toggle(c);
     this.syncMode();
-    this.app.announce(on ? `已选择 ${c.name}` : `已取消选择 ${c.name}`);
+    this.app.announce(on ? t('common.selectedName', { name: c.name }) : t('common.deselectedName', { name: c.name }));
     this.update();
   }
 
@@ -237,7 +238,7 @@ export class CleanupPage {
     this.update();
     try {
       const r = await this.app.backend.createPlan(this.draft.setId, this.draft.items().map((c) => c.candidate_id), this.mode);
-      this.app.announce('计划已生成，尚未执行。请审阅完整清单');
+      this.app.announce(t('common.planCreatedNotRun'));
       this.app.openPlan(r.plan_id, 'cleanup');
     } catch (e) {
       this.createError = toIpcError(e);
@@ -256,9 +257,9 @@ export class CleanupPage {
           : ({ source: 'rule', rule_id: c.rules[0].split('@')[0] } as const);
       await this.app.backend.addProtection(target, null);
       this.draft?.remove(c.candidate_id);
-      this.notice = what === 'entry' ? `已把“${c.name}”加入保护清单。重新分析后它会显示为受保护，执行前也会再次检查。` : `已保护规则 ${c.rules[0].split('@')[0]}。它的所有结果在执行前都会被拦下。`;
+      this.notice = what === 'entry' ? t('cleanup.addedNameProtectionList', { name: c.name }) : t('cleanup.protectedRulePAll', { p: c.rules[0].split('@')[0] });
     } catch (e) {
-      this.notice = `未能加入保护清单：${errorText(toIpcError(e))}`;
+      this.notice = t('cleanup.couldntAddProtectionList', { errorText: errorText(toIpcError(e)) });
     }
     this.update();
   }
@@ -320,7 +321,7 @@ export class CleanupPage {
     const completeness = info?.scan_completeness ?? status?.completeness;
     const meta = [
       root ? pathText(root, { max: 48 }) : CLEANUP_TEXT.noRoot,
-      info?.created_at ? `分析于 ${formatTime(info.created_at)}` : null,
+      info?.created_at ? t('cleanup.analyzedAt', { created_at: formatTime(info.created_at) }) : null,
       completeness ? (COMPLETENESS_LABEL[completeness] ?? '') : null,
     ];
     const reanalyze = info ? h('button', { type: 'button', id: 'cleanup-analyze', disabled: this.analyzing }, this.analyzing ? CLEANUP_TEXT.analyzing : CLEANUP_TEXT.reanalyze) : null;
@@ -411,7 +412,7 @@ export class CleanupPage {
       { type: 'button', class: 'group-toggle', id: `group-toggle-${g}`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `group-body-${g}` },
       h('span', { class: 'chev-icon', 'aria-hidden': 'true' }, icon('chevron')),
       groupMark(g),
-      h('span', { class: 'group-count num' }, `${groupDigits(count.count)} 项`),
+      h('span', { class: 'group-count num' }, t('common.itemsCount', { count: count.count })),
       count.count
         ? h(
             'span',
@@ -455,7 +456,7 @@ export class CleanupPage {
         id: `${id}-check`,
         disabled: !selectable,
         'aria-describedby': `${id}-why`,
-        'aria-label': `选择 ${c.name}`,
+        'aria-label': t('common.selectName', { name: c.name }),
       }) as HTMLInputElement;
       check.checked = !!this.draft?.has(c.candidate_id);
       check.addEventListener('change', () => this.toggle(c));
@@ -473,7 +474,7 @@ export class CleanupPage {
         c.unknown_size_count ? h('small', {}, T.unknownIn(c.unknown_size_count)) : null,
       );
       const why = selectable
-        ? h('span', { id: `${id}-why`, class: 'modes-line' }, c.allowed_modes.map((m) => MODE_LABEL[m]).join('、'))
+        ? h('span', { id: `${id}-why`, class: 'modes-line' }, c.allowed_modes.map((m) => MODE_LABEL[m]).join(t('common.listSep')))
         : h('span', { id: `${id}-why`, class: 'why-not' }, NOT_SELECTABLE_LABEL[c.not_selectable ?? 'no_mode']);
       rows.push(
         h(
@@ -499,35 +500,35 @@ export class CleanupPage {
       h(
         'table',
         { class: 'data-table ctable' },
-        h('caption', { class: 'sr-only' }, `${GROUP_LABEL[g]}候选，按已知大小排序；大小未知的排在后面`),
-        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, '选择')), h('th', { scope: 'col' }, '对象与依据'), h('th', { scope: 'col', class: 'col-size' }, '逻辑大小'), h('th', { scope: 'col' }, '可用方式'))),
+        h('caption', { class: 'sr-only' }, t('cleanup.pCandidatesSortedKnown', { p: GROUP_LABEL[g] })),
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col', class: 'col-check' }, h('span', { class: 'sr-only' }, t('common.select'))), h('th', { scope: 'col' }, t('common.objectBasis')), h('th', { scope: 'col', class: 'col-size' }, t('common.logicalSize')), h('th', { scope: 'col' }, t('cleanup.availableActions')))),
         h('tbody', {}, ...rows),
       ),
     );
   }
 
   private detail(c: Candidate): HTMLElement {
-    const protectEntry = h('button', { type: 'button', class: 'quiet', onclick: () => void this.protect(c, 'entry') }, icon('shield'), '保护此位置');
-    const protectRule = h('button', { type: 'button', class: 'quiet', onclick: () => void this.protect(c, 'rule') }, icon('shield'), '保护整条规则');
+    const protectEntry = h('button', { type: 'button', class: 'quiet', onclick: () => void this.protect(c, 'entry') }, icon('shield'), t('cleanup.protectLocation'));
+    const protectRule = h('button', { type: 'button', class: 'quiet', onclick: () => void this.protect(c, 'rule') }, icon('shield'), t('cleanup.protectWholeRule'));
     return h(
       'div',
       { class: 'cdetail-body' },
       h(
         'dl',
         { class: 'facts-list' },
-        h('dt', {}, '规则'),
-        h('dd', {}, h('code', { class: 'selectable' }, c.rules.join('，'))),
-        h('dt', {}, '理由'),
-        h('dd', {}, c.reasons.length ? c.reasons.join('；') : '规则匹配'),
-        h('dt', {}, '影响'),
-        h('dd', {}, c.impact || '规则未提供影响说明'),
-        c.protection ? h('dt', {}, '保护') : null,
-        c.protection ? h('dd', {}, protectionText(c.protection.class), c.protection.reviewable ? '（仅可逐项审阅，不进入批量计划或策略）' : '') : null,
-        c.unknown_size_count ? h('dt', {}, '未知大小') : null,
-        c.unknown_size_count ? h('dd', {}, `${groupDigits(c.unknown_size_count)} 个文件大小未知，未计入上面的数字，也不能冻结进计划。`) : null,
-        c.registry_status ? h('dt', {}, '实测登记') : null,
-        c.registry_status ? h('dd', {}, REGISTRY_LABEL[c.registry_status] ?? c.registry_status, c.installed_version ? h('small', {}, `已安装版本 ${c.installed_version}`) : null) : null,
-        c.probes.length ? h('dt', {}, '占用检查') : null,
+        h('dt', {}, t('common.rules')),
+        h('dd', {}, h('code', { class: 'selectable' }, c.rules.join(t('common.commaSep')))),
+        h('dt', {}, t('cleanup.reasons')),
+        h('dd', {}, c.reasons.length ? c.reasons.join(t('common.clauseSep')) : t('cleanup.ruleMatch')),
+        h('dt', {}, t('common.impact')),
+        h('dd', {}, c.impact || t('cleanup.ruleGivesNoImpact')),
+        c.protection ? h('dt', {}, t('cleanup.protection')) : null,
+        c.protection ? h('dd', {}, protectionText(c.protection.class), c.protection.reviewable ? t('cleanup.reviewItemItemOnly') : '') : null,
+        c.unknown_size_count ? h('dt', {}, t('common.unknownSize')) : null,
+        c.unknown_size_count ? h('dd', {}, t('cleanup.unknownSizeCount', { unknown_size_count: c.unknown_size_count })) : null,
+        c.registry_status ? h('dt', {}, t('cleanup.testedVersions')) : null,
+        c.registry_status ? h('dd', {}, REGISTRY_LABEL[c.registry_status] ?? c.registry_status, c.installed_version ? h('small', {}, t('cleanup.installedVersionInstalledVersion', { installed_version: c.installed_version })) : null) : null,
+        c.probes.length ? h('dt', {}, t('cleanup.useCheck')) : null,
         c.probes.length
           ? h(
               'dd',
@@ -535,15 +536,15 @@ export class CleanupPage {
               c.probe_results.length
                 ? h('ul', { class: 'probe-list' }, ...c.probe_results.map((r) => h('li', {}, h('span', { class: 'probe-state', 'data-state': r.state }, PROBE_STATE_LABEL[r.state] ?? r.state), ` ${PROBE_LABEL[r.probe] ?? r.probe}`)))
                 : c.catalog_fresh
-                  ? '本次分析未运行检查'
-                  : '需要重新分析才有本次的检查结果',
-              h('small', {}, '执行前每一项会再次检查；无法确认时按占用处理。'),
+                  ? t('cleanup.analysisDidntRunCheck')
+                  : t('cleanup.analyzeAgainGetRuns'),
+              h('small', {}, t('cleanup.eachItemCheckedAgain')),
             )
           : null,
-        c.row_kind === 'adapter' ? h('dt', {}, '清理方式') : null,
-        c.row_kind === 'adapter' ? h('dd', {}, `由所属工具（${c.adapter_ref ?? '未知'}）自己清理；此版本只显示预览，不会直接删除目录。`) : null,
-        c.row_kind === 'hint' ? h('dt', {}, '提示') : null,
-        c.row_kind === 'hint' ? h('dd', {}, '这是大项提示，用于帮你决定是否手动处理；它永远不会进入计划。') : null,
+        c.row_kind === 'adapter' ? h('dt', {}, t('cleanup.howCleaned')) : null,
+        c.row_kind === 'adapter' ? h('dd', {}, t('cleanup.cleanedOwnToolP', { p: c.adapter_ref ?? t('common.unknownLower') })) : null,
+        c.row_kind === 'hint' ? h('dt', {}, t('cleanup.hint')) : null,
+        c.row_kind === 'hint' ? h('dd', {}, t('cleanup.largeItemHintHelp')) : null,
       ),
       h('div', { class: 'card-actions' }, protectEntry, c.rules.length ? protectRule : null, this.diagButton(c)),
     );
@@ -554,7 +555,7 @@ export class CleanupPage {
     const scanId = this.app.store.state.scanId;
     if (!scanId) return null;
     const name = c.name;
-    return h('button', { type: 'button', class: 'quiet', id: `diag-${c.candidate_id}`, onclick: () => this.app.openDiagnosis({ scanId, entryId: c.entry_id, origin: 'cleanup', name }, 'cleanup') }, icon('diag'), 'AI 诊断');
+    return h('button', { type: 'button', class: 'quiet', id: `diag-${c.candidate_id}`, onclick: () => this.app.openDiagnosis({ scanId, entryId: c.entry_id, origin: 'cleanup', name }, 'cleanup') }, icon('diag'), t('common.aiDiagnosis'));
   }
 
   /** The shared bottom selection bar (GUI-09): count, known size, unknown count, next step. */
@@ -566,12 +567,12 @@ export class CleanupPage {
       onClear: () => {
         this.draft?.clear();
         this.syncMode();
-        this.app.announce('已清空选择');
+        this.app.announce(t('common.selectionCleared'));
         this.update();
       },
       action: {
         id: 'cleanup-bar-go',
-        text: this.mode ? '生成计划并审阅' : '选择处理方式',
+        text: this.mode ? t('common.createPlanReview') : t('common.chooseAction'),
         disabled: this.creating,
         danger: this.mode === 'delete',
         onClick: () => {
@@ -610,7 +611,7 @@ export class CleanupPage {
               'ul',
               { class: 'draft-list' },
               ...list.slice(0, 5).map((c) =>
-                h('li', {}, h('span', { class: 'path' }, c.name), h('button', { type: 'button', class: 'icon-btn small-btn', 'aria-label': `移除 ${c.name}`, onclick: () => this.toggle(c) }, icon('close'))),
+                h('li', {}, h('span', { class: 'path' }, c.name), h('button', { type: 'button', class: 'icon-btn small-btn', 'aria-label': t('cleanup.removeName', { name: c.name }), onclick: () => this.toggle(c) }, icon('close'))),
               ),
               list.length > 5 ? h('li', { class: 'muted small' }, T.draftMore(list.length - 5)) : null,
             ),

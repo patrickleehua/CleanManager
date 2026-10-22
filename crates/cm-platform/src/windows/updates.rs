@@ -169,7 +169,8 @@ pub fn winget_list(exe: &Path) -> Result<String, String> {
     }
     match out.exit_code {
         Some(0) => Ok(out.output),
-        other => Err(format!("winget list exited with {other:?}")),
+        Some(code) => Err(format!("winget list exited with code {code}")),
+        None => Err("winget list ended without an exit code".into()),
     }
 }
 

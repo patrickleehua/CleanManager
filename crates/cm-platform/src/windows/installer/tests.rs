@@ -78,6 +78,30 @@ fn open_files_are_reported_in_use() {
     assert_eq!(open_elsewhere(&f), Some(false));
 }
 
+/// WFA-58: a file opened elsewhere without read sharing (`FileShare.None`) cannot be read; classification says so
+/// (instead of "not an installer"), and the holder is named. Released, it is recognized by content again.
+#[test]
+fn a_file_held_without_read_sharing_is_in_use_with_its_holder() {
+    let root = scratch("held");
+    let f = root.join("held.msi");
+    // A minimal compound file whose root storage carries the Windows Installer package class id.
+    let mut msi = vec![0u8; 1024];
+    msi[..8].copy_from_slice(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    msi[0x1e..0x20].copy_from_slice(&9u16.to_le_bytes());
+    msi[512 + 0x50..512 + 0x60].copy_from_slice(&[0x84, 0x10, 0x0c, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
+    std::fs::write(&f, msi).unwrap();
+    assert!(matches!(verdict(&f), Verdict::Installer { kind: InstallerKind::Msi, .. }), "{:?}", verdict(&f));
+    let holder = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+    assert!(held_without_read_sharing(&f));
+    assert!(matches!(verdict(&f), Verdict::InUse { .. }), "{:?}", verdict(&f));
+    let held_by = WinInstallerProbe.holders(&raw(&f).unwrap()).expect("Restart Manager answers");
+    let me = format!("pid {}", std::process::id());
+    assert!(held_by.iter().any(|h| h.contains(&me)), "{held_by:?}");
+    drop(holder);
+    assert!(!held_without_read_sharing(&f));
+    assert!(matches!(verdict(&f), Verdict::Installer { kind: InstallerKind::Msi, .. }));
+}
+
 #[test]
 fn attached_images_are_detected() {
     if !super::super::testvhd::allowed() {

@@ -18,6 +18,61 @@ fn ids(list: &str) -> Vec<String> {
     list.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
 }
 
+/// MTR-03 / WFA-35: refuse a plan that would move `paths` to the bin when any of their volumes has no usable bin
+/// (turned off, by policy, network, none on the volume). The error is `unsupported` with the `trash_unavailable`
+/// message naming the volumes; `quarantine` adds `--mode quarantine` as the alternative to the next step. Nothing is
+/// deleted instead and the mode is never switched. Called after the plan was built (so protection refusals come
+/// first) and before it is stored.
+pub(crate) fn bins_ready(req: &str, p: &crate::args::Parsed, paths: &[cm_core::path::RawPath], quarantine: bool) -> Result<(), std::process::ExitCode> {
+    use cm_platform::trash_readiness::{message, next_step, unready};
+    let unready = unready(paths);
+    if unready.is_empty() {
+        return Ok(());
+    }
+    for u in &unready {
+        cm_core::debug_trace!("trash.ready", "volume=\"{}\" unready: {}", u.volume, u.reason);
+    }
+    let code = cm_core::error::ErrorCode::Unsupported;
+    let next = next_step(&unready, quarantine.then_some("--mode quarantine"));
+    let record = cm_core::protocol::error_record(req, code, &message(&unready), Some(&next), Default::default());
+    crate::emit(&record, p.format);
+    Err(std::process::ExitCode::from(cm_core::error::ExitClass::Error(code).code() as u8))
+}
+
+/// [`bins_ready`] for a cleanup (plan/v1) selection: only in trash mode, for the selected candidates' volumes.
+pub(crate) fn plan_bins_ready(
+    req: &str, p: &crate::args::Parsed, set: &cm_core::analysis::CandidateSet, selected: &[String], mode: cm_core::rules::Mode,
+) -> Result<(), std::process::ExitCode> {
+    if mode != cm_core::rules::Mode::Trash {
+        return Ok(());
+    }
+    let paths: Vec<cm_core::path::RawPath> = set.candidates.iter().filter(|c| selected.contains(&c.candidate_id)).map(|c| c.path.clone()).collect();
+    bins_ready(req, p, &paths, true)
+}
+
+/// WFA-47/63: a link is never moved or followed, and when it resolves into a hard-deny location the refusal is the
+/// protection refusal (`policy_denied`) naming that target. The target is resolved read-only, by identity, the way
+/// `protect check` does; nothing is opened for writing through the link.
+fn link_protection(path: &cm_core::path::RawPath, hard: &cm_core::protect::HardDenySet) -> Option<cm_core::manual_trash::TrashRefusal> {
+    let chain = cm_platform::protection::identity_chain(path);
+    let (target, why) = chain.links.iter().filter(|l| l.on_object).filter_map(|l| l.target.as_ref().ok()).find_map(|t| {
+        let why = hard
+            .root_at(&t.object)
+            .map(|r| format!("is the hard-deny location {} ({})", r.display, r.class.as_str()))
+            .or_else(|| t.ancestors.iter().find_map(|a| hard.covering(a)).map(|r| format!("is inside the hard-deny location {} ({})", r.display, r.class.as_str())))
+            .or_else(|| cm_core::protect::prefilter(&t.path).err().map(|e| format!("is refused by the path check ({e})")))?;
+        Some((t.path.display(), why))
+    })?;
+    Some(cm_core::manual_trash::TrashRefusal {
+        code: "policy_denied",
+        reason: "protected",
+        message: format!(
+            "this link resolves into a protected system location: {target} {why}; links are never moved or followed. {}",
+            cm_core::manual_trash::VIEW_ONLY_EXPLANATION
+        ),
+    })
+}
+
 /// Windows: Shell recycle bin readiness, Restart Manager holders, `$Recycle.Bin\<SID>` listing.
 #[cfg(windows)]
 mod plat {
@@ -33,13 +88,6 @@ mod plat {
 
     /// What the platform calls its bin, in messages.
     pub const BIN: &str = "Recycle Bin";
-
-    /// MTR-03: why a plan touching `path` is refused up front (no usable recycle bin), as the full error message.
-    pub fn not_ready(path: &RawPath) -> Option<(cm_core::error::ErrorCode, String)> {
-        cm_platform::windows::actions::recycle_bin_ready(path)
-            .err()
-            .map(|why| (cm_core::error::ErrorCode::Unsupported, format!("{}: {why}; there is no permanent-delete alternative", path.display())))
-    }
 
     /// Whether objects of this kind may meet a platform refusal (none on Windows).
     pub fn may_refuse(_kind: cm_core::model::ObjectKind) -> bool {
@@ -79,7 +127,7 @@ mod plat {
     use cm_core::model::ObjectKind;
     use cm_core::path::RawPath;
     use cm_core::protocol::{ErrorDetails, error_record};
-    use cm_platform::macos::actions::trash::{ListError, TrashListing, folder_refusal, list_trash_dir, open_holders, trash_ready, volume_trash_dirs};
+    use cm_platform::macos::actions::trash::{ListError, TrashListing, folder_refusal, list_trash_dir, open_holders, volume_trash_dirs};
     use serde_json::{Value, json};
 
     use crate::args::Parsed;
@@ -98,12 +146,6 @@ mod plat {
     const ANSWER_PROMPT: &str = "Answer the macOS privacy prompt (\"would like to access…\") for the program that runs cleanmanager, then list the Trash again; or open the Trash in Finder";
     /// Next step when the folder's own permissions block it.
     const FIX_PERMISSIONS: &str = "The Trash folder should belong to you and be readable by you; check its permissions, or open the Trash in Finder";
-
-    pub fn not_ready(path: &RawPath) -> Option<(ErrorCode, String)> {
-        trash_ready(path)
-            .err()
-            .map(|why| (ErrorCode::Unsupported, format!("trash_unavailable: {}: {why}; there is no permanent-delete alternative", path.display())))
-    }
 
     pub fn may_refuse(kind: ObjectKind) -> bool {
         kind == ObjectKind::Directory
@@ -206,7 +248,7 @@ mod imp {
     use cm_store::index::ScanStatusView;
     use serde_json::{Value, json};
 
-    use super::{ids, plat};
+    use super::{bins_ready, ids, link_protection, plat};
     use crate::args::Parsed;
     use crate::commands::{fields, open_stores, store_error};
     use crate::plan_cmd::{current_policy_digest, now_unix, v2_plan_record};
@@ -281,13 +323,6 @@ mod imp {
             Ok(e) => e,
             Err(c) => return c,
         };
-        // MTR-03: a volume without a usable recycle bin fails the plan; nothing is ever deleted instead.
-        for &e in &selected {
-            let path = scan.view.path(e);
-            if let Some((code, message)) = plat::not_ready(&path) {
-                return fail(req, code, &message, p.format);
-            }
-        }
         let hard = cm_platform::protection::hard_deny_set();
         let user = cm_platform::protection::load(&scan.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
@@ -311,8 +346,20 @@ mod imp {
         };
         let plan = match build_trash_plan(&scan.view, &selected, &guard, &input) {
             Ok(pl) => pl,
+            // WFA-47/63: a link into a protected system location is refused as protected, naming the location.
+            Err(ManualError::Refused { entry_id, path, refusal, .. }) if refusal.reason == "link_or_reparse" => {
+                let link = entry_id.parse::<u64>().ok().filter(|e| scan.view.facts.contains_key(e)).map(|e| scan.view.path(e));
+                let refusal = link.and_then(|l| link_protection(&l, &hard)).map(Box::new).unwrap_or(refusal);
+                return refusal_error(req, p, &ManualError::Refused { entry_id, path, refusal, protected: vec![], gaps: vec![] });
+            }
             Err(e) => return refusal_error(req, p, &e),
         };
+        // MTR-03 / WFA-35: a volume without a usable recycle bin fails the plan before it is stored; nothing is ever
+        // deleted instead.
+        let paths: Vec<cm_core::path::RawPath> = selected.iter().map(|&e| scan.view.path(e)).collect();
+        if let Err(c) = bins_ready(req, p, &paths, false) {
+            return c;
+        }
         if let Err(e) = scan.stores.audit.save_plan_v2(&plan) {
             return store_error(req, &e, p.format);
         }
@@ -341,6 +388,20 @@ mod imp {
         let mut ins = inspect(&scan.view, entry, &guard);
         if ins.refusal.is_none() {
             ins.refusal = plat::refusal(&ins);
+        }
+        // WFA-47/63: a link into a protected system location is view-only as protected, naming the location.
+        if ins.refusal.as_ref().is_some_and(|r| r.reason == "link_or_reparse")
+            && let Some(r) = link_protection(&ins.path, &hard)
+        {
+            ins.refusal = Some(r);
+        }
+        // WFA-35: a volume without a usable bin offers no move (the plan would be refused).
+        if ins.refusal.is_none()
+            && let Some(u) = cm_platform::trash_readiness::unready(std::slice::from_ref(&ins.path)).first()
+        {
+            let one = std::slice::from_ref(u);
+            let message = format!("{} {}", cm_platform::trash_readiness::message(one), cm_platform::trash_readiness::next_step(one, None));
+            ins.refusal = Some(cm_core::manual_trash::TrashRefusal { code: "unsupported", reason: "trash_unavailable", message });
         }
         let (holders, holders_note) = holders_of(&ins, &scan.view);
         let trashable = ins.refusal.is_none();

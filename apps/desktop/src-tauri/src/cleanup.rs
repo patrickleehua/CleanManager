@@ -551,8 +551,24 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
         policy_digest: &pdigest,
     };
     let plan = build_plan(&view, set, selected, mode, &input).map_err(|e| ipc(ErrorCode::PolicyDenied, "plan_refused", e.to_string()))?;
+    bins_ready(set, selected, mode)?;
     stores.audit.save_plan(&plan)?;
     Ok(CreatedPlanDto::new(plan_id))
+}
+
+/// MTR-03 / WFA-35: trash mode needs a usable bin on every selected target's volume, checked before a cleanup plan is
+/// stored; the plan is refused (naming the volumes), never switched to another mode or to a delete.
+pub(crate) fn bins_ready(set: &CandidateSet, selected: &[String], mode: Mode) -> IpcResult<()> {
+    use cm_platform::trash_readiness::{message, next_step, unready};
+    if mode != Mode::Trash {
+        return Ok(());
+    }
+    let paths: Vec<cm_core::path::RawPath> = set.candidates.iter().filter(|c| selected.contains(&c.candidate_id)).map(|c| c.path.clone()).collect();
+    let unready = unready(&paths);
+    if unready.is_empty() {
+        return Ok(());
+    }
+    Err(ipc(ErrorCode::Unsupported, "recycle_bin_unavailable", format!("{} {}", message(&unready), next_step(&unready, Some("quarantine mode")))))
 }
 
 // ---------------------------------------------------------------------------------------------

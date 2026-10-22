@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "kind": "operation_report",
+  "request_id": "req_synthetic",
+  "operation_id": "op_unknown",
+  "plan_id": "p_demo",
+  "plan_digest": "67b754ab5ce95ce2ab724f542ad5b5cd6f217e19d12eae1eed7ef6ae4209abf4",
+  "status": "completed",
+  "started_at": "2026-10-14T12:02:00Z",
+  "finished_at": "2026-10-14T12:05:00Z",
+  "succeeded": 2,
+  "skipped": 0,
+  "failed": 0,
+  "not_started": 0,
+  "unknown": 0,
+  "items": [
+    {
+      "action_id": "a_demo",
+      "status": "succeeded",
+      "code": "moved_to_trash",
+      "message": "Synthetic move",
+      "recovery": "trash"
+    },
+    {
+      "action_id": "a_demo2",
+      "status": "succeeded",
+      "code": "reconciled_performed",
+      "message": "the action was found to have taken effect",
+      "recovery": "trash"
+    }
+  ],
+  "processed_logical_bytes": "209715200",
+  "quarantined_logical_bytes": "0",
+  "estimated_freed_bytes": "0",
+  "volume_free_before_bytes": null,
+  "volume_free_after_bytes": null,
+  "observed_free_delta_bytes": null,
+  "reconciled_at": "2026-10-14T12:05:00Z"
+}

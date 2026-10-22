@@ -4,7 +4,7 @@
 // Only entry ids cross IPC; the plan moves nothing until it is approved and applied.
 
 import type { App } from '../main';
-import { formatBytes, groupDigits } from '../lib/bytes';
+import { formatBytes } from '../lib/bytes';
 import { h, icon, replace } from '../lib/dom';
 import { RequestGate } from '../lib/gate';
 import { words } from '../lib/platform';
@@ -12,26 +12,26 @@ import type { Entry, TrashInspection } from '../lib/types';
 import { atLeast, ensureReady, sumSizes, toIpcError } from './kit';
 import { errorText } from './parts';
 import { refusalText as codeRefusalText } from '../lib/codes';
+import { t } from '../i18n';
 
 const MAX_ENTRIES = 50;
 
 const REFUSAL: Record<string, string> = {
-  protected: '这个对象受保护，只能查看或复制路径',
-  protected_descendants: '其中有受保护的对象；请改选其中未受保护的子项',
-  coverage_gap: '其中有未能读取的部分，无法确认全部内容',
-  cloud_placeholder: '这是云端占位文件，没有下载到本机',
-  hard_denied: '属于系统硬拒绝范围',
-  no_recycle_bin: '所在的卷没有可用的回收站',
-  mounted: '这是挂载点或正在挂载的映像',
-  root: '不能选择扫描根目录本身',
+  get protected() { return t('trash.refusal.protected'); },
+  get protected_descendants() { return t('trash.refusal.protected_descendants'); },
+  get coverage_gap() { return t('trash.refusal.coverage_gap'); },
+  get cloud_placeholder() { return t('trash.refusal.cloud_placeholder'); },
+  get hard_denied() { return t('trash.refusal.hard_denied'); },
+  get no_recycle_bin() { return t('trash.refusal.no_recycle_bin', { bin: words().bin }); },
+  get mounted() { return t('trash.refusal.mounted'); },
+  get root() { return t('trash.refusal.root'); },
 };
 
 function refusalText(i: TrashInspection): string {
   const r = i.refusal;
   if (!r) return '';
   // A reason without words here reads through the shared code table (never the host's raw message).
-  const base = REFUSAL[r.reason] ?? codeRefusalText({ reason: r.reason });
-  return base.replace('回收站', words().bin);
+  return REFUSAL[r.reason] ?? codeRefusalText({ reason: r.reason });
 }
 
 /** Opens the review dialog for the selected entries; resolves when it closes. */
@@ -49,8 +49,8 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
   const dlg = h('dialog', { class: 'cm-dialog trash-review', 'aria-labelledby': 'trash-title' }) as HTMLDialogElement;
   const list = h('ul', { class: 'trash-list', 'aria-live': 'polite' });
   const status = h('p', { class: 'muted small', role: 'status' });
-  const go = h('button', { type: 'button', class: 'primary', id: 'trash-create', disabled: true }, '生成计划');
-  const cancel = h('button', { type: 'button', id: 'trash-cancel' }, '取消');
+  const go = h('button', { type: 'button', class: 'primary', id: 'trash-create', disabled: true }, t('trash.createPlan'));
+  const cancel = h('button', { type: 'button', id: 'trash-cancel' }, t('common.cancel'));
   const errEl = h('p', { class: 'form-error', role: 'alert', hidden: true });
   const close = () => {
     gate.invalidate(); // late inspections never write into a closed dialog
@@ -80,26 +80,26 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
             { class: 'tr-main' },
             h('b', { class: 'tr-name' }, e.name),
             h('span', { class: 'path muted small' }, e.path_display),
-            state === 'pending' ? h('span', { class: 'small muted' }, '正在检查…') : null,
+            state === 'pending' ? h('span', { class: 'small muted' }, t('common.checking')) : null,
             typeof r === 'string' ? h('span', { class: 'why-not' }, r) : null,
             ins && !ins.trashable ? h('span', { class: 'why-not' }, refusalText(ins)) : null,
             ins && ins.protected.length
               ? h(
                   'span',
                   { class: 'tr-sub small' },
-                  `受保护的子项 ${groupDigits(ins.protected_count)} 个：`,
+                  t('trash.protectedCount', { protected_count: ins.protected_count }),
                   ins.protected
                     .slice(0, 3)
-                    .map((p) => `${p.path_display}（${p.reason}）`)
-                    .join('；'),
-                  ins.protected_count > 3 ? ` 等` : '',
+                    .map((p) => t('trash.pathDisplayReason', { path_display: p.path_display, reason: p.reason }))
+                    .join(t('common.clauseSep')),
+                  ins.protected_count > 3 ? t('trash.more') : '',
                 )
               : null,
-            ins && ins.gap_count ? h('span', { class: 'tr-sub small' }, `未读取的部分 ${groupDigits(ins.gap_count)} 处：${ins.coverage_gaps.slice(0, 2).map((g) => g.path_display).join('；')}`) : null,
-            ins && ins.holders && ins.holders.length ? h('span', { class: 'tr-sub small' }, `正被使用：${ins.holders.join('、')}。执行时会跳过。`) : null,
-            ins && !ins.recycle_bin_ready ? h('span', { class: 'why-not' }, ins.recycle_bin_problem ?? `所在的卷没有可用的${w.bin}`) : null,
+            ins && ins.gap_count ? h('span', { class: 'tr-sub small' }, t('trash.gapCountJoin', { gap_count: ins.gap_count, join: ins.coverage_gaps.slice(0, 2).map((g) => g.path_display).join(t('common.clauseSep')) })) : null,
+            ins && ins.holders && ins.holders.length ? h('span', { class: 'tr-sub small' }, t('trash.useJoinSkippedWhen', { join: ins.holders.join(t('common.listSep')) })) : null,
+            ins && !ins.recycle_bin_ready ? h('span', { class: 'why-not' }, ins.recycle_bin_problem ?? t('trash.volumeNoUsableBin', { bin: w.bin })) : null,
           ),
-          h('span', { class: 'tr-size num' }, ins ? (ins.logical_bytes === null ? '大小未知' : formatBytes(ins.logical_bytes)) : formatBytes(e.logical_bytes)),
+          h('span', { class: 'tr-size num' }, ins ? (ins.logical_bytes === null ? t('common.sizeUnknown') : formatBytes(ins.logical_bytes)) : formatBytes(e.logical_bytes)),
         );
       }),
     );
@@ -107,10 +107,10 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
     const done = results.size === picked.length;
     const sum = sumSizes(good.map((g) => ({ bytes: g.logical_bytes })));
     status.textContent = done
-      ? `${groupDigits(good.length)} / ${groupDigits(picked.length)} 项可以${w.moveToBin}，${atLeast(sum)}。${entries.length > MAX_ENTRIES ? `一次最多 ${MAX_ENTRIES} 项，其余未包含。` : ''}`
-      : `正在检查 ${groupDigits(results.size)} / ${groupDigits(picked.length)} 项（只读）…`;
+      ? t('trash.lengthLength2UseMovetobin', { length: good.length, length2: picked.length, moveToBin: w.moveToBin, sum: atLeast(sum), p: entries.length > MAX_ENTRIES ? t('trash.mostMaxEntriesItems', { MAX_ENTRIES }) : '' })
+      : t('trash.checkingSizeLengthRead', { size: results.size, length: picked.length });
     go.disabled = !done || good.length === 0 || creating;
-    go.textContent = creating ? '正在冻结计划…' : good.length ? `生成计划（${groupDigits(good.length)} 项）` : '没有可以处理的对象';
+    go.textContent = creating ? t('common.freezingPlan') : good.length ? t('trash.createPlanLength', { length: good.length }) : t('trash.nothingProcessed');
     errEl.hidden = !error;
     errEl.textContent = error ?? '';
   };
@@ -124,7 +124,7 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
     try {
       const r = await app.backend.trashPlan(scanId, good.map((g) => g.entry_id));
       close();
-      app.announce('计划已生成，尚未执行。请审阅完整清单');
+      app.announce(t('common.planCreatedNotRun'));
       app.openPlan(r.plan_id, 'disk');
     } catch (e) {
       error = errorText(toIpcError(e));
@@ -137,8 +137,8 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
     h(
       'div',
       { class: 'dlg-head' },
-      h('h2', { id: 'trash-title' }, `${w.moveToBin}：手选的 ${groupDigits(picked.length)} 项`),
-      h('p', { class: 'muted' }, `先逐项只读检查，再把可以处理的对象冻结成一份计划。批准并执行后才会移动；之后可以${w.restoreFromBin}。`),
+      h('h2', { id: 'trash-title' }, t('trash.movetobinLength', { moveToBin: w.moveToBin, length: picked.length })),
+      h('p', { class: 'muted' }, t('trash.eachItemGetsRead', { restoreFromBin: w.restoreFromBin })),
     ),
     h('div', { class: 'dlg-body' }, list, status, errEl),
     h('div', { class: 'dlg-actions' }, cancel, go),

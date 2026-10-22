@@ -1,83 +1,85 @@
-// One code → 中文 table for everything the host can report by code: scan issues, the issue lists of
+// One code → words table for everything the host can report by code: scan issues, the issue lists of
 // analysis / catalogs / startup / apps, and refusal reasons (`IpcError.reason`). The main text a person
-// reads is always Chinese; a code the table does not know reads "未识别的问题（代码 x）" and its raw host
-// message is kept for a collapsed detail, never shown as the main text.
+// reads always comes from the language resources (src/i18n, 简体中文 and English, LIF-05); a code the table does not
+// know reads "未识别的问题（代码 x）" / "Unrecognized issue (code x)" and its raw host message is kept for a
+// collapsed detail, never shown as the main text.
 //
 // Refusal reasons extend `ERROR_HINT` (format.ts), which keeps its existing entries unchanged.
 
 import { ERROR_HINT } from './format';
-import { macOverlay, onPlatform, words } from './platform';
+import { words } from './platform';
 import type { Issue, PermissionCause } from './types';
 import { CODE_EXPLAIN } from './words';
+import { t } from '../i18n';
 
 /** Scan issues and the other issue lists (cleanup analysis, catalogs, startup, apps). */
 export const ISSUE_TEXT: Record<string, string> = {
   // The scan root itself (the scan ends `failed` before any row is written).
-  not_a_directory: '所选路径是文件，不是文件夹，请选择一个文件夹。',
-  root_not_directory: '所选路径是文件，不是文件夹，请选择一个文件夹。',
-  root_is_link: '所选路径是链接（目录联接或符号链接），请直接选择它指向的文件夹。',
-  root_unavailable: '找不到所选文件夹，或它所在的卷已离线。请连接后重新扫描，或选择其他文件夹。',
-  root_missing: '文件夹不存在或所在的卷已离线。',
-  unsupported_path: '这个路径不是本机可以扫描的位置，请选择这台电脑上的文件夹。',
-  scope_requires_volume: '这种读取方式只能扫描整个卷，请选择卷的根目录。',
-  unsupported_filesystem: '这个卷的文件系统不支持这种读取方式。',
-  unsupported: '这个平台还没有可用的扫描方式。',
+  get not_a_directory() { return t('codes.issueText.not_a_directory'); },
+  get root_not_directory() { return t('codes.issueText.root_not_directory'); },
+  get root_is_link() { return t('codes.issueText.root_is_link'); },
+  get root_unavailable() { return t('codes.issueText.root_unavailable'); },
+  get root_missing() { return t('codes.issueText.root_missing'); },
+  get unsupported_path() { return t('codes.issueText.unsupported_path'); },
+  get scope_requires_volume() { return t('codes.issueText.scope_requires_volume'); },
+  get unsupported_filesystem() { return t('codes.issueText.unsupported_filesystem'); },
+  get unsupported() { return t('codes.issueText.unsupported'); },
   // Inside the scan.
-  permission_required: '以普通权限无法读取这个位置。CleanManager 不会自动提权，它的大小记为未知。',
-  permission_denied: '没有权限读取这个位置，其中的项目没有列出。',
-  io_error: '读取这个位置时出错，它没有计入结果。',
-  internal_error: 'CleanManager 处理这个位置时出错，它没有计入结果。',
-  own_store_skipped: '这是 CleanManager 自己的数据目录，按设计不扫描。',
-  store_error: '扫描结果没能完整写入索引，本次结果可能缺少部分条目。',
-  volume_changed: '扫描期间卷发生了变化，扫描已停止。请重新扫描。',
-  identity_changed: '这个文件夹在列出后被替换，为安全起见没有进入。',
-  root_changed: '所选文件夹在扫描期间被移动或替换，扫描已停止。请重新扫描。',
-  volume_offline: '扫描期间卷不再响应（可能已拔出或断开），扫描已停止。',
-  mount_boundary: '这里挂载了另一个卷，没有进入。',
-  cloud_materialization_avoided: '这是只在云端的项目，为避免触发下载没有进入。',
-  materialization_policy_unavailable: '无法阻止云端文件被下载，为安全起见云端项目没有读取。',
-  entry_vanished: '这个条目在扫描期间被删除或移走，没有计入。',
-  bulk_record_malformed: '系统返回的目录记录格式异常，这部分没有计入。',
-  supplement_failed: '补充读取这个文件的详细信息时出错，它的大小可能未知。',
-  timeout: '扫描超过了等待时间，已保留到此为止确认的结果。',
-  host_exited: '运行扫描的程序在完成前退出，已保留确认的部分。',
+  get permission_required() { return t('codes.issueText.permission_required'); },
+  get permission_denied() { return t('codes.issueText.permission_denied'); },
+  get io_error() { return t('codes.issueText.io_error'); },
+  get internal_error() { return t('codes.issueText.internal_error'); },
+  get own_store_skipped() { return t('codes.issueText.own_store_skipped'); },
+  get store_error() { return t('codes.issueText.store_error'); },
+  get volume_changed() { return t('codes.issueText.volume_changed'); },
+  get identity_changed() { return t('codes.issueText.identity_changed'); },
+  get root_changed() { return t('codes.issueText.root_changed'); },
+  get volume_offline() { return t('codes.issueText.volume_offline'); },
+  get mount_boundary() { return t('codes.issueText.mount_boundary'); },
+  get cloud_materialization_avoided() { return t('codes.issueText.cloud_materialization_avoided'); },
+  get materialization_policy_unavailable() { return t('codes.issueText.materialization_policy_unavailable'); },
+  get entry_vanished() { return t('codes.issueText.entry_vanished'); },
+  get bulk_record_malformed() { return t('codes.issueText.bulk_record_malformed'); },
+  get supplement_failed() { return t('codes.issueText.supplement_failed'); },
+  get timeout() { return t('codes.issueText.timeout'); },
+  get host_exited() { return t('codes.issueText.host_exited'); },
   // Cleanup analysis.
-  rule_inapplicable: '有规则不适用于这台电脑，已跳过。',
-  undetermined: '有匹配的对象暂时无法判断，没有列为候选。',
-  needs_reanalysis: '检查结果已过时，请重新分析。',
-  protected_reviewable: '有对象默认受保护，只能审阅。',
-  protection_unavailable: '保护清单无法读取。为安全起见，所有写操作已停止。',
+  get rule_inapplicable() { return t('codes.issueText.rule_inapplicable'); },
+  get undetermined() { return t('codes.issueText.undetermined'); },
+  get needs_reanalysis() { return t('codes.issueText.needs_reanalysis'); },
+  get protected_reviewable() { return t('codes.issueText.protected_reviewable'); },
+  get protection_unavailable() { return t('codes.issueText.protection_unavailable'); },
   // Build artifacts / installers.
-  root_contains_store: '这个文件夹包含 CleanManager 自己的数据，没有扫描。',
-  scan_failed: '扫描这个位置时失败。',
-  cloud_placeholders: '有只在云端的文件，没有打开或识别。',
+  get root_contains_store() { return t('codes.issueText.root_contains_store'); },
+  get scan_failed() { return t('codes.issueText.scan_failed'); },
+  get cloud_placeholders() { return t('codes.issueText.cloud_placeholders'); },
   // Startup items.
-  registry_open_failed: '无法打开一个注册表位置，其中的项目没有列出。',
-  registry_enum_failed: '无法读取一个注册表位置中的全部项目。',
-  registry_entry_unreadable: '有一条登记无法读取，已跳过。',
-  known_folder_unavailable: '找不到一个系统文件夹（例如“启动”文件夹）。',
-  folder_unreadable: '无法读取一个启动文件夹。',
-  task_scheduler_unavailable: '无法连接任务计划程序，计划任务类启动项没有列出。',
-  task_folder_unreadable: '无法读取任务计划程序中的一个文件夹。',
+  get registry_open_failed() { return t('codes.issueText.registry_open_failed'); },
+  get registry_enum_failed() { return t('codes.issueText.registry_enum_failed'); },
+  get registry_entry_unreadable() { return t('codes.issueText.registry_entry_unreadable'); },
+  get known_folder_unavailable() { return t('codes.issueText.known_folder_unavailable'); },
+  get folder_unreadable() { return t('codes.issueText.folder_unreadable'); },
+  get task_scheduler_unavailable() { return t('codes.issueText.task_scheduler_unavailable'); },
+  get task_folder_unreadable() { return t('codes.issueText.task_folder_unreadable'); },
   // Apps.
-  unrecognized_package_entry: '有一条应用包登记无法识别，已跳过。',
-  root_unreadable: '无法读取应用文件夹。',
-  caskroom_unreadable: '无法读取 Homebrew 的 Caskroom 目录。',
-  cask_metadata_unreadable: '有一个 Homebrew 应用的信息无法读取。',
-  receipts_unreadable: '无法读取安装收据。',
-  invalid_argument: '读取应用清单的条件无效，清单可能不完整。',
+  get unrecognized_package_entry() { return t('codes.issueText.unrecognized_package_entry'); },
+  get root_unreadable() { return t('codes.issueText.root_unreadable'); },
+  get caskroom_unreadable() { return t('codes.issueText.caskroom_unreadable'); },
+  get cask_metadata_unreadable() { return t('codes.issueText.cask_metadata_unreadable'); },
+  get receipts_unreadable() { return t('codes.issueText.receipts_unreadable'); },
+  get invalid_argument() { return t('codes.issueText.invalid_argument'); },
 };
 
 /** Default protection categories (`protection.class` of a candidate, built-in protection rows `dc_<class>`). */
 export const PROTECTION_CLASS_TEXT: Record<string, string> = {
-  credentials: '凭据与密钥（.ssh、.gnupg、.aws、.azure、.kube、凭据管理器、钥匙串、系统证书）',
-  database: '数据库文件及其日志（.db、.sqlite、-wal、-shm、.mdb、.accdb）',
-  browser_site_storage: '浏览器站点数据（IndexedDB、Local Storage、Cookie、登录数据、历史记录等）',
-  ai_sessions_config: 'AI 工具的会话与配置（.claude、.codex）；会话可以逐项审阅',
-  source_worktree: 'Git 工作树（含 .git 的文件夹）；没有未提交改动的工作树可以逐项审阅，有改动的被阻止',
-  models: '模型权重（.gguf、.safetensors、.ckpt、.pt、.onnx）',
-  user_documents: '用户文档（按身份识别）',
-  system_repair: '系统修复与安装存储（按身份识别）',
+  get credentials() { return t('codes.protectionClassText.credentials'); },
+  get database() { return t('codes.protectionClassText.database'); },
+  get browser_site_storage() { return t('codes.protectionClassText.browser_site_storage'); },
+  get ai_sessions_config() { return t('codes.protectionClassText.ai_sessions_config'); },
+  get source_worktree() { return t('codes.protectionClassText.source_worktree'); },
+  get models() { return t('codes.protectionClassText.models'); },
+  get user_documents() { return t('codes.protectionClassText.user_documents'); },
+  get system_repair() { return t('codes.protectionClassText.system_repair'); },
 };
 
 /** A protection class in words; a class the table does not know reads as the unknown-code line. */
@@ -87,83 +89,75 @@ export function protectionText(cls: string): string {
 
 /** Why a permission issue happened (`permission_cause`). */
 export const PERMISSION_CAUSE_TEXT: Record<PermissionCause, string> = {
-  privacy_prompt_pending: '正在等待 macOS 授权：请在弹出的对话框中选择，然后重新扫描。',
-  undetermined: ISSUE_TEXT.permission_required,
+  get privacy_prompt_pending() { return t('codes.permissionCauseText.privacy_prompt_pending'); },
+  get undetermined() { return ISSUE_TEXT.permission_required; },
 };
 
 /** Refusal reasons the hint table did not cover (IPC `reason`, trash refusals, readiness). */
 export const EXTRA_REFUSAL_TEXT: Record<string, string> = {
-  root_not_directory: '所选路径是文件，不是文件夹，请选择一个文件夹。',
-  root_unavailable: '找不到所选文件夹，或它所在的卷已离线。',
-  ipc: '与 CleanManager 宿主通信失败，未做任何更改。',
-  invalid_argument: '请求的内容不符合要求，未做任何更改。',
-  schema_mismatch: '界面与核心的版本不一致，未做任何更改。请重新启动 CleanManager。',
-  internal: 'CleanManager 内部出错，未做任何更改。',
-  internal_error: 'CleanManager 内部出错，未做任何更改。',
-  cancelled: '已取消，未做任何更改。',
-  audit_unavailable: '操作记录无法写入。为安全起见没有执行。',
-  no_store_dir: 'CleanManager 的数据目录不可用，扫描结果和计划无法保存。',
-  no_store: 'CleanManager 的数据目录不可用，扫描结果和计划无法保存。',
-  store_error: '写入 CleanManager 自己的记录时出错，未做任何更改。',
-  experimental_off: '这项功能默认关闭，可以在“设置 › 实验功能”中开启。',
-  diag_not_configured: '还没有配置 AI 诊断的提供方。',
-  diag_unsupported: '这个对象不支持 AI 诊断。',
-  diag_not_found: '找不到这条诊断记录。',
-  diag_preview_changed: '要发送的内容在确认前发生了变化，请重新预览。',
-  diag_store: '诊断记录无法保存。',
-  cli_rejected: '这个命令行工具不符合要求，不会被启动。',
-  credential_store: '无法访问系统的凭据存储，密钥没有保存。',
-  handoff_unavailable: '这条建议不能转为计划。',
-  needs_reanalysis: '所选对象不在当前的分析结果中，请重新分析。',
-  plan_kind_violation: '这种计划不能执行这个动作。',
-  not_cleanup_plan: '只有清理计划可以由策略覆盖。',
-  no_rules: '这份计划没有引用规则版本，不能据此创建策略。',
-  unsupported_name: '这个名称无法准确保存到保护清单中。',
-  unknown_rule: '找不到这条规则，请刷新后重试。',
-  not_checked: '还没有检查过更新。',
-  unknown_app: '找不到这个应用，请刷新列表。',
-  no_purge_roots: '还没有添加项目文件夹。',
-  not_reviewed: '请先逐项审阅这些下载。',
-  no_downloads: '没有可处理的旧下载。',
-  scan_failed: '扫描失败，未做任何更改。',
-  refused: '核心拒绝了这个请求，未做任何更改。',
-  not_running: '这个进程已经不在运行。',
-  scan_root: '不能把整个扫描范围移到回收站。',
-  in_recycle_bin: '这个对象已经在回收站中。',
-  link_or_reparse: '这是链接或重分析点，不会被跟随，也不会被移动。',
-  protected_descendants: '文件夹里有受保护的项目，不能整体移动。',
-  cloud_placeholder: '这是只在云端的文件，不能移动。',
-  unknown_size: '大小未知，不能放入计划。',
-  hard_links: '这个文件有多个硬链接，移动它不会释放空间。',
-  weak_identity: '无法可靠地识别这个对象，为安全起见不能放入计划。',
-  folder_move_unavailable: '这一版不能把文件夹移到废纸篓。',
+  get root_not_directory() { return t('codes.extraRefusalText.root_not_directory'); },
+  get root_unavailable() { return t('codes.extraRefusalText.root_unavailable'); },
+  get ipc() { return t('codes.extraRefusalText.ipc'); },
+  get invalid_argument() { return t('codes.extraRefusalText.invalid_argument'); },
+  get schema_mismatch() { return t('codes.extraRefusalText.schema_mismatch'); },
+  get internal() { return t('codes.extraRefusalText.internal'); },
+  get internal_error() { return t('codes.extraRefusalText.internal_error'); },
+  get cancelled() { return t('codes.extraRefusalText.cancelled'); },
+  get audit_unavailable() { return t('codes.extraRefusalText.audit_unavailable'); },
+  // Protocol code of a damaged or incompatible scan index (the reasons index_corrupt/index_incompatible say which).
+  get index_unavailable() { return t('codes.extraRefusalText.index_unavailable'); },
+  get no_store_dir() { return t('codes.extraRefusalText.no_store_dir'); },
+  get no_store() { return t('codes.extraRefusalText.no_store'); },
+  get store_error() { return t('codes.extraRefusalText.store_error'); },
+  get experimental_off() { return t('codes.extraRefusalText.experimental_off'); },
+  get diag_not_configured() { return t('codes.extraRefusalText.diag_not_configured'); },
+  get diag_unsupported() { return t('codes.extraRefusalText.diag_unsupported'); },
+  get diag_not_found() { return t('codes.extraRefusalText.diag_not_found'); },
+  get diag_preview_changed() { return t('codes.extraRefusalText.diag_preview_changed'); },
+  get diag_store() { return t('codes.extraRefusalText.diag_store'); },
+  get cli_rejected() { return t('codes.extraRefusalText.cli_rejected'); },
+  get credential_store() { return t('codes.extraRefusalText.credential_store'); },
+  get handoff_unavailable() { return t('codes.extraRefusalText.handoff_unavailable'); },
+  get needs_reanalysis() { return t('codes.extraRefusalText.needs_reanalysis'); },
+  get plan_kind_violation() { return t('codes.extraRefusalText.plan_kind_violation'); },
+  get not_cleanup_plan() { return t('codes.extraRefusalText.not_cleanup_plan'); },
+  get no_rules() { return t('codes.extraRefusalText.no_rules'); },
+  get unsupported_name() { return t('codes.extraRefusalText.unsupported_name'); },
+  get unknown_rule() { return t('codes.extraRefusalText.unknown_rule'); },
+  get not_checked() { return t('codes.extraRefusalText.not_checked'); },
+  get unknown_app() { return t('codes.extraRefusalText.unknown_app'); },
+  get no_purge_roots() { return t('codes.extraRefusalText.no_purge_roots'); },
+  get not_reviewed() { return t('codes.extraRefusalText.not_reviewed'); },
+  get no_downloads() { return t('codes.extraRefusalText.no_downloads'); },
+  get scan_failed() { return t('codes.extraRefusalText.scan_failed'); },
+  get refused() { return t('codes.extraRefusalText.refused'); },
+  get not_running() { return t('codes.extraRefusalText.not_running'); },
+  get scan_root() { return t('codes.wholeScanScopeCant', { bin: words().bin }); },
+  get in_recycle_bin() { return t('codes.objectAlreadyBin', { bin: words().bin }); },
+  get link_or_reparse() { return t('codes.extraRefusalText.link_or_reparse'); },
+  get protected_descendants() { return t('codes.extraRefusalText.protected_descendants'); },
+  get cloud_placeholder() { return t('codes.extraRefusalText.cloud_placeholder'); },
+  get unknown_size() { return t('codes.extraRefusalText.unknown_size'); },
+  get hard_links() { return t('codes.extraRefusalText.hard_links'); },
+  get weak_identity() { return t('codes.extraRefusalText.weak_identity'); },
+  get folder_move_unavailable() { return t('codes.extraRefusalText.folder_move_unavailable'); },
 };
 
-// macOS words: a link root is a symbolic link or an alias; read permission is granted in System Settings.
-macOverlay(ISSUE_TEXT, {
-  root_is_link: '所选路径是替身或符号链接，请直接选择它指向的文件夹。',
-  permission_required: '以普通权限无法读取这个位置，它的大小记为未知。可以在“系统设置 › 隐私与安全性”中允许 CleanManager 访问，然后重新扫描。',
-});
-const ROOT_IS_LINK_WINDOWS = ERROR_HINT.root_is_link;
-onPlatform((p) => {
-  PERMISSION_CAUSE_TEXT.undetermined = ISSUE_TEXT.permission_required;
-  ERROR_HINT.root_is_link = p === 'macos' ? ISSUE_TEXT.root_is_link : ROOT_IS_LINK_WINDOWS;
-  EXTRA_REFUSAL_TEXT.scan_root = `不能把整个扫描范围移到${words().bin}。`;
-  EXTRA_REFUSAL_TEXT.in_recycle_bin = `这个对象已经在${words().bin}中。`;
-});
+// macOS readings (a link root is a symbolic link or an alias; read permission is granted in System Settings) are the
+// `@macos` keys of the resources (src/i18n); they follow the platform without any code here.
 
 /** Main text for a code nobody has put in words yet; the raw message goes into a collapsed detail. */
 export function unknownCodeText(code: string): string {
-  return `未识别的问题（代码 ${code || '空'}）`;
+  return t('codes.unrecognizedIssueCodeP', { p: code || t('codes.empty') });
 }
 
-/** Chinese text of a refusal reason (IPC error), or the unknown-code line. */
+/** Interface text of a refusal reason (IPC error), or the unknown-code line. */
 export function refusalText(e: { reason?: string | null; code?: string | null }): string {
   const reason = e.reason ?? '';
   return ERROR_HINT[reason] ?? EXTRA_REFUSAL_TEXT[reason] ?? ISSUE_TEXT[reason] ?? (e.code ? (ERROR_HINT[e.code] ?? EXTRA_REFUSAL_TEXT[e.code]) : undefined) ?? unknownCodeText(reason || (e.code ?? ''));
 }
 
-/** Whether a refusal reason has Chinese words. */
+/** Whether a refusal reason has words (in every language: the resources share their keys). */
 export function refusalKnown(reason: string): boolean {
   return reason in ERROR_HINT || reason in EXTRA_REFUSAL_TEXT || reason in ISSUE_TEXT;
 }
@@ -185,7 +179,7 @@ export interface ExplainedIssue {
   rawCode: string;
   known: boolean;
   cause: PermissionCause | null;
-  /** The Chinese main text: always set. */
+  /** The main text in the interface language: always set. */
   text: string;
   /** The host's raw message, for a collapsed detail only. */
   raw: string;
@@ -241,7 +235,7 @@ export function explainResult(i: Issue): ExplainedIssue {
   return explainIssue(i);
 }
 
-/** The main text of a result code: Chinese, or the unknown-code line — never the host's raw message. */
+/** The main text of a result code: its words, or the unknown-code line — never the host's raw message. */
 export function resultText(code: string | null): string {
   if (!code) return '';
   return explainResult({ code, scope_display: '', message: '' }).text;

@@ -113,6 +113,10 @@ impl AppState {
         match &store_dir {
             None => store_problem = Some(no_store()),
             Some(dir) => match Stores::open(dir) {
+                // The audit store opens here, an existing index on first use (BUG-WFA-01): a damaged or incompatible
+                // index becomes the startup store problem (`index_corrupt`/`index_incompatible`, code
+                // `index_unavailable`, the message names `cleanmanager doctor --repair-index`) while history,
+                // quarantine and recovery stay usable; only an audit-store problem leaves the stores closed.
                 Ok(stores) => {
                     match stores.index.reconcile_hosts(|h| OsHostProbe.liveness(h), &now_utc()) {
                         Ok(ids) => interrupted = ids,
@@ -387,6 +391,33 @@ mod tests {
         assert!(root_problem(&base, Some(&store)).is_none(), "the scanner skips the store as a boundary");
         assert_eq!(root_problem(&store, Some(&store)).map(|e| e.reason), Some("root_inside_store"));
         assert_eq!(root_problem(&store.join("quarantine"), Some(&store)).map(|e| e.reason), Some("root_inside_store"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// WFA-16: a damaged index is reported at startup; the audit store (history, quarantine, recovery) stays open.
+    #[test]
+    fn a_damaged_index_is_a_startup_problem_and_history_stays_usable() {
+        let base = std::env::temp_dir().join(format!("cm-desktop-damaged-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = base.join("store");
+        {
+            let stores = Stores::open(&store).unwrap();
+            // A pid no process has (pid 1 is launchd on macOS: probing it unprivileged gives EPERM, i.e. "unknown").
+            let host = cm_core::host::HostRef { kind: "cli".into(), pid: 0x7FFF_FFF0, started_at: "2026-10-22T00:00:00Z".into() };
+            stores.audit.begin_operation("op1", "p1", "d", "k", &host, "2026-10-22T00:00:00Z").unwrap();
+        }
+        std::fs::write(store.join(INDEX_FILE), [0x42u8; 8192]).unwrap();
+        let s = AppState::with_store(Some(store.clone()), None, None);
+        let problem = s.startup.store_problem.clone().expect("the index problem is reported");
+        assert_eq!((problem.code, problem.reason), (ErrorCode::IndexUnavailable, "index_corrupt"), "{problem:?}");
+        assert!(problem.message.contains("doctor --repair-index"), "{}", problem.message);
+        // The audit side of startup still ran: the operation whose host exited awaits reconciliation (GUI-06).
+        assert_eq!(s.startup.operations_to_reconcile, ["op1".to_string()]);
+        let state = s.with_stores(|st| st.audit.operation_state("op1").map_err(IpcError::from)).unwrap();
+        assert_eq!(state, "reconciliation_required", "history is readable while the index is damaged");
+        let e = s.with_index(|idx| idx.list_scans(5, None).map_err(IpcError::from)).unwrap_err();
+        assert_eq!(e.reason, "index_corrupt");
+        drop(s);
         let _ = std::fs::remove_dir_all(&base);
     }
 

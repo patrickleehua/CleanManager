@@ -216,6 +216,46 @@ pub fn trash_ready(path: &RawPath) -> Result<PathBuf, String> {
     }
 }
 
+/// Mount point of the volume holding `path`'s parent folder (the object itself is never followed), from `statfs`
+/// on the nearest existing ancestor.
+fn mount_point_of(path: &Path) -> Option<Vec<u8>> {
+    let mut p = path.parent()?.to_path_buf();
+    loop {
+        if let Ok(c) = CString::new(p.as_os_str().as_bytes()) {
+            // SAFETY: zeroed POD out-parameter of the declared type.
+            let mut sfs: libc::statfs = unsafe { std::mem::zeroed() };
+            // SAFETY: NUL-terminated path and valid out-pointer.
+            if unsafe { libc::statfs(c.as_ptr(), &mut sfs) } == 0 {
+                return Some(sfs.f_mntonname.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect());
+            }
+        }
+        if !p.pop() {
+            return None;
+        }
+    }
+}
+
+/// Every volume among `paths` without a Trash, each volume asked once, in first-seen order: `(mount point or the
+/// unresolvable path, why)`. Used to refuse a trash-mode plan up front (MTR-03, WFA-35).
+pub fn trash_unready(paths: &[RawPath]) -> Vec<(String, String)> {
+    let mut checked = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for p in paths {
+        let Some(bytes) = super::unix_bytes(p) else {
+            out.push((p.display(), "not a macOS path".to_string()));
+            continue;
+        };
+        let mount = mount_point_of(&super::os_path(bytes));
+        let shown = mount.as_deref().map(|m| String::from_utf8_lossy(m).into_owned()).unwrap_or_else(|| p.display());
+        if checked.insert(mount.unwrap_or_else(|| bytes.to_vec()))
+            && let Err(why) = trash_ready(p)
+        {
+            out.push((shown, why));
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------------------------
 // Who holds planned files open (MTR-04)
 

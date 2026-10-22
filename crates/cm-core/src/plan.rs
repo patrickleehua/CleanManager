@@ -125,7 +125,7 @@ pub enum PlanError {
     UnknownCandidate(String),
     #[error("candidate {0} cannot be planned: {1}")]
     NotPlannable(String, String),
-    #[error("mode {0:?} is not allowed for candidate {1}")]
+    #[error("mode {} is not allowed for candidate {}", .0.as_str(), .1)]
     ModeNotAllowed(Mode, String),
     #[error("candidate {0} contains a file of unknown size")]
     UnknownSize(String),
@@ -280,6 +280,18 @@ fn push_item(
     Ok(())
 }
 
+/// Why a candidate in `state` cannot be planned, for people (the state's code first).
+fn not_plannable_reason(state: CandidateState) -> &'static str {
+    match state {
+        CandidateState::Allowed => "allowed",
+        CandidateState::ProtectedReviewable => "protected_reviewable: protected by default; it can only be removed after a per-item confirmation",
+        CandidateState::PendingEvidence => {
+            "pending_evidence: its evidence is incomplete (for example in use, attached, or not fully readable); resolve that and run the preview again"
+        }
+        CandidateState::Blocked => "blocked: it is protected or outside the policy",
+    }
+}
+
 /// Freeze a selection into a plan. Only allowed (or explicitly reviewed review-only) candidates
 /// with the chosen mode permitted are accepted; blocked and pending candidates are refused.
 pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String], mode: Mode, input: &PlanInput<'_>) -> Result<Plan, PlanError> {
@@ -291,7 +303,7 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
         let c = set.candidates.iter().find(|c| &c.candidate_id == id).ok_or_else(|| PlanError::UnknownCandidate(id.clone()))?;
         match c.state {
             CandidateState::Allowed => {}
-            other => return Err(PlanError::NotPlannable(id.clone(), format!("{other:?}"))),
+            other => return Err(PlanError::NotPlannable(id.clone(), not_plannable_reason(other).into())),
         }
         if c.tier == Tier::Blocked {
             return Err(PlanError::NotPlannable(id.clone(), "blocked".into()));
@@ -362,6 +374,17 @@ pub enum StaleReason {
     Expired,
     RuleSetChanged,
     DigestMismatch,
+}
+
+/// The reason's code, then what it means (messages never carry Rust debug text).
+impl std::fmt::Display for StaleReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            StaleReason::Expired => "expired: its review window ended; create a new plan",
+            StaleReason::RuleSetChanged => "rule_set_changed: the rules changed since it was made; create a new plan",
+            StaleReason::DigestMismatch => "digest_mismatch: the stored plan no longer matches its digest",
+        })
+    }
 }
 
 /// Plan-level validity at `now` (PLN-03). Item-level re-observation happens at execution.

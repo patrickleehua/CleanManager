@@ -213,3 +213,29 @@ fn shipped_windows_pack_loads_with_its_registry() {
     let admin: Vec<&Rule> = set.enabled_for(Platform::Windows).filter(|r| r.requires_admin).collect();
     assert!(!admin.is_empty() && admin.iter().all(|r| r.max_tier == Tier::ReviewOnly), "administrator logs are enabled and review-only");
 }
+
+/// ANA-02 / WFA-17: the explanation names the rule ceiling and every lowering code, states the age basis as a
+/// modification time (never as a last use), and gives each offered mode's recovery limit.
+#[test]
+fn explanations_name_the_rule_basis_and_recovery_limits() {
+    let mut temp = rule("windows.user-temp.stale-files", RootResolver::UserTemp, RebuildClass::NotRebuildable, Tier::ReviewOnly);
+    temp.impact.summary = "Files directly in the user's temporary folder.".into();
+    temp.thresholds = Thresholds { min_age_days: Some(7), age_basis: Some("modified_time".into()), min_size_bytes: None, retention_days: None };
+    let basis = match_reason(&temp);
+    assert!(basis.starts_with("windows.user-temp.stale-files@1.0.0: Files directly in the user's temporary folder. Age threshold: modified at least 7 day(s)"), "{basis}");
+    assert!(basis.contains("by its modification time") && basis.contains("when it was last used is not known"), "{basis}");
+    assert_eq!(age_threshold(&temp), Some((7, "modified_time")));
+    assert_eq!(tier_reason(&[], Some(&temp)), "rule windows.user-temp.stale-files@1.0.0 lists it for review only (its owner does not rebuild it)");
+    let lowered = tier_reason(&["registry_missing".into(), "probe:open_file_handle:unknown".into()], Some(&temp));
+    assert!(lowered.ends_with("; registry_missing, probe:open_file_handle:unknown"), "{lowered}");
+    assert_eq!(tier_reason(&["protected:database".into()], None), "matched rule; protected:database");
+    let cache = rule("google.chrome.code-cache", RootResolver::BrowserProfile, RebuildClass::LocalRebuild, Tier::DefaultSelected);
+    assert!(tier_reason(&[], Some(&cache)).contains("allows default selection (rebuilt locally"));
+    assert_eq!(age_threshold(&cache), None);
+    assert_eq!(worst_rebuild([&cache, &temp]), Some(RebuildClass::NotRebuildable));
+    let limits = recovery_limits(&[crate::rules::Mode::Trash, crate::rules::Mode::Quarantine, crate::rules::Mode::Delete]);
+    let kinds: Vec<&str> = limits.iter().map(|l| l.recovery).collect();
+    assert_eq!(kinds, ["system_recycle_bin", "in_app_restore", "unavailable"]);
+    assert!(limits[0].limit.contains(crate::manual_trash::BIN_NAME) && limits[1].limit.contains("frees no space") && limits[2].limit.contains("no undo"));
+    assert!(recovery_limits(&[]).is_empty(), "a row without offered modes has no recovery to describe");
+}

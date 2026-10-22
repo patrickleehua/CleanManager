@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { HINT_LABEL, hintAction, hintBasisText, hintOf, hintTitle } from './cleanable';
+import { hintLabel, hintAction, hintBasisText, hintOf, hintTitle } from './cleanable';
 import { setPlatform } from './platform';
 import type { CleanableHint, Entry } from './types';
 
@@ -30,7 +30,7 @@ describe('DIN-05 cleanable directory hints', () => {
     expect(hintBasisText(artifact)).toContain('package.json');
     expect(hintBasisText(tag)).toContain('CACHEDIR.TAG');
     expect(hintBasisText(rule)).toContain('google.chrome.code-cache');
-    expect(hintTitle(tag)).toContain(HINT_LABEL);
+    expect(hintTitle(tag)).toContain(hintLabel());
     expect(hintTitle(tag)).toContain('不会替你选中');
   });
 
