@@ -6,6 +6,7 @@
 | --- | --- |
 | [capabilities.json](capabilities.json) | 平台能力可用、需要权限的不同状态 |
 | [scan-partial.json](scan-partial.json) | 部分子树拒绝访问，已知数据与缺口并存 |
+| [scan-failed.json](scan-failed.json) | 根是 junction：写入任何行之前以 `root_is_link` 失败，大小未知为 null 而不是 0 |
 | [candidate.json](candidate.json) | Windows 路径原始 UTF-16 编码和候选理由 |
 | [candidate-macos.json](candidate-macos.json) | macOS 路径原始字节编码 |
 | [plan.json](plan.json) | 固定对象集合、15 分钟有效期、规范化摘要 |

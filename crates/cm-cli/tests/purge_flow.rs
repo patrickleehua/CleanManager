@@ -192,7 +192,9 @@ fn recent_projects_need_an_explicit_choice() {
     write(&root.join("fresh").join("pyproject.toml"), b"[project]");
     write(&root.join("fresh").join(".mypy_cache").join("3.12").join("x.json"), b"{}");
     assert_eq!(cli(&["purge", "roots", "add", "--path", root.to_str().unwrap()], &store).0, 0);
-    let (_, preview) = cli(&["purge", "scan"], &store);
+    // Only the configured fixture root: the default roots (e.g. `<drive>:\workplace`) may hold real projects on a
+    // developer machine, whose old caches would then be selected by default.
+    let (_, preview) = cli(&["purge", "scan", "--root", root.to_str().unwrap()], &store);
     let cache = item(&preview, "fresh\\.mypy_cache").expect("listed");
     assert_eq!((cache["tier"].as_str(), cache["skip_reason"].as_str(), cache["selected_by_default"].as_bool()), (Some("review_only"), Some("recent"), Some(false)));
     let (code, err) = cli(&["purge", "plan", "create", "--all-default-selected", "--non-interactive"], &store);

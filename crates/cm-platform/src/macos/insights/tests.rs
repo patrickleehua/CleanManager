@@ -204,7 +204,7 @@ fn fake_vm_dirs_are_sized_by_allocation() {
     assert_eq!((b.count, b.size_basis), (Some(1), SizeBasis::Allocated));
 
     // Overview: the VM card sums known allocations only when every member is known.
-    let downloads = old_downloads_at(Some(&home.join("Downloads")), 90);
+    let downloads = old_downloads_at(Some(&home.join("Downloads")), Some(home), 90);
     let cards = cm_core::insights::overview_cards(&items, &downloads, &[]);
     let vm = cards.iter().find(|c| c.kind == CardKind::VirtualMachines).unwrap();
     assert_eq!(vm.logical_bytes, None, "UTM is unknown, so the total is unknown");
@@ -245,48 +245,55 @@ fn old_downloads_review_of_a_fixture_folder() {
     fx.write("home/Downloads/new.txt", b"fresh");
     let env = ResolverEnv::from_vars(|_| None).with_overrides(|k| (k == "CM_RESOLVE_HOME").then(|| fx.path().join("home").into_os_string())).0;
     assert_eq!(env.downloads.as_deref(), Some(dl.as_path()));
-    let r = old_downloads_at(env.downloads.as_deref(), 90);
+    let r = old_downloads_at(env.downloads.as_deref(), env.home.as_deref(), 90);
     assert_eq!(r.items.iter().map(|i| i.logical_bytes).collect::<Vec<_>>(), [9000, 500, 10]);
     assert!(r.items.iter().all(|i| !i.selected) && r.items[0].installer_like);
     assert_eq!((r.total_logical_bytes, r.item_count, r.handling), (Some(9510), 3, Handling::ManualTrashReview));
     assert_eq!(r.root.as_ref().map(|p| p.display()), Some(dl.to_string_lossy().into_owned()));
 
     std::fs::set_permissions(&dl, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let denied = old_downloads_at(Some(&dl), 90);
+    let denied = old_downloads_at(Some(&dl), env.home.as_deref(), 90);
     std::fs::set_permissions(&dl, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!((denied.total_logical_bytes, denied.item_count), (None, 0));
+    assert_eq!((denied.total_logical_bytes, denied.known_item_count()), (None, None), "unknown, not 0 files");
     assert!(denied.note.as_deref().unwrap().starts_with(PERMISSION_REQUIRED), "{:?}", denied.note);
 
-    let missing = old_downloads_at(Some(&fx.path().join("nope")), 90);
+    let missing = old_downloads_at(Some(&fx.path().join("nope")), env.home.as_deref(), 90);
     assert_eq!((missing.root.is_none(), missing.total_logical_bytes), (true, None));
+}
+
+/// A gate of its own (tests run in parallel and must not share the process-wide cap of waiting workers).
+fn gate(home: &Path, wait: Duration) -> privacy::Gate {
+    privacy::Gate { home: Some(home.to_path_buf()), wait, registry: Box::leak(Box::new(privacy::Registry::new(privacy::MAX_PARKED))), hold: None }
 }
 
 /// The Downloads folder while macOS shows its privacy prompt: the first open does not return, so after the deadline
 /// the review is pending with an unknown total (never an empty folder), and the overview card shows no count or size.
-/// An answer within the deadline lists the folder; a denial is `permission_required`.
+/// An answer within the deadline lists the folder; a denial is `permission_required`. A redirected Downloads folder
+/// outside the home is no known prompt location: the same silence is `undetermined`.
 #[test]
 fn old_downloads_while_a_privacy_prompt_is_unanswered() {
     let fx = Fixture::new("insights-dl-prompt");
     let dl = fx.mkdir("Downloads");
     let p = fx.write("Downloads/old.dmg", &[0u8; 700]);
     std::fs::File::options().write(true).open(&p).unwrap().set_modified(SystemTime::now() - Duration::from_secs(200 * 86_400)).unwrap();
+    let slow = gate(fx.path(), Duration::from_secs(5));
 
     // Answered (allowed) within the deadline: listed as usual.
-    let allowed = old_downloads_gated(Some(&dl), 90, Duration::from_secs(5), |dir| {
+    let allowed = old_downloads_gated(Some(&dl), 90, &slow, |dir| {
         std::thread::sleep(Duration::from_millis(300));
         std::fs::read_dir(dir).map(drop)
     });
     assert_eq!((allowed.total_logical_bytes, allowed.item_count, allowed.note.as_deref()), (Some(700), 1, None));
 
     // Denied: macOS answers EPERM, reported as permission_required with the settings path.
-    let denied = old_downloads_gated(Some(&dl), 90, Duration::from_secs(5), |_| Err(std::io::Error::from_raw_os_error(libc::EPERM)));
+    let denied = old_downloads_gated(Some(&dl), 90, &slow, |_| Err(std::io::Error::from_raw_os_error(libc::EPERM)));
     assert_eq!(denied.total_logical_bytes, None);
     let note = denied.note.as_deref().unwrap();
     assert!(note.starts_with(PERMISSION_REQUIRED) && note.contains("Files and Folders") && !privacy::is_pending(note), "{note}");
 
     let (answer, prompt) = std::sync::mpsc::channel::<()>();
     let t = std::time::Instant::now();
-    let r = old_downloads_gated(Some(&dl), 90, Duration::from_millis(200), move |dir| {
+    let r = old_downloads_gated(Some(&dl), 90, &gate(fx.path(), Duration::from_millis(200)), move |dir| {
         let _ = prompt.recv(); // held in the kernel until the person answers
         std::fs::read_dir(dir).map(drop)
     });
@@ -300,7 +307,63 @@ fn old_downloads_while_a_privacy_prompt_is_unanswered() {
     let card = cards.iter().find(|c| c.kind == CardKind::OldDownloads).unwrap();
     assert_eq!((card.logical_bytes, card.count), (None, None), "an unknown folder has no file count either");
     assert!(card.size_note.as_deref().is_some_and(privacy::is_pending), "{:?}", card.size_note);
+    assert_eq!(card.to_wire()["permission_cause"], "privacy_prompt_pending", "the structured cause travels with the card");
+    assert_eq!(r.known_item_count(), None);
+    let wire = crate_wire(&r);
+    assert!(wire["item_count"].is_null() && wire["permission_cause"] == "privacy_prompt_pending", "{wire}");
     answer.send(()).unwrap(); // the parked reader ends
+
+    // The same silence for a redirected folder outside any home: no known prompt, cause undetermined.
+    let elsewhere = fx.mkdir("fixture-downloads");
+    let (answer, prompt) = std::sync::mpsc::channel::<()>();
+    let r = old_downloads_gated(Some(&elsewhere), 90, &gate(&fx.path().join("home"), Duration::from_millis(200)), move |dir| {
+        let _ = prompt.recv();
+        std::fs::read_dir(dir).map(drop)
+    });
+    let note = r.note.as_deref().unwrap();
+    assert!(note.starts_with(privacy::PERMISSION_UNDETERMINED) && note.contains("did not answer within 0.2 s") && !privacy::is_pending(note), "{note}");
+    assert_eq!(r.total_logical_bytes, None);
+    drop(answer);
+}
+
+fn crate_wire(r: &cm_core::insights::OldDownloadsReview) -> serde_json::Value {
+    r.to_wire()
+}
+
+/// Docker's two image names live in one container: while its first access waits, the second is not tried (one wait,
+/// not two), and another app's container is tried on its own.
+#[test]
+fn insights_wait_once_per_location() {
+    let fx = Fixture::new("insights-prompt-key");
+    let home = fx.path();
+    let docker = join(home, DOCKER_DATA);
+    std::fs::create_dir_all(&docker).unwrap();
+    std::fs::write(docker.join("Docker.raw"), b"img").unwrap();
+    std::fs::write(docker.join("Docker.qcow2"), b"img").unwrap();
+    fx.mkdir("Library/Containers/com.utmapp.UTM/Data");
+    let (answer, prompt) = std::sync::mpsc::channel::<()>();
+    let prompt = std::sync::Mutex::new(prompt);
+    let asked: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>> = std::sync::Arc::default();
+    let seen = std::sync::Arc::clone(&asked);
+    let mut g = gate(home, Duration::from_millis(200));
+    g.hold = Some(std::sync::Arc::new(move |p: &Path| {
+        seen.lock().unwrap().push(p.to_path_buf());
+        if p.components().any(|c| c.as_os_str() == "com.docker.docker") {
+            let _ = prompt.lock().unwrap().recv(); // held until the person answers
+        }
+    }));
+    let t = std::time::Instant::now();
+    let items = home_objects_gated(home, NOW, g);
+    assert!(t.elapsed() < Duration::from_millis(1500), "one wait for Docker's container, not one per image: {:?}", t.elapsed());
+    let disks: Vec<_> = items.iter().filter(|i| i.kind == "macos.docker_disk").collect();
+    assert_eq!(disks.len(), 2, "{disks:?}");
+    assert!(disks.iter().all(|d| d.logical_bytes.is_none() && d.size_note.as_deref().is_some_and(privacy::is_pending)), "{disks:?}");
+    assert!(disks[1].size_note.as_deref().unwrap().contains("was not tried"), "{:?}", disks[1].size_note);
+    let utm = items.iter().find(|i| i.kind == "macos.utm_vms").unwrap();
+    assert!(!utm.size_note.as_deref().unwrap().contains("not tried"), "UTM's container is its own location: {:?}", utm.size_note);
+    let docker_asks = asked.lock().unwrap().iter().filter(|p| p.components().any(|c| c.as_os_str() == "com.docker.docker")).count();
+    assert_eq!(docker_asks, 1, "the second image was not tried");
+    drop(answer);
 }
 
 #[test]

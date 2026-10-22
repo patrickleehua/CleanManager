@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-05",
+  "run_id": "run_win_acc_2026-10-22_win-05",
+  "recorded_at": "2026-10-22T04:25:52Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "desktop debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "ui-10-disk-default.txt",
+      "ui-14-name-sort.txt",
+      "ui-15-nested-confirmed.txt"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [],
+  "seed": null,
+  "expected": "展开层级正确；排序符合所选字段；逻辑量和分配量有明确口径",
+  "actual": "表格按逻辑大小降序；切换名称排序后标签和行顺序变化；进入 nested 后显示 second.log 8,192 字节与 zero.txt 0 字节。",
+  "terminal_state": "observed_in_native_window",
+  "exit_code": null,
+  "measurements": {
+    "default_sort": "logical size descending",
+    "name_sort_changed_order": true,
+    "nested": {
+      "second.log": "8192",
+      "zero.txt": "0"
+    }
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate."
+  ],
+  "status": "passed"
+}

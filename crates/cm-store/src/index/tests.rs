@@ -299,6 +299,30 @@ fn cancel_is_a_receipt_and_terminal_scans_refuse_it() {
 }
 
 #[test]
+fn an_accepted_cancel_always_ends_cancelled_even_if_the_backend_finished_first() {
+    let dir = scratch("cancel-late");
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    let other = IndexStore::open(&dir.join("index.db")).unwrap(); // another process's connection
+    let rev = begin(&store, "s1");
+    store.write_batch("s1", rev, &[obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::File, Some(9))],
+        &[ent(1, None, "/r", 1, ObjectKind::Directory), ent(2, Some(1), "a", 2, ObjectKind::File)], &[]).unwrap();
+    // The receipt lands after the backend's last poll; the backend still reports `completed`.
+    assert!(other.request_cancel("s1").unwrap().accepted);
+    let state = store.publish("s1", rev, ScanState::Completed, "t").unwrap();
+    assert_eq!(state, ScanState::Cancelled, "an accepted receipt never ends as completed");
+    let status = other.scan_status("s1").unwrap();
+    assert_eq!((status.state, status.completeness.as_deref()), (ScanState::Cancelled, Some("partial_scope")));
+    assert_eq!(store.list_entries(&query(Sort::LogicalDesc, 5, None)).unwrap().items.len(), 1, "confirmed rows stay queryable");
+    let late = other.request_cancel("s1").unwrap();
+    assert_eq!((late.accepted, late.state_at_receipt.as_str()), (false, "already_terminal"));
+
+    // Without a cancel request the same publish completes.
+    let rev = begin(&store, "s2");
+    store.write_batch("s2", rev, &[obj(1, ObjectKind::Directory, None)], &[ent(1, None, "/r", 1, ObjectKind::Directory)], &[]).unwrap();
+    assert_eq!(store.publish("s2", rev, ScanState::Completed, "t").unwrap(), ScanState::Completed);
+}
+
+#[test]
 fn windows_paths_are_rebuilt_from_raw_units() {
     let dir = scratch("winpath");
     let store = IndexStore::open(&dir.join("index.db")).unwrap();

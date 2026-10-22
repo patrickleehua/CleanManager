@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-17",
+  "run_id": "run_win_acc_2026-10-22_win-17",
+  "recorded_at": "2026-10-22T04:28:34Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "cli-42-insights-system-only.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [
+    "cleanmanager",
+    "insights",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "平台不支持有说明；未知非 0；若需要读取个人范围，本轮记录未执行而非通过",
+  "actual": "已验证系统对象 CLI 返回 5 项，WinSxS/受限快照大小保持未知并有说明；完整洞察页还会枚举真实 Downloads，Windows 使用系统 KnownFolder，当前没有独立测试账号/可重定向入口，因此本轮没有执行完整页面和旧下载测量。",
+  "terminal_state": "insight_list",
+  "exit_code": 0,
+  "measurements": {
+    "system_insights": [
+      {
+        "kind": "windows.page_file",
+        "logical_bytes": "15569256448",
+        "size_basis": "file_metadata"
+      },
+      {
+        "kind": "windows.delivery_optimization_cache",
+        "logical_bytes": "1128892233",
+        "size_basis": "directory_walk"
+      },
+      {
+        "kind": "windows.swap_file",
+        "logical_bytes": "16777216",
+        "size_basis": "file_metadata"
+      },
+      {
+        "kind": "windows.shadow_storage",
+        "logical_bytes": null,
+        "size_basis": "not_measured"
+      },
+      {
+        "kind": "windows.component_store",
+        "logical_bytes": null,
+        "size_basis": "not_measured"
+      }
+    ],
+    "full_page_and_old_downloads": "not executed"
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate.",
+    "Blocked: the full insights page enumerates the real Downloads KnownFolder; no separate test account or redirectable KnownFolder was available, so it was not run."
+  ],
+  "status": "incomplete"
+}

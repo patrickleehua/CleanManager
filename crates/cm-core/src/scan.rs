@@ -55,10 +55,25 @@ pub struct ScanIssue {
     pub message: String,
 }
 
+/// Typed `ScanIssue::code` values that every backend and host reports with the same meaning.
+/// A root refusal is reported before any row is written: the scan ends `failed` with no entries.
+pub mod issue {
+    /// The root exists but is not a directory (a regular file, a device, ...).
+    pub const NOT_A_DIRECTORY: &str = "not_a_directory";
+    /// The root itself is a link: a symbolic link, junction, mount point or another reparse point
+    /// the scanner does not traverse. It is never followed; the user scans the target directly.
+    pub const ROOT_IS_LINK: &str = "root_is_link";
+    /// The root does not exist, its volume is offline, or it cannot be opened for another reason.
+    pub const ROOT_UNAVAILABLE: &str = "root_unavailable";
+    /// Reading the root or a subtree needs rights the scan does not have; never elevated silently.
+    pub const PERMISSION_REQUIRED: &str = "permission_required";
+}
+
 /// Where scan rows go. Implemented by the index store.
 pub trait ScanSink {
     fn write(&mut self, objects: &[ObjectRow], entries: &[EntryRow], skipped: &[SkippedRow]) -> Result<(), String>;
-    /// Polled between directories; a `true` stops scheduling new work.
+    /// Polled between directories and after every batch written while one directory is listed, so a
+    /// single huge directory cannot outrun a cancel request; a `true` stops scheduling new work.
     fn cancel_requested(&mut self) -> bool;
 }
 

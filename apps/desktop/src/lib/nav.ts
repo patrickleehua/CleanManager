@@ -180,9 +180,12 @@ export function shortcutLabel(key: string, mod: string): string {
   return mod === '⌘' ? `⌘${key}` : `${mod}+${key}`;
 }
 
-/** Short label for a tool whose gate has not passed (18.5: the UI never presents ungated tools as released). */
-export function gateLabel(tool: Tool): string {
-  return `实验 · ${tool.gate} 未通过`;
+/**
+ * Short label for a tool whose gate has not passed (18.5: the UI never presents ungated tools as released). Plain
+ * words: the gate id is not shown in the bar (设置 › 实验功能 lists each capability with its gate).
+ */
+export function gateLabel(_tool: Tool): string {
+  return '实验功能';
 }
 
 /** A section backed by a capability with a release gate (D15). */

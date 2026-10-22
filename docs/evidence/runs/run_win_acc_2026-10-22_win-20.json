@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-20",
+  "run_id": "run_win_acc_2026-10-22_win-20",
+  "recorded_at": "2026-10-22T04:21:10Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "cli-01-help.json",
+      "cli-04-doctor.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md",
+    "commands": [
+      [
+        "cleanmanager",
+        "help",
+        "--lang",
+        "zh",
+        "--format",
+        "text"
+      ],
+      [
+        "cleanmanager",
+        "doctor",
+        "--json",
+        "--non-interactive"
+      ]
+    ]
+  },
+  "command": [
+    "cleanmanager",
+    "doctor",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "文本帮助可读，JSON 结构正确；诊断默认脱敏，不发生上传",
+  "actual": "中文 help 在 text 模式可读，doctor 明确 `redacted=true`，SQLite 与配置检查有结果；没有使用导出、发送或上传入口。",
+  "terminal_state": "doctor_report",
+  "exit_code": 0,
+  "measurements": {
+    "help_text_exit_code": 0,
+    "help_first_line": "CleanManager 命令行",
+    "doctor_redacted": true,
+    "doctor_checks": {
+      "platform.engine": "ok",
+      "permissions.bypass_privileges": "ok",
+      "permissions.capabilities": "warning",
+      "config.rules": "ok",
+      "store.open": "ok",
+      "store.index.scans": "ok",
+      "store.quarantine": "ok",
+      "store.operations": "ok",
+      "config.protection_list": "ok"
+    },
+    "export_or_upload_used": false
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate."
+  ],
+  "status": "passed"
+}

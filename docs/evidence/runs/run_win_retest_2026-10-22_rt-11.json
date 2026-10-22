@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-09",
+  "run_id": "run_win_retest_2026-10-22_rt-11",
+  "recorded_at": "2026-10-22T04:43:43Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": null,
+  "config": {
+    "round": "windows-retest-2026-10-22",
+    "retest_case": "RT-11",
+    "binary": "cli debug build",
+    "cli_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+    "desktop_sha256": "8d4171ad9b8a78f136ae4ed16319657a04c4d177ab3025beeeed98b41ef05663",
+    "base_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+    "patch_sha256": "8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556",
+    "store": "isolated CM_STORE_DIR under .research/windows-retest-2026-10-22/store",
+    "raw_evidence": [
+      "agent-checks.txt",
+      "cloud-host-recheck.txt",
+      "schema-validation.json",
+      "code.patch"
+    ],
+    "plan_source": "docs/acceptance/windows-2026-10-22-retest-plan.md",
+    "report": "docs/acceptance/windows-2026-10-22-retest-report.md",
+    "commands": [
+      [
+        "cargo",
+        "test",
+        "-p",
+        "cm-platform",
+        "--lib",
+        "regular_file_root_is_refused_before_any_directory_is_recorded",
+        "--locked"
+      ],
+      [
+        "cargo",
+        "clippy",
+        "-p",
+        "cm-platform",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      [
+        "git",
+        "diff",
+        "--check"
+      ],
+      [
+        "cargo",
+        "test",
+        "-p",
+        "cm-platform",
+        "--lib",
+        "windows::directory::tests",
+        "--locked",
+        "--",
+        "--nocapture"
+      ]
+    ]
+  },
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "cm-platform",
+    "--lib",
+    "windows::directory::tests",
+    "--locked",
+    "--",
+    "--nocapture"
+  ],
+  "seed": null,
+  "expected": "必要检查通过，记录具体命令与覆盖；单元测试不替代 RT-01..10 的实际运行",
+  "actual": "平台检查与协议：新永久回归、clippy、diff 检查通过；33 个新机器输出均通过 Schema。目录组另有 Cloud Files 夹具初始化失败；2 个 VHD 用例按既有 opt-in 条件未实际运行。详见下节。",
+  "terminal_state": "cloud_fixture_setup_failed",
+  "exit_code": null,
+  "measurements": {
+    "new_regression": "1 passed",
+    "clippy_cm_platform": "exit 0",
+    "diff_check": "exit 0",
+    "directory_tests": {
+      "reported_passed": 12,
+      "reported_failed": 1,
+      "actually_exercised_and_passed": 10,
+      "vhd_opt_in_returned_early": 2,
+      "failed": "cloud_placeholders_are_never_hydrated_or_populated_by_a_scan: CfRegisterSyncRoot HRESULT 0x80070001 before the scanner ran (sandbox and real host)"
+    },
+    "cargo_fmt_all_check": "exit 1 on pre-existing differences in untouched files; not claimed as passed",
+    "protocol_schema_validation": {
+      "machine_records_checked": 33,
+      "errors": 0
+    }
+  },
+  "observer": "agent (Windows retest 2026-10-22: one-off runner run.py/summarize.py for CLI records; rebuilt native Tauri window read through the computer-use accessibility tree)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Binary built from main@2d654d9 plus an uncommitted patch to crates/cm-platform/src/windows/{handle.rs,directory.rs,directory/tests.rs} (git diff SHA-256 8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556); code_commit is that base commit and does not itself contain the fix.",
+    "Debug builds: cargo build -p cm-cli --locked; npm run tauri -- build --debug --no-bundle.",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "Same synthetic fixture and sentinel as the first round, new isolated CM_STORE_DIR; no plan was approved and nothing was moved, deleted or restored.",
+    "Developer checks, not a product-run case; recorded under WIN-09 because they are the BUG-WIN-01 regression evidence.",
+    "Cloud Files placeholder behaviour remains unverified; the two VHD cases did not exercise their environment (CM_ALLOW_VHD_TESTS not set)."
+  ],
+  "status": "incomplete"
+}

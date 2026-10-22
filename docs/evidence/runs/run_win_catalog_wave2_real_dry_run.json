@@ -44,7 +44,7 @@
     "rows": [
       {
         "rule_id": "bytedance.feishu.code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\CodeCache",
+        "path": "~\\AppData\\Roaming\\LarkShell\\CodeCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -55,7 +55,7 @@
       },
       {
         "rule_id": "bytedance.feishu.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\GrShaderCache",
+        "path": "~\\AppData\\Roaming\\LarkShell\\GrShaderCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -66,7 +66,7 @@
       },
       {
         "rule_id": "bytedance.feishu.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\LarkShell\\ShaderCache",
+        "path": "~\\AppData\\Roaming\\LarkShell\\ShaderCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -77,7 +77,7 @@
       },
       {
         "rule_id": "tencent.wechat.web-code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\game\\Code Cache",
+        "path": "~\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\game\\Code Cache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -88,7 +88,7 @@
       },
       {
         "rule_id": "tencent.wechat.web-code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\multitab\\Code Cache",
+        "path": "~\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\multitab\\Code Cache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -99,7 +99,7 @@
       },
       {
         "rule_id": "tencent.wechat.web-code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\web_shell\\Code Cache",
+        "path": "~\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\profiles\\web_shell\\Code Cache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -110,7 +110,7 @@
       },
       {
         "rule_id": "docker.desktop.http-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\Cache\\Cache_Data",
+        "path": "~\\AppData\\Roaming\\Docker Desktop\\Cache\\Cache_Data",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -121,7 +121,7 @@
       },
       {
         "rule_id": "docker.desktop.code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\Code Cache",
+        "path": "~\\AppData\\Roaming\\Docker Desktop\\Code Cache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -132,7 +132,7 @@
       },
       {
         "rule_id": "docker.desktop.gpu-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Roaming\\Docker Desktop\\GPUCache",
+        "path": "~\\AppData\\Roaming\\Docker Desktop\\GPUCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -143,7 +143,7 @@
       },
       {
         "rule_id": "netease.uu-remote.http-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Cache\\Cache_Data",
+        "path": "~\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Cache\\Cache_Data",
         "tier": "review_only",
         "skip_reason": "in_use",
         "probes": {
@@ -154,7 +154,7 @@
       },
       {
         "rule_id": "netease.uu-remote.code-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Code Cache",
+        "path": "~\\AppData\\Local\\GameViewer\\webviewcache\\EBWebView\\Default\\Code Cache",
         "tier": "review_only",
         "skip_reason": "in_use",
         "probes": {
@@ -165,7 +165,7 @@
       },
       {
         "rule_id": "amd.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DX9Cache",
+        "path": "~\\AppData\\Local\\AMD\\DX9Cache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -175,7 +175,7 @@
       },
       {
         "rule_id": "amd.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DxCache",
+        "path": "~\\AppData\\Local\\AMD\\DxCache",
         "tier": "review_only",
         "skip_reason": "in_use",
         "probes": {
@@ -185,7 +185,7 @@
       },
       {
         "rule_id": "amd.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\DxcCache",
+        "path": "~\\AppData\\Local\\AMD\\DxcCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -195,7 +195,7 @@
       },
       {
         "rule_id": "amd.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\OglCache",
+        "path": "~\\AppData\\Local\\AMD\\OglCache",
         "tier": "review_only",
         "skip_reason": "in_use",
         "probes": {
@@ -205,7 +205,7 @@
       },
       {
         "rule_id": "amd.shader-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\AMD\\VkCache",
+        "path": "~\\AppData\\Local\\AMD\\VkCache",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -215,7 +215,7 @@
       },
       {
         "rule_id": "pnpm.metadata-cache",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\pnpm-cache\\metadata-v1.3",
+        "path": "~\\AppData\\Local\\pnpm-cache\\metadata-v1.3",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -225,7 +225,7 @@
       },
       {
         "rule_id": "python.install-manager.downloads",
-        "path": "C:\\Users\\libinghua\\AppData\\Local\\Python\\_cache\\pythoncore-3.15-64-3.15.0.zip",
+        "path": "~\\AppData\\Local\\Python\\_cache\\pythoncore-3.15-64-3.15.0.zip",
         "tier": "review_only",
         "skip_reason": null,
         "probes": {
@@ -239,7 +239,8 @@
   "observer": "tools/validate_catalog_windows_wave2.py",
   "limitations": [
     "Working tree may contain uncommitted changes; code_commit is the base commit.",
-    "Preview only: no plan was created and nothing was changed."
+    "Preview only: no plan was created and nothing was changed.",
+    "Paths redacted on 2026-10-22 for publication (user home directory -> ~); all measured values are otherwise unchanged."
   ],
   "status": "passed"
 }

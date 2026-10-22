@@ -882,7 +882,7 @@ fn a_privacy_prompt_skips_only_the_location_it_holds() {
         fx.write("Library/Caches/plain/p.txt", b"p");
         fx.write("Projects/Downloads/not-protected.txt", b"n"); // the held name, but not a protected location
         let (answer, open, asked) = prompt_opener(b"Downloads");
-        let gate = walk::PrivacyGate { home: Some(home.to_path_buf()), wait: Duration::from_millis(200), open };
+        let gate = walk::PrivacyGate { home: Some(home.to_path_buf()), wait: Duration::from_millis(200), open, registry: registry(8) };
         let mut sink = MemSink::default();
         let mut lister = lister_for(backend);
         let options = ScanOptions { batch_entries: 4, ..Default::default() };
@@ -898,6 +898,7 @@ fn a_privacy_prompt_skips_only_the_location_it_holds() {
         assert_eq!(skip[0].parent_entry_id, Some(sink.by_name("Downloads").entry_id), "the skipped range hangs under its entry");
         let issue = report.issues.iter().find(|i| i.code == "permission_required").unwrap_or_else(|| panic!("{backend}: {:?}", report.issues));
         assert!(issue.message.starts_with(super::privacy::PERMISSION_PENDING) && issue.message.contains(&*downloads.to_string_lossy()), "{}", issue.message);
+        assert_eq!(cm_core::permission::cause_in(&issue.message), Some(cm_core::permission::PermissionCause::PrivacyPromptPending));
         assert!(!sink.has("held.dmg") && !sink.has("deep") && !sink.has("inner.txt"), "{backend}: nothing below the held folder is read");
         for name in ["a.txt", "c.bin", "g.txt", "p.txt", "not-protected.txt"] {
             assert!(sink.has(name), "{backend}: {name} is walked as usual");
@@ -923,7 +924,7 @@ fn a_root_held_by_a_privacy_prompt_is_never_an_empty_scan() {
         let root = fx.mkdir("Desktop");
         fx.write("Desktop/file.txt", b"d");
         let (answer, open, _) = prompt_opener(b"Desktop");
-        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(200), open };
+        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(200), open, registry: registry(8) };
         let mut sink = MemSink::default();
         let mut lister = lister_for(backend);
         let t = Instant::now();
@@ -944,45 +945,89 @@ fn a_root_held_by_a_privacy_prompt_is_never_an_empty_scan() {
     }
 }
 
-/// Every app's container waits for the same "data from other apps" prompt: while the first one is parked, the others
-/// are skipped as pending at once, without another open and without waiting again.
+/// A registry of waiting workers of its own: tests run in parallel and must not share the process-wide cap.
+fn registry(cap: usize) -> &'static super::privacy::Registry {
+    Box::leak(Box::new(super::privacy::Registry::new(cap)))
+}
+
+/// An opener that holds every open whose name `held` accepts until the returned sender is used or dropped.
+fn holding_opener(held: fn(&[u8]) -> bool) -> (std::sync::mpsc::Sender<()>, walk::Opener, Asked) {
+    let (answer, prompt) = std::sync::mpsc::channel::<()>();
+    let prompt = std::sync::Mutex::new(prompt);
+    let asked: Asked = std::sync::Arc::default();
+    let seen = std::sync::Arc::clone(&asked);
+    let open: walk::Opener = std::sync::Arc::new(move |parent: Option<&Fd>, name: &std::ffi::CStr| {
+        seen.lock().unwrap().push(name.to_bytes().to_vec());
+        if held(name.to_bytes()) {
+            let _ = prompt.lock().unwrap().recv(); // held until the person answers
+        }
+        match parent {
+            None => Fd::open_dir(name),
+            Some(p) => p.open_child_dir(name),
+        }
+    });
+    (answer, open, asked)
+}
+
+/// Each app's container is its own location: while sandboxed apps' containers wait for their prompt, a container
+/// that never prompts (Docker Desktop is not sandboxed) is opened and walked as usual, never reported pending.
 #[test]
-fn one_pending_app_data_prompt_is_waited_for_once() {
+fn each_container_is_tried_on_its_own() {
     for backend in NAMES {
         let fx = crate::macos::testfs::Fixture::new(&format!("walk-prompt-apps-{backend}"));
-        for app in ["app.a", "app.b", "app.c"] {
-            fx.write(format!("Library/Containers/{app}/Data/f.txt"), b"f");
+        for app in ["app.a", "app.b", "com.docker.docker"] {
+            fx.write(format!("Library/Containers/{app}/Data/{app}.txt"), b"f");
         }
         fx.write("Documents/d.txt", b"d");
-        let (answer, prompt) = std::sync::mpsc::channel::<()>();
-        let prompt = std::sync::Mutex::new(prompt);
-        let asked: Asked = std::sync::Arc::default();
-        let seen = std::sync::Arc::clone(&asked);
-        let open: walk::Opener = std::sync::Arc::new(move |parent: Option<&Fd>, name: &std::ffi::CStr| {
-            seen.lock().unwrap().push(name.to_bytes().to_vec());
-            if name.to_bytes().starts_with(b"app.") {
-                let _ = prompt.lock().unwrap().recv(); // held until the person answers
-            }
-            match parent {
-                None => Fd::open_dir(name),
-                Some(p) => p.open_child_dir(name),
-            }
-        });
-        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(300), open };
+        let (answer, open, asked) = holding_opener(|n| n.starts_with(b"app."));
+        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(200), open, registry: registry(8) };
         let mut sink = MemSink::default();
         let mut lister = lister_for(backend);
         let t = Instant::now();
         let report = walk::scan_gated(backend, "test walk", &raw(fx.path()), &mut sink, &ScanOptions::default(), lister.as_mut(), walk::RECHECK_EVERY_DIRS, &gate);
-        let took = t.elapsed();
-        assert!(took < Duration::from_millis(900), "{backend}: waited once, not three times: {took:?}");
+        assert!(t.elapsed() < Duration::from_secs(3), "{backend}: {:?}", t.elapsed());
         assert_eq!(report.state, ScanState::Completed, "{backend}: {:?}", report.issues);
-        assert_eq!(sink.skipped.len(), 3, "{backend}: {:?}", sink.skipped);
+        assert_eq!(sink.skipped.len(), 2, "{backend}: {:?}", sink.skipped);
         assert!(sink.skipped.iter().all(|s| s.reason == SkipReason::PermissionDenied));
-        let pending = report.issues.iter().filter(|i| i.code == "permission_required" && super::privacy::is_pending(&i.message)).count();
-        assert_eq!(pending, 3, "{backend}: {:?}", report.issues);
-        assert!(sink.has("d.txt") && !sink.has("f.txt"));
+        let pending: Vec<_> = report.issues.iter().filter(|i| i.code == "permission_required" && super::privacy::is_pending(&i.message)).collect();
+        assert_eq!(pending.len(), 2, "{backend}: {:?}", report.issues);
+        assert!(pending.iter().all(|i| i.message.contains("did not answer")), "each was tried, none coalesced: {pending:?}");
+        assert!(sink.has("com.docker.docker.txt") && sink.has("d.txt"), "{backend}: Docker's container is read as usual");
+        assert!(!sink.has("app.a.txt") && !sink.has("app.b.txt"));
         let apps = asked.lock().unwrap().iter().filter(|n| n.starts_with(b"app.")).count();
-        assert_eq!(apps, 1, "{backend}: only the first container was opened");
+        assert_eq!(apps, 2, "{backend}: both sandboxed containers were tried");
+        drop(answer);
+    }
+}
+
+/// At most a few workers wait at once: past the cap a container is not tried and says so (pending, unknown, never
+/// empty); past [`walk::MAX_GATE_ISSUES`] issues the rest are counted in one closing issue, each still a skipped range.
+#[test]
+fn waiting_workers_and_listed_issues_are_capped() {
+    for backend in NAMES {
+        let fx = crate::macos::testfs::Fixture::new(&format!("walk-prompt-cap-{backend}"));
+        let n = walk::MAX_GATE_ISSUES + 4;
+        for i in 0..n {
+            fx.write(format!("Library/Containers/app.{i:02}/Data/f.txt"), b"f");
+        }
+        let (answer, open, asked) = holding_opener(|n| n.starts_with(b"app."));
+        let reg = registry(3);
+        let gate = walk::PrivacyGate { home: Some(fx.path().to_path_buf()), wait: Duration::from_millis(60), open, registry: reg };
+        let mut sink = MemSink::default();
+        let mut lister = lister_for(backend);
+        let t = Instant::now();
+        let report = walk::scan_gated(backend, "test walk", &raw(fx.path()), &mut sink, &ScanOptions::default(), lister.as_mut(), walk::RECHECK_EVERY_DIRS, &gate);
+        assert!(t.elapsed() < Duration::from_secs(3), "three waits, the rest not tried: {:?}", t.elapsed());
+        assert_eq!(sink.skipped.len(), n, "{backend}: every container is a skipped range: {:?}", sink.skipped);
+        let tried = asked.lock().unwrap().iter().filter(|n| n.starts_with(b"app.")).count();
+        assert_eq!(tried, 3, "{backend}: only as many as the cap were tried");
+        let gate_issues: Vec<_> = report.issues.iter().filter(|i| i.code == "permission_required").collect();
+        assert_eq!(gate_issues.len(), walk::MAX_GATE_ISSUES + 1, "{backend}: {:?}", report.issues);
+        assert_eq!(gate_issues.iter().filter(|i| i.message.contains("did not answer within")).count(), 3);
+        assert!(gate_issues.iter().any(|i| i.message.contains("was not tried: 3 other first accesses are already waiting")), "{gate_issues:?}");
+        let summary = gate_issues.last().unwrap();
+        assert!(summary.message.starts_with(super::privacy::PERMISSION_PENDING) && summary.message.contains("4 more location(s) were not read"), "{}", summary.message);
+        assert_eq!(reg.parked(), 3);
         drop(answer);
     }
 }

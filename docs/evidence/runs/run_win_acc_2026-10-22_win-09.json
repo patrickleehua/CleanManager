@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-09",
+  "run_id": "run_win_acc_2026-10-22_win-09",
+  "recorded_at": "2026-10-22T04:28:48Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": "win.directory",
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "cli-05-missing-root.json",
+      "cli-06-file-as-root.json",
+      "cli-44-repro-file-as-root.json",
+      "cli-46-repro-file-root-entries.json",
+      "ui-40-file-root-bug-0.png"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md",
+    "commands": [
+      [
+        "cleanmanager",
+        "scan",
+        "--root",
+        "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input\\missing",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "scan",
+        "--root",
+        "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input\\a.txt",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_4ea8_18e0bf9bed4cf724",
+        "--json",
+        "--non-interactive"
+      ]
+    ]
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input\\a.txt",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "明确拒绝并有机器可读错误；不回退为扫描其他目录，不产生伪成功",
+  "actual": "不存在目录有明确 failed；普通文件被错误索引为目录且终态为 partial。见 BUG-WIN-01。",
+  "terminal_state": "partial",
+  "exit_code": 5,
+  "measurements": {
+    "missing_root": {
+      "exit_code": 8,
+      "status": "failed",
+      "completeness": "partial_scope",
+      "entries_seen": 0,
+      "skipped_ranges": 0,
+      "logical_bytes": "0",
+      "allocated_bytes": null,
+      "unknown_size_count": 0,
+      "backend": "win.directory",
+      "issues": [
+        {
+          "code": "root_unavailable",
+          "message": "系统找不到指定的文件。 (os error 2)"
+        }
+      ]
+    },
+    "regular_file_root": {
+      "exit_code": 5,
+      "file_bytes_on_disk": 1024,
+      "status": "partial",
+      "completeness": "partial_scope",
+      "entries_seen": 1,
+      "skipped_ranges": 1,
+      "logical_bytes": "0",
+      "allocated_bytes": null,
+      "unknown_size_count": 1,
+      "backend": "win.directory",
+      "issues": [
+        {
+          "code": "io_error",
+          "message": "参数错误。 (os error 87)"
+        }
+      ]
+    },
+    "indexed_entry": {
+      "kind": "directory",
+      "logical_bytes": null,
+      "allocated_bytes": null,
+      "size_basis": "unknown",
+      "unknown_descendants": 1
+    },
+    "file_unchanged": true
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate.",
+    "BUG-WIN-01 (P2): reproduced once in the tool sandbox (cli-06) and once on the real host (cli-44); the fix was retested in run_win_retest_2026-10-22_rt-01..rt-03 and rt-09.",
+    "Historical failure kept as observed; it is not rewritten by the retest."
+  ],
+  "status": "failed"
+}

@@ -3,7 +3,7 @@
 
 import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
 import { h, icon } from '../lib/dom';
-import { ERROR_HINT } from '../lib/format';
+import { refusalKnown, refusalText } from '../lib/codes';
 import { shortcutLabel } from '../lib/nav';
 import { words } from '../lib/platform';
 import type { Counts, Group, IpcError, ItemStatus } from '../lib/types';
@@ -40,13 +40,21 @@ export function exactTitle(known: string | null): string {
   return formatExactBytes(parseBytes(known));
 }
 
+/** The Chinese text of a refusal; an unknown reason reads "未识别的问题（代码 x）", never the host's raw message. */
 export function errorText(e: IpcError): string {
-  return ERROR_HINT[e.reason] ?? e.message;
+  return refusalText(e);
 }
 
 export function errorLine(e: IpcError | null, id?: string): HTMLElement | null {
   if (!e) return null;
-  return h('p', { class: 'form-error', role: 'alert', id }, errorText(e));
+  if (refusalKnown(e.reason)) return h('p', { class: 'form-error', role: 'alert', id }, errorText(e));
+  // Unknown reason: the raw message is kept, collapsed, for whoever needs to report it.
+  return h(
+    'div',
+    { class: 'form-error', role: 'alert', id },
+    h('p', {}, errorText(e)),
+    h('details', { class: 'tech' }, h('summary', {}, '技术详情'), h('p', { class: 'selectable small' }, `${e.code} / ${e.reason}：${e.message}`)),
+  );
 }
 
 /** Page head shared by every page: optional back link, title, a meta line and actions. */

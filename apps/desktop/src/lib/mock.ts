@@ -18,6 +18,7 @@ import type {
   EntriesQuery,
   FinishedEvent,
   IpcError,
+  Issue,
   ProgressEvent,
   RootOffer,
   ScanStatus,
@@ -52,7 +53,7 @@ function rng(seed: number) {
   };
 }
 
-function buildTree(rootName: string): Map<number, Node> {
+function buildTree(rootName: string, gaps = true): Map<number, Node> {
   const nodes = new Map<number, Node>();
   let next = 0;
   const add = (parent: number | null, name: string, kind: Entry['kind'], logical: bigint | null = null, extra: Partial<Node> = {}) => {
@@ -87,9 +88,12 @@ function buildTree(rootName: string): Map<number, Node> {
   const docs = add(root, 'Documents', 'directory');
   for (let i = 0; i < 60; i++) add(docs, `报告-${2020 + (i % 6)}-${i + 1}.docx`, 'file', BigInt(Math.floor(r() * 40_000_000) + 20_000));
   add(docs, '合同扫描件.pdf', 'file', 412n * MiB);
-  add(root, 'Locked', 'directory', null, { skipped: 1 });
-  add(root, 'cloud-drive', 'directory', 0n, { boundary: 'cloud_provider' });
-  add(root, 'sparse.vhdx', 'file', null);
+  // The completed preview (`?scan=completed`) has no unread range and no unknown size.
+  if (gaps) {
+    add(root, 'Locked', 'directory', null, { skipped: 1 });
+    add(root, 'cloud-drive', 'directory', 0n, { boundary: 'cloud_provider' });
+    add(root, 'sparse.vhdx', 'file', null);
+  }
   add(root, 'empty.log', 'file', 0n);
   add(root, 'notes.txt', 'file', 3_201n);
   // Aggregate (logical = known subtree; unknown counted).
@@ -113,12 +117,121 @@ function buildTree(rootName: string): Map<number, Node> {
   return nodes;
 }
 
-const ROOT = 'D:\\Work';
+/** Preview paths follow `?platform=` (Windows paths in the Windows preview, macOS paths in the macOS one). */
+const pick = (win: string, mac: string): string => (previewPlatform() === 'macos' ? mac : win);
+const defaultRoot = (): string => pick('D:\\Work', '/Users/lin/Work');
 
 function pathOf(nodes: Map<number, Node>, id: number): string {
   const n = nodes.get(id)!;
   if (n.parent === null) return n.name;
-  return `${pathOf(nodes, n.parent)}\\${n.name}`;
+  const parent = pathOf(nodes, n.parent);
+  return parent.startsWith('/') ? `${parent}/${n.name}` : `${parent}\\${n.name}`;
+}
+
+/**
+ * Overview preview states (`?scan=…`, browser preview only; docs/visual-identity.md lists them). The scan
+ * opened at start is the first one; `s_preview_0` is an older completed scan for the "other scans" list.
+ */
+export type ScanPreview =
+  | 'partial'
+  | 'completed'
+  | 'partial-pending'
+  | 'failed-file'
+  | 'failed-link'
+  | 'failed-missing'
+  | 'failed-unknown'
+  | 'cancelled'
+  | 'interrupted'
+  | 'running'
+  | 'none';
+
+export const SCAN_PREVIEWS: ScanPreview[] = ['partial', 'completed', 'partial-pending', 'failed-file', 'failed-link', 'failed-missing', 'failed-unknown', 'cancelled', 'interrupted', 'running', 'none'];
+
+function scanPreview(): ScanPreview {
+  const v = new URLSearchParams(globalThis.location?.search ?? '').get('scan') as ScanPreview | null;
+  return v && SCAN_PREVIEWS.includes(v) ? v : 'partial';
+}
+
+const previewRoot = (p: ScanPreview): string | undefined =>
+  (
+    {
+      'partial-pending': '/Users/lin',
+      'failed-file': pick('C:\\Users\\Lin\\Downloads\\季度报告-2026-Q3-最终版.pdf', '/Users/lin/Downloads/季度报告-2026-Q3-最终版.pdf'),
+      'failed-link': pick('C:\\Users\\Lin\\Projects-link', '/Users/lin/Projects-link'),
+      'failed-missing': pick('E:\\Backup\\Photos', '/Volumes/Backup/Photos'),
+    } as Partial<Record<ScanPreview, string>>
+  )[p];
+
+interface MockScan {
+  state: ScanStatus['state'];
+  seen: number;
+  cancel: boolean;
+  started: string;
+  finished: string | null;
+  root: string;
+  /** Overrides of what the host would report for this preview state. */
+  issues?: Issue[];
+  published?: boolean;
+  summary?: Summary | null;
+  skipped?: number;
+  hosted?: boolean;
+}
+
+function childNamed(nodes: Map<number, Node>, name: string): number | null {
+  for (const n of nodes.values()) if (n.parent === 1 && n.name === name) return n.id;
+  return null;
+}
+
+/** The scans of one preview state: the state itself first, then an older completed scan. */
+function seedScans(preview: ScanPreview, root: string, nodes: Map<number, Node>, scans: Map<string, MockScan>, summaryOf: (ids: number[]) => Summary): void {
+  if (preview === 'none') return;
+  const done = { cancel: false, started: '2026-10-15T01:12:00Z', finished: '2026-10-15T01:12:41Z', root };
+  const failed = (code: string, message: string): MockScan => ({ ...done, state: 'failed', seen: 0, published: true, summary: null, skipped: 0, finished: '2026-10-15T01:12:00Z', issues: [{ code, scope_display: root, message }] });
+  const kept = [childNamed(nodes, 'Videos'), childNamed(nodes, 'Archives')].filter((x): x is number => x !== null);
+  const keptSummary = () => ({ ...summaryOf(kept), unread_ranges: 0 });
+  const first: Record<Exclude<ScanPreview, 'none'>, () => MockScan> = {
+    partial: () => ({ ...done, state: 'partial', seen: nodes.size }),
+    completed: () => ({ ...done, state: 'completed', seen: nodes.size, issues: [], skipped: 0 }),
+    'partial-pending': () => {
+      const base = summaryOf([1]);
+      const pending = (dir: string): Issue => ({ code: 'permission_required', scope_display: `${root}/${dir}`, message: 'permission_required (permission_cause=privacy_prompt_pending)', permission_cause: 'privacy_prompt_pending' });
+      return {
+        ...done,
+        state: 'partial',
+        seen: nodes.size,
+        skipped: 3,
+        summary: { ...base, unread_ranges: 3, logical_unknown_count: base.logical_unknown_count + 2 },
+        issues: [pending('Documents'), pending('Desktop'), { code: 'permission_required', scope_display: `${root}/Library/Mail`, message: 'Operation not permitted (os error 1)', permission_cause: 'undetermined' }],
+      };
+    },
+    'failed-file': () => failed('not_a_directory', 'root is not a directory'),
+    'failed-link': () => failed('root_is_link', 'This location is a link (symbolic link or junction); CleanManager never follows links'),
+    'failed-missing': () => failed('root_unavailable', pick('The system cannot find the path specified. (os error 3)', 'No such file or directory (os error 2)')),
+    'failed-unknown': () => ({ ...failed('index_quota_exhausted', 'index quota exhausted while writing rows'), root: defaultRoot(), issues: [{ code: 'index_quota_exhausted', scope_display: defaultRoot(), message: 'index quota exhausted while writing rows' }] }),
+    cancelled: () => ({ ...done, state: 'cancelled', seen: 812, summary: keptSummary(), issues: [], skipped: 0, finished: '2026-10-15T01:12:19Z' }),
+    interrupted: () => ({ ...done, state: 'interrupted', seen: 812, summary: keptSummary(), issues: [], skipped: 0, finished: '2026-10-15T01:12:19Z' }),
+    running: () => ({ ...done, state: 'running', seen: 4318, published: false, hosted: true, started: new Date(Date.now() - 37_000).toISOString(), finished: null }),
+  };
+  scans.set('s_preview_1', first[preview]());
+  const docs = childNamed(nodes, 'Documents');
+  const docsRoot = root.startsWith('/') ? '/Users/lin/Documents' : 'C:\\Users\\Lin\\Documents';
+  scans.set('s_preview_0', { state: 'completed', seen: 62, cancel: false, started: '2026-10-14T08:02:00Z', finished: '2026-10-14T08:02:09Z', root: docsRoot, issues: [], skipped: 0, summary: docs ? { ...summaryOf([docs]), unread_ranges: 0 } : null });
+}
+
+/** `?choose=file|link`: the folder picker returns a file or a link once, so the scope page shows its refusal. */
+function chooseRefusal(): RootOffer | null {
+  const v = new URLSearchParams(globalThis.location?.search ?? '').get('choose');
+  if (v === 'file')
+    return { token: 'rc_file', label: '季度报告.pdf', kind: 'chosen', path_display: pick('C:\\Users\\Lin\\Downloads\\季度报告.pdf', '/Users/lin/Downloads/季度报告.pdf'), problem: err('invalid_argument', 'not_a_directory', 'This location is not a folder') };
+  if (v === 'link')
+    return {
+      token: 'rc_link',
+      label: 'Projects-link',
+      kind: 'chosen',
+      path_display: pick('C:\\Users\\Lin\\Projects-link', '/Users/lin/Projects-link'),
+      problem: err('invalid_argument', 'root_is_link', 'This location is a link (symbolic link or junction); CleanManager never follows links. Choose the folder it points to instead'),
+    };
+  return null;
 }
 
 function toEntry(nodes: Map<number, Node>, n: Node): Entry {
@@ -161,11 +274,14 @@ const MOCK_GATES: [string, string][] = [
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function mockBackend(): Backend {
-  const nodes = buildTree(ROOT);
+  const preview = scanPreview();
+  const DEFAULT_ROOT = defaultRoot();
+  const ROOT = previewRoot(preview) ?? DEFAULT_ROOT;
+  // A failed root has no tree; its "D:\Work" tree only backs the older scan in the list.
+  const nodes = buildTree(preview.startsWith('failed') ? DEFAULT_ROOT : ROOT, preview !== 'completed');
   const progress = new Set<(e: ProgressEvent) => void>();
   const finished = new Set<(e: FinishedEvent) => void>();
-  const scans = new Map<string, { state: ScanStatus['state']; seen: number; cancel: boolean; started: string; finished: string | null; root: string }>();
-  scans.set('s_preview_1', { state: 'partial', seen: nodes.size, cancel: false, started: '2026-10-15T01:12:00Z', finished: '2026-10-15T01:12:41Z', root: ROOT });
+  const scans = new Map<string, MockScan>();
   let counter = 1;
   let offerCounter = 0;
   // D15: gated tools are off until 设置 › 实验功能 is turned on (the preview starts where a new install starts).
@@ -202,10 +318,35 @@ export function mockBackend(): Backend {
     };
   };
 
+  seedScans(preview, ROOT, nodes, scans, summaryOf);
+  if (preview === 'running') {
+    // The running preview keeps going until it is cancelled.
+    const s = scans.get('s_preview_1')!;
+    const tick = setInterval(() => {
+      if (s.cancel && s.state === 'running') s.state = 'stopping';
+      else if (s.state === 'stopping') {
+        s.state = 'cancelled';
+        s.published = true;
+        s.hosted = false;
+        s.finished = new Date().toISOString();
+        s.summary = summaryOf([1]);
+        s.issues = [];
+        s.skipped = 0;
+        clearInterval(tick);
+        finished.forEach((cb) => cb({ scan_id: 's_preview_1', state: 'cancelled', error: null }));
+        return;
+      } else s.seen = Math.min(nodes.size * 40, s.seen + 37);
+      progress.forEach((cb) => cb({ scan_id: 's_preview_1', state: s.state, entries_seen: s.seen, skipped_ranges: 0, cancel_requested: s.cancel, heartbeat_at: new Date().toISOString() }));
+    }, 450);
+  }
+
   const status = (id: string): ScanStatus => {
     const s = scans.get(id);
     if (!s) throw err('invalid_argument', 'not_found', `not found: ${id}`);
-    const published = !['created', 'running', 'stopping'].includes(s.state);
+    const terminal = !['created', 'running', 'stopping'].includes(s.state);
+    const published = s.published ?? terminal;
+    const issues = s.issues ?? (published ? [{ code: 'permission_required', scope_display: `${s.root}${s.root.startsWith('/') ? '/' : '\\'}Locked`, message: 'Access is denied. (os error 5)' }] : []);
+    const mac = s.root.startsWith('/');
     return {
       scan_id: id,
       scope_id: 'scope_preview',
@@ -216,20 +357,21 @@ export function mockBackend(): Backend {
       cancel_requested: s.cancel,
       host_kind: 'desktop',
       host_pid: 4242,
-      hosted_here: !published,
+      hosted_here: s.hosted ?? !published,
       heartbeat_at: new Date().toISOString(),
       entries_seen: s.seen,
-      skipped_ranges: published ? 1 : 0,
+      skipped_ranges: s.skipped ?? (published ? 1 : 0),
       started_at: s.started,
       finished_at: s.finished,
       root_display: s.root,
-      root_entry_id: published ? '1' : null,
-      summary: published ? summaryOf([1]) : null,
-      backend: 'win.directory',
-      backend_reason: 'Directory enumeration with handle-relative opens',
+      root_entry_id: published && s.seen > 0 ? '1' : null,
+      // A failed scan reports no sizes (unknown, never 0), like the host.
+      summary: s.summary !== undefined ? s.summary : published && s.state !== 'failed' ? summaryOf([1]) : null,
+      backend: mac ? 'macos.posix' : 'win.directory',
+      backend_reason: mac ? 'openat/fstatat walk without following links' : 'Directory enumeration with handle-relative opens',
       elevated_read: [],
-      issues: published ? [{ code: 'permission_required', scope_display: `${ROOT}\\Locked`, message: 'Access is denied. (os error 5)' }] : [],
-      issues_total: published ? 1 : 0,
+      issues,
+      issues_total: issues.length,
     };
   };
 
@@ -270,15 +412,15 @@ export function mockBackend(): Backend {
   };
 
   const offers: RootOffer[] = [
-    { token: 'r1', label: '下载', kind: 'user_folder', path_display: 'C:\\Users\\Lin\\Downloads', problem: null },
-    { token: 'r2', label: '文档', kind: 'user_folder', path_display: 'C:\\Users\\Lin\\Documents', problem: null },
-    { token: 'r3', label: '用户目录', kind: 'user_home', path_display: 'C:\\Users\\Lin', problem: null },
-    { token: 'r4', label: 'D: 卷', kind: 'volume', path_display: 'D:\\', problem: null },
+    { token: 'r1', label: '下载', kind: 'user_folder', path_display: pick('C:\\Users\\Lin\\Downloads', '/Users/lin/Downloads'), problem: null },
+    { token: 'r2', label: '文档', kind: 'user_folder', path_display: pick('C:\\Users\\Lin\\Documents', '/Users/lin/Documents'), problem: null },
+    { token: 'r3', label: '用户目录', kind: 'user_home', path_display: pick('C:\\Users\\Lin', '/Users/lin'), problem: null },
+    { token: 'r4', label: pick('D: 卷', 'Macintosh HD'), kind: 'volume', path_display: pick('D:\\', '/'), problem: null },
     {
       token: 'r5',
-      label: 'E: 卷',
+      label: pick('E: 卷', 'Backup'),
       kind: 'volume',
-      path_display: 'E:\\',
+      path_display: pick('E:\\', '/Volumes/Backup'),
       problem: err('invalid_argument', 'root_missing', 'This folder does not exist or its volume is offline'),
     },
   ];
@@ -355,11 +497,14 @@ export function mockBackend(): Backend {
     },
     async listScanRoots() {
       await delay(250);
-      return offers;
+      return [...offers];
     },
     async chooseFolder() {
       offerCounter += 1;
-      const o: RootOffer = { token: `rc${offerCounter}`, label: 'Work', kind: 'chosen', path_display: ROOT, problem: null };
+      // Like the host, a refused pick is answered with its reason and is not added to the offered roots.
+      const refused = offerCounter === 1 ? chooseRefusal() : null;
+      if (refused) return refused;
+      const o: RootOffer = { token: `rc${offerCounter}`, label: 'Work', kind: 'chosen', path_display: DEFAULT_ROOT, problem: null };
       offers.push(o);
       return o;
     },
@@ -369,7 +514,7 @@ export function mockBackend(): Backend {
         root_display: s.root,
         started_at: s.started,
         state: s.state,
-        published: !['created', 'running', 'stopping'].includes(s.state),
+        published: s.published ?? !['created', 'running', 'stopping'].includes(s.state),
         host_kind: 'desktop',
         completeness: s.state === 'completed' ? 'verified_scope' : s.state === 'partial' ? 'partial_scope' : null,
         finished_at: s.finished,
@@ -383,7 +528,7 @@ export function mockBackend(): Backend {
       if ([...scans.values()].some((s) => ['created', 'running', 'stopping'].includes(s.state))) throw err('conflict', 'scan_running', 'A scan is still running');
       counter += 1;
       const id = `s_preview_${counter}`;
-      const s = { state: 'running' as ScanStatus['state'], seen: 0, cancel: false, started: new Date().toISOString(), finished: null as string | null, root: ROOT };
+      const s: MockScan = { state: 'running', seen: 0, cancel: false, started: new Date().toISOString(), finished: null, root: o.path_display };
       scans.set(id, s);
       const tick = setInterval(() => {
         if (s.cancel && s.state === 'running') s.state = 'stopping';
@@ -399,7 +544,7 @@ export function mockBackend(): Backend {
         }
         progress.forEach((cb) => cb({ scan_id: id, state: s.state, entries_seen: s.seen, skipped_ranges: 0, cancel_requested: s.cancel, heartbeat_at: new Date().toISOString() }));
       }, 450);
-      return { scan_id: id, root_display: ROOT };
+      return { scan_id: id, root_display: o.path_display };
     },
     async scanStatus(id) {
       await delay(60);

@@ -21,6 +21,7 @@ import { OPERATION_STATE_LABEL, operationTone } from '../lib/words';
 import { LongProgress, atLeast, ensureReady, selectionBar, stageSteps, sumSizes, tierBadge, toIpcError, type Step } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, sizeText } from './parts';
 import { APP_OUTCOME, MAX_BATCH, batchActionText, batchSelectable, batchSelection, leftoverSections, leftoversTitle, type LeftoverSection } from './uninstallBatch';
+import { issueList } from './ui';
 
 type Filter = 'all' | 'available' | 'settings' | 'protected';
 
@@ -295,7 +296,7 @@ export class UninstallPage {
             'details',
             { class: 'issues-details' },
             h('summary', {}, `未能读取的登记（${d.issues.length}）——清单可能不完整`),
-            h('ul', { class: 'issue-list' }, ...d.issues.map((i) => h('li', {}, h('span', { class: 'issue-code' }, i.code), h('span', { class: 'path' }, i.scope_display), h('span', { class: 'muted' }, i.message)))),
+            issueList(d.issues, { label: '记录的问题' }),
           )
         : null,
     );

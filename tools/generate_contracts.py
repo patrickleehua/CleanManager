@@ -60,7 +60,11 @@ def main():
                         "raw_base64": {"type": "string", "minLength": 4, "contentEncoding": "base64"}})
     defs["identity"] = obj({"volume_id": STR, "file_id": {"type": "string", "pattern": "^(ntfs64:[0-9a-f]{16}|fileid128:[0-9a-f]{32}|inode64:[0-9a-f]{16})$"}, "generation": nullable(STR),
                             "quality": enum("strong", "weak"), "observed_at": TIME})
-    defs["issue"] = obj({"code": STR, "scope_display": STR, "message": STR})
+    # docs/platforms/macos.md §6: the blocking layer behind a permission_required report, as far as it can be proven
+    # (the message names it too). Optional: absent when the message names no cause; nothing is guessed.
+    permission_cause = enum("undetermined", "privacy_prompt_pending")
+    defs["issue"] = obj({"code": STR, "scope_display": STR, "message": STR, "permission_cause": permission_cause},
+                        required=["code", "scope_display", "message"])
     defs["capability"] = obj({"name": STR, "state": enum("available", "permission_required", "unsupported", "unverified"),
                               "reason": nullable(STR)})
     defs["capabilities"] = record("capabilities", {"platform": enum("windows", "macos"),
@@ -68,8 +72,14 @@ def main():
     defs["scan_result"] = record("scan_result", {"scan_id": STR, "scope_id": STR, "revision": COUNT,
         "backend": STR, "status": enum("completed", "partial", "cancelled", "failed", "interrupted"),
         "completeness": enum("verified_scope", "partial_scope"), "started_at": TIME, "finished_at": TIME,
-        "entries_seen": COUNT, "skipped_ranges": COUNT, "logical_bytes": UINT,
+        "entries_seen": COUNT, "skipped_ranges": COUNT, "logical_bytes": nullable(UINT),
         "allocated_bytes": nullable(UINT), "unknown_size_count": COUNT, "issues": arr(ref("issue"))})
+    # SCN-03: a failed scan has no usable subtotal, so its sizes are unknown (null), never "0"; every
+    # other terminal state reports the known part of the confirmed rows ("0" only when that is zero).
+    defs["scan_result"]["allOf"] = [
+        {"if": {"properties": {"status": {"const": "failed"}}},
+         "then": {"properties": {"logical_bytes": {"type": "null"}, "allocated_bytes": {"type": "null"}}},
+         "else": {"properties": {"logical_bytes": UINT}}}]
     candidate_props = {"candidate_id": STR, "scan_id": STR, "scan_revision": COUNT,
         "entry_id": STR, "rule_id": STR, "rule_version": STR, "risk": enum("low", "medium", "high", "blocked"),
         "path": ref("path"), "reason": STR, "impact": STR, "logical_bytes": UINT,
@@ -475,6 +485,7 @@ def main():
         "size_note": nullable(STR), "observed_at": nullable(TIME), "explanation": STR, "handling": enum("read_only_guidance",
             "open_system_settings", "open_owner_tool", "manual_trash_review", "installer_review"),
         "guidance": arr(obj({"tool": STR, "steps": STR, "requires_admin": {"type": "boolean"}, "impact": STR}))})
+    defs["insight"]["properties"]["permission_cause"] = permission_cause  # optional, from size_note (§6)
     defs["insight_list"] = record("insight_list", {"items": arr(ref("insight"))})
     # LIF-04: capability matrix, permission context, configuration, error-code table, recent error codes
     # and store self-check; redacted by default, exported only after a previewed terminal confirmation.
@@ -556,13 +567,18 @@ def main():
         "logical_bytes": nullable(UINT), "count": nullable(COUNT), "size_note": nullable(STR), "observed_at": nullable(TIME),
         "link": obj({"view": enum("analyze", "insights.downloads", "insights"), "path": nullable(ref("path")), "insight_ids": arr(STR)})})
     defs["insight_card"]["allOf"] = [{"if": {"properties": {"logical_bytes": {"type": "null"}}}, "then": {"properties": {"size_note": STR}}}]
+    defs["insight_card"]["properties"]["permission_cause"] = permission_cause  # optional, from size_note (§6)
+    # An unreadable or pending Downloads folder has no known file count: item_count is null with the total, never 0.
+    old_downloads_summary = obj({"older_than_days": COUNT, "item_count": nullable(COUNT), "total_logical_bytes": nullable(UINT), "observed_at": TIME})
+    old_downloads_summary["properties"]["permission_cause"] = permission_cause  # optional, from the review note (§6)
     defs["insight_overview"] = record("insight_overview", {"generated_at": TIME, "cards": arr(ref("insight_card")),
-        "old_downloads": obj({"older_than_days": COUNT, "item_count": COUNT, "total_logical_bytes": nullable(UINT), "observed_at": TIME})})
+        "old_downloads": old_downloads_summary})
     defs["old_downloads_review"] = record("old_downloads_review", {"root": nullable(ref("path")), "older_than_days": COUNT, "observed_at": TIME,
         "items": arr(obj({"path": ref("path"), "logical_bytes": UINT, "modified_at": TIME, "age_days": COUNT, "installer_like": BOOL,
             "selected": {"const": False}})),
-        "total_logical_bytes": nullable(UINT), "item_count": COUNT, "shown": COUNT, "note": nullable(STR),
+        "total_logical_bytes": nullable(UINT), "item_count": nullable(COUNT), "shown": COUNT, "note": nullable(STR),
         "handling": {"const": "manual_trash_review"}, "guidance": STR})
+    defs["old_downloads_review"]["properties"]["permission_cause"] = permission_cause  # optional, from note (§6)
     # Parity 10.x (UPD-01..04): "up to date" only with a channel that answered and a check time.
     update_route = enum("package_manager", "open_store", "open_app", "open_official_page", "none")
     defs["app_update"] = obj({"app_instance_id": STR, "name": STR, "current_version": nullable(STR), "available_version": nullable(STR),
@@ -988,6 +1004,9 @@ def main():
             requested_at=t1, note="Receipt only: the scan stops at the next safe boundary; query scan show for the terminal record."),
         "scan-interrupted": {**scan, "status": "interrupted", "issues": scan["issues"] + [{"code": "host_exited",
             "scope_display": "scan host", "message": "Hosting process exited before a terminal record"}]},
+        "scan-failed": {**scan, "status": "failed", "entries_seen": 0, "skipped_ranges": 0, "logical_bytes": None,
+            "allocated_bytes": None, "unknown_size_count": 0, "issues": [{"code": "root_is_link",
+            "scope_display": "C:\\Users\\Example\\Link", "message": "the root is a junction or volume mount point; links are never followed and nothing behind it was read. Scan the folder it points to directly"}]},
         "entries-page": rec("entries_page", scan_id="s_demo", scope_id="scope_demo", revision=1, sort="logical_desc",
             filter={"kind": "any", "name_contains": None, "parent_entry_id": "e_root"}, page_size=3, next_cursor="cur_opaque_1",
             unknown_size_items=1, items=[

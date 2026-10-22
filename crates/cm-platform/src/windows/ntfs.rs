@@ -5,6 +5,8 @@
 //! an explicitly selected *volume root* with administrator rights. A directory scope is refused
 //! before anything is read (SCN-01/02); callers fall back to `win.directory`. Output rows use the
 //! same semantics as the directory baseline so the two can be compared on the same volume.
+//! Cancellation is polled after every enumeration buffer and every written batch, never only
+//! between directories, so neither the volume pre-pass nor one huge directory outruns it.
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -80,12 +82,16 @@ fn open_volume(drive: &[u16]) -> io::Result<Owned> {
     if h == INVALID_HANDLE_VALUE { Err(io::Error::last_os_error()) } else { Ok(Owned(h)) }
 }
 
-/// Every file record name on the volume: FRN → (parent FRN, name, attributes).
-fn enumerate(volume: &Owned) -> io::Result<HashMap<u64, Node>> {
+/// Every file record name on the volume: FRN → (parent FRN, name, attributes). `None` when
+/// `cancelled` answered true between two enumeration buffers.
+fn enumerate(volume: &Owned, cancelled: &mut dyn FnMut() -> bool) -> io::Result<Option<HashMap<u64, Node>>> {
     let mut nodes = HashMap::new();
     let mut input = MFT_ENUM_DATA_V0 { StartFileReferenceNumber: 0, LowUsn: 0, HighUsn: i64::MAX };
     let mut buf = vec![0u64; (1 << 20) / 8];
     loop {
+        if cancelled() {
+            return Ok(None);
+        }
         let mut returned = 0u32;
         // SAFETY: valid input struct and 8-byte-aligned output buffer of the declared size.
         let ok = unsafe {
@@ -94,11 +100,11 @@ fn enumerate(volume: &Owned) -> io::Result<HashMap<u64, Node>> {
         };
         if ok == 0 {
             let e = io::Error::last_os_error();
-            return if e.raw_os_error() == Some(ERROR_HANDLE_EOF) { Ok(nodes) } else { Err(e) };
+            return if e.raw_os_error() == Some(ERROR_HANDLE_EOF) { Ok(Some(nodes)) } else { Err(e) };
         }
         let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), returned as usize) };
         if bytes.len() < 8 {
-            return Ok(nodes);
+            return Ok(Some(nodes));
         }
         input.StartFileReferenceNumber = u64::from_le_bytes(bytes[..8].try_into().unwrap());
         let mut off = 8usize;
@@ -276,8 +282,13 @@ impl ScanBackend for NtfsEnumBackend {
             Err(e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) => return fail(report, "permission_required", "administrator rights required".into()),
             Err(e) => return fail(report, "root_unavailable", e.to_string()),
         };
-        let nodes = match enumerate(&volume) {
-            Ok(n) => n,
+        let nodes = match enumerate(&volume, &mut || sink.cancel_requested()) {
+            Ok(Some(n)) => n,
+            // Nothing was written yet: a cancelled pre-pass confirms no rows.
+            Ok(None) => {
+                report.state = ScanState::Cancelled;
+                return report;
+            }
             Err(e) => return fail(report, "io_error", format!("FSCTL_ENUM_USN_DATA: {e}")),
         };
         let volume_id = format!("{}|{serial:016x}", root_handle.volume_guid().unwrap_or_default());
@@ -325,7 +336,7 @@ impl ScanBackend for NtfsEnumBackend {
 
         let mut queue = VecDeque::from([(root_frn & FRN_MASK, root_entry, display.clone(), vec![b'\\' as u16])]);
         let mut state = ScanState::Completed;
-        while let Some((dir_frn, dir_entry, dir_full, dir_rel)) = queue.pop_front() {
+        'dirs: while let Some((dir_frn, dir_entry, dir_full, dir_rel)) = queue.pop_front() {
             if sink.cancel_requested() {
                 state = ScanState::Cancelled;
                 break;
@@ -363,15 +374,20 @@ impl ScanBackend for NtfsEnumBackend {
                 } else if links.is_some_and(|n| n > 1) {
                     multi_link.push((obj, full));
                 }
-            }
-            if entries.len() >= batch {
-                if let Err(m) = sink.write(&objects, &entries, &[]) {
-                    report.issues.push(ScanIssue { code: "store_error".into(), scope_display: String::new(), message: m });
-                    state = ScanState::Failed;
-                    break;
+                if entries.len() >= batch {
+                    if let Err(m) = sink.write(&objects, &entries, &[]) {
+                        report.issues.push(ScanIssue { code: "store_error".into(), scope_display: String::new(), message: m });
+                        state = ScanState::Failed;
+                        break 'dirs;
+                    }
+                    objects.clear();
+                    entries.clear();
+                    // Also inside one directory, so a directory with very many entries still stops.
+                    if sink.cancel_requested() {
+                        state = ScanState::Cancelled;
+                        break 'dirs;
+                    }
                 }
-                objects.clear();
-                entries.clear();
             }
         }
         // Hard links: the enumeration yields one name per file record; add the other names.

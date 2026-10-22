@@ -16,6 +16,7 @@ import { HINT_LABEL, hintAction, hintBasisText, hintOf } from '../lib/cleanable'
 import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, SortKey, Summary, TreemapLayer } from '../lib/types';
 import { canOpen, EntryGrid } from './grid';
 import { REST_ID, TreemapView } from './treemapView';
+import { refusalText } from '../lib/codes';
 
 const PAGE_SIZE = 200;
 const TREEMAP_LIMIT = 120;
@@ -210,7 +211,7 @@ export class DiskPage {
       this.pushGrid();
     } catch (e) {
       const err = toIpcError(e);
-      this.treemap.setError(`图表无法加载：${ERROR_HINT[err.reason] ?? err.message}。表格仍可使用。`);
+      this.treemap.setError(`图表无法加载：${refusalText(err)}。表格仍可使用。`);
     }
   }
 
@@ -392,7 +393,7 @@ export class DiskPage {
   private pushGrid(): void {
     const filtered = this.kind !== 'any' || this.name.trim() !== '';
     const emptyText = this.listError
-      ? `无法加载：${ERROR_HINT[this.listError.reason] ?? this.listError.message}`
+      ? `无法加载：${refusalText(this.listError)}`
       : filtered
         ? '没有符合过滤条件的条目。清除过滤可查看全部。'
         : '这个文件夹是空的。';
@@ -612,7 +613,7 @@ export class DiskPage {
       text = '扫描根目录可能无法读取。请在概览中查看原因，或重新选择范围。';
     } else if (s.statusError) {
       title = '无法读取扫描记录';
-      text = ERROR_HINT[s.statusError.reason] ?? s.statusError.message;
+      text = refusalText(s.statusError);
     }
     const others = s.recent.filter((r) => r.scan_id !== s.scanId && r.state && isTerminal(r.state));
     const go = h('button', { type: 'button', id: 'disk-go-scope' }, '选择扫描范围');

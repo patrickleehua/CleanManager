@@ -18,6 +18,8 @@
 | [Windows 后端](platforms/windows.md) | NTFS、USN、权限、云占位、应用管理与发布 |
 | [macOS 后端](platforms/macos.md) | 批量枚举、APFS、FSEvents、TCC 与平台限制 |
 | [macOS 真机验证指南](platforms/macos-verification.md) | 在自己的 Mac 上用 `tools/mac_verify.sh` 收集测试与 CLI 冒烟结果 |
+| [Windows 可重复验收](verification-plan.md) | 第 2.1 节：用 `tools/win_verify.py` 在本机重跑不需要桌面、不做破坏性动作的 Windows CLI 验收用例，输出脱敏的运行记录 |
+| [Windows 本机验收（2026-10-22）](acceptance/windows-2026-10-22-report.md) · [复验](acceptance/windows-2026-10-22-retest-report.md) | 25 条文字用例与 BUG-WIN-01 修复复验的结论，逐项链接脱敏运行记录 |
 | [规则与执行](safety-and-rules.md) | 候选如何成为固定计划，如何授权和核验 |
 | [清理目录](catalog.md) | 第 1 波 Windows 类目、档位计算、占用探测、所属工具委托与实测证据 |
 | [手选移入回收站](manual-trash.md) | manual_selection 计划、系统目录只读、占用进程、回收站内永久删除与放回方式 |

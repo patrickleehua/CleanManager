@@ -21,7 +21,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cm_core::analysis::{
-    AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogFacts, CatalogSet, UserList, analyze_catalog, apply_probes, plannable,
+    AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogFacts, CatalogSet, IndexView, UserList, analyze_catalog, apply_probes,
+    plannable,
 };
 use cm_core::catalog::{CatalogContext, SkipReason};
 use cm_core::authz::{Policy, PolicyState, Receipt, ReceiptSource, current_principal, policy_covers, receipt_valid};
@@ -438,7 +439,8 @@ pub fn analyze(s: &AppState, stores: &Stores, scan_id: &str) -> IpcResult<Candid
         worktrees: &[],
     };
     // The same rule-root resolution as `cleanmanager analyze`; problems resolving a root are listed with the analysis.
-    let (roots, resolve_issues) = crate::plat::resolve(&rules.rules);
+    let scan_root = view.path(view.root());
+    let (roots, resolve_issues) = crate::plat::resolve(&rules.rules, Some(&scan_root));
     let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
     // The same catalog analysis as `cleanmanager analyze` / `clean`: tested registry and
     // installed versions decide version verdicts, then live probes may lower tiers.

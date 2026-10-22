@@ -24,6 +24,7 @@ pub mod manual_trash;
 pub mod model;
 pub mod obs;
 pub mod path;
+pub mod permission;
 pub mod plan;
 pub mod process;
 pub mod protect;

@@ -53,7 +53,9 @@ mod imp {
 
     // ---- analysis --------------------------------------------------------------------------------
 
-    pub fn resolve(rules: &[cm_core::rules::Rule]) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<ResolveIssue>) {
+    /// Rule roots (`within`, the scan's root, only narrows the lookup on macOS).
+    pub fn resolve(rules: &[cm_core::rules::Rule], within: Option<&cm_core::path::RawPath>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<ResolveIssue>) {
+        let _ = within;
         (os::resolve::resolve(rules, &os::resolve::ResolverEnv::from_os()), Vec::new())
     }
 
@@ -338,8 +340,12 @@ mod imp {
 
     // ---- analysis --------------------------------------------------------------------------------
 
-    pub fn resolve(rules: &[cm_core::rules::Rule]) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<ResolveIssue>) {
-        let r = os::resolve::resolve(rules, &os::resolve::ResolverEnv::from_os());
+    /// Roots of the enabled rules at or below `within` (the scan's root), as `cleanmanager analyze` resolves them:
+    /// analysis matches roots by identity inside the scan, so no other root is looked up (a privacy-protected location
+    /// such as another app's container is never opened for nothing, docs/platforms/macos.md §6).
+    pub fn resolve(rules: &[cm_core::rules::Rule], within: Option<&cm_core::path::RawPath>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<ResolveIssue>) {
+        let enabled: Vec<cm_core::rules::Rule> = rules.iter().filter(|r| r.status == cm_core::rules::RuleStatus::Enabled).cloned().collect();
+        let r = os::resolve::resolve_in(&enabled, &os::resolve::ResolverEnv::from_os(), within);
         (r.roots, r.issues.into_iter().map(|i| (i.code.to_owned(), i.scope, i.message)).collect())
     }
 

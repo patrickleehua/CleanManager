@@ -18,6 +18,7 @@ import { APPLICABILITY, ELEVATION_WORD, FINDING_WORD, PROHIBITED_WORDS, TASK_COD
 import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, outcomeMark, outcomeTally, selectionBar, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
+import { learnMore } from './ui';
 
 export function taskTitle(id: string, fallback: string): string {
   return TASK_WORDS[id]?.title ?? fallback;
@@ -405,8 +406,8 @@ export class DiagnosisPage {
               'section',
               { class: 'panel catalog-intro', 'aria-labelledby': 'mdiag-intro' },
               h('h2', { id: 'mdiag-intro' }, '电脑变慢时先看看原因'),
-              h('p', { class: 'lede' }, '用 2 秒的窗口读取每个进程的处理器占用、内存负载、提交量、磁盘可用空间、启动项数量和仍挂载的磁盘映像，列出值得注意的发现，并指向可以查看的地方。'),
-              h('p', { class: 'muted small' }, '诊断只读取，不结束任何进程，也不更改任何设置。'),
+              h('p', { class: 'lede' }, '用 2 秒读取一次负载与空间，列出值得注意的发现；只读取，不更改任何设置。'),
+              learnMore(h('p', {}, '读取每个进程的处理器占用、内存负载、提交量、磁盘可用空间、启动项数量和仍挂载的磁盘映像，并指向可以查看的地方。诊断不结束任何进程。')),
             )
           : null,
     );

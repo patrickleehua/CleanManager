@@ -134,3 +134,75 @@ fn scan_analyze_persist_and_page_candidates() {
     drop(stores);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// SCN-04 / CLI cancel semantics: a cancel requested while one directory of 20,000 files is
+/// being listed stops the scan at the next batch; the scan ends `cancelled` (never `completed`)
+/// and the confirmed rows are published and pageable.
+#[test]
+fn cancel_inside_one_huge_directory_ends_cancelled_with_queryable_rows() {
+    use cm_core::scan::{EntryRow, ObjectRow, ScanSink, SkippedRow};
+
+    struct CancelAfterFirstBatch<'a> {
+        inner: StagingSink<'a>,
+        other: &'a cm_store::IndexStore,
+        writes: usize,
+    }
+    impl ScanSink for CancelAfterFirstBatch<'_> {
+        fn write(&mut self, o: &[ObjectRow], e: &[EntryRow], s: &[SkippedRow]) -> Result<(), String> {
+            self.inner.write(o, e, s)?;
+            self.writes += 1;
+            if self.writes == 1 {
+                // Another process asks to cancel; the receipt is only a receipt.
+                assert!(self.other.request_cancel("wide").unwrap().accepted);
+            }
+            Ok(())
+        }
+        fn cancel_requested(&mut self) -> bool {
+            self.inner.cancel_requested()
+        }
+    }
+
+    disable_bypass_privileges().unwrap();
+    let base = std::env::temp_dir().join(format!("cm-wide-cancel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, store_dir) = (base.join("wide"), base.join("store"));
+    std::fs::create_dir_all(&root).unwrap();
+    const FILES: usize = 20_000;
+    for i in 0..FILES {
+        std::fs::write(root.join(format!("f{i:05}.bin")), b"xy").unwrap();
+    }
+    let stores = Stores::open(&store_dir).unwrap();
+    let other = cm_store::IndexStore::open(&store_dir.join(cm_store::INDEX_FILE)).unwrap();
+    let raw = RawPath::windows(root.as_os_str().encode_wide().collect()).unwrap();
+    let rev = stores.index.begin_scan(&ScanInit { scan_id: "wide".into(), scope_id: "scope".into(), root: raw.clone(),
+        backend: "win.directory".into(), host: OsHostProbe.current("cli"), started_at: cm_core::time::now_utc() }).unwrap();
+    let mut sink = CancelAfterFirstBatch { inner: StagingSink { store: &stores.index, scan_id: "wide".into(), revision: rev }, other: &other, writes: 0 };
+    let options = ScanOptions::default();
+    let report = DirectoryBackend.scan(&raw, &mut sink, &options);
+    assert_eq!(report.state, ScanState::Cancelled, "the backend saw the cancel inside the directory: {:?}", report.issues);
+    assert_eq!(sink.writes, 1, "nothing is written after the cancel was observed");
+    stores.index.record_report("wide", &report).unwrap();
+    assert_eq!(stores.index.publish("wide", rev, report.state, &cm_core::time::now_utc()).unwrap(), ScanState::Cancelled);
+
+    let status = other.scan_status("wide").unwrap();
+    assert_eq!((status.state, status.completeness.as_deref()), (ScanState::Cancelled, Some("partial_scope")));
+    assert_eq!(status.entries_seen, options.batch_entries as u64, "exactly the first batch is confirmed");
+    assert!(status.entries_seen < FILES as u64 + 1, "the listing stopped early");
+    // The confirmed rows are kept and pageable within the published revision.
+    let mut seen = 0;
+    let mut cursor = None;
+    loop {
+        let page = other.list_entries(&EntryQuery { scan_id: "wide".into(), sort: Sort::NameAsc,
+            filter: Filter { kind: KindFilter::File, name_contains: None, parent_entry_id: None }, page_size: 500, cursor }).unwrap();
+        seen += page.items.len();
+        assert!(page.items.iter().all(|i| i.logical_bytes.map(|b| b.0) == Some(2)));
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert_eq!(seen as u64, status.entries_seen - 1, "every confirmed file (all but the root entry) is listed");
+    assert_eq!(other.request_cancel("wide").unwrap().state_at_receipt, "already_terminal");
+    drop((stores, other));
+    std::fs::remove_dir_all(&base).unwrap();
+}

@@ -1,0 +1,118 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-04",
+  "run_id": "run_win_acc_2026-10-22_win-04",
+  "recorded_at": "2026-10-22T04:24:33Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": "win.directory",
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "desktop debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "ui-09-scan-complete.txt",
+      "ui-09-scan-complete-0.png",
+      "cli-07-scan.json",
+      "cli-08-scan-show.json",
+      "fixture-before.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "范围正确，显示过程及终态；已知逻辑量与独立清单一致；原文件与 sentinel 未改变",
+  "actual": "原生文件夹选择器选择专用夹具，桌面扫描完成，10 个条目、27,904 字节；与独立清单及 CLI 一致。",
+  "terminal_state": "completed",
+  "exit_code": 0,
+  "measurements": {
+    "desktop": {
+      "entries": 10,
+      "logical_bytes": "27904"
+    },
+    "cli": {
+      "status": "completed",
+      "completeness": "verified_scope",
+      "entries_seen": 10,
+      "skipped_ranges": 0,
+      "logical_bytes": "27904",
+      "allocated_bytes": "33024",
+      "unknown_size_count": 0,
+      "backend": "win.directory",
+      "issues": []
+    },
+    "fixture_manifest": {
+      "files": {
+        ".ssh/id_ed25519": {
+          "bytes": 256,
+          "sha256": "509747601130b9eff29b61da980b1b7cf6240a602195121285fbce919a3f692b"
+        },
+        "a.txt": {
+          "bytes": 1024,
+          "sha256": "2edc986847e209b4016e141a6dc8716d3207350f416969382d431539bf292e4a"
+        },
+        "big.bin": {
+          "bytes": 16384,
+          "sha256": "e33f24140499430b048f6600af4f41f3ccb0cb766d9f7661124cf8ba4b827523"
+        },
+        "nested/second.log": {
+          "bytes": 8192,
+          "sha256": "d0b2c59d7aca952678574929551dc88900a08f642b09d890d30657f794b5f825"
+        },
+        "nested/zero.txt": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "中文 空格.txt": {
+          "bytes": 2048,
+          "sha256": "71899db2707c5d7dc62d01bcf923431418374e9fb42a3fcb6d83e5cc017c2173"
+        }
+      },
+      "directories": [
+        ".ssh",
+        "empty",
+        "nested"
+      ],
+      "logical_bytes": 27904
+    }
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate.",
+    "The desktop scan was started from the native folder picker; exit_code is the CLI cross-check scan."
+  ],
+  "status": "passed"
+}

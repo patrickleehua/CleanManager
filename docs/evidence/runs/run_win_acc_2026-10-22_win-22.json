@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-22",
+  "run_id": "run_win_acc_2026-10-22_win-22",
+  "recorded_at": "2026-10-22T04:32:38Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "fixture-before.json",
+      "fixture-after.json",
+      "sentinel-before.json",
+      "sentinel-after.json",
+      "integrity-result.json",
+      "cli-47-final-operations.json",
+      "schema-validation.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [],
+  "seed": null,
+  "expected": "输入路径、内容、大小、SHA-256 均保持；sentinel 未变，未发生卸载、进程终止或系统维护",
+  "actual": "所有测试完成后输入名称/目录/大小/SHA-256 和 sentinel 均相同；执行历史为空。",
+  "terminal_state": "inputs_unchanged",
+  "exit_code": null,
+  "measurements": {
+    "integrity": {
+      "input_unchanged": true,
+      "sentinel_unchanged": true,
+      "logical_bytes": 27904,
+      "file_count": 6
+    },
+    "fixture_manifest": {
+      "files": {
+        ".ssh/id_ed25519": {
+          "bytes": 256,
+          "sha256": "509747601130b9eff29b61da980b1b7cf6240a602195121285fbce919a3f692b"
+        },
+        "a.txt": {
+          "bytes": 1024,
+          "sha256": "2edc986847e209b4016e141a6dc8716d3207350f416969382d431539bf292e4a"
+        },
+        "big.bin": {
+          "bytes": 16384,
+          "sha256": "e33f24140499430b048f6600af4f41f3ccb0cb766d9f7661124cf8ba4b827523"
+        },
+        "nested/second.log": {
+          "bytes": 8192,
+          "sha256": "d0b2c59d7aca952678574929551dc88900a08f642b09d890d30657f794b5f825"
+        },
+        "nested/zero.txt": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "中文 空格.txt": {
+          "bytes": 2048,
+          "sha256": "71899db2707c5d7dc62d01bcf923431418374e9fb42a3fcb6d83e5cc017c2173"
+        }
+      },
+      "directories": [
+        ".ssh",
+        "empty",
+        "nested"
+      ],
+      "logical_bytes": 27904
+    },
+    "fixture_after_equals_before": true,
+    "sentinel_manifest": {
+      "files": {
+        "do-not-touch.txt": {
+          "bytes": 29,
+          "sha256": "5cd392fdc32d436ba0e1b9525c6a4cb4ff680c32b16179e94be4b1470ffd87ce"
+        }
+      },
+      "directories": [],
+      "logical_bytes": 29
+    },
+    "final_operations": 0,
+    "protocol_schema_validation": {
+      "machine_records_checked": 57,
+      "errors": 0
+    },
+    "round_assertions": {
+      "passed": 20,
+      "failed": 1
+    }
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate.",
+    "fixture_manifest_sha256 is SHA-256 of the canonical JSON (sorted keys, no spaces, UTF-8) of measurements.fixture_manifest.",
+    "round_assertions.failed=1 is the WIN-09 check (BUG-WIN-01)."
+  ],
+  "status": "passed"
+}

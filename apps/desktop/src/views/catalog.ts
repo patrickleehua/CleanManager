@@ -12,6 +12,7 @@ import type { Catalog, CatalogItem, CatalogPreview, InstallerLocations, IpcError
 import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOptions, noticeLine, selectionBar, sumSizes, tierBadge, toIpcError } from './kit';
 import { confirmInline, emptyState, errorLine, exactTitle, pageHead, sizeText } from './parts';
 import { notOnThisPlatform } from '../lib/platform';
+import { issueList, learnMore } from './ui';
 
 const SOURCE_LABEL: Record<string, string> = {
   downloads: '下载文件夹',
@@ -41,7 +42,9 @@ interface Copy {
   title: string;
   verb: string;
   op: 'purge' | 'installer';
+  /** One short sentence; the rest goes under "了解更多". */
   lede: string;
+  more: string;
   empty: string;
 }
 
@@ -50,14 +53,16 @@ const COPY: Record<Catalog, Copy> = {
     title: '构建产物',
     verb: '扫描构建产物',
     op: 'purge',
-    lede: '在你的项目文件夹中，按项目标记（Cargo.toml、package.json 等）找出 target、node_modules、.next 这类可重新生成的构建输出。产物名本身不会让一个目录成为候选。',
+    lede: '在你的项目文件夹中找出 target、node_modules、.next 这类可重新生成的构建输出。',
+    more: '按项目标记（Cargo.toml、package.json 等）判断；产物名本身不会让一个目录成为候选。',
     empty: '配置的项目文件夹中没有找到构建产物。没有项目标记的 build 目录不会被当作产物。',
   },
   installer: {
     title: '安装包',
     verb: '扫描安装包',
     op: 'installer',
-    lede: '在下载文件夹、桌面和浏览器下载位置按文件内容识别安装程序与磁盘映像。安装包一律需要逐项审阅，不会被默认选择。',
+    lede: '在下载文件夹、桌面和浏览器下载位置找出安装程序与磁盘映像。',
+    more: '按文件内容识别，而不是只看扩展名；安装包一律需要逐项审阅，不会被默认选择。',
     empty: '声明的位置中没有识别出安装包。',
   },
 };
@@ -276,7 +281,7 @@ export class CatalogPage {
       { class: 'panel catalog-intro', 'aria-labelledby': `${this.catalog}-intro` },
       h('h2', { id: `${this.catalog}-intro` }, this.scanning ? '正在扫描' : '还没有扫描'),
       h('p', { class: 'lede' }, copy.lede),
-      h('p', { class: 'muted small' }, '扫描只读取文件元数据并把结果存进 CleanManager 自己的索引；不会打开、移动或删除任何文件。'),
+      learnMore(h('p', {}, copy.more), h('p', {}, '扫描只读取文件元数据并把结果存进 CleanManager 自己的索引；不会打开、移动或删除任何文件。')),
     );
   }
 
@@ -308,7 +313,7 @@ export class CatalogPage {
       'details',
       { class: 'issues-details' },
       h('summary', {}, `扫描说明（${p.issues.length}）`),
-      h('ul', { class: 'issue-list' }, ...p.issues.map((i) => h('li', {}, h('span', { class: 'issue-code' }, i.code), h('span', { class: 'path' }, i.scope_display), h('span', { class: 'muted' }, i.message)))),
+      issueList(p.issues, { label: '记录的问题' }),
     );
   }
 

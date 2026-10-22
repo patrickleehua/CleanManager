@@ -7,6 +7,10 @@
 //! - Re-opens each subdirectory and checks its volume serial and file ID against the parent
 //!   listing; a replaced directory is skipped, a changed volume stops the scan.
 //! - Unreadable subtrees become skipped ranges, never zero-sized directories.
+//! - The root is judged on its own handle before any row exists: a link (`root_is_link`) or a
+//!   non-directory (`not_a_directory`) fails the scan instead of being followed or recorded.
+//! - Listings are read buffer by buffer and rows are written in batches; cancellation is polled
+//!   between directories and after every batch, so one huge directory still stops promptly.
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -14,7 +18,7 @@ use std::io;
 use cm_core::capability::CapabilityState;
 use cm_core::model::{BoundaryKind, CloudState, IdentityQuality, ObjectKind, ScanState, SkipReason};
 use cm_core::path::RawPath;
-use cm_core::scan::{EntryRow, ObjectRow, RootProbe, ScanBackend, ScanIssue, ScanOptions, ScanReport, ScanSink, SkippedRow};
+use cm_core::scan::{EntryRow, ObjectRow, RootProbe, ScanBackend, ScanIssue, ScanOptions, ScanReport, ScanSink, SkippedRow, issue};
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ID_BOTH_DIR_INFO, FILE_ID_EXTD_DIR_INFO, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
     FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo, GetFileInformationByHandleEx,
@@ -31,6 +35,8 @@ const ATTR_RECALL_ON_OPEN: u32 = 0x0004_0000;
 const ATTR_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
 const TAG_MOUNT_POINT: u32 = 0xA000_0003;
 const TAG_SYMLINK: u32 = 0xA000_000C;
+/// Reparse-tag bit Windows sets for tags that name another entity (symlinks, junctions, ...).
+const TAG_NAME_SURROGATE: u32 = 0x2000_0000;
 const ERROR_ACCESS_DENIED: i32 = 5;
 const ERROR_NO_MORE_FILES: i32 = 18;
 const ERROR_INVALID_PARAMETER: i32 = 87;
@@ -60,34 +66,51 @@ enum ListClass {
     Both,
 }
 
-fn read_records(dir: &Handle, class: ListClass) -> io::Result<Vec<Record>> {
-    let mut out = Vec::new();
-    let mut buf = vec![0u64; 64 * 1024 / 8];
-    let mut first = true;
-    loop {
-        let info_class = match (class, first) {
+/// One directory's listing, read one 64 KiB buffer at a time so the caller can write batches and
+/// observe a cancel request while a huge directory is still being listed.
+struct Listing<'a> {
+    dir: &'a Handle,
+    class: ListClass,
+    buf: Vec<u64>,
+    first: bool,
+}
+
+impl<'a> Listing<'a> {
+    fn new(dir: &'a Handle, class: ListClass) -> Self {
+        Listing { dir, class, buf: vec![0u64; 64 * 1024 / 8], first: true }
+    }
+
+    /// No buffer was returned yet, so falling back to another information class repeats nothing.
+    fn nothing_returned(&self) -> bool {
+        self.first
+    }
+
+    /// The next buffer of records (without `.` and `..`); `None` once the listing is complete.
+    fn next_chunk(&mut self) -> io::Result<Option<Vec<Record>>> {
+        let info_class = match (self.class, self.first) {
             (ListClass::Extd, true) => FileIdExtdDirectoryRestartInfo,
             (ListClass::Extd, false) => FileIdExtdDirectoryInfo,
             (ListClass::Both, true) => FileIdBothDirectoryRestartInfo,
             (ListClass::Both, false) => FileIdBothDirectoryInfo,
         };
-        first = false;
         // SAFETY: 8-byte aligned buffer of the declared size.
-        let ok = unsafe { GetFileInformationByHandleEx(dir.raw(), info_class, buf.as_mut_ptr().cast(), (buf.len() * 8) as u32) };
+        let ok = unsafe { GetFileInformationByHandleEx(self.dir.raw(), info_class, self.buf.as_mut_ptr().cast(), (self.buf.len() * 8) as u32) };
         if ok == 0 {
             let err = io::Error::last_os_error();
             if err.raw_os_error() == Some(ERROR_NO_MORE_FILES) {
-                return Ok(out);
+                return Ok(None);
             }
             return Err(err);
         }
-        let base = buf.as_ptr().cast::<u8>();
+        self.first = false;
+        let mut out = Vec::new();
+        let base = self.buf.as_ptr().cast::<u8>();
         let mut offset = 0usize;
         loop {
             // SAFETY: the API wrote a chain of records inside the buffer; offsets come from it.
-            let rec = unsafe { parse_record(base.add(offset), class) };
+            let rec = unsafe { parse_record(base.add(offset), self.class) };
             if rec.name != [b'.' as u16] && rec.name != [b'.' as u16, b'.' as u16] {
-                out.push(rec.clone());
+                out.push(rec);
             }
             // SAFETY: NextEntryOffset is the first u32 of both record layouts.
             let next = unsafe { *(base.add(offset) as *const u32) } as usize;
@@ -96,6 +119,7 @@ fn read_records(dir: &Handle, class: ListClass) -> io::Result<Vec<Record>> {
             }
             offset += next;
         }
+        Ok(Some(out))
     }
 }
 
@@ -184,8 +208,10 @@ impl Ctx<'_> {
         Ok(())
     }
 
-    fn maybe_flush(&mut self) -> Result<(), String> {
-        if self.entries.len() + self.skipped.len() >= self.batch { self.flush() } else { Ok(()) }
+    /// Write a full batch, if one is pending. `Ok(true)` when rows were written: the caller then
+    /// polls for cancellation, which also covers a single directory with very many entries.
+    fn maybe_flush(&mut self) -> Result<bool, String> {
+        if self.entries.len() + self.skipped.len() >= self.batch { self.flush().map(|()| true) } else { Ok(false) }
     }
 
     /// Objects are keyed by file ID so hard links share one object. A zero ID (some FAT
@@ -258,6 +284,67 @@ struct Work {
     expected_id: [u8; 16],
 }
 
+/// Record one listed child of `work`: links, mount points and cloud or own-store directories as
+/// boundaries, other directories queued for traversal, files with their measured sizes.
+fn record(ctx: &mut Ctx<'_>, rec: &Record, work: &Work, queue: &mut VecDeque<Work>, own_store: &[[u8; 16]], serial: u64) -> Result<(), String> {
+    let is_dir = rec.attributes & ATTR_DIRECTORY != 0;
+    let placeholder = rec.attributes & (ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS) != 0
+        || rec.reparse_tag.is_some_and(is_cloud_tag);
+    let cloud = if placeholder { CloudState::Placeholder } else { CloudState::NotCloud };
+    match (rec.reparse_tag, is_dir) {
+        (Some(TAG_SYMLINK), _) => {
+            let o = ctx.object(rec, ObjectKind::Symlink, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Symlink, Some(BoundaryKind::Symlink)).map(|_| ())
+        }
+        (Some(TAG_MOUNT_POINT), _) => {
+            let o = ctx.object(rec, ObjectKind::Reparse, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Reparse, Some(BoundaryKind::Junction)).map(|_| ())
+        }
+        (Some(tag), true) if is_cloud_tag(tag) => {
+            // Unverified cloud providers are not traversed: listing could hydrate content (SCN-05).
+            let o = ctx.object(rec, ObjectKind::Directory, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, Some(BoundaryKind::CloudProvider)).map(|_| ())
+        }
+        (Some(_), true) => {
+            let o = ctx.object(rec, ObjectKind::Reparse, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Reparse, Some(BoundaryKind::Junction)).map(|_| ())
+        }
+        (_, true) if own_store.contains(&rec.file_id) => {
+            ctx.issue("own_store_skipped", &join(&work.display, &rec.name), OWN_STORE_MESSAGE.into());
+            let o = ctx.object(rec, ObjectKind::Directory, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, Some(BoundaryKind::OwnStore)).map(|_| ())
+        }
+        (_, true) => {
+            let o = ctx.object(rec, ObjectKind::Directory, None, None, cloud);
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, None).map(|id| {
+                queue.push_back(Work {
+                    entry_id: id,
+                    display: join(&work.display, &rec.name),
+                    verbatim: join(&work.verbatim, &rec.name),
+                    expected_id: rec.file_id,
+                });
+            })
+        }
+        (_, false) => {
+            // Compressed/sparse allocation from a directory listing is not trusted: it
+            // is measured through an attribute-only handle whose identity is checked.
+            // Cloud placeholders are never opened, so their allocation stays as listed.
+            let (alloc, links) = if rec.attributes & (ATTR_COMPRESSED | ATTR_SPARSE) != 0 && !placeholder {
+                supplement(&join(&work.verbatim, &rec.name), serial, rec.file_id)
+            } else {
+                (Some(rec.allocation), None)
+            };
+            let o = ctx.object(rec, ObjectKind::File, Some(rec.end_of_file), alloc, cloud);
+            if let Some(n) = links
+                && let Some(obj) = ctx.objects.iter_mut().rev().find(|x| x.object_id == o)
+            {
+                obj.link_count = Some(n);
+            }
+            ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::File, None).map(|_| ())
+        }
+    }
+}
+
 pub struct DirectoryBackend;
 
 /// File IDs (on the scanned volume `serial`) of CleanManager's own data directories: the ones
@@ -296,6 +383,35 @@ pub fn identity_of(path: &[u16]) -> io::Result<(String, String)> {
     Ok((format!("{}|{serial:016x}", h.volume_guid().unwrap_or_default()), format!("fileid128:{}", hex(&id))))
 }
 
+/// Why the opened root must not be scanned, as `(issue code, message)`, judged on the handle
+/// itself (opened without following links) before any row exists. A link is refused, never
+/// followed, and a non-directory is never recorded as one. A cloud-provider directory is the one
+/// reparse point accepted as a root: it is listed by metadata only, and its placeholder
+/// subdirectories stay `cloud_provider` boundaries (SCN-05).
+fn root_refusal(h: &Handle) -> Option<(&'static str, String)> {
+    let (attributes, tag) = match h.attribute_tag() {
+        Ok(v) => v,
+        Err(e) => {
+            let code = if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) { issue::PERMISSION_REQUIRED } else { issue::ROOT_UNAVAILABLE };
+            return Some((code, format!("cannot inspect the root's type: {e}")));
+        }
+    };
+    let is_dir = attributes & ATTR_DIRECTORY != 0;
+    if attributes & ATTR_REPARSE_POINT != 0 && !(is_dir && is_cloud_tag(tag)) {
+        let message = match tag {
+            TAG_SYMLINK => "the root is a symbolic link".to_owned(),
+            TAG_MOUNT_POINT => "the root is a junction or volume mount point".to_owned(),
+            t if t & TAG_NAME_SURROGATE != 0 => format!("the root is a link (reparse tag {t:#010x})"),
+            t => format!("the root is a reparse point the scanner does not traverse (tag {t:#010x})"),
+        };
+        return Some((
+            issue::ROOT_IS_LINK,
+            format!("{message}; links are never followed and nothing behind it was read. Scan the folder it points to directly"),
+        ));
+    }
+    (!is_dir).then(|| (issue::NOT_A_DIRECTORY, "root is not a directory".to_owned()))
+}
+
 impl DirectoryBackend {
     fn units(root: &RawPath) -> Option<Vec<u16>> {
         match root {
@@ -319,6 +435,10 @@ impl ScanBackend for DirectoryBackend {
         };
         match Handle::open(&verbatim, FILE_READ_ATTRIBUTES | SYNCHRONIZE) {
             Ok(h) => {
+                if let Some((code, reason)) = root_refusal(&h) {
+                    let state = if code == issue::PERMISSION_REQUIRED { CapabilityState::PermissionRequired } else { CapabilityState::Unsupported };
+                    return fail(reason, state);
+                }
                 let fs = h.filesystem().ok();
                 let serial = h.id_info().ok().map(|(s, _)| s);
                 RootProbe {
@@ -370,6 +490,12 @@ impl ScanBackend for DirectoryBackend {
                 return report;
             }
         };
+        // Check this handle before creating the root entry: a regular file or a link can be opened
+        // with these rights too, but must never be recorded as a directory or followed.
+        if let Some((code, message)) = root_refusal(&root_handle) {
+            report.issues.push(ScanIssue { code: code.into(), scope_display: root.display(), message });
+            return report;
+        }
         let (serial, root_id) = match root_handle.id_info() {
             Ok(v) => v,
             Err(e) => {
@@ -468,93 +594,49 @@ impl ScanBackend for DirectoryBackend {
                     continue;
                 }
             }
-            let records = match read_records(&dir, class) {
-                Ok(r) => r,
-                Err(e) if class == ListClass::Extd
-                    && matches!(e.raw_os_error(), Some(ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION)) =>
-                {
-                    class = ListClass::Both;
-                    ctx.report.backend_reason.push_str("; extended directory information unsupported, using FileIdBothDirectoryInfo");
-                    match read_records(&dir, class) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            ctx.issue("io_error", &work.display, e.to_string());
-                            let _ = ctx.skip(Some(work.entry_id), &work.display, skip_reason(&e));
-                            continue;
-                        }
+            let mut listing = Listing::new(&dir, class);
+            'listing: loop {
+                let chunk = match listing.next_chunk() {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(e) if class == ListClass::Extd
+                        && listing.nothing_returned()
+                        && matches!(e.raw_os_error(), Some(ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION)) =>
+                    {
+                        class = ListClass::Both;
+                        ctx.report.backend_reason.push_str("; extended directory information unsupported, using FileIdBothDirectoryInfo");
+                        listing = Listing::new(&dir, class);
+                        continue;
                     }
-                }
-                Err(e) => {
-                    ctx.issue(if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) { "permission_required" } else { "io_error" }, &work.display, e.to_string());
-                    let _ = ctx.skip(Some(work.entry_id), &work.display, skip_reason(&e));
-                    continue;
-                }
-            };
-            drop(dir);
-            for rec in records {
-                let is_dir = rec.attributes & ATTR_DIRECTORY != 0;
-                let placeholder = rec.attributes & (ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS) != 0
-                    || rec.reparse_tag.is_some_and(is_cloud_tag);
-                let cloud = if placeholder { CloudState::Placeholder } else { CloudState::NotCloud };
-                let outcome = match (rec.reparse_tag, is_dir) {
-                    (Some(TAG_SYMLINK), _) => {
-                        let o = ctx.object(&rec, ObjectKind::Symlink, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Symlink, Some(BoundaryKind::Symlink)).map(|_| ())
-                    }
-                    (Some(TAG_MOUNT_POINT), _) => {
-                        let o = ctx.object(&rec, ObjectKind::Reparse, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Reparse, Some(BoundaryKind::Junction)).map(|_| ())
-                    }
-                    (Some(tag), true) if is_cloud_tag(tag) => {
-                        // Unverified cloud providers are not traversed: listing could hydrate content (SCN-05).
-                        let o = ctx.object(&rec, ObjectKind::Directory, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, Some(BoundaryKind::CloudProvider)).map(|_| ())
-                    }
-                    (Some(_), true) => {
-                        let o = ctx.object(&rec, ObjectKind::Reparse, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Reparse, Some(BoundaryKind::Junction)).map(|_| ())
-                    }
-                    (_, true) if own_store.contains(&rec.file_id) => {
-                        ctx.issue("own_store_skipped", &join(&work.display, &rec.name), OWN_STORE_MESSAGE.into());
-                        let o = ctx.object(&rec, ObjectKind::Directory, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, Some(BoundaryKind::OwnStore)).map(|_| ())
-                    }
-                    (_, true) => {
-                        let o = ctx.object(&rec, ObjectKind::Directory, None, None, cloud);
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::Directory, None).map(|id| {
-                            queue.push_back(Work {
-                                entry_id: id,
-                                display: join(&work.display, &rec.name),
-                                verbatim: join(&work.verbatim, &rec.name),
-                                expected_id: rec.file_id,
-                            });
-                        })
-                    }
-                    (_, false) => {
-                        // Compressed/sparse allocation from a directory listing is not trusted: it
-                        // is measured through an attribute-only handle whose identity is checked.
-                        // Cloud placeholders are never opened, so their allocation stays as listed.
-                        let (alloc, links) = if rec.attributes & (ATTR_COMPRESSED | ATTR_SPARSE) != 0 && !placeholder {
-                            supplement(&join(&work.verbatim, &rec.name), serial, rec.file_id)
-                        } else {
-                            (Some(rec.allocation), None)
-                        };
-                        let o = ctx.object(&rec, ObjectKind::File, Some(rec.end_of_file), alloc, cloud);
-                        if let Some(n) = links
-                            && let Some(obj) = ctx.objects.iter_mut().rev().find(|x| x.object_id == o)
-                        {
-                            obj.link_count = Some(n);
-                        }
-                        ctx.entry(Some(work.entry_id), rec.name.clone(), o, ObjectKind::File, None).map(|_| ())
+                    Err(e) => {
+                        // Rows already written for this directory stay; the unread rest is a skipped range.
+                        ctx.issue(if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) { "permission_required" } else { "io_error" }, &work.display, e.to_string());
+                        let _ = ctx.skip(Some(work.entry_id), &work.display, skip_reason(&e));
+                        break;
                     }
                 };
-                if let Err(msg) = outcome {
-                    ctx.issue("internal_error", &work.display, msg);
+                for rec in chunk {
+                    if let Err(msg) = record(&mut ctx, &rec, &work, &mut queue, &own_store, serial) {
+                        ctx.issue("internal_error", &work.display, msg);
+                    }
+                    match ctx.maybe_flush() {
+                        Ok(false) => {}
+                        // Polled after every written batch, not only between directories: a cancel
+                        // request stops even a directory with hundreds of thousands of entries.
+                        Ok(true) if ctx.sink.cancel_requested() => {
+                            state = ScanState::Cancelled;
+                            break 'listing;
+                        }
+                        Ok(true) => {}
+                        Err(msg) => {
+                            ctx.issue("store_error", &work.display, msg);
+                            state = ScanState::Failed;
+                            break 'listing;
+                        }
+                    }
                 }
             }
-            if let Err(msg) = ctx.maybe_flush() {
-                ctx.issue("store_error", &work.display, msg);
-                state = ScanState::Failed;
+            if matches!(state, ScanState::Cancelled | ScanState::Failed) {
                 break;
             }
         }

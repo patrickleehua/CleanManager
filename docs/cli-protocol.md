@@ -170,10 +170,26 @@ JSON 模式只输出一个终态记录。JSONL 模式输出零个或多个 progr
 
 - `scan --format jsonl` 在扫描记录建立后立即输出第一条 `progress`（`task_id` 即 scan_id、`sequence: 0`），之后每秒至多四条，最后恰好一条 `scan_result`。调用方可以先拿到 ID，再从别的进程查询或取消。
 - `scan show ID` 与 `scan wait ID`：先用宿主身份（PID + 进程创建时间，避免 PID 复用误判）核对宿主是否仍在；宿主已退出而扫描未到终态时，已提交的结果按 `interrupted`、`partial_scope` 发布，issues 含 `host_exited`，退出 5。宿主存活状态无法判定时从不结束任务。
-- `scan cancel ID` 只记录请求并返回 `scan_cancel_receipt`（`accepted`、`state_at_receipt`）。它不是终态：扫描在下一个安全边界停止，期间显示 `stopping`，最终为 `cancelled`（退出 130），已确认的行保留。对已结束的扫描回执为 `already_terminal`。
+- `scan cancel ID` 只记录请求并返回 `scan_cancel_receipt`（`accepted`、`state_at_receipt`）。它不是终态：扫描在下一个安全边界停止，期间显示 `stopping`，最终为 `cancelled`（退出 130），已确认的行保留且可分页查询。安全边界是每个目录之间以及每写入一批行之后（默认 4,096 行），所以只有一个巨大目录的扫描也会在列举途中停下，而不是列完才看取消。`accepted: true` 的回执一定以 `cancelled` 结束：即使后端恰好在收到请求后、再次检查前完成，发布时也按 `cancelled`、`partial_scope` 处理，从不发布为 `completed`。对已结束的扫描回执为 `already_terminal`、`accepted: false`；判定与发布在同一写事务中，两者不会交错。
 - `scan wait ID --timeout S` 的超时只是等待预算：返回当时的 `scan_status`，退出 8（“稍后凭 ID 再查”），不取消、不回滚，扫描继续由宿主运行。
 - `scan --root P --timeout S` 的超时是宿主自己的预算：宿主像其他进程一样为自己的扫描记录取消请求，在安全边界停止，结果为 `cancelled` 并带 `timeout` issue（说明“没有回滚”），退出 8。
 - 终态 `scan_result` 的退出码对 `scan`、`scan show`、`scan wait` 一致：completed 0，partial/interrupted 5，cancelled 130，超时 8，其他按 issue 映射（permission_required 4、unsupported 7、否则 8）。
+- 终态 `scan_result` 的 `logical_bytes` 是已确认行中已知部分之和；`failed` 的结果没有可用的小计，`logical_bytes` 与 `allocated_bytes` 一律为 null（未知），即使失败前已写入部分行，也从不写 "0"。其他终态只在已知小计确实为零时写 "0"（例如取消时只确认了一个空目录）。
+
+扫描 issue 的 `code` 在两个平台含义一致（常量见 `cm_core::scan::issue`）。根被拒绝时扫描在写入任何行（包括根条目）之前以 `failed` 结束，`entries_seen` 为 0：
+
+| code | 含义 | 结果与退出码 |
+| --- | --- | --- |
+| `not_a_directory` | 根存在但不是目录（普通文件、设备等）；从不把它记录为目录 | failed，退出 8 |
+| `root_is_link` | 根本身是链接：符号链接（指向目录或文件、包括悬空链接）、junction、卷挂载点，或扫描器不进入的其他 reparse point。链接从不被跟随，message 提示直接扫描它指向的文件夹 | failed，退出 8 |
+| `root_unavailable` | 根不存在、所在卷离线或无法打开 | failed，退出 8 |
+| `permission_required` | 以当前权限读不了根（failed，退出 4）或某个子树（该子树记为跳过范围，结果 partial，退出 5）；从不自动提权 | 见左 |
+| `own_store_skipped` | CleanManager 自己的数据目录：记录为 `own_store` 边界、不进入、不计大小 | 不影响终态 |
+| `volume_changed` / `identity_changed` | 扫描中卷被替换（停止，partial）/ 目录在列出后被替换（该目录跳过） | partial，退出 5 |
+| `host_exited` | 宿主进程在终态前退出 | interrupted，退出 5 |
+| `timeout` | `scan --timeout` 的预算用尽，宿主为自己请求取消 | cancelled，退出 8 |
+
+根判断基于已打开的根句柄（Windows 以 `FILE_FLAG_OPEN_REPARSE_POINT` 打开、macOS 以 `O_NOFOLLOW`），不是先查路径再打开，因此检查与扫描之间替换路径也不会被跟随。Windows 上云同步根目录本身带云 reparse 标记，是唯一按目录接受的 reparse point：只按元数据列出，其中的占位子目录仍记为 `cloud_provider` 边界。桌面端在提供和开始扫描前用同样的 code（`not_a_directory`、`root_is_link`）预先拒绝。
 
 端到端测试 `crates/cm-cli/tests/scan_lifecycle.rs` 在子进程中启动真实扫描（调试构建可用 `CM_TEST_SCAN_SLOW_MS` 放慢批次，发布构建忽略该变量），从其他进程查询、取消、等待，并强杀宿主后验证中断状态。
 

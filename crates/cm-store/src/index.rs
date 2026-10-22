@@ -362,6 +362,8 @@ impl IndexStore {
     }
 
     /// Record a cancel request. It is a receipt only; the host stops at its next safe boundary.
+    /// The flag is set only while the scan is not terminal, in one statement, so an accepted
+    /// receipt is always seen by `publish` and the scan ends `cancelled` (never `completed`).
     pub fn request_cancel(&self, scan_id: &str) -> Result<CancelReceipt> {
         let state: String = self
             .conn
@@ -369,10 +371,11 @@ impl IndexStore {
             .optional()?
             .ok_or_else(|| StoreError::NotFound(scan_id.into()))?;
         let parsed: ScanState = enum_parse(&state)?;
-        if parsed.is_terminal() {
+        let set = !parsed.is_terminal()
+            && self.conn.execute("UPDATE scans SET cancel_requested=1 WHERE scan_id=?1 AND state IN ('created','running','stopping')", [scan_id])? == 1;
+        if !set {
             return Ok(CancelReceipt { scan_id: scan_id.into(), accepted: false, state_at_receipt: "already_terminal".into() });
         }
-        self.conn.execute("UPDATE scans SET cancel_requested=1 WHERE scan_id=?1", [scan_id])?;
         Ok(CancelReceipt { scan_id: scan_id.into(), accepted: true, state_at_receipt: state })
     }
 
@@ -386,17 +389,25 @@ impl IndexStore {
     }
 
     /// Publish the staging revision with a terminal state. `completed` with unread ranges is
-    /// downgraded to `partial` (SCN-03). Aggregates are computed here, once per revision.
+    /// downgraded to `partial` (SCN-03); `completed` after an accepted cancel request is published
+    /// as `cancelled`, even when the backend finished before it polled again (SCN-04). Aggregates
+    /// are computed here, once per revision.
     pub fn publish(&self, scan_id: &str, revision: u32, requested: ScanState, finished_at: &str) -> Result<ScanState> {
         if !requested.is_terminal() {
             return Err(StoreError::InvalidState("publish needs a terminal state".into()));
         }
+        // Write lock first: a concurrent cancel request either lands before the state is decided
+        // below or finds the scan terminal (receipt `already_terminal`), never in between.
+        let tx = rusqlite::Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
         self.require_staging(scan_id, revision)?;
-        let skipped: i64 =
-            self.conn.query_row("SELECT count(*) FROM skipped WHERE scan_id=?1 AND revision=?2", params![scan_id, revision], |r| r.get(0))?;
-        let state = if requested == ScanState::Completed && skipped > 0 { ScanState::Partial } else { requested };
+        let skipped: i64 = tx.query_row("SELECT count(*) FROM skipped WHERE scan_id=?1 AND revision=?2", params![scan_id, revision], |r| r.get(0))?;
+        let cancel: i64 = tx.query_row("SELECT cancel_requested FROM scans WHERE scan_id=?1", [scan_id], |r| r.get(0))?;
+        let state = match requested {
+            ScanState::Completed if cancel != 0 => ScanState::Cancelled,
+            ScanState::Completed if skipped > 0 => ScanState::Partial,
+            other => other,
+        };
         let completeness = if state == ScanState::Completed { "verified_scope" } else { "partial_scope" };
-        let tx = self.conn.unchecked_transaction()?;
         compute_aggregates(&tx, scan_id, revision)?;
         tx.execute("UPDATE revisions SET status='published' WHERE scan_id=?1 AND revision=?2", params![scan_id, revision])?;
         tx.execute(

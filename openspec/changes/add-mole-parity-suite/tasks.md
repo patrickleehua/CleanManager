@@ -18,7 +18,8 @@
 ## 2. 保护策略
 
 - [x] 2.1 实现 Windows/macOS 平台硬拒绝清单与按卷+文件身份的匹配，含祖先链接只拒不放；验收：PRT-03/04 单元测试覆盖大小写变体、junction/symlink 指向系统目录、解析失败即拒绝。
-- [ ] 2.2 建立双平台危险路径语料与模糊测试（含 UNC、设备路径、短文件名、ADS、控制字符、Unicode 变体）并接入 CI；验收：PRT-05 语料全部期望拒绝，任一放行使 CI 失败。
+- [x] 2.2 建立双平台危险路径语料与模糊测试（含 UNC、设备路径、短文件名、ADS、控制字符、Unicode 变体）并接入 CI；验收：PRT-05 语料全部期望拒绝，任一放行使 CI 失败。
+  勾选依据（2026-10-22）：`tests/corpus/dangerous-paths.json` 共 654 条（Windows 409、macOS 245；23 类，含 unc 36、device_path 27、short_name 18、ads 14、control_char 42、unicode 50）。CI 步骤“Dangerous-path corpus and protection fuzzing”在 `windows-x64` 与 `macos-arm64` 两个 job 上运行 cm-core 模型机语料、确定性变异与性质测试，以及本机 `hard_deny` 语料测试（真实 junction/符号链接夹具）；任一条目为 Allowed 即断言失败，job 随之失败。run 39731816978（bca6f31）与 39048067909（2d654d9）两个 job 均通过，日志记录 409/245 条全部拒绝。
 - [x] 2.3 实现用户保护名单存储（版本化、原子写、精确/通配/后代/祖先/规则/维护任务条目）与 GUI/CLI 共用读取；验收：PRT-01/06 测试中新增保护使待执行项 skipped，CLI 与核心查询结果一致。
 - [x] 2.4 实现保护数据失败即停止写操作与无效条目提示；验收：PRT-02 损坏文件、相对路径、穿越条目测试中写命令返回 protection_unavailable/参数错误，只读扫描继续。
 - [x] 2.5 实现默认保护类目的 protected_reviewable 状态（AI 会话、worktree）及与 MVP ANA-03 的一致性测试；验收：CAT-04 场景中会话不进入自动候选与策略，worktree 脏状态为 blocked。

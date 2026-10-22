@@ -81,10 +81,15 @@ export interface Summary {
   unread_ranges: number;
 }
 
+/** Why a permission issue or unread range happened: macOS still shows its privacy prompt, or the cause is not known. */
+export type PermissionCause = 'privacy_prompt_pending' | 'undetermined';
+
 export interface Issue {
   code: string;
   scope_display: string;
   message: string;
+  /** Structured cause of a `permission_required` issue (older hosts put `permission_cause=…` in the message). */
+  permission_cause?: PermissionCause | null;
 }
 
 export interface ScanStatus {

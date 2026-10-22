@@ -180,6 +180,119 @@ fn missing_root_fails_with_a_typed_issue_not_an_empty_scan() {
 }
 
 #[test]
+fn regular_file_root_is_refused_before_any_directory_is_recorded() {
+    let base = scratch("file-root");
+    let root = base.join("root.txt");
+    let contents = vec![b'x'; 1_024];
+    std::fs::write(&root, &contents).unwrap();
+
+    let probe = DirectoryBackend.probe(&raw(&root));
+    assert_eq!(probe.state, CapabilityState::Unsupported);
+    assert!(probe.reason.contains("not a directory"), "{}", probe.reason);
+
+    let mut sink = MemSink::default();
+    let report = scan(&root, &mut sink);
+    assert_eq!(report.state, ScanState::Failed);
+    assert_eq!(report.entries, 0);
+    assert_eq!(report.skipped_ranges, 0);
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].code, issue::NOT_A_DIRECTORY);
+    assert!(report.issues[0].message.contains("not a directory"));
+    assert!(sink.entries.is_empty() && sink.objects.is_empty() && sink.skipped.is_empty());
+    assert_eq!(sink.writes, 0, "an invalid root must not write a synthetic directory to the index");
+    assert_eq!(std::fs::read(&root).unwrap(), contents, "rejecting a file root is read-only");
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Scan `root` (also spelled with a trailing separator, for directories) and require a refusal
+/// before any row: `failed`, one `root_is_link` issue, zero writes.
+fn assert_link_root_refused(root: &Path, what: &str) {
+    let mut spellings = vec![root.to_path_buf()];
+    if std::fs::metadata(root).is_ok_and(|m| m.is_dir()) {
+        spellings.push(PathBuf::from(format!("{}\\", root.display())));
+    }
+    for root in spellings {
+        let probe = DirectoryBackend.probe(&raw(&root));
+        assert_eq!(probe.state, CapabilityState::Unsupported, "{}: {}", root.display(), probe.reason);
+        assert!(probe.reason.contains(what) && probe.reason.contains("never followed"), "{}", probe.reason);
+        let mut sink = MemSink::default();
+        let report = scan(&root, &mut sink);
+        assert_eq!(report.state, ScanState::Failed, "{}: {:?}", root.display(), report.issues);
+        assert_eq!((report.entries, report.skipped_ranges, report.issues.len()), (0, 0, 1));
+        assert_eq!(report.issues[0].code, issue::ROOT_IS_LINK);
+        assert!(report.issues[0].message.contains(what), "{}", report.issues[0].message);
+        assert!(report.issues[0].message.contains("Scan the folder it points to directly"), "{}", report.issues[0].message);
+        assert_eq!(sink.writes, 0, "{}: a link root writes nothing, not even a root entry", root.display());
+    }
+}
+
+#[test]
+fn junction_root_is_refused_not_reported_as_a_complete_empty_scan() {
+    let base = scratch("junction-root");
+    let (target, jn) = (base.join("target"), base.join("jn"));
+    std::fs::create_dir_all(target.join("sub")).unwrap();
+    std::fs::write(target.join("sub").join("inside.bin"), vec![7u8; 4096]).unwrap();
+    let out = Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&jn).arg(&target).output().unwrap();
+    assert!(out.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_link_root_refused(&jn, "junction");
+    // The target itself is an ordinary root.
+    let mut sink = MemSink::default();
+    assert_eq!(scan(&target, &mut sink).state, ScanState::Completed);
+    assert!(sink.entries.iter().any(|e| sink.name_of(e) == "inside.bin"));
+    std::fs::remove_dir(&jn).unwrap();
+    assert_eq!(std::fs::read(target.join("sub").join("inside.bin")).unwrap(), vec![7u8; 4096], "refusing a link is read-only");
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn symbolic_link_roots_are_refused_for_directories_and_files() {
+    let base = scratch("symlink-root");
+    let target = base.join("target");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("file.txt"), b"content").unwrap();
+    let (dir_link, file_link) = (base.join("dir-link"), base.join("file-link.txt"));
+    // Creating symbolic links needs SeCreateSymbolicLinkPrivilege or Developer Mode.
+    match std::os::windows::fs::symlink_dir(&target, &dir_link) {
+        Ok(()) => assert_link_root_refused(&dir_link, "symbolic link"),
+        Err(e) => eprintln!("skipped directory symlink root: cannot create a symbolic link here ({e})"),
+    }
+    match std::os::windows::fs::symlink_file(target.join("file.txt"), &file_link) {
+        // A link to a file is a link first: it is refused as one, not as a non-directory.
+        Ok(()) => assert_link_root_refused(&file_link, "symbolic link"),
+        Err(e) => eprintln!("skipped file symlink root: cannot create a symbolic link here ({e})"),
+    }
+    // A dangling link is refused the same way, without touching its (missing) target.
+    let dangling = base.join("dangling");
+    if std::os::windows::fs::symlink_dir(base.join("missing"), &dangling).is_ok() {
+        assert_link_root_refused(&dangling, "symbolic link");
+    }
+    assert_eq!(std::fs::read(target.join("file.txt")).unwrap(), b"content");
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn cancel_inside_one_huge_directory_stops_after_the_first_batch() {
+    let base = scratch("wide-cancel");
+    for i in 0..2_000 {
+        std::fs::write(base.join(format!("f{i:05}.bin")), b"x").unwrap();
+    }
+    // Cancel is requested once the first batch (4 rows: the root and 3 files) is written.
+    let mut sink = MemSink { cancel_after_writes: Some(1), ..Default::default() };
+    let report = scan(&base, &mut sink);
+    assert_eq!(report.state, ScanState::Cancelled, "{:?}", report.issues);
+    assert_eq!(sink.writes, 1, "no batch is written after the cancel was observed");
+    assert_eq!(sink.entries.len(), 4, "the confirmed batch is kept, the rest of the listing is not recorded");
+    assert_eq!(report.entries, 4);
+    // Without a cancel the same directory is listed completely, in batches.
+    let mut sink = MemSink::default();
+    let report = scan(&base, &mut sink);
+    assert_eq!(report.state, ScanState::Completed);
+    assert_eq!(sink.entries.len(), 2_001);
+    assert!(sink.writes >= 2_001 / 4, "rows were written in batches during the listing, not at its end");
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
 fn probe_reports_filesystem_and_stays_unverified() {
     let base = scratch("probe");
     let p = DirectoryBackend.probe(&raw(&base));

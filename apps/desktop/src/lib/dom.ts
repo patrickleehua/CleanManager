@@ -73,6 +73,8 @@ const ICONS: Record<string, string> = {
   bin: 'M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10.5 11v5M13.5 11v5',
   warn: 'M12 4.2 20.5 19H3.5L12 4.2ZM12 10v4M12 16.8h.01',
   lock: 'M7 11V8.5a5 5 0 0 1 10 0V11M6 11h12v9H6zM12 14.5v2',
+  // Waiting for an answer (a system privacy prompt).
+  hourglass: 'M7 4h10M7 20h10M8 4v1.5c0 2.5 4 4 4 6.5s-4 4-4 6.5V20M16 4v1.5c0 2.5-4 4-4 6.5s4 4 4 6.5V20',
   refresh: 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.7h-3.7',
   // A drawing pin (kept on top), an outward arrow (opens a system page), a terminal prompt.
   pin: 'M9 4.5h6M10 4.5v5.2L7.5 13h9L14 9.7V4.5M12 13v6.5',

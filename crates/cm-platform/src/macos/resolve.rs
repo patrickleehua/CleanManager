@@ -14,11 +14,16 @@
 //!   whether access was granted (§6: no probing of private directories): when such a location exists the rule reports
 //!   `permission_required` (`permission_cause=undetermined`) and the root stays unresolved. Any other root that cannot
 //!   be read for lack of permission reports the same issue.
-//! - Privacy prompts (§6): a root at or below a privacy-protected location ([`privacy::protected_root`]: Downloads,
-//!   another app's container such as Docker's logs, a selected volume) is looked up through [`privacy::bounded`], as is
+//! - Privacy prompts (§6): a root at or below a privacy-protected location ([`privacy::classify`]: Downloads,
+//!   another app's container such as Docker's logs, a selected volume) is looked up through [`privacy::Gate`], as is
 //!   the existence check of a TCC location inside a container. When macOS has not answered within
-//!   [`privacy::PROMPT_WAIT`] the rule reports `permission_required (permission_cause=privacy_prompt_pending)` and the
-//!   root stays unresolved (never an empty location).
+//!   [`privacy::prompt_wait`] the rule reports `permission_required` and the root stays unresolved (never an empty
+//!   location): `permission_cause=privacy_prompt_pending` where the prompt is the proven explanation (Downloads, an
+//!   app's container), `undetermined` otherwise (a volume, iCloud Drive, File Provider storage).
+//! - Scope ([`resolve_in`]): analysis matches roots by identity inside one scan, so a root outside the scan's root can
+//!   never yield a candidate. Only roots at or below the scan root (compared in its given, plain `/private`-less and
+//!   real spellings) are looked up; nothing outside it is opened, listed or examined (browser profile folders are
+//!   listed only when they overlap the scan root).
 //! - `CM_RESOLVE_HOME` / `CM_RESOLVE_TEMP` / `CM_RESOLVE_DOWNLOADS` / `CM_RESOLVE_SYSTEM` redirect resolution into
 //!   validation fixtures. With a home override the package managers' own variables (`CARGO_HOME`, `GOCACHE`...) are
 //!   ignored, since they name the real user's locations, and system-wide locations are not resolved unless
@@ -35,15 +40,15 @@ use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use cm_core::analysis::ResolvedRoot;
 use cm_core::capability::CapabilityState;
 use cm_core::path::RawPath;
 use cm_core::rules::{RootResolver, Rule};
 
+use super::ids;
+use super::privacy::{self, GateError};
 use super::sys::{Fd, describe};
-use super::{ids, privacy};
 
 /// Capability rows this module backs (name, state, reason); concatenated by `HostPlatform::capabilities`.
 pub(crate) const CAPS: &[(&str, CapabilityState, &str)] = &[(
@@ -241,6 +246,60 @@ pub struct Target {
 
 /// Every candidate root of a rule, privacy-protected ones included.
 pub fn targets(rule: &Rule, env: &ResolverEnv) -> Vec<Target> {
+    targets_in(rule, env, None)
+}
+
+/// macOS spells some locations two ways (`/private/var` and `/var`, `/tmp`, `/etc`; `/System/Volumes/Data/<p>` and
+/// `/<p>`): one spelling for comparisons, from the text alone.
+pub(crate) fn plain_spelling(p: &Path) -> PathBuf {
+    let p = p.strip_prefix("/System/Volumes/Data").map(|r| Path::new("/").join(r)).unwrap_or_else(|_| p.to_path_buf());
+    for link in ["var", "tmp", "etc"] {
+        if let Ok(rest) = p.strip_prefix(Path::new("/private").join(link)) {
+            return Path::new("/").join(link).join(rest);
+        }
+    }
+    p
+}
+
+/// The scan root a resolution is limited to, in each spelling that can be compared: as given (plain) and its real
+/// path (looked up once, bounded by the privacy gate; left out when it does not answer).
+#[derive(Debug, Clone)]
+pub struct Scope(Vec<PathBuf>);
+
+impl Scope {
+    pub fn of(root: &Path, gate: &privacy::Gate) -> Scope {
+        let mut spellings = vec![plain_spelling(root)];
+        let owned = root.to_path_buf();
+        if let Ok(Ok(real)) = gate.run(root, move || std::fs::canonicalize(&owned)) {
+            spellings.push(plain_spelling(&real));
+        }
+        spellings.dedup();
+        Scope(spellings)
+    }
+
+    /// `path` lies at or below the scan root.
+    pub fn contains(&self, path: &Path) -> bool {
+        let p = plain_spelling(path);
+        self.0.iter().any(|s| p.starts_with(s))
+    }
+
+    /// `path` and the scan root overlap (one is at or below the other): a listing of `path` can name a root in scope.
+    pub fn overlaps(&self, path: &Path) -> bool {
+        let p = plain_spelling(path);
+        self.0.iter().any(|s| p.starts_with(s) || s.starts_with(&p))
+    }
+}
+
+/// [`targets`] limited to `scope` (every target when `None`); profile folders are listed only when they overlap it.
+pub(crate) fn targets_in(rule: &Rule, env: &ResolverEnv, scope: Option<&Scope>) -> Vec<Target> {
+    let all = all_targets(rule, env, scope);
+    match scope {
+        Some(s) => all.into_iter().filter(|t| s.contains(&t.path)).collect(),
+        None => all,
+    }
+}
+
+fn all_targets(rule: &Rule, env: &ResolverEnv, scope: Option<&Scope>) -> Vec<Target> {
     let owner = rule.owner.id.as_str();
     let open = |path: PathBuf| Target { path, tcc_protected: false };
     let home = env.home.as_deref();
@@ -251,8 +310,9 @@ pub fn targets(rule: &Rule, env: &ResolverEnv) -> Vec<Target> {
         RootResolver::BrowserProfile => BROWSERS
             .iter()
             .filter(|(id, ..)| *id == owner)
-            .filter_map(|(_, parts, style)| home.map(|h| profiles(&join(h, parts), *style)))
-            .flatten()
+            .filter_map(|(_, parts, style)| home.map(|h| (join(h, parts), *style)))
+            .filter(|(parent, _)| scope.is_none_or(|s| s.overlaps(parent)))
+            .flat_map(|(parent, style)| profiles(&parent, style))
             .map(open)
             .collect(),
         RootResolver::ApplicationCache | RootResolver::AppContainer | RootResolver::UserLogs | RootResolver::CrashReports => APP_DIRS
@@ -361,33 +421,42 @@ impl FirstAccess {
 }
 
 /// Run one first access to `path`, through the privacy gate when `path` is at or below a protected location.
-fn gated<T: Send + 'static>(path: &Path, home: Option<&Path>, wait: Duration, op: impl FnOnce(&Path) -> T + Send + 'static) -> Result<T, String> {
-    let Some(prompt) = privacy::prompt_key(path, home) else { return Ok(op(path)) };
+fn gated<T: Send + 'static>(path: &Path, gate: &privacy::Gate, op: impl FnOnce(&Path) -> T + Send + 'static) -> Result<T, GateError> {
     let owned = path.to_path_buf();
-    privacy::bounded_as(&prompt, path, wait, move || op(&owned))
+    gate.run_if_protected(path, move || op(&owned))
 }
 
-fn pending_issue(rule: &str, why: String) -> ResolveIssue {
-    let code = if privacy::is_pending(&why) { "permission_required" } else { "io_error" };
-    ResolveIssue { code, scope: rule.to_owned(), message: format!("{why}; the rule is not applied there") }
+fn pending_issue(rule: &str, why: GateError) -> ResolveIssue {
+    ResolveIssue { code: why.issue_code(), scope: rule.to_owned(), message: format!("{why}; the rule is not applied there") }
 }
 
 /// Resolve every rule's roots to identities. Missing locations are simply absent; privacy-protected or unreadable
 /// ones are reported as `permission_required` issues.
 pub fn resolve(rules: &[Rule], env: &ResolverEnv) -> Resolution {
-    resolve_gated(rules, env, privacy::PROMPT_WAIT, &FirstAccess::os())
+    resolve_in(rules, env, None)
 }
 
-/// [`resolve`] with the privacy-prompt deadline and the first accesses injected.
-pub(crate) fn resolve_gated(rules: &[Rule], env: &ResolverEnv, wait: Duration, access: &FirstAccess) -> Resolution {
+/// [`resolve`] limited to the roots at or below `within` (a scan's root): the others cannot match anything in that
+/// scan, so they are neither opened nor examined.
+pub fn resolve_in(rules: &[Rule], env: &ResolverEnv, within: Option<&RawPath>) -> Resolution {
+    let gate = privacy::Gate::for_home(env.home.as_deref());
+    let scope = within.map(|w| match w {
+        RawPath::Unix(b) => Scope::of(Path::new(OsStr::from_bytes(b)), &gate),
+        // Not a macOS path: nothing of this platform's lies inside it.
+        RawPath::Windows(_) => Scope(Vec::new()),
+    });
+    resolve_gated(rules, env, &gate, &FirstAccess::os(), scope.as_ref())
+}
+
+/// [`resolve_in`] with the privacy gate and the first accesses injected.
+pub(crate) fn resolve_gated(rules: &[Rule], env: &ResolverEnv, gate: &privacy::Gate, access: &FirstAccess, scope: Option<&Scope>) -> Resolution {
     let mut out = Resolution::default();
-    let home = env.home.as_deref();
     for rule in rules {
-        for t in targets(rule, env) {
+        for t in targets_in(rule, env, scope) {
             if t.tcc_protected {
                 // Existence only (lstat in the unprotected parent): the contents are never touched.
                 let exists = Arc::clone(&access.exists);
-                match gated(&t.path, home, wait, move |p| exists(p)) {
+                match gated(&t.path, gate, move |p| exists(p)) {
                     Ok(true) => out.issues.push(permission_issue(&rule.rule_id, &t.path, true)),
                     Ok(false) => {}
                     Err(why) => out.issues.push(pending_issue(&rule.rule_id, why)),
@@ -395,7 +464,7 @@ pub(crate) fn resolve_gated(rules: &[Rule], env: &ResolverEnv, wait: Duration, a
                 continue;
             }
             let identity = Arc::clone(&access.identity);
-            let found = match gated(&t.path, home, wait, move |p| identity(p)) {
+            let found = match gated(&t.path, gate, move |p| identity(p)) {
                 Ok(found) => found,
                 Err(why) => {
                     out.issues.push(pending_issue(&rule.rule_id, why));
@@ -432,8 +501,8 @@ pub fn removable_volume_root(arg: &Path) -> Result<PathBuf, String> {
         return Err(format!("{} is not a directory", root.display()));
     }
     let c = cstr(&root).map_err(describe)?;
-    // Opening a volume can wait for the Removable / Network Volumes prompt.
-    let fd = privacy::bounded(&root, privacy::PROMPT_WAIT, move || Fd::open_dir(&c))?.map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
+    // Opening a volume can wait for the Removable / Network Volumes prompt, or for a slow disk (cause undetermined).
+    let fd = privacy::Gate::os().run(&root, move || Fd::open_dir(&c)).map_err(GateError::into_message)?.map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
     let sfs = fd.statfs().map_err(|e| format!("{}: {}", root.display(), describe(e)))?;
     if sfs.f_flags & libc::MNT_ROOTFS as u32 != 0 {
         return Err(format!("{} is on the startup volume, not a separate mounted volume", root.display()));

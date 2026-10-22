@@ -283,10 +283,14 @@ fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<std::proce
 pub fn scan_result(req: &str, stores: &Stores, scan_id: &str) -> Result<Value, StoreError> {
     let status = stores.index.scan_status(scan_id)?;
     let report = stores.index.scan_report(scan_id)?.unwrap_or(Value::Null);
-    let summary = if status.entries_seen > 0 { Some(stores.index.summarize(scan_id, &[1])?) } else { None };
+    // A failed scan has no usable subtotal: its sizes are unknown (null), never "0" (SCN-03).
+    // Other terminal states report the known part of what was confirmed, "0" only when that is zero.
+    let failed = status.state == ScanState::Failed;
+    let summary = if status.entries_seen > 0 && !failed { Some(stores.index.summarize(scan_id, &[1])?) } else { None };
     let (logical, unknown, allocated) = match summary {
-        Some(s) => (s.logical.known.to_string(), s.logical.unknown_count, s.allocated.exact().map(|b| b.to_string())),
-        None => ("0".to_string(), 0, None),
+        Some(s) => (Some(s.logical.known.to_string()), s.logical.unknown_count, s.allocated.exact().map(|b| b.to_string())),
+        None if failed => (None, 0, None),
+        None => (Some("0".to_string()), 0, None),
     };
     Ok(record(
         "scan_result",
@@ -305,7 +309,11 @@ pub fn scan_result(req: &str, stores: &Stores, scan_id: &str) -> Result<Value, S
             "logical_bytes": logical,
             "allocated_bytes": allocated,
             "unknown_size_count": unknown,
-            "issues": report["issues"].as_array().cloned().unwrap_or_default(),
+            // The structured `permission_cause` of each issue whose message names one (macos.md §6).
+            "issues": report["issues"].as_array().cloned().map(|mut i| {
+                cm_core::permission::annotate_issues(&mut i);
+                i
+            }).unwrap_or_default(),
         })),
     ))
 }
@@ -505,3 +513,46 @@ pub fn entries_list(req: &str, p: &Parsed) -> ExitCode {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cm_core::model::{CloudState, IdentityQuality, ObjectKind};
+    use cm_core::path::RawPath;
+    use cm_core::scan::{EntryRow, ObjectRow, ScanIssue, ScanReport};
+    use cm_store::index::ScanInit;
+
+    fn publish(stores: &Stores, scan_id: &str, state: ScanState) -> Value {
+        let root = RawPath::unix(b"/r".to_vec()).unwrap();
+        let host = cm_core::host::HostRef { kind: "cli".into(), pid: std::process::id(), started_at: "2026-10-22T00:00:00Z".into() };
+        let rev = stores.index.begin_scan(&ScanInit { scan_id: scan_id.into(), scope_id: "scope".into(), root: root.clone(), backend: "test".into(),
+            host, started_at: "2026-10-22T00:00:00Z".into() }).unwrap();
+        let object = |id: u64, kind: ObjectKind, logical: Option<u64>| ObjectRow { object_id: id, volume_id: "v".into(), file_id: format!("inode64:{id:016x}"),
+            generation: None, quality: IdentityQuality::Strong, kind, logical, allocated: logical, link_count: None, cloud: CloudState::NotCloud,
+            modified_unix: None, shared_blocks: None };
+        let file = RawPath::unix(b"a".to_vec()).unwrap();
+        stores.index.write_batch(scan_id, rev, &[object(1, ObjectKind::Directory, None), object(2, ObjectKind::File, Some(0))],
+            &[EntryRow { entry_id: 1, parent_entry_id: None, name: root, object_id: 1, kind: ObjectKind::Directory, boundary: None },
+              EntryRow { entry_id: 2, parent_entry_id: Some(1), name: file, object_id: 2, kind: ObjectKind::File, boundary: None }], &[]).unwrap();
+        let report = ScanReport { state, backend: "test".into(), backend_reason: "test".into(), entries: 2, skipped_ranges: 0, boundaries: 0,
+            elevated_read: vec![], issues: vec![ScanIssue { code: "store_error".into(), scope_display: String::new(), message: "disk full".into() }] };
+        stores.index.record_report(scan_id, &report).unwrap();
+        stores.index.publish(scan_id, rev, state, "2026-10-22T00:00:01Z").unwrap();
+        scan_result("req_test", stores, scan_id).unwrap()
+    }
+
+    #[test]
+    fn failed_scans_report_unknown_sizes_and_others_keep_their_known_subtotal() {
+        let dir = std::env::temp_dir().join(format!("cm-cli-scan-result-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let stores = Stores::open(&dir).unwrap();
+        // Rows were written before the failure: their subtotal is still not reported (SCN-03).
+        let failed = publish(&stores, "s_failed", ScanState::Failed);
+        assert_eq!((failed["status"].as_str(), failed["entries_seen"].as_u64()), (Some("failed"), Some(2)), "{failed}");
+        assert!(failed["logical_bytes"].is_null() && failed["allocated_bytes"].is_null(), "{failed}");
+        // A known zero subtotal of a scan that ran stays "0".
+        let cancelled = publish(&stores, "s_cancelled", ScanState::Cancelled);
+        assert_eq!((cancelled["logical_bytes"].as_str(), cancelled["allocated_bytes"].as_str()), (Some("0"), Some("0")), "{cancelled}");
+        drop(stores);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

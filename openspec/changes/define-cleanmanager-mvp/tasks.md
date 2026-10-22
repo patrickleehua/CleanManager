@@ -12,8 +12,9 @@
 - [x] 1.2 创建 Rust workspace 与 cm-core/cm-platform/cm-cli 最小结构，隔离桌面依赖；验收：核心和 CLI 可分别构建，CLI 构建不拉入桌面生命周期，CLI-01 的无 GUI smoke command 可运行。
 - [x] 1.3 建立受控小型、宽/深目录和可扩展 10K/100K/1M 夹具生成方式及 manifest，明确准备/销毁根；验收：固定种子可复现条目/链接/大小定义，生成动作不计入扫描只读证据，越界 sentinel 不受修改。
 - [x] 1.4 锁定原型依赖/工具链并记录用途、来源、许可；验收：lockfile 与依赖清单一致，构建不捆绑 WizTree/Mole 研究副本，README 给出可执行的基础构建方式。
-- [ ] 1.5 建立 Windows/macOS CI 构建与受控单元/契约测试任务；验收：日志记录实际 runner/架构，CI 通过不自动改写真机、签名或权限验收状态。
-  CI 运行登记（仅事实，未据此勾选）：2026-10-16 首次远端运行 run 38947490646（`main`，01de24c）两个 job 均在 `cargo test` 失败；修复后 `ci/green` 分支 run 38955708298（2026-10-16，cc172d3）`windows-x64`（windows-latest，X64）与 `macos-arm64`（macos-14，ARM64）全部步骤通过。
+- [x] 1.5 建立 Windows/macOS CI 构建与受控单元/契约测试任务；验收：日志记录实际 runner/架构，CI 通过不自动改写真机、签名或权限验收状态。
+  CI 运行登记：2026-10-16 首次远端运行 run 38947490646（`main`，01de24c）两个 job 均在 `cargo test` 失败；修复后 `ci/green` 分支 run 38955708298（2026-10-16，cc172d3）`windows-x64`（windows-latest，X64）与 `macos-arm64`（macos-14，ARM64）全部步骤通过。
+  勾选依据（2026-10-22）：此后 `main` 上的 CI 多次全绿，含 run 39048067909（2d654d9）与 run 39731816978（bca6f31）。两次的“Record actual runner and architecture”步骤都把实际 `runner.os`/`runner.arch`/`uname -m`/镜像写入日志与 job summary（39731816978：macOS ARM64 `arm64` macos14 20260831.0302.1；Windows X64 `x86_64` win25-vs2026 20261007.264.1）。最后一步“CI changed no tracked file (and no acceptance record)”（`git diff --exit-code`，含 `docs/evidence`）通过，保证 CI 不写设备矩阵、运行记录或任何验收记录。真机、签名/公证与系统权限验收仍只由 `docs/evidence/runs/` 中的真机运行记录推进。
 
 ## 2. 领域类型与完整机器契约
 

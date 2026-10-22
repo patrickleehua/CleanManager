@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-13",
+  "run_id": "run_win_acc_2026-10-22_win-13",
+  "recorded_at": "2026-10-22T04:28:16Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "holder-environment.json",
+      "cli-41-held-file-inspect.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [
+    "cleanmanager",
+    "trash",
+    "inspect",
+    "--scan",
+    "s_5c40_18e0bf328009a66c",
+    "--entry",
+    "4",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "能报告实际占用或明确查询限制；不结束进程、不修改文件",
+  "actual": "测试进程以 share_mode=0 只读独占文件；inspect 报告 python.exe PID 26612，与实际测试 PID 一致，随后关闭测试句柄。",
+  "terminal_state": "trash_inspection",
+  "exit_code": 0,
+  "measurements": {
+    "test_holder": {
+      "holder_pid": 26612,
+      "share_mode": 0,
+      "access": "read only",
+      "target": "big.bin"
+    },
+    "reported_holders": [
+      "python.exe (Python, pid 26612)"
+    ],
+    "process_ended": false,
+    "file_changed": false
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate."
+  ],
+  "status": "passed"
+}

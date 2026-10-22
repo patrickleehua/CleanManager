@@ -53,6 +53,24 @@
 
 运行记录格式见 [run-record Schema](../schemas/v1/run-record.schema.json) 与[空白模板](evidence/runs/run-record.template.json)，存放在 `docs/evidence/runs/`。设备矩阵 [device-matrix.json](evidence/device-matrix.json) 分开登记 expected 与 actual，缺设备时 actual 为 null。平台能力声明只有在引用同平台、已观测设备上 status=passed 且 actual 非空的运行记录时才能标为 verified；文档验证器拒绝用 Windows 运行支撑 macOS 声明（SCN-07）。
 
+入库的运行记录和验收报告必须先脱敏，规则与 doctor 相同：用户主目录 → `~`，用户名 → `<user>`，主机名 → `<host>`，不带原始路径字节（`raw_base64`）。含用户名、已安装软件或进程清单、截图的原始输出只留在本地被 git 忽略的 `.research/` 或 `target/`，Markdown 不链接这些位置，也不链接盘符路径或 `file:` 地址（文档验证器拒绝）。2026-10-22 的 Windows 验收即按此整理：[报告](acceptance/windows-2026-10-22-report.md)与[复验报告](acceptance/windows-2026-10-22-retest-report.md)链接逐项运行记录 `run_win_acc_2026-10-22_*` 与 `run_win_retest_2026-10-22_*`。
+
+### 2.1 可重复验收（Windows CLI）
+
+[tools/win_verify.py](../tools/win_verify.py) 把 2026-10-22 Windows 验收（[用例](acceptance/windows-2026-10-22-cases.md)）中既不需要桌面窗口、也不做破坏性动作的 CLI 用例做成可以随时重跑的检查：
+
+```text
+python -I tools/win_verify.py                # 先构建 release CLI（cargo build --release --locked -p cm-cli）
+python -I tools/win_verify.py --cli PATH     # 测指定的二进制
+python -I tools/win_verify.py --strict       # 修复全部落地后使用：known_pending 也算失败
+```
+
+- 只用标准库；Schema 校验复用文档验证器的 jsonschema 设置（`.research/python-deps`）。在 `%TEMP%` 下生成合成夹具：中文/空格名、空文件与空目录、假 `.ssh` 凭据、junction、范围外 sentinel、400 目录/40,000 文件树和 20,000 文件单目录。使用自己的 `CM_STORE_DIR`，运行前后比较 SHA-256 清单；不批准任何计划，不移动、删除或恢复任何对象，结束时删除夹具（`--keep-fixture` 保留）。
+- 15 个用例 WV-01..WV-15：help/doctor（含脱敏检查）、实验功能默认关闭及开关、夹具扫描、entries 分页/过滤/limit、缺失根/文件根/junction 根、凭据保护 `policy_denied`、计划与未批准 apply 的 `needs_approval` 及 900 秒有效期、多目录取消与单个大目录内取消、完整性与无执行，以及全部 JSON 输出的 v1 Schema 与语义校验。`results.json` 为每个用例写明对应的 WIN-xx 用例和独立预期。
+- 有四个用例写的是 2026-10-22 正在落地的修复之后的行为，标为 `known_pending`：普通文件根 failed / `not_a_directory`（BUG-WIN-01）；junction 根 failed / `root_is_link`（运行后审查发现的伪完整）；failed 扫描的 `logical_bytes` 与 `allocated_bytes` 为 null；在单个 20,000 文件目录内取消，以 cancelled / 退出 130 结束。旧二进制上这四项显示为 known pending，既不悄悄通过，也不和其他失败混在一起。退出码：0 全部通过；1 有失败；3 无失败，但有 known pending、无法判定或未运行的用例；2 用法或准备错误。
+- 结果写到 `target/win-verify/<时间>/`。`summary.md`、`results.json` 和符合 run-record Schema 的 `run-record.json`（test_id SCN-07）按上面的规则脱敏；`raw/` 保留未脱敏的原始输出，只供本地排查，不提交。登记时把 `run-record.json` 复制到 `docs/evidence/runs/` 并运行文档验证器；单条记录不会自动改变设备矩阵声明。
+- 不覆盖：桌面窗口与读屏、实际回收站/隔离/恢复、卸载/启动项/维护、签名安装、其他文件系统与设备。2026-10-22 已在本机端到端运行：对复验时的旧二进制（2d654d9 加 BUG-WIN-01 补丁）为 11 通过、4 known pending；对含并行修复的工作树构建为 15 项通过。被测工作树有未提交改动，所以这两次都没有登记为运行记录。
+
 ## 3. 核心与 v1 协议共同判据
 
 平台内部属性通过核心 Observation/适配层映射到 v1，不增加 Schema 未定义键。特别约束如下：

@@ -228,6 +228,59 @@ def rule_v2_semantics(value, registry):
         assert set(value["platforms"]) <= tested, "enabled rule claims an untested platform"
 
 
+# Markdown links: only web/mail URLs may leave the repository. A drive-letter path, a `file:` URL, a UNC or
+# rooted path, any other scheme, a target outside the checkout or inside a git-ignored local folder works on
+# the author's machine only and is dead on GitHub (e.g. links into a local agent session or raw evidence).
+EXTERNAL_LINK = re.compile(r"^(https?|mailto):", re.I)
+IGNORED_TOP_DIRS = {".research", "target", "node_modules", ".playwright-mcp", ".venv", "venv"}
+
+
+def link_problem(doc, target, root=ROOT):
+    """None if the Markdown link target is acceptable, else the reason it is not."""
+    target = target.strip().strip("<>").strip()
+    if not target:
+        return "empty link target"
+    if target.startswith("#") or EXTERNAL_LINK.match(target):
+        return None
+    if re.match(r"^[A-Za-z]:", target):
+        return "absolute Windows drive path"
+    if re.match(r"^file:", target, re.I):
+        return "file: URL"
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+        return "unsupported link scheme (only http, https and mailto may leave the repository)"
+    if target.startswith(("/", "\\")):
+        return "rooted or UNC path"
+    from urllib.parse import unquote
+    resolved = (doc.parent / unquote(target.split("#", 1)[0])).resolve()
+    try:
+        rel = resolved.relative_to(root.resolve())
+    except ValueError:
+        return "link outside the repository"
+    if rel.parts and rel.parts[0] in IGNORED_TOP_DIRS:
+        return "link into a git-ignored local folder"
+    if not resolved.exists():
+        return "missing target"
+    return None
+
+
+# Run records are published: a user's home directory must be redacted to `~` (or the user to `<user>`),
+# as doctor does. Synthetic placeholders and the shared Windows/macOS profiles are fine.
+HOME_PATH = re.compile(r"(?i)\b[a-z]:[\\/]+users[\\/]+(?!(?:<user>|public|default|all users)(?:[\\/]|$))[^\\/\s\"]+"
+                       r"|(?<![\w.~])/Users/(?!(?:<user>|Shared)(?:/|$))[^/\s\"]+")
+
+
+def unredacted_home(value):
+    """The first string in a JSON value that still names a real user's home directory, else None."""
+    if isinstance(value, str):
+        return value if HOME_PATH.search(value) else None
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    for item in items:
+        hit = unredacted_home(item)
+        if hit is not None:
+            return hit
+    return None
+
+
 def device_claim_semantics(matrix, runs):
     """SCN-07: a platform claim is verified only by passed runs observed on a real device of that platform."""
     devices = {d["device_id"]: d for d in matrix["devices"]}
@@ -304,6 +357,8 @@ def main():
         value = load(path)
         validators["run-record"].validate(value)
         assert value["run_id"] not in runs, "duplicate run id"
+        hit = unredacted_home(value)
+        assert hit is None, f"run record {path.name} contains an unredacted home path (use ~ or <user>): {hit[:120]}"
         runs[value["run_id"]] = value
     # Production rule packs: schema, registry-backed promotion and existing passed run evidence.
     prod_registry = {}
@@ -372,6 +427,10 @@ def main():
     reject_claim("scn07-verified-from-unverified-run", lambda m: first(m, platform="windows", state="unverified").update(state="verified", run_ids=["run_template"]))
     reject("run-unverified-with-actual", runs["run_template"], lambda x: x.update(actual="made up"), "run-record")
     reject("run-passed-without-actual", runs["run_template"], lambda x: x.update(status="passed"), "run-record")
+    for name, leaked in [("run-unredacted-windows-home", "C:\\Users\\alice\\AppData\\Local\\Temp\\fixture"), ("run-unredacted-macos-home", "/Users/alice/Library/Caches/x")]:
+        assert unredacted_home(dict(runs["run_template"], command=["cleanmanager", "scan", "--root", leaked])) is not None, "unredacted home accepted: " + name
+        negative.append(name)
+    assert unredacted_home(["~\\AppData\\Local", "C:\\Users\\<user>\\x", "C:\\Users\\Public\\x", "/Users/Shared/x", "~/Library"]) is None, "redacted paths rejected"
     reject("unbacked-verified-rule", load(rules[0]), lambda x: x.update(status="verified"), "rule")
     def reject_plan(name, source, mutate):
         """Mutate a plan/v2 example and re-sign it, so rejection proves the intended invariant, not a stale digest."""
@@ -503,12 +562,21 @@ def main():
         markdown.append(content)
         assert content.count("```") % 2 == 0, "unclosed fence: " + str(path)
         assert "\ufffd" not in content, "replacement character: " + str(path)
-        for target in re.findall(r"(?<!!)\[[^\]\n]*\]\(([^)\n]+)\)", content):
-            if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target) or target.startswith("#"):
-                continue
-            target = target.split("#", 1)[0].strip("<>")
-            assert (path.parent / target).resolve().exists(), f"broken local link: {path}: {target}"
-            links += 1
+        for target in re.findall(r"\[[^\]\n]*\]\(([^)\n]+)\)", content):
+            problem = link_problem(path, target)
+            assert problem is None, f"bad local link ({problem}): {path.relative_to(ROOT).as_posix()}: {target}"
+            if not (target.startswith("#") or EXTERNAL_LINK.match(target.strip("<> "))):
+                links += 1
+    # The link rules reject the shapes that are dead outside the author's machine.
+    doc = ROOT / "docs" / "README.md"
+    for name, bad in [("link-windows-drive-path", "C:/Users/someone/.agent/session.md"), ("link-windows-backslash-path", "C:\\Users\\someone\\a.md"),
+                      ("link-file-url", "file:///C:/Users/someone/a.md"), ("link-unc-path", "\\\\server\\share\\a.md"),
+                      ("link-rooted-path", "/etc/hosts"), ("link-other-scheme", "vscode://file/a.md"),
+                      ("link-outside-repo", "../../../outside.md"), ("link-ignored-folder", "../.research/acceptance-raw/x.json"),
+                      ("link-missing-target", "no-such-file.md")]:
+        assert link_problem(doc, bad) is not None, "bad link accepted: " + bad
+        negative.append(name)
+    assert link_problem(doc, "https://example.com/a") is None and link_problem(doc, "mailto:a@example.com") is None and link_problem(doc, "verification-plan.md#2") is None, "valid link rejected"
     lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
     members = {tomllib.loads(m.read_text(encoding="utf-8"))["package"]["name"] for m in (ROOT / "crates").glob("*/Cargo.toml")}
     locked = {(pkg["name"], pkg["version"]) for pkg in lock["package"] if pkg["name"] not in members}

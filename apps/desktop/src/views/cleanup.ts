@@ -13,6 +13,7 @@ import type { Candidate, CandidateSetInfo, Group, IpcError, Mode } from '../lib/
 import { GROUP_EXPLAIN, GROUP_LABEL, MODE_EXPLAIN, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LABEL, PROBE_STATE_LABEL, REGISTRY_LABEL } from '../lib/words';
 import { emptyState, errorLine, errorText, exactTitle, groupMark, pageHead, sizeText } from './parts';
 import { selectionBar, sumSizes, tierBadge } from './kit';
+import { issueList } from './ui';
 
 const PAGE = 50;
 const GROUPS: Group[] = ['low', 'review', 'pending', 'blocked'];
@@ -283,7 +284,7 @@ export class CleanupPage {
           'details',
           { class: 'issues-details' },
           h('summary', {}, `分析说明（${info.issues.length}）`),
-          h('ul', { class: 'issue-list' }, ...info.issues.map((i) => h('li', {}, h('span', { class: 'issue-code' }, i.code), h('span', { class: 'path' }, i.scope_display), h('span', { class: 'muted' }, i.message)))),
+          issueList(info.issues, { label: '记录的问题' }),
         ),
       );
     return h('div', { class: 'notices' }, ...parts);

@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-15",
+  "run_id": "run_win_acc_2026-10-22_win-15",
+  "recorded_at": "2026-10-22T04:27:05Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "desktop debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "ui-22-maintenance-ready.txt",
+      "cli-38-optimise-catalog.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md"
+  },
+  "command": [],
+  "seed": null,
+  "expected": "任务有影响、权限/风险说明；写入必须进入计划，不能进入页面即执行",
+  "actual": "5 项维护任务，无预勾选，适用/不适用与权限说明存在；草稿按钮禁用，没有运行记录，进入页面只读探测。",
+  "terminal_state": "observed_in_native_window",
+  "exit_code": null,
+  "measurements": {
+    "tasks": [
+      "windows.shell-restart",
+      "windows.icon-cache-rebuild",
+      "windows.dns-flush",
+      "windows.trim-when-due",
+      "windows.image-health-check"
+    ],
+    "preselected": 0,
+    "draft_button_disabled": true,
+    "runs_recorded": 0
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate."
+  ],
+  "status": "passed"
+}

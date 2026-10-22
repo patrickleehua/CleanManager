@@ -7,7 +7,7 @@ import { EMPTY_COUNTS, Store, type ActivityTab, type Page } from './lib/store';
 import type { DiagTarget } from './lib/diagTypes';
 import type { ReadinessOp, ScanStatus } from './lib/types';
 import { OPERATION_STATE_LABEL } from './lib/words';
-import { EXTENSIONS, TOOLS, gateLabel, gatedOff, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
+import { EXTENSIONS, TOOLS, gatedOff, placeOf, shortcutFor, shortcutLabel, toolForPage, toolOf, type ExtId, type ToolId } from './lib/nav';
 import { platform, setPlatform, words } from './lib/platform';
 import { ActivityPage } from './views/activity';
 import { AppsPage } from './views/apps';
@@ -29,6 +29,8 @@ import { ProcessesPage } from './views/processes';
 import { ResidentPage } from './views/resident';
 import { ensureReady } from './views/kit';
 import { GateOffView } from './views/gateOff';
+import { gateBadge } from './views/ui';
+import { refusalText } from './lib/codes';
 
 export interface App {
   backend: Backend;
@@ -228,7 +230,7 @@ async function boot(): Promise<void> {
     if (t && t.scanId === e.scan_id) {
       store.set({ task: { ...t, state: e.state ?? 'failed', error: e.error, dismissed: false } });
     }
-    announce(e.state ? taskTitle(e.state) : `扫描未能开始：${e.error?.message ?? ''}`);
+    announce(e.state ? taskTitle(e.state) : `扫描未能开始：${e.error ? refusalText(e.error) : ''}`);
     if (store.state.scanId === e.scan_id) await app.refreshStatus();
     store.set({ recent: await backend.recentScans().catch(() => store.state.recent) });
   });
@@ -242,7 +244,7 @@ async function boot(): Promise<void> {
     if (a && a.operationId === e.operation_id) {
       store.set({ apply: { ...a, running: false, status: e.status, error: e.error, dismissed: false } });
     }
-    announce(e.status ? `执行结束：${OPERATION_STATE_LABEL[e.status] ?? e.status}` : `执行未能开始：${e.error?.message ?? ''}`);
+    announce(e.status ? `执行结束：${OPERATION_STATE_LABEL[e.status] ?? e.status}` : `执行未能开始：${e.error ? refusalText(e.error) : ''}`);
   });
   await backend.onDiagFinished((e) => {
     const word = e.state === 'completed' ? '已完成' : e.state === 'cancelled' ? '已取消' : e.state === 'failed' ? '失败' : e.state;
@@ -475,11 +477,8 @@ async function boot(): Promise<void> {
               ),
             )
           : []),
-        tool
-          ? off
-            ? h('span', { class: 'pill gate-pill', title: `这个分区尚未通过发布门禁 ${off.gate}，默认关闭；可在 设置 › 实验功能 中开启`, 'data-tone': 'muted' }, h('span', { class: 'pill-mark' }), `默认关闭 · ${off.gate} 未通过`)
-            : h('span', { class: 'pill gate-pill', title: `${tool.label}的能力尚未通过发布门禁 ${tool.gate}：${words().devBuild}`, 'data-tone': 'warn' }, h('span', { class: 'pill-mark' }), gateLabel(tool))
-          : null,
+        // Plain words in the bar ("实验功能" / "默认关闭"); the gate id stays in the settings list.
+        tool ? gateBadge(off ? 'off' : 'experimental') : null,
       );
     }
     closingBanner.hidden = !s.closing;

@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-10",
+  "run_id": "run_win_retest_2026-10-22_rt-06",
+  "recorded_at": "2026-10-22T04:41:07Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": null,
+  "config": {
+    "round": "windows-retest-2026-10-22",
+    "retest_case": "RT-06",
+    "binary": "cli debug build",
+    "cli_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+    "desktop_sha256": "8d4171ad9b8a78f136ae4ed16319657a04c4d177ab3025beeeed98b41ef05663",
+    "base_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+    "patch_sha256": "8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556",
+    "store": "isolated CM_STORE_DIR under .research/windows-retest-2026-10-22/store",
+    "raw_evidence": [
+      "06-all-entries.json",
+      "06-page-1.json",
+      "06-page-2.json",
+      "06-page-3.json",
+      "06-page-4.json",
+      "06-page-5.json",
+      "06-chinese-filter.json",
+      "06-empty-filter.json",
+      "06-invalid-limit.json",
+      "06-invalid-limit-high.json"
+    ],
+    "plan_source": "docs/acceptance/windows-2026-10-22-retest-plan.md",
+    "report": "docs/acceptance/windows-2026-10-22-retest-report.md"
+  },
+  "command": [
+    "cleanmanager",
+    "entries",
+    "list",
+    "--scan",
+    "s_6cfc_18e0c047fc663124",
+    "--limit",
+    "2",
+    "--sort",
+    "name_asc",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "十条全部无重无漏；中文仅一条；不存在词为空；非法大小明确拒绝，字节保持字符串/null",
+  "actual": "查询回归：5 页各 2 项，无重无漏；中文 1 项、无匹配 0 项；limit=0/501 拒绝；字节为字符串/null。",
+  "terminal_state": "entries_page",
+  "exit_code": 0,
+  "measurements": {
+    "page_entry_ids": [
+      [
+        "7",
+        "2"
+      ],
+      [
+        "1",
+        "3"
+      ],
+      [
+        "4",
+        "5"
+      ],
+      [
+        "8",
+        "6"
+      ],
+      [
+        "9",
+        "10"
+      ]
+    ],
+    "total_entries": 10,
+    "duplicates": 0,
+    "chinese_filter_items": 1,
+    "empty_filter_items": 0,
+    "limit_0": {
+      "exit_code": 2,
+      "code": "invalid_argument",
+      "message": "--limit must be 1..=500"
+    },
+    "limit_501": {
+      "exit_code": 2,
+      "code": "invalid_argument",
+      "message": "--limit must be 1..=500"
+    },
+    "byte_fields_decimal_string_or_null": true
+  },
+  "observer": "agent (Windows retest 2026-10-22: one-off runner run.py/summarize.py for CLI records; rebuilt native Tauri window read through the computer-use accessibility tree)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Binary built from main@2d654d9 plus an uncommitted patch to crates/cm-platform/src/windows/{handle.rs,directory.rs,directory/tests.rs} (git diff SHA-256 8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556); code_commit is that base commit and does not itself contain the fix.",
+    "Debug builds: cargo build -p cm-cli --locked; npm run tauri -- build --debug --no-bundle.",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "Same synthetic fixture and sentinel as the first round, new isolated CM_STORE_DIR; no plan was approved and nothing was moved, deleted or restored."
+  ],
+  "status": "passed"
+}

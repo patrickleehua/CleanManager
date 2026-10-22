@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-21",
+  "run_id": "run_win_acc_2026-10-22_win-21",
+  "recorded_at": "2026-10-22T04:32:55Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": null,
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "desktop debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "cli-15-experimental-on.json",
+      "cli-16-capabilities-on.json",
+      "cli-50-restart-on.json",
+      "ui-38-process-restart-on.txt",
+      "cli-48-experimental-off.json",
+      "cli-51-final-off.json",
+      "cli-49-final-gate.json",
+      "cli-52-final-gate-off.json",
+      "ui-43-final-default-gate.txt"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md",
+    "commands": [
+      [
+        "cleanmanager",
+        "experimental",
+        "--state",
+        "on",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "capabilities",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "experimental",
+        "--state",
+        "off",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "status",
+        "--json",
+        "--non-interactive"
+      ]
+    ]
+  },
+  "command": [
+    "cleanmanager",
+    "status",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "两端读同一开关；开启能力仍未验证，桌面提示实验状态；关闭后受保护功能恢复说明页",
+  "actual": "CLI 开启后桌面可使用受门禁工具；真实关闭/重启进程后开关仍生效；能力未被提升为 available；最后关闭并在桌面确认默认说明页。",
+  "terminal_state": "unsupported",
+  "exit_code": 7,
+  "measurements": {
+    "capabilities_with_experimental_on": {
+      "unverified": 21
+    },
+    "available_capabilities": 0,
+    "gate_passed_any": false,
+    "final_gate": {
+      "exit_code": 7,
+      "code": "unsupported",
+      "message": "status.metrics is off until release gate G3 passes; experimental features are disabled. To evaluate it on this machine, turn them on with `cleanmanager experimental --state on` or 设置 › 实验功能 in the desktop app"
+    }
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate."
+  ],
+  "status": "passed"
+}

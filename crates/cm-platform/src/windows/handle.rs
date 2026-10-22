@@ -6,8 +6,8 @@ use std::io;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, CreateFileW, GetFileInformationByHandle, FILE_COMPRESSION_INFO, FILE_ID_INFO, FILE_STANDARD_INFO, FileCompressionInfo, FileIdInfo,
-    FileStandardInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetFullPathNameW,
+    BY_HANDLE_FILE_INFORMATION, CreateFileW, GetFileInformationByHandle, FILE_ATTRIBUTE_TAG_INFO, FILE_COMPRESSION_INFO, FILE_ID_INFO, FILE_STANDARD_INFO,
+    FileAttributeTagInfo, FileCompressionInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetFullPathNameW,
     GetVolumeInformationByHandleW,
 };
 
@@ -44,6 +44,26 @@ impl Handle {
 
     pub fn raw(&self) -> HANDLE {
         self.0
+    }
+
+    /// Attributes and reparse tag of the opened object itself (opens never follow links), rather
+    /// than of a path that could be replaced. The tag is 0 for an object that is not a reparse
+    /// point, and also where the file system has no FileAttributeTagInfo (the attributes still tell).
+    pub fn attribute_tag(&self) -> io::Result<(u32, u32)> {
+        let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { std::mem::zeroed() };
+        // SAFETY: buffer is a FILE_ATTRIBUTE_TAG_INFO of the declared size; this reads metadata only.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(self.0, FileAttributeTagInfo, (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(), size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32)
+        };
+        if ok != 0 {
+            return Ok((info.FileAttributes, info.ReparseTag));
+        }
+        let mut basic: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: valid handle and out-pointer; this reads metadata only.
+        if unsafe { GetFileInformationByHandle(self.0, &mut basic) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((basic.dwFileAttributes, 0))
     }
 
     /// Volume serial number and 128-bit file ID of the opened object. File systems without

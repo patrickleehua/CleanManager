@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cm_core::analysis::{
-    AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogSet, Undetermined, UserList, analyze_catalog, analyze_preview_with,
+    AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogSet, IndexView, Undetermined, UserList, analyze_catalog,
+    analyze_preview_with,
 };
 use cm_core::catalog::CatalogContext;
 use cm_core::error::ErrorCode;
@@ -99,18 +100,36 @@ fn resolver_env(volume: Option<PathBuf>) -> (cm_platform::macos::resolve::Resolv
     (env, issues)
 }
 
-fn roots_for(rules: &[Rule], volume: Option<PathBuf>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<Value>) {
+/// Rule roots of `rules`. On macOS only roots at or below `within` (the scan's root) are looked up: analysis matches
+/// roots by identity inside that scan, so any other root is irrelevant, and looking it up could open a
+/// privacy-protected location (another app's container) for nothing (docs/platforms/macos.md §6).
+fn roots_for(rules: &[Rule], volume: Option<PathBuf>, within: Option<&cm_core::path::RawPath>) -> (Vec<cm_core::analysis::ResolvedRoot>, Vec<Value>) {
     #[cfg(windows)]
     {
+        let _ = within;
         let (env, issues) = resolver_env(volume);
         (cm_platform::windows::resolve::resolve(rules, &env), issues)
     }
     #[cfg(target_os = "macos")]
     {
         let (env, mut issues) = resolver_env(volume);
-        let r = cm_platform::macos::resolve::resolve(rules, &env);
-        issues.extend(r.issues.into_iter().map(|i| json!({"code": i.code, "scope_display": i.scope, "message": i.message})));
+        let r = cm_platform::macos::resolve::resolve_in(rules, &env, within);
+        issues.extend(r.issues.into_iter().map(|i| {
+            let mut v = json!({"code": i.code, "scope_display": i.scope, "message": i.message});
+            cm_core::permission::annotate_issue(&mut v);
+            v
+        }));
         (r.roots, issues)
+    }
+}
+
+/// The rules whose roots an analysis needs: on macOS only the enabled ones (the catalog analysis skips the others, and
+/// every macOS rule is experimental until it is registered on a real Mac); elsewhere all, as before.
+fn analyzed_rules(rules: &RuleSet) -> Vec<Rule> {
+    if cfg!(target_os = "macos") {
+        rules.enabled_for(cm_core::capability::Platform::Macos).cloned().collect()
+    } else {
+        rules.rules.clone()
     }
 }
 
@@ -178,7 +197,8 @@ pub fn run_analysis(req: &str, p: &Parsed, stores: &Stores, scan_id: &str, volum
         // No read-only Git probe yet: every worktree root is `worktree_status_unknown` (blocked).
         worktrees: &[],
     };
-    let (roots, issues) = roots_for(&rules.rules, volume);
+    let scan_root = view.path(view.root());
+    let (roots, issues) = roots_for(&analyzed_rules(&rules), volume, Some(&scan_root));
     let installed = installed_versions(&rules.rules);
     let ctx = CatalogContext { registry: Some(&registry), installed: Some(&installed) };
     let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };
@@ -237,7 +257,8 @@ pub fn analyze_cmd(req: &str, p: &Parsed) -> ExitCode {
             },
             worktrees: &[],
         };
-        let (roots, mut issues) = roots_for(std::slice::from_ref(&rule), None);
+        let scan_root = view.path(view.root());
+        let (roots, mut issues) = roots_for(std::slice::from_ref(&rule), None, Some(&scan_root));
         issues.push(json!({"code": "experimental_preview", "scope_display": rule.rule_id,
             "message": "preview of a rule that is not enabled; results cannot be planned"}));
         let input = AnalysisInput { scan_id, revision: status.revision, now_unix: now_unix(), roots: &roots, protected: &[] };

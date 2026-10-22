@@ -252,6 +252,12 @@
         "message": {
           "type": "string",
           "minLength": 1
+        },
+        "permission_cause": {
+          "enum": [
+            "undetermined",
+            "privacy_prompt_pending"
+          ]
         }
       },
       "required": [
@@ -411,8 +417,15 @@
           "maximum": 9007199254740991
         },
         "logical_bytes": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "allocated_bytes": {
           "anyOf": [
@@ -457,7 +470,36 @@
         "unknown_size_count",
         "issues"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "logical_bytes": {
+                "type": "null"
+              },
+              "allocated_bytes": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "logical_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        }
+      ]
     },
     "candidate": {
       "type": "object",
@@ -9288,6 +9330,12 @@
             "additionalProperties": false
           },
           "minItems": 0
+        },
+        "permission_cause": {
+          "enum": [
+            "undetermined",
+            "privacy_prompt_pending"
+          ]
         }
       },
       "required": [
@@ -10882,6 +10930,12 @@
             "insight_ids"
           ],
           "additionalProperties": false
+        },
+        "permission_cause": {
+          "enum": [
+            "undetermined",
+            "privacy_prompt_pending"
+          ]
         }
       },
       "required": [
@@ -10949,9 +11003,16 @@
               "maximum": 9007199254740991
             },
             "item_count": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "total_logical_bytes": {
               "anyOf": [
@@ -10968,6 +11029,12 @@
               "type": "string",
               "format": "date-time",
               "pattern": "Z$"
+            },
+            "permission_cause": {
+              "enum": [
+                "undetermined",
+                "privacy_prompt_pending"
+              ]
             }
           },
           "required": [
@@ -11075,9 +11142,16 @@
           ]
         },
         "item_count": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "shown": {
           "type": "integer",
@@ -11101,6 +11175,12 @@
         "guidance": {
           "type": "string",
           "minLength": 1
+        },
+        "permission_cause": {
+          "enum": [
+            "undetermined",
+            "privacy_prompt_pending"
+          ]
         }
       },
       "required": [

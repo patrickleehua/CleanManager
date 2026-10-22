@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-08",
+  "run_id": "run_win_retest_2026-10-22_rt-08",
+  "recorded_at": "2026-10-22T04:41:30Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": null,
+  "config": {
+    "round": "windows-retest-2026-10-22",
+    "retest_case": "RT-08",
+    "binary": "cli debug build",
+    "cli_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+    "desktop_sha256": "8d4171ad9b8a78f136ae4ed16319657a04c4d177ab3025beeeed98b41ef05663",
+    "base_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+    "patch_sha256": "8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556",
+    "store": "isolated CM_STORE_DIR under .research/windows-retest-2026-10-22/store",
+    "raw_evidence": [
+      "08-experimental-on.json",
+      "08-protected-plan.json",
+      "08-manual-plan.json",
+      "08-plan-show.json",
+      "08-unapproved-apply.json",
+      "08-operations.json"
+    ],
+    "plan_source": "docs/acceptance/windows-2026-10-22-retest-plan.md",
+    "report": "docs/acceptance/windows-2026-10-22-retest-report.md",
+    "also_covers": [
+      "WIN-11",
+      "WIN-12"
+    ],
+    "commands": [
+      [
+        "cleanmanager",
+        "trash",
+        "--scan",
+        "s_6cfc_18e0c047fc663124",
+        "--entry",
+        "8",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "trash",
+        "--scan",
+        "s_6cfc_18e0c047fc663124",
+        "--entry",
+        "4",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "plan",
+        "show",
+        "mp_78dc_18e0c04d82bb1dac",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "plan",
+        "apply",
+        "mp_78dc_18e0c04d82bb1dac",
+        "--json",
+        "--non-interactive"
+      ]
+    ]
+  },
+  "command": [
+    "cleanmanager",
+    "plan",
+    "apply",
+    "mp_78dc_18e0c04d82bb1dac",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "前者 policy_denied；后者 needs_approval；无成功执行记录、输入不变",
+  "actual": "保护与批准边界：假凭据项 policy_denied / 3；普通文件生成同一固定回收站计划，TTL 900 秒；未批准 apply 返回 needs_approval / 3，执行历史为空。",
+  "terminal_state": "needs_approval",
+  "exit_code": 3,
+  "measurements": {
+    "protected_plan": {
+      "exit_code": 3,
+      "code": "policy_denied",
+      "message": "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input\\.ssh\\id_ed25519: default protection class credentials. System folders, protected categories and your protection list are view-only: CleanManager can show, copy the path of, or diagnose them, never move them."
+    },
+    "manual_plan": {
+      "plan_kind": "manual_selection",
+      "action_types": [
+        "fs_trash"
+      ],
+      "authorization_status": "required",
+      "created_at": "2026-10-22T04:41:30Z",
+      "expires_at": "2026-10-22T04:56:30Z",
+      "ttl_seconds": 900,
+      "body_unchanged_on_show": true
+    },
+    "apply_without_approval": {
+      "exit_code": 3,
+      "code": "needs_approval",
+      "message": "plan mp_78dc_18e0c04d82bb1dac needs approval"
+    },
+    "operations": 0
+  },
+  "observer": "agent (Windows retest 2026-10-22: one-off runner run.py/summarize.py for CLI records; rebuilt native Tauri window read through the computer-use accessibility tree)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Binary built from main@2d654d9 plus an uncommitted patch to crates/cm-platform/src/windows/{handle.rs,directory.rs,directory/tests.rs} (git diff SHA-256 8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556); code_commit is that base commit and does not itself contain the fix.",
+    "Debug builds: cargo build -p cm-cli --locked; npm run tauri -- build --debug --no-bundle.",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "Same synthetic fixture and sentinel as the first round, new isolated CM_STORE_DIR; no plan was approved and nothing was moved, deleted or restored."
+  ],
+  "status": "passed"
+}

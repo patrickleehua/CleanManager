@@ -503,7 +503,8 @@ fn roots_held_by_a_privacy_prompt_are_pending_not_absent() {
         std::fs::symlink_metadata(p).is_ok()
     });
     let t = std::time::Instant::now();
-    let res = resolve_gated(&rules, &env, Duration::from_millis(200), &FirstAccess { identity, exists });
+    let gate = privacy::Gate { home: env.home.clone(), wait: Duration::from_millis(200), registry: Box::leak(Box::new(privacy::Registry::new(8))), hold: None };
+    let res = resolve_gated(&rules, &env, &gate, &FirstAccess { identity, exists }, None);
     assert!(t.elapsed() < Duration::from_secs(3), "resolution is not held by the prompt: {:?}", t.elapsed());
 
     let resolved: BTreeSet<&str> = res.roots.iter().map(|r| r.rule_id.as_str()).collect();
@@ -523,4 +524,66 @@ fn roots_held_by_a_privacy_prompt_are_pending_not_absent() {
         ])
     );
     drop(answer); // the parked lookups end
+}
+
+/// Analysis of one scan needs only the roots inside it: a root outside the scan's root is never looked up (Docker's
+/// logs in its container, Downloads), whether the scan root is spelled through `/private` or not; a browser's profile
+/// folder outside the scan is not even listed.
+#[test]
+fn only_roots_inside_the_scan_root_are_looked_up() {
+    use std::sync::{Arc, Mutex};
+    let fx = Fixture::new("resolve-scope");
+    let home = fx.mkdir("home");
+    fx.mkdir("home/Library/Containers/com.docker.docker/Data/log");
+    fx.mkdir("home/Library/Application Support/Code");
+    fx.mkdir("home/Library/Application Support/Google/Chrome/Default");
+    fx.mkdir("home/Downloads");
+    let tmp = fx.mkdir("tmp");
+    let rules = [
+        rule_like(RootResolver::UserLogs, "docker.desktop"),
+        rule_like(RootResolver::InstallerLocation, "macos.downloads"),
+        rule_like(RootResolver::ApplicationCache, "microsoft.vscode"),
+        rule_like(RootResolver::BrowserProfile, "google.chrome"),
+        rule_like(RootResolver::UserTemp, "macos"),
+    ];
+    let env = ResolverEnv { home: Some(home.clone()), downloads: Some(home.join("Downloads")), temp: Some(tmp.clone()), ..ResolverEnv::default() };
+    let looked: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+    let seen = Arc::clone(&looked);
+    let identity = Arc::new(move |p: &Path| {
+        seen.lock().unwrap().push(p.to_path_buf());
+        identity_of(p)
+    });
+    let exists = Arc::new(|p: &Path| std::fs::symlink_metadata(p).is_ok());
+    let gate = privacy::Gate { home: env.home.clone(), wait: Duration::from_secs(5), registry: Box::leak(Box::new(privacy::Registry::new(8))), hold: None };
+    let access = FirstAccess { identity, exists };
+
+    // A scan of the temp folder: only the temp rule is looked up.
+    let scope = Scope::of(&tmp, &gate);
+    let paths = |res: &Resolution| res.roots.iter().map(|r| PathBuf::from(OsStr::from_bytes(&r.path.raw_bytes()))).collect::<BTreeSet<_>>();
+    let res = resolve_gated(&rules, &env, &gate, &access, Some(&scope));
+    assert_eq!(paths(&res), BTreeSet::from([tmp.clone()]), "{res:?}");
+    assert_eq!(*looked.lock().unwrap(), std::slice::from_ref(&tmp), "nothing outside the scan root is examined");
+    assert!(res.issues.is_empty(), "{:?}", res.issues);
+
+    // The same root spelled with and without /private (macOS fixtures live under /var/folders → /private/var/folders).
+    assert_eq!(plain_spelling(Path::new("/private/var/folders/x/T")), Path::new("/var/folders/x/T"));
+    assert_eq!(plain_spelling(Path::new("/System/Volumes/Data/Users/a")), Path::new("/Users/a"));
+    assert_eq!(plain_spelling(Path::new("/private/varx")), Path::new("/private/varx"));
+    let canonical = std::fs::canonicalize(&tmp).unwrap();
+    let other = if canonical.starts_with("/private") { plain_spelling(&canonical) } else { Path::new("/private").join(canonical.strip_prefix("/").unwrap()) };
+    let scope = Scope::of(&other, &gate);
+    assert!(scope.contains(&tmp) && scope.contains(&canonical.join("x")) && !scope.contains(&home), "{scope:?}");
+
+    // A scan of Application Support: VS Code and Chrome's profile resolve, Docker's container and Downloads are not
+    // looked up at all.
+    looked.lock().unwrap().clear();
+    let scope = Scope::of(&home.join("Library/Application Support"), &gate);
+    let res = resolve_gated(&rules, &env, &gate, &access, Some(&scope));
+    let support = home.join("Library/Application Support");
+    assert_eq!(paths(&res), BTreeSet::from([support.join("Code"), support.join("Google/Chrome/Default")]), "{res:?}");
+    assert!(looked.lock().unwrap().iter().all(|p| p.starts_with(home.join("Library/Application Support"))), "{:?}", looked.lock().unwrap());
+
+    // Without a scope every root is looked up, as before.
+    let all = resolve_gated(&rules, &env, &gate, &access, None);
+    assert_eq!(paths(&all).len(), 5, "{all:?}");
 }

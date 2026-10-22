@@ -185,7 +185,8 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
     let root_display = Some(v.root.display());
     let mut summary = None;
     let mut root_entry_id = None;
-    if v.published && v.entries_seen > 0 {
+    // A failed scan reports no sizes (unknown, never 0), as its `scan_result` does (SCN-03).
+    if v.published && v.entries_seen > 0 && v.state != cm_core::model::ScanState::Failed {
         summary = Some(root_summary(s, idx, id, v.revision, ROOT_ENTRY_ID)?);
         root_entry_id = Some(ROOT_ENTRY_ID.to_string());
     }
@@ -459,6 +460,81 @@ mod tests {
         assert!(serde_json::from_value::<ListEntriesArgs>(v).is_err());
         let v = serde_json::json!({"scan_id":"s_1","sort":"name_asc","kind":"any","page_size":-1});
         assert!(serde_json::from_value::<ListEntriesArgs>(v).is_err());
+    }
+
+    /// SCN-03: a failed scan shows no sizes (the WebView renders unknown), even when rows were written.
+    #[test]
+    fn failed_scan_status_has_no_size_summary() {
+        use cm_core::model::{CloudState, IdentityQuality, ObjectKind, ScanState};
+        use cm_core::path::RawPath;
+        use cm_core::scan::{EntryRow, ObjectRow, RootProbe, ScanBackend, ScanIssue, ScanOptions, ScanReport, ScanSink};
+        use cm_core::host::HostProbe;
+
+        struct FailsAfterOneBatch;
+        impl ScanBackend for FailsAfterOneBatch {
+            fn name(&self) -> &'static str {
+                "test.fails"
+            }
+            fn probe(&self, _: &RawPath) -> RootProbe {
+                RootProbe { filesystem: None, volume_id: None, backend: "test.fails".into(), state: cm_core::capability::CapabilityState::Unverified, reason: "test".into() }
+            }
+            fn scan(&self, root: &RawPath, sink: &mut dyn ScanSink, _: &ScanOptions) -> ScanReport {
+                let obj = |id: u64, kind, logical| ObjectRow { object_id: id, volume_id: "v".into(), file_id: format!("inode64:{id:016x}"), generation: None,
+                    quality: IdentityQuality::Strong, kind, logical, allocated: logical, link_count: None, cloud: CloudState::NotCloud, modified_unix: None, shared_blocks: None };
+                let file = RawPath::unix(b"a".to_vec()).unwrap();
+                sink.write(&[obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::File, Some(700))],
+                    &[EntryRow { entry_id: 1, parent_entry_id: None, name: root.clone(), object_id: 1, kind: ObjectKind::Directory, boundary: None },
+                      EntryRow { entry_id: 2, parent_entry_id: Some(1), name: file, object_id: 2, kind: ObjectKind::File, boundary: None }], &[]).unwrap();
+                ScanReport { state: ScanState::Failed, backend: "test.fails".into(), backend_reason: "test".into(), entries: 2, skipped_ranges: 0, boundaries: 0,
+                    elevated_read: vec![], issues: vec![ScanIssue { code: "store_error".into(), scope_display: String::new(), message: "disk full".into() }] }
+            }
+        }
+        let base = std::env::temp_dir().join(format!("cm-desktop-failed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = base.join("store");
+        let stores = cm_store::Stores::open(&store).unwrap();
+        let request = cm_app::scan::ScanRequest { scan_id: "s_failed".into(), scope_id: "scope".into(), root: RawPath::unix(b"/r".to_vec()).unwrap(),
+            host: cm_platform::host::OsHostProbe.current("desktop") };
+        let outcome = cm_app::scan::run_scan(&stores.index, &FailsAfterOneBatch, &request, &ScanOptions::default()).unwrap();
+        assert_eq!(outcome.state, ScanState::Failed);
+        let s = AppState::with_store(Some(store.clone()), None, None);
+        s.with_index(|idx| {
+            let st = status_of(&s, idx, "s_failed")?;
+            assert_eq!((st.state, st.published, st.entries_seen), (ScanState::Failed, true, 2));
+            assert!(st.summary.is_none(), "a failed scan reports no sizes, never 0 or a partial total");
+            Ok(())
+        })
+        .unwrap();
+        drop((s, stores));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn root_pre_check_refuses_files_and_links_with_the_scanner_codes() {
+        let base = std::env::temp_dir().join(format!("cm-desktop-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let target = base.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(base.join("file.txt"), b"x").unwrap();
+        assert!(root_problem(&target, None).is_none());
+        let reason = |p: &std::path::Path| root_problem(p, None).map(|e| e.reason);
+        assert_eq!(reason(&base.join("file.txt")), Some(cm_core::scan::issue::NOT_A_DIRECTORY));
+        #[cfg(windows)]
+        {
+            let jn = base.join("jn");
+            assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&jn).arg(&target).output().unwrap().status.success());
+            assert_eq!(reason(&jn), Some(cm_core::scan::issue::ROOT_IS_LINK), "a junction is refused, not followed");
+            match std::os::windows::fs::symlink_dir(&target, base.join("link")) {
+                Ok(()) => assert_eq!(reason(&base.join("link")), Some(cm_core::scan::issue::ROOT_IS_LINK)),
+                Err(e) => eprintln!("skipped directory symlink: cannot create a symbolic link here ({e})"),
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, base.join("link")).unwrap();
+            assert_eq!(reason(&base.join("link")), Some(cm_core::scan::issue::ROOT_IS_LINK), "a symlink is refused, not followed");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

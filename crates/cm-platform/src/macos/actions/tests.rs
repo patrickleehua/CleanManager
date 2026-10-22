@@ -804,9 +804,9 @@ fn trash_on_a_volume_without_a_trash_never_deletes() {
     assert_eq!(read(&f), "keep me");
 }
 
-/// The Trash while macOS shows its privacy prompt for it: the first open does not return, so after the deadline the
-/// listing is `PromptPending` (never an empty Trash); answered in time it lists as usual, and a denial is
-/// `PermissionRequired`.
+/// The Trash while its first open does not return (a privacy prompt or a slow volume): after the deadline the listing
+/// is `PromptPending` (never an empty Trash) with cause `undetermined` (no prompt was measured for a Trash); answered
+/// in time it lists as usual, and a denial is `PermissionRequired`.
 #[test]
 fn a_trash_held_by_a_privacy_prompt_is_pending_not_empty() {
     use std::time::{Duration, Instant};
@@ -814,27 +814,34 @@ fn a_trash_held_by_a_privacy_prompt_is_pending_not_empty() {
     let fx = Fixture::new("trash-prompt");
     let bin = fx.mkdir(".Trash");
     fx.write(".Trash/old.txt", b"old");
+    let gate = |wait: Duration| crate::macos::privacy::Gate {
+        home: Some(fx.path().to_path_buf()),
+        wait,
+        registry: Box::leak(Box::new(crate::macos::privacy::Registry::new(crate::macos::privacy::MAX_PARKED))),
+        hold: None,
+    };
 
-    let listed = list_trash_dir_gated(&bin, Duration::from_secs(5), |c| {
+    let listed = list_trash_dir_gated(&bin, &gate(Duration::from_secs(5)), |c| {
         std::thread::sleep(Duration::from_millis(300));
         crate::macos::sys::Fd::open_dir(c)
     })
     .unwrap();
     assert_eq!(listed.items.len(), 1);
 
-    let denied = list_trash_dir_gated(&bin, Duration::from_secs(5), |_| Err(libc::EPERM)).unwrap_err();
+    let denied = list_trash_dir_gated(&bin, &gate(Duration::from_secs(5)), |_| Err(libc::EPERM)).unwrap_err();
     assert!(denied.privacy_blocked(), "{denied:?}");
 
     let (answer, prompt) = std::sync::mpsc::channel::<()>();
     let t = Instant::now();
-    let pending = list_trash_dir_gated(&bin, Duration::from_millis(200), move |c| {
+    let pending = list_trash_dir_gated(&bin, &gate(Duration::from_millis(200)), move |c| {
         let _ = prompt.recv(); // held in the kernel until the person answers
         crate::macos::sys::Fd::open_dir(c)
     })
     .unwrap_err();
     assert!(t.elapsed() < Duration::from_secs(3), "the listing is not held by the prompt: {:?}", t.elapsed());
     let ListError::PromptPending(why) = &pending else { panic!("{pending:?}") };
-    assert!(why.starts_with(crate::macos::privacy::PERMISSION_PENDING) && why.contains(&*bin.to_string_lossy()), "{why}");
+    assert!(why.starts_with(crate::macos::privacy::PERMISSION_UNDETERMINED) && why.contains(&*bin.to_string_lossy()), "{why}");
+    assert!(why.contains("did not answer within 0.2 s") && !crate::macos::privacy::is_pending(why), "a Trash is no measured prompt location: {why}");
     assert!(!pending.privacy_blocked(), "pending is not a denial");
     answer.send(()).unwrap(); // the parked open ends; its descriptor is dropped
 }

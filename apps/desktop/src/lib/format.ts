@@ -102,7 +102,8 @@ export function formatElapsed(fromIso: string | null | undefined, toIso?: string
 export const ERROR_HINT: Record<string, string> = {
   store_inside_scope: '此文件夹包含 CleanManager 自己的索引。请改选其中的子文件夹（如“下载”“文档”）。',
   root_missing: '文件夹不存在或所在的卷已离线。请重新选择或连接后重新检查。',
-  not_a_directory: '这不是文件夹。',
+  not_a_directory: '所选路径是文件，不是文件夹，请选择一个文件夹。',
+  root_is_link: '所选路径是链接（目录联接或符号链接），请直接选择它指向的文件夹。',
   permission_required: '以普通权限无法读取此位置。CleanManager 不会自动提权。',
   scan_running: '已有扫描在运行。等待它结束或先取消它。',
   unknown_root: '此位置已失效，请重新选择。',

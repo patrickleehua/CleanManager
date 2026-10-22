@@ -18,14 +18,13 @@
 //! names the processes holding planned files open; [`list_trash_dir`] lists a Trash folder read-only for permanent
 //! deletes inside it, skipping Finder's private `.DS_Store` record, so no original location is ever claimed, and
 //! reports `EPERM`/`EACCES` as permission required, never as an empty Trash. Its first open, and the look at a
-//! volume's Trash, go through [`privacy::bounded`]: while macOS shows a privacy prompt for that location the Trash is
-//! reported `permission_required (permission_cause=privacy_prompt_pending)` after [`privacy::PROMPT_WAIT`], never as
-//! empty (docs/platforms/macos.md §6).
+//! volume's Trash, go through [`privacy::Gate`]: when that access does not return within [`privacy::prompt_wait`]
+//! the Trash is reported `permission_required`, never as empty; the cause is `undetermined` (a Trash or a volume is no
+//! location whose prompt was measured: it may be a prompt or a slow disk), docs/platforms/macos.md §6.
 
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use cm_core::analysis::{EntryFacts, IndexView, MemView};
 use cm_core::capability::{CapabilityState, Platform};
@@ -303,8 +302,9 @@ pub enum ListError {
     /// Refused by permissions (`EACCES`) or by privacy protection / another policy layer (`EPERM`, typically TCC:
     /// Full Disk Access or Removable Volumes). Never reported as an empty Trash.
     PermissionRequired { errno: i32, message: String },
-    /// The first open did not return within [`privacy::PROMPT_WAIT`]: macOS is most likely showing a privacy prompt
-    /// ([`privacy::pending_reason`]). Unknown, never an empty Trash.
+    /// The first open did not return within [`privacy::prompt_wait`] (or was not tried while an earlier one waits):
+    /// macOS may be showing a privacy prompt, or the volume is slow; the message names the provable cause. Unknown,
+    /// never an empty Trash.
     PromptPending(String),
     /// Any other failure to read it.
     Unreadable(String),
@@ -319,9 +319,12 @@ impl ListError {
         }
     }
 
-    /// The privacy gate gave no result: a pending prompt, or no worker thread.
-    fn gate(why: String) -> ListError {
-        if privacy::is_pending(&why) { ListError::PromptPending(why) } else { ListError::Unreadable(why) }
+    /// The privacy gate gave no result: no answer in time, or no worker thread.
+    fn gate(why: privacy::GateError) -> ListError {
+        match why {
+            privacy::GateError::Unanswered { message, .. } => ListError::PromptPending(message),
+            privacy::GateError::Failed(message) => ListError::Unreadable(message),
+        }
     }
 
     /// `EPERM`: not the folder's own permissions but privacy protection (TCC) or another policy layer; which one is
@@ -451,14 +454,14 @@ fn item_id(volume_id: &str, file_id: &str) -> String {
 /// List one Trash folder (`~/.Trash`, `/Volumes/<v>/.Trashes/<uid>`, or a test folder laid out the same way) without
 /// reading any content and without materializing cloud placeholders. Finder's `.DS_Store` record is skipped.
 pub fn list_trash_dir(dir: &Path) -> Result<TrashListing, ListError> {
-    list_trash_dir_gated(dir, privacy::PROMPT_WAIT, Fd::open_dir)
+    list_trash_dir_gated(dir, &privacy::Gate::os(), Fd::open_dir)
 }
 
-/// [`list_trash_dir`] with the first open (`open`, run through [`privacy::bounded`]) and its deadline injected.
-pub(crate) fn list_trash_dir_gated(dir: &Path, wait: Duration, open: impl FnOnce(&CStr) -> Result<Fd, i32> + Send + 'static) -> Result<TrashListing, ListError> {
+/// [`list_trash_dir`] with the first open (`open`, run through `gate`) and the gate injected.
+pub(crate) fn list_trash_dir_gated(dir: &Path, gate: &privacy::Gate, open: impl FnOnce(&CStr) -> Result<Fd, i32> + Send + 'static) -> Result<TrashListing, ListError> {
     let _guard = no_materialize().map_err(|_| ListError::Unreadable("cannot turn off dataless materialization".into()))?;
     let c = CString::new(dir.as_os_str().as_bytes()).map_err(|_| ListError::Unreadable("path contains NUL".into()))?;
-    let first = privacy::bounded(dir, wait, move || {
+    let first = gate.run(dir, move || {
         // This thread's own policy: opening a folder does not materialize it, its listing (on the caller) is guarded.
         let _policy = no_materialize();
         open(&c)
@@ -530,9 +533,9 @@ pub fn volume_trash_dirs() -> (Vec<PathBuf>, Vec<(PathBuf, ListError)>) {
     vols.sort();
     for v in vols {
         let dir = v.join(".Trashes").join(uid.to_string());
-        // Looking inside a volume can wait for the Removable / Network Volumes prompt.
+        // Looking inside a volume can wait for the Removable / Network Volumes prompt, or for a slow disk.
         let probe = dir.clone();
-        let meta = match privacy::bounded(&dir, privacy::PROMPT_WAIT, move || std::fs::symlink_metadata(&probe)) {
+        let meta = match privacy::Gate::os().run(&dir, move || std::fs::symlink_metadata(&probe)) {
             Ok(meta) => meta,
             Err(why) => {
                 failed.push((dir, ListError::gate(why)));

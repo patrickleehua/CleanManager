@@ -11,6 +11,7 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import type { AppItem, AppsList, IpcError } from '../lib/types';
 import { emptyState, errorLine, exactTitle, metaRow, pageHead, pill } from './parts';
 import { words } from '../lib/platform';
+import { issueList, learnMore } from './ui';
 
 const SOURCE_LABEL: Record<AppItem['source'], string> = {
   registry_uninstall: '安装程序登记',
@@ -139,7 +140,7 @@ export class AppsPage {
     replace(
       this.body,
       head,
-      d.issues.length ? h('div', { class: 'notice warn' }, h('span', {}, `部分来源不完整：${d.issues.map((i) => i.message).join('；')}。缺失的记录不代表应用已卸载。`)) : null,
+      d.issues.length ? h('div', { class: 'notice warn' }, h('span', {}, '部分来源没有读完，缺失的记录不代表应用已卸载。'), learnMore(issueList(d.issues, { label: '没有读完的来源' }))) : null,
       h(
         'div',
         { class: 'work-layout' },

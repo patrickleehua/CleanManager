@@ -116,6 +116,42 @@ fn read_only_commands_emit_one_schema_record_without_a_terminal() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// SCN-01/SCN-03: a root that is a file or a link fails before any row, with a typed issue and
+/// unknown (null) sizes, never "0"; `scan show` repeats the same terminal record.
+#[test]
+fn refused_roots_fail_with_unknown_sizes_never_zero() {
+    let s = schema();
+    let base = scratch("refused");
+    let store = base.join("store");
+    let file = base.join("not-a-folder.txt");
+    std::fs::write(&file, vec![b'x'; 1024]).unwrap();
+    #[cfg(windows)]
+    let roots = {
+        let (target, jn) = (base.join("target"), base.join("jn"));
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("inside.bin"), vec![1u8; 4096]).unwrap();
+        assert!(Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&jn).arg(&target).output().unwrap().status.success());
+        vec![(file.clone(), "not_a_directory"), (jn, "root_is_link")]
+    };
+    #[cfg(not(windows))]
+    let roots = vec![(file.clone(), "not_a_directory")];
+    for (root, code) in roots {
+        let out = raw(&store, &["scan", "--root", root.to_str().unwrap()], &[]);
+        let v = record(&out, &s);
+        assert_eq!((v["status"].as_str(), v["completeness"].as_str(), out.code), (Some("failed"), Some("partial_scope"), 8), "{v}");
+        assert_eq!(v["entries_seen"], 0, "{v}");
+        assert!(v["logical_bytes"].is_null() && v["allocated_bytes"].is_null(), "unread sizes are unknown, not zero: {v}");
+        // macOS maps its own errno to the same codes; this suite checks the Windows backend's code.
+        if cfg!(windows) {
+            assert_eq!(v["issues"][0]["code"], code, "{v}");
+        }
+        let shown = record(&raw(&store, &["scan", "show", v["scan_id"].as_str().unwrap()], &[]), &s);
+        assert_eq!((shown["status"].as_str(), shown["logical_bytes"].is_null()), (Some("failed"), true), "{shown}");
+    }
+    assert_eq!(std::fs::read(&file).unwrap(), vec![b'x'; 1024], "refusing a root is read-only");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn pages_are_bounded_complete_and_bound_to_their_cursor() {
     let s = schema();

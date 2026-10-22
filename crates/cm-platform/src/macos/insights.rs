@@ -16,9 +16,11 @@
 //! - Old downloads: the Downloads folder the catalog resolver uses (so `CM_RESOLVE_HOME` / `CM_RESOLVE_DOWNLOADS`
 //!   redirect it into fixtures), a review list with nothing selected.
 //! - Privacy prompts: the first access to a privacy-protected location (Downloads, device backups, files inside other
-//!   apps' containers) goes through [`super::privacy::bounded`]. When macOS has not answered within
-//!   [`super::privacy::PROMPT_WAIT`] (it is showing a "would like to access…" prompt) the location is reported
-//!   `permission_required (permission_cause=privacy_prompt_pending)` with an unknown size, and the command goes on.
+//!   apps' containers) goes through [`super::privacy::Gate`], keyed on the location ([`super::privacy::prompt_key`]):
+//!   Docker's two image names wait for one answer, not two. When macOS has not answered within
+//!   [`super::privacy::prompt_wait`] the location is reported `permission_required` with an unknown size and the
+//!   command goes on: `permission_cause=privacy_prompt_pending` where the prompt is the proven explanation (Downloads,
+//!   another app's container), `undetermined` elsewhere (device backups, a redirected fixture folder).
 //!
 //! Safety boundary: directory listings and `lstat` only (links are not followed, mount points not crossed, dataless
 //! iCloud folders not listed and nothing materialized); the one external tool is a fixed read-only `tmutil` query.
@@ -58,7 +60,7 @@ const TMUTIL: &str = "/usr/bin/tmutil";
 const TMUTIL_TIMEOUT: Duration = Duration::from_secs(20);
 /// Prefix of every note about a read macOS denied (docs/platforms/macos.md §6: the blocking layer cannot be told
 /// from `EPERM`/`EACCES` alone).
-pub const PERMISSION_REQUIRED: &str = "permission_required (permission_cause=undetermined)";
+pub const PERMISSION_REQUIRED: &str = privacy::PERMISSION_UNDETERMINED;
 
 /// Owner folders below the home folder.
 const DOCKER_DATA: &[&str] = &["Library", "Containers", "com.docker.docker", "Data", "vms", "0", "data"];
@@ -337,8 +339,8 @@ pub fn purgeable(observed_at: &str) -> Insight {
 struct Found<'a> {
     home: &'a Path,
     now: &'a str,
-    /// How long a first access to a privacy-protected location may wait for macOS.
-    wait: Duration,
+    /// How first accesses to privacy-protected locations are bounded.
+    gate: privacy::Gate,
     items: Vec<Insight>,
 }
 
@@ -351,9 +353,9 @@ impl Found<'_> {
     /// One disk image file, by allocated size (its logical size, the sparse maximum, goes in the note).
     fn image(&mut self, object: MacObject, label: Option<&str>, path: &Path) {
         let p = path.to_path_buf();
-        let meta = match privacy::bounded(path, self.wait, move || std::fs::symlink_metadata(&p)) {
+        let meta = match self.gate.run(path, move || std::fs::symlink_metadata(&p)) {
             Ok(m) => m,
-            Err(why) => return self.push(object, label, path, Measured::Unknown(why), None, None),
+            Err(why) => return self.push(object, label, path, Measured::Unknown(why.into_message()), None, None),
         };
         match meta {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -416,10 +418,10 @@ impl Found<'_> {
         self.image(MacObject::OrbStackDisk, None, &join(&home, ORBSTACK_DATA));
         let utm = join(&home, UTM_CONTAINER);
         let probe = utm.clone();
-        let utm_dir = match privacy::bounded(&utm, self.wait, move || std::fs::symlink_metadata(&probe).is_ok_and(|m| m.is_dir())) {
+        let utm_dir = match self.gate.run(&utm, move || std::fs::symlink_metadata(&probe).is_ok_and(|m| m.is_dir())) {
             Ok(is_dir) => is_dir,
             Err(why) => {
-                self.push(MacObject::UtmVms, None, &utm, Measured::Unknown(why), None, None);
+                self.push(MacObject::UtmVms, None, &utm, Measured::Unknown(why.into_message()), None, None);
                 false
             }
         };
@@ -442,12 +444,12 @@ impl Found<'_> {
             return;
         }
         let dir = root.clone();
-        let first = privacy::bounded(&root, self.wait, move || {
+        let first = self.gate.run(&root, move || {
             let _guard = NoMaterialize::enter().map_err(std::io::Error::from_raw_os_error)?;
             std::fs::read_dir(&dir).map(|rd| rd.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).count() as u64)
         });
         let count = match first {
-            Err(why) => return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(why), None, None),
+            Err(why) => return self.push(MacObject::DeviceBackups, None, &root, Measured::Unknown(why.into_message()), None, None),
             Ok(Ok(count)) => count,
             Ok(Err(e)) if denied(&e) => {
                 let why = format!(
@@ -467,7 +469,12 @@ impl Found<'_> {
 
 /// Known objects below `home` (virtual machines, containers, device backups).
 pub(crate) fn home_objects(home: &Path, now: &str) -> Vec<Insight> {
-    let mut f = Found { home, now, wait: privacy::PROMPT_WAIT, items: Vec::new() };
+    home_objects_gated(home, now, privacy::Gate::for_home(Some(home)))
+}
+
+/// [`home_objects`] with the privacy gate injected.
+pub(crate) fn home_objects_gated(home: &Path, now: &str, gate: privacy::Gate) -> Vec<Insight> {
+    let mut f = Found { home, now, gate, items: Vec::new() };
     f.virtual_machines();
     f.device_backups();
     f.items
@@ -527,9 +534,9 @@ pub(crate) fn download_entries(root: &Path) -> Result<(Vec<DownloadEntry>, Optio
     Ok((out, (unreadable > 0).then(|| format!("{unreadable} folder(s) could not be read"))))
 }
 
-/// The old-downloads review of `downloads` (`None`: not resolved).
-pub(crate) fn old_downloads_at(downloads: Option<&Path>, days: u32) -> OldDownloadsReview {
-    old_downloads_gated(downloads, days, privacy::PROMPT_WAIT, first_listing)
+/// The old-downloads review of `downloads` (`None`: not resolved); `home` is the resolver's, for the privacy gate.
+pub(crate) fn old_downloads_at(downloads: Option<&Path>, home: Option<&Path>, days: u32) -> OldDownloadsReview {
+    old_downloads_gated(downloads, days, &privacy::Gate::for_home(home), first_listing)
 }
 
 /// The first open of the Downloads folder, the access macOS holds while it shows its privacy prompt.
@@ -538,11 +545,11 @@ fn first_listing(dir: PathBuf) -> std::io::Result<()> {
     std::fs::read_dir(&dir).map(drop)
 }
 
-/// [`old_downloads_at`] with the first access (`first`, run through [`privacy::bounded`]) and its deadline injected.
+/// [`old_downloads_at`] with the first access (`first`, run through `gate`) and the gate injected.
 pub(crate) fn old_downloads_gated(
     downloads: Option<&Path>,
     days: u32,
-    wait: Duration,
+    gate: &privacy::Gate,
     first: impl FnOnce(PathBuf) -> std::io::Result<()> + Send + 'static,
 ) -> OldDownloadsReview {
     let now = cm_core::time::now_utc();
@@ -557,8 +564,8 @@ pub(crate) fn old_downloads_gated(
         r
     };
     let owned = dir.to_path_buf();
-    let listed = match privacy::bounded(dir, wait, move || first(owned)) {
-        Err(why) => return unknown(why),
+    let listed = match gate.run(dir, move || first(owned)) {
+        Err(why) => return unknown(why.into_message()),
         Ok(Ok(())) => download_entries(dir),
         Ok(Err(e)) => Err(e),
     };
@@ -575,7 +582,8 @@ pub(crate) fn old_downloads_gated(
 
 /// The old-downloads review of this user's Downloads folder (the resolver's, with its fixture overrides).
 pub fn old_downloads(days: u32) -> OldDownloadsReview {
-    old_downloads_at(resolver_env().downloads.as_deref(), days)
+    let env = resolver_env();
+    old_downloads_at(env.downloads.as_deref(), env.home.as_deref(), days)
 }
 
 /// Fixed tool directories below the home folder for the developer-tool and model-library cards.

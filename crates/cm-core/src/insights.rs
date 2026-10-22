@@ -488,7 +488,7 @@ impl Insight {
     }
 
     pub fn to_wire(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut v = serde_json::json!({
             "insight_id": self.insight_id,
             "kind": self.kind,
             "title": self.title,
@@ -501,7 +501,16 @@ impl Insight {
             "explanation": self.explanation,
             "handling": self.handling,
             "guidance": self.guidance,
-        })
+        });
+        with_cause(&mut v, self.size_note.as_deref());
+        v
+    }
+}
+
+/// Add the optional structured `permission_cause` (docs/platforms/macos.md §6) when `note` names one.
+fn with_cause(v: &mut serde_json::Value, note: Option<&str>) {
+    if let Some(cause) = note.and_then(crate::permission::cause_in) {
+        v["permission_cause"] = cause.as_str().into();
     }
 }
 
@@ -723,7 +732,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
             bytes: downloads.total_logical_bytes,
             estimate: false,
             // An unreadable or pending folder has no known file count either (unknown is never 0).
-            count: downloads.total_logical_bytes.map(|_| downloads.item_count),
+            count: downloads.known_item_count(),
             note: downloads.note.clone(),
             observed_at: Some(downloads.observed_at.clone()),
             path: downloads.root.clone(),
@@ -752,7 +761,7 @@ pub fn overview_cards(known: &[Insight], downloads: &OldDownloadsReview, dirs: &
     }
     let mut cards: Vec<InsightCard> = groups.iter().map(|(k, m)| card(*k, m)).collect();
     if let Some(c) = cards.iter_mut().find(|c| c.kind == CardKind::OldDownloads) {
-        c.count = downloads.total_logical_bytes.map(|_| downloads.item_count);
+        c.count = downloads.known_item_count();
         c.title = format!("Downloads older than {} days", downloads.older_than_days);
     }
     // Largest known size first, unknown after, then by kind.
@@ -764,6 +773,7 @@ impl InsightCard {
     pub fn to_wire(&self) -> serde_json::Value {
         let mut v = serde_json::to_value(self).expect("card serializes");
         v["logical_bytes"] = self.logical_bytes.map_or(serde_json::Value::Null, |b| serde_json::Value::String(b.to_string()));
+        with_cause(&mut v, self.size_note.as_deref());
         v
     }
 }
@@ -773,6 +783,12 @@ pub const OLD_DOWNLOADS_GUIDANCE: &str =
     "Review only: nothing is selected. Pick files yourself and move them to the Recycle Bin (the Trash on macOS) with the trash command, or review installer packages with installer scan.";
 
 impl OldDownloadsReview {
+    /// The number of old files when the folder was read; `None` when its total is unknown (unreadable, pending, not
+    /// resolved): unknown is never 0.
+    pub fn known_item_count(&self) -> Option<u64> {
+        self.total_logical_bytes.map(|_| self.item_count)
+    }
+
     pub fn to_wire(&self) -> serde_json::Value {
         let items: Vec<serde_json::Value> = self
             .items
@@ -782,11 +798,13 @@ impl OldDownloadsReview {
                     "installer_like": i.installer_like, "selected": i.selected})
             })
             .collect();
-        serde_json::json!({
+        let mut v = serde_json::json!({
             "root": self.root, "older_than_days": self.older_than_days, "observed_at": self.observed_at, "items": items,
-            "total_logical_bytes": self.total_logical_bytes.map(|b| b.to_string()), "item_count": self.item_count, "note": self.note,
+            "total_logical_bytes": self.total_logical_bytes.map(|b| b.to_string()), "item_count": self.known_item_count(), "note": self.note,
             "handling": self.handling, "guidance": OLD_DOWNLOADS_GUIDANCE,
-        })
+        });
+        with_cause(&mut v, self.note.as_deref());
+        v
     }
 }
 

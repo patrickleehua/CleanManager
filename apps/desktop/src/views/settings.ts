@@ -10,11 +10,12 @@ import { formatBytes, groupDigits } from '../lib/bytes';
 import { h, keepFocus, replace } from '../lib/dom';
 import { gatedOff } from '../lib/nav';
 import { words } from '../lib/platform';
-import { ERROR_HINT, formatTime } from '../lib/format';
+import { formatTime } from '../lib/format';
 import type { GateRow, IpcError, Policy, ProtectionItem, ProtectionList } from '../lib/types';
 import { LAYER_LABEL, MATCH_LABEL, MODE_LABEL, POLICY_STATE_LABEL } from '../lib/words';
 import { DiagSettings } from './diagSettings';
 import { confirmInline, copyField, errorLine, errorText, pageHead, pill } from './parts';
+import { refusalText } from '../lib/codes';
 
 type Pending = { kind: 'remove'; id: string } | { kind: 'enable'; id: string } | { kind: 'revoke'; id: string } | null;
 
@@ -424,7 +425,7 @@ export class SettingsPage {
         h('dt', {}, '引擎'),
         h('dd', {}, c ? `${c.engine_version}（协议 ${c.schema_version}）` : '—'),
       ),
-      c?.store_problem ? h('p', { class: 'form-error' }, ERROR_HINT[c.store_problem.reason] ?? c.store_problem.message) : null,
+      c?.store_problem ? h('p', { class: 'form-error' }, refusalText(c.store_problem)) : null,
       h('h3', {}, 'CLI 连接'),
       h('p', { class: 'muted small' }, 'CLI 与桌面端读写同一个存储：在一侧生成的计划可以在另一侧审阅和执行，批准与策略对两侧同样有效。'),
       copyField('列出计划与执行', 'cleanmanager operations list'),

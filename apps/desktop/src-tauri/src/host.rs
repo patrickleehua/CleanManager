@@ -196,11 +196,21 @@ fn drop_bypass_privileges() -> Option<Result<(), String>> {
 
 /// Why a root cannot be scanned, if anything (checked when offering and again when starting).
 /// A root that *contains* CleanManager's store is fine: the scanner records the store as an
-/// `own_store` boundary and reports it. A root at or inside the store is refused.
+/// `own_store` boundary and reports it. A root at or inside the store is refused. The root itself
+/// is inspected, never a link's target: a symbolic link or junction is refused like the scanner
+/// refuses it (`root_is_link`), which also rechecks the opened handle when the scan starts.
 pub fn root_problem(root: &Path, store_dir: Option<&Path>) -> Option<IpcError> {
-    match std::fs::metadata(root) {
+    match std::fs::symlink_metadata(root) {
+        // On Windows `is_symlink` covers every name-surrogate reparse point: symlinks and junctions.
+        Ok(m) if m.file_type().is_symlink() => {
+            return Some(IpcError::new(
+                ErrorCode::InvalidArgument,
+                cm_core::scan::issue::ROOT_IS_LINK,
+                "This location is a link (symbolic link or junction); CleanManager never follows links. Choose the folder it points to instead",
+            ));
+        }
         Ok(m) if m.is_dir() => {}
-        Ok(_) => return Some(IpcError::new(ErrorCode::InvalidArgument, "not_a_directory", "This location is not a folder")),
+        Ok(_) => return Some(IpcError::new(ErrorCode::InvalidArgument, cm_core::scan::issue::NOT_A_DIRECTORY, "This location is not a folder")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Some(IpcError::new(ErrorCode::InvalidArgument, "root_missing", "This folder does not exist or its volume is offline"));
         }

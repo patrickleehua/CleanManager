@@ -12,6 +12,7 @@ import { words } from '../lib/platform';
 import type { IpcError, Mode, Readiness, ReadinessCheck, ReadinessOp, Tier } from '../lib/types';
 import { MODE_EXPLAIN, MODE_LABEL } from '../lib/words';
 import { copyField, errorLine, errorText, pill, type Tone } from './parts';
+import { learnMore } from './ui';
 
 type Child = Node | string | null | undefined | false;
 
@@ -323,9 +324,9 @@ function readinessDialog(op: ReadinessOp, label: string, gaps: ReadinessCheck[],
 export type GateState = 'in_progress' | 'not_applicable' | 'experimental' | 'cli_only' | 'off';
 
 export const GATE_LABEL: Record<GateState, string> = {
-  in_progress: '已规格 · 开发中',
+  in_progress: '开发中',
   not_applicable: '此平台不适用',
-  experimental: '实验',
+  experimental: '实验功能',
   cli_only: '仅命令行',
   off: '默认关闭',
 };
@@ -338,8 +339,10 @@ export interface CapabilityOpts {
   gate: GateState;
   /** What the feature will do, in the user's words. */
   does: string[];
-  /** Why it is not available here right now. */
+  /** Why it is not available here right now: one short sentence. */
   why: string;
+  /** Longer explanation, shown under "了解更多". */
+  whyMore?: string[];
   /** Requirement ids and the release gate it waits on. */
   spec: string;
   gateName: string;
@@ -356,7 +359,7 @@ export function capabilityPage(o: CapabilityOpts): HTMLElement {
     h(
       'div',
       { class: 'page-head' },
-      h('div', { class: 'page-head-text' }, h('h1', { id: `${o.id}-title` }, o.title), h('p', { class: 'meta-row' }, h('span', {}, pill(GATE_LABEL[o.gate], GATE_TONE[o.gate])), h('span', {}, o.spec), h('span', {}, `门禁 ${o.gateName}`))),
+      h('div', { class: 'page-head-text' }, h('h1', { id: `${o.id}-title` }, o.title), h('p', { class: 'meta-row' }, h('span', {}, pill(GATE_LABEL[o.gate], GATE_TONE[o.gate])))),
     ),
     h(
       'div',
@@ -367,6 +370,7 @@ export function capabilityPage(o: CapabilityOpts): HTMLElement {
         { class: 'panel cap-why', 'aria-labelledby': `${o.id}-why` },
         h('h2', { id: `${o.id}-why` }, o.gate === 'not_applicable' ? '为什么这里不提供' : '现在的状态'),
         h('p', {}, o.why),
+        learnMore(...(o.whyMore ?? []).map((t) => h('p', {}, t)), h('p', { class: 'small' }, `规格 ${o.spec}；发布前验收项 ${o.gateName}。`)),
         o.safety?.length ? h('h3', {}, '上线后仍然遵守') : null,
         o.safety?.length ? h('ul', { class: 'cap-list-plain small' }, ...o.safety.map((s) => h('li', {}, s))) : null,
         o.cli?.length ? h('h3', {}, o.gate === 'off' ? '在终端中开启' : '现在可以在终端中使用') : null,
@@ -395,7 +399,11 @@ export function gateOffPage(o: GateOffOpts): HTMLElement {
     title: o.title,
     gate: 'off',
     does: o.does,
-    why: `这项功能尚未通过发布门禁 ${o.gate}：还没有两个平台的真机验收证据。按照发布规则，未通过门禁的功能默认关闭，不在这台电脑上读取或更改任何东西。如果只是想在这台电脑上评估，可以在“设置 › 实验功能”中开启；开启不代表它已通过验收，每项更改仍然需要你审阅计划。`,
+    why: '这项功能尚未通过发布前验收，默认关闭，不会读取或更改这台电脑上的任何东西。',
+    whyMore: [
+      '发布前验收需要两个平台的真机证据；没有通过的功能按发布规则默认关闭。',
+      '如果只想在这台电脑上评估，可以在“设置 › 实验功能”中开启。开启不代表它已通过验收，每项更改仍然需要你审阅计划。',
+    ],
     spec: o.capability,
     gateName: o.gate,
     cli: [{ label: '开启实验功能（与桌面端共用同一设置）', command: 'cleanmanager experimental --state on' }],

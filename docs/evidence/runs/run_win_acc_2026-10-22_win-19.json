@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-19",
+  "run_id": "run_win_acc_2026-10-22_win-19",
+  "recorded_at": "2026-10-22T04:24:11Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": null,
+  "backend": "win.directory",
+  "config": {
+    "round": "windows-acceptance-2026-10-22",
+    "binary": "cli debug build",
+    "cli_sha256": "0f104e35a0e96527a7121c56d68322c33d509f54cecaa17aeffc1340153bdb15",
+    "desktop_sha256": "c7024489970867fdfc43f3ad59a1284ac3f44d2b72386dae3be11b0a75cfa08c",
+    "store": "isolated CM_STORE_DIR under .research/windows-acceptance-2026-10-22/store",
+    "raw_evidence": [
+      "cancel-tree-manifest.json",
+      "cli-31-detach-tree.json",
+      "cli-32-cancel-tree.json",
+      "cli-33-cancel-tree-wait.json",
+      "cli-34-cancel-tree-entries.json",
+      "cancel-fixture-manifest.json",
+      "cli-27-detach.json",
+      "cli-28-cancel.json",
+      "cli-29-cancel-wait.json",
+      "cli-30-cancel-entries.json"
+    ],
+    "case_source": "docs/acceptance/windows-2026-10-22-cases.md",
+    "report": "docs/acceptance/windows-2026-10-22-report.md",
+    "commands": [
+      [
+        "cleanmanager",
+        "scan",
+        "--root",
+        "<repo>\\.research\\windows-acceptance-2026-10-22\\cancel-tree",
+        "--detach",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "scan",
+        "cancel",
+        "s_4c38_18e0bf5b82cf934c",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "scan",
+        "wait",
+        "s_4c38_18e0bf5b82cf934c",
+        "--timeout",
+        "30",
+        "--json",
+        "--non-interactive"
+      ],
+      [
+        "cleanmanager",
+        "entries",
+        "list",
+        "--scan",
+        "s_4c38_18e0bf5b82cf934c",
+        "--limit",
+        "2",
+        "--json",
+        "--non-interactive"
+      ]
+    ]
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "wait",
+    "s_4c38_18e0bf5b82cf934c",
+    "--timeout",
+    "30",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "回执与终态分开；最终 cancelled/退出 130，保留已确认结果；不能报告 completed",
+  "actual": "对 400 目录/40,000 文件扫描发取消，回执后终态为 cancelled / 130，保留 6,401 个确认条目，可继续分页查询。",
+  "terminal_state": "cancelled",
+  "exit_code": 130,
+  "measurements": {
+    "tree_fixture": {
+      "directories": 400,
+      "files": 40000
+    },
+    "receipt": {
+      "accepted": true,
+      "state_at_receipt": "running"
+    },
+    "terminal": {
+      "exit_code": 130,
+      "status": "cancelled",
+      "completeness": "partial_scope",
+      "entries_seen": 6401,
+      "skipped_ranges": 0,
+      "logical_bytes": "0",
+      "allocated_bytes": "0",
+      "unknown_size_count": 0,
+      "backend": "win.directory",
+      "issues": []
+    },
+    "retained_page_items": 2,
+    "first_attempt_wide_directory": {
+      "files": 30000,
+      "receipt": {
+        "accepted": true,
+        "state_at_receipt": "running"
+      },
+      "terminal": {
+        "exit_code": 0,
+        "status": "completed",
+        "completeness": "verified_scope",
+        "entries_seen": 30001,
+        "skipped_ranges": 0,
+        "logical_bytes": "0",
+        "allocated_bytes": "0",
+        "unknown_size_count": 0,
+        "backend": "win.directory",
+        "issues": []
+      }
+    }
+  },
+  "observer": "agent (Windows acceptance 2026-10-22: one-off runner acceptance_cli.py/summarize.py for CLI records; native Tauri window driven and read through the computer-use accessibility tree for desktop checks)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Debug builds of main@2d654d9 (CLI and Tauri desktop rebuilt for this run; no product code changed).",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "A pass covers only the checkpoints this case lists in docs/acceptance/windows-2026-10-22-cases.md, not the module or a release gate.",
+    "Fixture: synthetic 0-byte files generated under .research/; fixture_manifest_sha256 is null because only counts were recorded.",
+    "The first attempt on a single 30,000-file directory got an accepted/running receipt but ended completed; it is kept, not overwritten. Review after the run identified this as a cancel-in-large-directory gap."
+  ],
+  "status": "passed"
+}

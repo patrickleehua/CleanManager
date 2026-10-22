@@ -13,6 +13,10 @@
 - **WHEN** 用户扫描测试目录，目录内链接指向范围外的 sentinel
 - **THEN** 结果识别链接及边界，不遍历 sentinel，也不修改任何目标文件
 
+#### Scenario: The selected root is itself a link
+- **WHEN** 用户选择的扫描根本身是符号链接、junction、挂载点或其他扫描器不进入的 reparse point
+- **THEN** 系统在写入任何条目前返回 failed 和 `root_is_link`，不跟随链接，提示用户直接扫描链接目标，也不显示完整空目录
+
 #### Scenario: A directory request would require a whole-volume fast path
 - **WHEN** 快速后端需要读取该目录之外的整卷命名空间，而请求仅批准目录范围
 - **THEN** 系统使用限定范围后端或说明能力不可用，不静默扩大读取范围
@@ -39,12 +43,20 @@
 - **WHEN** 在发现条目前根目录已不存在或读取被拒绝
 - **THEN** 返回 failed 和类型化原因，不显示完整空目录
 
+#### Scenario: The root is not a directory or the scan fails
+- **WHEN** 选择的根是普通文件，或扫描以 failed 结束
+- **THEN** 普通文件根在写入任何条目前以 `not_a_directory` 失败、不被记录为目录；failed 结果的逻辑与分配大小为未知（null），不报告为 0
+
 ### Requirement: SCN-04 Cancellation retains confirmed results
 系统 SHALL 支持请求取消扫描，停止调度新的工作并保留已确认结果。仍在退场的 I/O SHALL 显示正在停止；未停止前不得发出虚假的完成或取消终态。
 
 #### Scenario: Cancellation arrives during a scan
 - **WHEN** 用户在扫描产生部分批次后请求取消
 - **THEN** 系统停止后返回 cancelled，仍可查询已确认条目，并标示范围未完整扫描
+
+#### Scenario: Cancellation arrives while one huge directory is listed
+- **WHEN** 取消请求在一个包含数万条目的目录列举途中被接受
+- **THEN** 系统在下一批确认后停止，返回 cancelled 并保留该批条目；已接受的取消回执不会以 completed 结束
 
 ### Requirement: SCN-05 Cloud materialization boundary
 系统 SHALL 默认避免读取文件内容或触发云占位文件下载；无法验证无物化行为的 provider、目录或接口 SHALL 跳过并说明未知范围。扫描 SHALL 不将云端同步删除或驱逐数据当作本地缓存清理。

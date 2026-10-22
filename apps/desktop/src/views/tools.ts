@@ -15,6 +15,7 @@ import type { CpuAlert, Insight, InsightsList, IpcError, NetworkTotals, StartupI
 import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
 import { atLeast, capabilityPage, ensureReady, noticeLine, selectionBar, sumSizes, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, type Tone } from './parts';
+import { issueList } from './ui';
 
 interface PageLike {
   el: HTMLElement;
@@ -281,7 +282,7 @@ export class StartupPage implements PageLike {
       'details',
       { class: 'issues-details' },
       h('summary', {}, `未能读取的来源（${d.issues.length}）——清单可能不完整`),
-      h('ul', { class: 'issue-list' }, ...d.issues.map((i) => h('li', {}, h('span', { class: 'issue-code' }, i.code), h('span', { class: 'path' }, i.scope_display), h('span', { class: 'muted' }, i.message)))),
+      issueList(d.issues, { label: '记录的问题' }),
     );
   }
 }
@@ -993,7 +994,8 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'agent', Capabi
         spec: 'MTR-01..05',
         gateName: 'G1',
         does: [w().binListDoes, `把选中的项目冻结成“永久删除”计划；审阅时需要额外确认不可恢复。`, `在“分析 › 磁盘”中选择对象，生成“${w().moveToBin}”计划。`],
-        why: `手选${w().moveToBin}已经可用：在“分析 › 磁盘”选中对象后点“${w().moveToBin}…”。浏览和永久删除${w().bin}项目目前只在命令行提供，因为它需要一次单独的不可恢复确认，桌面版的确认界面还在开发。`,
+        why: `手选${w().moveToBin}已经可用：在“分析 › 磁盘”选中对象后点“${w().moveToBin}…”。`,
+        whyMore: [`浏览和永久删除${w().bin}项目目前只在命令行提供，因为它需要一次单独的不可恢复确认，桌面版的确认界面还在开发。`],
         safety: ['只按扫描中的条目编号选择对象，界面从不传递路径。', `目标卷没有可用的${w().bin}时计划失败，绝不改为永久删除。`, '受保护的子项会被列出并阻止整个文件夹进入计划。', ...(w().binPutBack ? [w().binPutBack!] : [])],
         cli: [
           { label: `列出${w().bin}`, command: 'cleanmanager trash list' },
@@ -1010,7 +1012,8 @@ export function capabilityPages(app: App): Record<'recyclebin' | 'agent', Capabi
         spec: 'CLI-01..12（agent-cli）',
         gateName: 'G1',
         does: ['让脚本和 AI Agent 用 JSON 调用同样的扫描、分析、计划与执行。', '计划编号与摘要在桌面和终端之间通用：在任一入口批准都对另一入口有效。', '自动化调用不能批准计划，只能等待人工批准或已启用的有限策略。'],
-        why: 'Agent 接口就是命令行的 JSON 协议，现在可以直接使用。桌面里没有单独的 Agent 运行界面，以免绕过人工审阅。',
+        why: 'Agent 接口就是命令行的 JSON 协议，现在可以直接使用。',
+        whyMore: ['桌面里没有单独的 Agent 运行界面，以免绕过人工审阅。'],
         cli: [
           { label: '查看能力', command: 'cleanmanager capabilities --json' },
           { label: '只读预览清理候选', command: 'cleanmanager clean --dry-run --json' },

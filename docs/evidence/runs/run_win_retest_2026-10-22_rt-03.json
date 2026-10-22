@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "test_id": "WIN-09",
+  "run_id": "run_win_retest_2026-10-22_rt-03",
+  "recorded_at": "2026-10-22T04:41:06Z",
+  "code_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+  "binary_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+  "device_id": "dev_win11_x64_primary",
+  "os": {
+    "platform": "windows",
+    "name": "Windows 11 Enterprise",
+    "build": "10.0.26200",
+    "architecture": "x64"
+  },
+  "filesystem": {
+    "type": "NTFS",
+    "volume_id": null
+  },
+  "permission_context": {
+    "elevated": null,
+    "signing_identity": null,
+    "grants": [
+      "doctor permissions.bypass_privileges: ordinary-permission context, no ACL-bypass privilege enabled"
+    ]
+  },
+  "scope_digest": null,
+  "fixture_manifest_sha256": "1cc33d71c8c34b78225dcc2b53f32f7c8d3dc999e6de9d17985d6bfc2417bb24",
+  "backend": "win.directory",
+  "config": {
+    "round": "windows-retest-2026-10-22",
+    "retest_case": "RT-03",
+    "binary": "cli debug build",
+    "cli_sha256": "370a3d0c8bf581f040f02625380e24891ed61a0aebb3a809c4cfc21c4905a38c",
+    "desktop_sha256": "8d4171ad9b8a78f136ae4ed16319657a04c4d177ab3025beeeed98b41ef05663",
+    "base_commit": "2d654d9199d4959a7492f4e519158a8255dc0f29",
+    "patch_sha256": "8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556",
+    "store": "isolated CM_STORE_DIR under .research/windows-retest-2026-10-22/store",
+    "raw_evidence": [
+      "03-chinese-file.json",
+      "03-chinese-file-entries.json"
+    ],
+    "plan_source": "docs/acceptance/windows-2026-10-22-retest-plan.md",
+    "report": "docs/acceptance/windows-2026-10-22-retest-report.md"
+  },
+  "command": [
+    "cleanmanager",
+    "scan",
+    "--root",
+    "~\\AppData\\Local\\Temp\\CleanManagerAcceptance-20261022-b4ef3aa9\\input\\中文 空格.txt",
+    "--json",
+    "--non-interactive"
+  ],
+  "seed": null,
+  "expected": "同样拒绝；错误准确定位原始路径，无字符损失",
+  "actual": "中文空格名文件根：2,048 字节文件拒绝，原始路径与中文完整，空索引。",
+  "terminal_state": "failed",
+  "exit_code": 8,
+  "measurements": {
+    "scan": {
+      "exit_code": 8,
+      "status": "failed",
+      "completeness": "partial_scope",
+      "entries_seen": 0,
+      "skipped_ranges": 0,
+      "logical_bytes": "0",
+      "allocated_bytes": null,
+      "unknown_size_count": 0,
+      "backend": "win.directory",
+      "issues": [
+        {
+          "code": "root_not_directory",
+          "message": "root is not a directory"
+        }
+      ]
+    },
+    "indexed_entries": 0,
+    "root_file_bytes": 2048
+  },
+  "observer": "agent (Windows retest 2026-10-22: one-off runner run.py/summarize.py for CLI records; rebuilt native Tauri window read through the computer-use accessibility tree)",
+  "limitations": [
+    "Redacted transcription. Raw stdout/stderr, native-window accessibility text and screenshots stay local in .research/acceptance-raw/2026-10-22/ (gitignored: they contain the user name, the installed-software list and the live process list); file names are listed in config.raw_evidence.",
+    "Binary built from main@2d654d9 plus an uncommitted patch to crates/cm-platform/src/windows/{handle.rs,directory.rs,directory/tests.rs} (git diff SHA-256 8a6b26903d986e0b158c7b2a2e820a4ff9c4eea4843bf222eb4493251166f556); code_commit is that base commit and does not itself contain the fix.",
+    "Debug builds: cargo build -p cm-cli --locked; npm run tauri -- build --debug --no-bundle.",
+    "Token elevation was not measured independently (the desktop maintenance page reported an elevated context); ordinary-user and UAC acceptance cannot be inferred from this run.",
+    "Same synthetic fixture and sentinel as the first round, new isolated CM_STORE_DIR; no plan was approved and nothing was moved, deleted or restored."
+  ],
+  "status": "passed"
+}

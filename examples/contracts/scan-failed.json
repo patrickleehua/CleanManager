@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "kind": "scan_result",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "revision": 1,
+  "backend": "portable_walk",
+  "status": "failed",
+  "completeness": "partial_scope",
+  "started_at": "2026-10-14T12:00:00Z",
+  "finished_at": "2026-10-14T12:00:02Z",
+  "entries_seen": 0,
+  "skipped_ranges": 0,
+  "logical_bytes": null,
+  "allocated_bytes": null,
+  "unknown_size_count": 0,
+  "issues": [
+    {
+      "code": "root_is_link",
+      "scope_display": "C:\\Users\\Example\\Link",
+      "message": "the root is a junction or volume mount point; links are never followed and nothing behind it was read. Scan the folder it points to directly"
+    }
+  ]
+}
