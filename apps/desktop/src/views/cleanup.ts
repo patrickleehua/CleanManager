@@ -2,22 +2,88 @@
 // analysis of a published scan, grouped by risk with reasons, impact and sizes. Nothing is
 // pre-selected; unknown sizes never count as 0 or rank as "largest"; blocked, protected and
 // pending candidates explain why and cannot be selected. Creating a plan executes nothing.
+//
+// Order of the page (GUI-09): the summary — one sentence and every group's count and known size —
+// then the groups, then the rows; the draft with the processing mode sits in the aside, and the
+// shared selection bar carries the same count to the plan review.
 
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
-import { formatBytes, groupDigits } from '../lib/bytes';
+import { formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
+import { protectionText } from '../lib/codes';
+import { sizeLabel } from '../lib/display';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { Draft } from '../lib/draft';
 import { COMPLETENESS_LABEL, formatTime } from '../lib/format';
 import type { Candidate, CandidateSetInfo, Group, IpcError, Mode } from '../lib/types';
-import { GROUP_EXPLAIN, GROUP_LABEL, MODE_EXPLAIN, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LABEL, PROBE_STATE_LABEL, REGISTRY_LABEL } from '../lib/words';
-import { emptyState, errorLine, errorText, exactTitle, groupMark, pageHead, sizeText } from './parts';
-import { selectionBar, sumSizes, tierBadge } from './kit';
-import { issueList } from './ui';
+import { GROUP_EXPLAIN, GROUP_LABEL, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LABEL, PROBE_STATE_LABEL, REGISTRY_LABEL } from '../lib/words';
+import { errorLine, errorText, exactTitle, groupMark, pageHead } from './parts';
+import { atLeast, modeOptions, selectionBar, sumSizes, summaryStrip, tierBadge } from './kit';
+import { emptyBlock, issueList, learnMore, pathText, stateLine, statusBanner } from './ui';
 
 const PAGE = 50;
 const GROUPS: Group[] = ['low', 'review', 'pending', 'blocked'];
-const MODES: Mode[] = ['trash', 'quarantine', 'delete'];
+
+/** Words of the cleanup page that are not data (one table for the language switch). */
+export const CLEANUP_TEXT = {
+  title: '清理',
+  candidates: '清理候选',
+  noScanTitle: '先扫描一个文件夹',
+  noScanBody: '候选只来自已发布的扫描结果；扫描前这里不会显示任何“可清理”数字。',
+  chooseScope: '选择扫描范围',
+  unpublishedTitle: '扫描还没有发布结果',
+  unpublishedBody: '扫描结束（或取消）并发布已确认的部分后才能按规则分析；进行中的数据不参与判断。',
+  viewProgress: '查看扫描进度',
+  loading: '正在读取分析结果…',
+  noRoot: '（范围不可用）',
+  analyze: '按规则分析这次扫描',
+  analyzing: '正在分析…',
+  analyzingLabel: '正在按规则分析，总量未知',
+  reanalyze: '重新分析',
+  notAnalyzedTitle: '还没有分析这次扫描',
+  notAnalyzedBody: '分析只读取扫描索引，用已启用的规则找出缓存、临时文件等候选。',
+  notAnalyzedMore: '每个候选都标出风险、影响和保护情况。分析不会触碰任何文件，也不会授权任何操作；生成计划之前没有任何东西会被处理。',
+  noneTitle: '当前规则没有找到可处理项',
+  noneBody: '这只说明已启用的规则在本次扫描范围内没有匹配，不代表磁盘上没有可以清理的数据。',
+  browseDisk: '浏览磁盘',
+  summary: (n: number) => `按规则找到 ${groupDigits(n)} 个候选`,
+  summarySize: (size: string) => `低风险与需审阅合计 ${size}`,
+  summaryNote: '没有预先勾选任何项目；大小未知的不按 0 计算，排在已知大小之后。',
+  summaryLabel: '各风险组的候选数与已知大小',
+  dismiss: '知道了',
+  rulesChanged: '规则包在分析之后已更新，基于旧规则的候选不能执行；请重新分析。',
+  partialScope: '这次扫描只覆盖了部分范围：未读取区域里的候选显示为“待判断”，不会进入计划。',
+  issues: (n: number) => `分析说明（${n}）`,
+  issuesLabel: '记录的问题',
+  unknownIn: (n: number) => `${groupDigits(n)} 项未知`,
+  selectLow: '选择全部可选的低风险项',
+  groupEmpty: '没有这一类候选。',
+  loadingMore: '正在加载…',
+  showMore: (shown: number, total: number) => `显示更多（已显示 ${shown} / ${total}）`,
+  loadingRows: '正在加载候选…',
+  hideBasis: '收起依据',
+  showBasis: '依据与影响',
+  hintTag: '提示',
+  adapterTag: '工具清理',
+  draft: '选择草稿',
+  draftEmpty: '没有预先勾选任何项目。勾选候选后，在这里选择处理方式。',
+  draftCount: (n: number) => `${groupDigits(n)} 个候选的已知逻辑大小`,
+  draftMore: (n: number) => `另外 ${n} 项`,
+  clear: '清空选择',
+  freezing: '正在冻结计划…',
+  pickFirst: '先选择候选',
+  pickMode: '再选择处理方式',
+  create: (n: number) => `生成计划（${n} 个候选）`,
+  createNote: '生成计划只冻结清单，不会执行；下一步由你逐项审阅并批准。',
+} as const;
+
+/** One short note per group in the summary strip. */
+const GROUP_NOTE: Record<Group, string> = {
+  low: '可以选择',
+  review: '逐项确认',
+  pending: '证据不完整',
+  blocked: '只能查看',
+};
 
 interface GroupView {
   items: Candidate[];
@@ -201,21 +267,30 @@ export class CleanupPage {
 
   private render(): void {
     const st = this.app.store.state;
+    const T = CLEANUP_TEXT;
     if (!st.scanId) {
       replace(
         this.body,
-        h('h1', { id: 'cleanup-title' }, '清理'),
-        emptyState('先扫描一个文件夹', '候选只来自已发布的扫描结果。扫描前这里不会显示任何“可清理”数字。', h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('scope') }, '选择扫描范围')),
+        h('h1', { id: 'cleanup-title' }, T.title),
+        emptyBlock({ icon: 'tool-clean', title: T.noScanTitle, body: T.noScanBody, actions: [h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('scope') }, T.chooseScope)] }),
       );
       return;
     }
     const status = st.status;
     if (status && !status.published) {
-      replace(this.body, this.head(), emptyState('扫描还没有发布结果', '扫描结束（或取消）并发布已确认的部分后，才能按规则分析。进行中的数据不参与判断。', h('button', { type: 'button', onclick: () => this.app.navigate('overview') }, '查看扫描进度')));
+      replace(
+        this.body,
+        this.head(),
+        h(
+          'div',
+          { class: 'ov-single' },
+          statusBanner({ kind: 'running', level: 2, titleId: 'cleanup-state-title', title: T.unpublishedTitle, sentence: T.unpublishedBody, actions: [h('button', { type: 'button', onclick: () => this.app.navigate('overview') }, T.viewProgress)] }),
+        ),
+      );
       return;
     }
     if (this.loadingInfo && !this.info) {
-      replace(this.body, this.head(), h('p', { class: 'muted', role: 'status' }, '正在读取分析结果…'));
+      replace(this.body, this.head(), h('p', { class: 'muted', role: 'status' }, T.loading));
       return;
     }
     if (!this.info) {
@@ -226,14 +301,14 @@ export class CleanupPage {
     replace(
       this.body,
       this.head(),
-      this.notices(),
       total === 0
-        ? emptyState(
-            '当前规则没有找到可处理项',
-            '这只说明已启用的规则在本次扫描范围内没有匹配，不代表磁盘上没有可以清理的数据。可以在磁盘页查看占用，或扫描其他范围。',
-            h('button', { type: 'button', onclick: () => this.app.navigate('disk') }, '浏览磁盘'),
+        ? h(
+            'div',
+            { class: 'ov-single' },
+            this.notices(),
+            emptyBlock({ icon: 'tool-clean', title: T.noneTitle, body: T.noneBody, actions: [h('button', { type: 'button', onclick: () => this.app.navigate('disk') }, T.browseDisk)] }),
           )
-        : h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, ...GROUPS.map((g) => this.groupSection(g))), this.draftPanel()),
+        : h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.summary(total), this.notices(), ...GROUPS.map((g) => this.groupSection(g))), this.draftPanel()),
       this.bar(),
     );
   }
@@ -241,52 +316,87 @@ export class CleanupPage {
   private head(): HTMLElement {
     const info = this.info;
     const status = this.app.store.state.status;
+    const root = info?.scan_root_display ?? status?.root_display ?? null;
+    const completeness = info?.scan_completeness ?? status?.completeness;
     const meta = [
-      h('span', { class: 'path' }, info?.scan_root_display ?? status?.root_display ?? '（范围不可用）'),
+      root ? pathText(root, { max: 48 }) : CLEANUP_TEXT.noRoot,
       info?.created_at ? `分析于 ${formatTime(info.created_at)}` : null,
-      (info?.scan_completeness ?? status?.completeness) ? (COMPLETENESS_LABEL[(info?.scan_completeness ?? status?.completeness)!] ?? '') : null,
+      completeness ? (COMPLETENESS_LABEL[completeness] ?? '') : null,
     ];
-    const reanalyze = info
-      ? h('button', { type: 'button', id: 'cleanup-analyze', disabled: this.analyzing }, this.analyzing ? '正在分析…' : '重新分析')
-      : null;
+    const reanalyze = info ? h('button', { type: 'button', id: 'cleanup-analyze', disabled: this.analyzing }, this.analyzing ? CLEANUP_TEXT.analyzing : CLEANUP_TEXT.reanalyze) : null;
     reanalyze?.addEventListener('click', () => void this.analyze());
-    return pageHead({ id: 'cleanup-title', title: '清理候选', meta, actions: [reanalyze] });
+    return pageHead({ id: 'cleanup-title', title: CLEANUP_TEXT.candidates, meta, actions: [reanalyze] });
   }
 
   private notAnalyzed(): HTMLElement {
-    const btn = h('button', { type: 'button', id: 'cleanup-analyze', class: 'primary', disabled: this.analyzing }, this.analyzing ? '正在分析…' : '按规则分析这次扫描');
+    const T = CLEANUP_TEXT;
+    const btn = h('button', { type: 'button', id: 'cleanup-analyze', class: 'primary', disabled: this.analyzing }, this.analyzing ? T.analyzing : T.analyze);
     btn.addEventListener('click', () => void this.analyze());
     return h(
-      'div',
-      { class: 'panel analyze-panel' },
-      h('h2', {}, '还没有分析这次扫描'),
-      h('p', { class: 'muted' }, '分析只读取扫描索引，用已启用的规则找出缓存、临时文件等候选，并标出风险、影响和保护情况。它不会触碰任何文件，也不会授权任何操作。'),
-      this.analyzing ? h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': '正在分析' }) : null,
+      'section',
+      { class: 'panel analyze-panel', 'aria-labelledby': 'analyze-title' },
+      h('h2', { id: 'analyze-title' }, T.notAnalyzedTitle),
+      h('p', {}, T.notAnalyzedBody),
+      learnMore(h('p', {}, T.notAnalyzedMore)),
+      this.analyzing ? h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': T.analyzingLabel, 'aria-valuetext': T.analyzingLabel }) : null,
       errorLine(this.infoError),
       h('div', { class: 'card-actions' }, btn),
     );
   }
 
+  /** GUI-09 summary first: every group's count and known size, each jumping to its group. */
+  private summary(total: number): HTMLElement {
+    const info = this.info!;
+    const T = CLEANUP_TEXT;
+    const known = GROUPS.filter((g) => g === 'low' || g === 'review').reduce((a, g) => a + (parseBytes(info.groups[g].known_logical_bytes) ?? 0n), 0n);
+    const unknown = GROUPS.filter((g) => g === 'low' || g === 'review').reduce((a, g) => a + info.groups[g].unknown_size_count, 0);
+    return h(
+      'section',
+      { class: 'cand-summary', 'aria-labelledby': 'cand-sum-title' },
+      h('h2', { id: 'cand-sum-title', class: 'cs-sentence' }, T.summary(total), h('span', { class: 'cs-size num' }, T.summarySize(sizeLabel(known, { unknownCount: unknown })))),
+      h('p', { class: 'cs-note' }, T.summaryNote),
+      summaryStrip(
+        T.summaryLabel,
+        GROUPS.map((g) => {
+          const c = info.groups[g];
+          return {
+            mark: groupMark(g),
+            count: c.count,
+            size: c.count && (g === 'low' || g === 'review') ? sizeLabel(c.known_logical_bytes, { unknownCount: c.unknown_size_count }) : null,
+            note: GROUP_NOTE[g],
+            id: `jump-${g}`,
+            onJump: () => this.jumpTo(g),
+          };
+        }),
+      ),
+    );
+  }
+
+  private jumpTo(g: Group): void {
+    if (this.collapsed.has(g)) {
+      this.collapsed.delete(g);
+      if (!this.groups.get(g) && this.info?.groups[g].count) void this.loadGroup(g);
+      this.update();
+    }
+    requestAnimationFrame(() => {
+      const t = document.getElementById(`group-toggle-${g}`);
+      t?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      t?.focus({ preventScroll: true });
+    });
+  }
+
   private notices(): HTMLElement {
     const info = this.info!;
+    const T = CLEANUP_TEXT;
     const parts: (HTMLElement | null)[] = [];
     if (this.notice) {
-      const close = h('button', { type: 'button', class: 'quiet', onclick: () => ((this.notice = null), this.update()) }, '知道了');
+      const close = h('button', { type: 'button', class: 'quiet', onclick: () => ((this.notice = null), this.update()) }, T.dismiss);
       parts.push(h('div', { class: 'notice', role: 'status' }, h('span', {}, this.notice), close));
     }
-    if (info.rules_current === false) parts.push(h('div', { class: 'notice warn' }, h('span', {}, '规则包在分析之后已更新。基于旧规则的候选不能执行，请重新分析。')));
-    if (info.scan_completeness === 'partial_scope')
-      parts.push(h('div', { class: 'notice warn' }, h('span', {}, '这次扫描只覆盖了部分范围。未读取区域里的候选显示为“待判断”，不会进入计划。')));
+    if (info.rules_current === false) parts.push(stateLine({ kind: 'failed', text: T.rulesChanged }));
+    if (info.scan_completeness === 'partial_scope') parts.push(stateLine({ kind: 'partial', text: T.partialScope }));
     if (this.infoError) parts.push(errorLine(this.infoError));
-    if (info.issues.length)
-      parts.push(
-        h(
-          'details',
-          { class: 'issues-details' },
-          h('summary', {}, `分析说明（${info.issues.length}）`),
-          issueList(info.issues, { label: '记录的问题' }),
-        ),
-      );
+    if (info.issues.length) parts.push(h('details', { class: 'issues-details' }, h('summary', {}, T.issues(info.issues.length)), issueList(info.issues, { label: T.issuesLabel })));
     return h('div', { class: 'notices' }, ...parts);
   }
 
@@ -295,13 +405,21 @@ export class CleanupPage {
     const count = info.groups[g];
     const view = this.groups.get(g);
     const open = !this.collapsed.has(g);
+    const T = CLEANUP_TEXT;
     const toggle = h(
       'button',
       { type: 'button', class: 'group-toggle', id: `group-toggle-${g}`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `group-body-${g}` },
       h('span', { class: 'chev-icon', 'aria-hidden': 'true' }, icon('chevron')),
       groupMark(g),
       h('span', { class: 'group-count num' }, `${groupDigits(count.count)} 项`),
-      h('span', { class: 'group-size num', title: exactTitle(count.known_logical_bytes) }, count.count ? sizeText(count.known_logical_bytes, count.unknown_size_count) : ''),
+      count.count
+        ? h(
+            'span',
+            { class: 'group-size num', title: exactTitle(count.known_logical_bytes) },
+            sizeLabel(count.known_logical_bytes, { unknownCount: count.unknown_size_count }),
+            count.unknown_size_count ? h('span', { class: 'group-unknown' }, T.unknownIn(count.unknown_size_count)) : null,
+          )
+        : null,
     );
     toggle.addEventListener('click', () => {
       if (open) this.collapsed.add(g);
@@ -311,25 +429,23 @@ export class CleanupPage {
       }
       this.update();
     });
-    const extra =
-      g === 'low' && count.count > 0
-        ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => void this.selectAllLow() }, '选择全部可选的低风险项')
-        : null;
+    const extra = g === 'low' && count.count > 0 ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => void this.selectAllLow() }, T.selectLow) : null;
     const bodyEl = h(
       'div',
       { class: 'group-body', id: `group-body-${g}`, hidden: !open },
       h('p', { class: 'group-explain' }, GROUP_EXPLAIN[g]),
-      count.count === 0 ? h('p', { class: 'muted small' }, '没有这一类候选。') : this.table(g, view),
+      count.count === 0 ? h('p', { class: 'muted small' }, T.groupEmpty) : this.table(g, view),
       view?.error ? errorLine(view.error) : null,
       view?.next
-        ? h('button', { type: 'button', class: 'quiet more', id: `more-${g}`, disabled: view.loading, onclick: () => void this.loadGroup(g, true) }, view.loading ? '正在加载…' : `显示更多（已显示 ${view.items.length} / ${view.total}）`)
+        ? h('button', { type: 'button', class: 'quiet more', id: `more-${g}`, disabled: view.loading, onclick: () => void this.loadGroup(g, true) }, view.loading ? T.loadingMore : T.showMore(view.items.length, view.total))
         : null,
     );
     return h('section', { class: 'panel cgroup', 'data-group': g, 'aria-labelledby': `group-toggle-${g}` }, h('div', { class: 'cgroup-head' }, h('h2', {}, toggle), extra), bodyEl);
   }
 
   private table(g: Group, view: GroupView | undefined): HTMLElement {
-    if (!view || (view.loading && !view.items.length)) return h('p', { class: 'muted small', role: 'status' }, '正在加载候选…');
+    const T = CLEANUP_TEXT;
+    if (!view || (view.loading && !view.items.length)) return h('p', { class: 'muted small', role: 'status' }, T.loadingRows);
     const rows: HTMLElement[] = [];
     for (const c of view.items) {
       const id = `cand-${c.candidate_id}`;
@@ -344,13 +460,18 @@ export class CleanupPage {
       check.checked = !!this.draft?.has(c.candidate_id);
       check.addEventListener('change', () => this.toggle(c));
       const open = this.expanded.has(c.candidate_id);
-      const more = h('button', { type: 'button', class: 'link-btn', id: `${id}-more`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-detail` }, open ? '收起依据' : '依据与影响');
+      const more = h('button', { type: 'button', class: 'link-btn', id: `${id}-more`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `${id}-detail` }, open ? T.hideBasis : T.showBasis);
       more.addEventListener('click', () => {
         if (open) this.expanded.delete(c.candidate_id);
         else this.expanded.add(c.candidate_id);
         this.update();
       });
-      const size = h('td', { class: 'col-size num', title: exactTitle(c.logical_known_bytes) }, sizeText(c.logical_known_bytes, c.unknown_size_count));
+      const size = h(
+        'td',
+        { class: 'col-size num', title: exactTitle(c.logical_known_bytes) },
+        sizeLabel(c.logical_known_bytes, { unknownCount: c.unknown_size_count }),
+        c.unknown_size_count ? h('small', {}, T.unknownIn(c.unknown_size_count)) : null,
+      );
       const why = selectable
         ? h('span', { id: `${id}-why`, class: 'modes-line' }, c.allowed_modes.map((m) => MODE_LABEL[m]).join('、'))
         : h('span', { id: `${id}-why`, class: 'why-not' }, NOT_SELECTABLE_LABEL[c.not_selectable ?? 'no_mode']);
@@ -363,8 +484,8 @@ export class CleanupPage {
             'td',
             { class: 'col-object' },
             h('label', { for: `${id}-check`, class: 'obj-name' }, c.name),
-            h('span', { class: 'obj-path path' }, c.path_display),
-            h('span', { class: 'obj-reason' }, c.row_kind === 'hint' ? h('span', { class: 'row-tag' }, '提示') : null, c.row_kind === 'adapter' ? h('span', { class: 'row-tag' }, '工具清理') : null, c.reasons[0] ?? c.rules[0]),
+            pathText(c.path_display, { max: 64, className: 'obj-path' }),
+            h('span', { class: 'obj-reason' }, c.row_kind === 'hint' ? h('span', { class: 'row-tag' }, T.hintTag) : null, c.row_kind === 'adapter' ? h('span', { class: 'row-tag' }, T.adapterTag) : null, c.reasons[0] ?? c.rules[0]),
           ),
           size,
           h('td', { class: 'col-status' }, tierBadge(c.tier), why, more),
@@ -401,7 +522,7 @@ export class CleanupPage {
         h('dt', {}, '影响'),
         h('dd', {}, c.impact || '规则未提供影响说明'),
         c.protection ? h('dt', {}, '保护') : null,
-        c.protection ? h('dd', {}, c.protection.describe, c.protection.reviewable ? '（仅可逐项审阅，不进入批量计划或策略）' : '') : null,
+        c.protection ? h('dd', {}, protectionText(c.protection.class), c.protection.reviewable ? '（仅可逐项审阅，不进入批量计划或策略）' : '') : null,
         c.unknown_size_count ? h('dt', {}, '未知大小') : null,
         c.unknown_size_count ? h('dd', {}, `${groupDigits(c.unknown_size_count)} 个文件大小未知，未计入上面的数字，也不能冻结进计划。`) : null,
         c.registry_status ? h('dt', {}, '实测登记') : null,
@@ -452,6 +573,7 @@ export class CleanupPage {
         id: 'cleanup-bar-go',
         text: this.mode ? '生成计划并审阅' : '选择处理方式',
         disabled: this.creating,
+        danger: this.mode === 'delete',
         onClick: () => {
           if (this.mode) void this.createPlan();
           else document.querySelector<HTMLInputElement>('input[name="plan-mode"]:not(:disabled)')?.focus();
@@ -461,69 +583,54 @@ export class CleanupPage {
   }
 
   private draftPanel(): HTMLElement {
+    const T = CLEANUP_TEXT;
     const d = this.draft;
     const n = d?.size ?? 0;
     const modes = d?.modes() ?? [];
-    const options = MODES.map((m) => {
-      const allowed = modes.includes(m);
-      const input = h('input', { type: 'radio', name: 'plan-mode', id: `mode-${m}`, value: m, disabled: !allowed, 'aria-describedby': `mode-${m}-desc` }) as HTMLInputElement;
-      input.checked = this.mode === m;
-      input.addEventListener('change', () => {
-        this.mode = m;
-        this.createError = null;
-        this.update();
-      });
-      return h(
-        'label',
-        { class: `mode-option${input.checked ? ' checked' : ''}${allowed ? '' : ' disabled'}`, for: `mode-${m}`, 'data-mode': m },
-        input,
-        h(
-          'span',
-          { class: 'mode-text', id: `mode-${m}-desc` },
-          h('b', {}, MODE_LABEL[m]),
-          h('span', {}, MODE_EXPLAIN[m].space),
-          h('span', { class: 'mode-recovery' }, MODE_EXPLAIN[m].recovery),
-          n > 0 && !allowed ? h('span', { class: 'why-not' }, '所选项目中有规则不允许这种方式') : null,
-        ),
-      );
-    });
     const create = h(
       'button',
-      { type: 'button', class: 'primary wide', id: 'create-plan', disabled: n === 0 || !this.mode || this.creating },
-      this.creating ? '正在冻结计划…' : n === 0 ? '先选择候选' : !this.mode ? '再选择处理方式' : `生成计划（${n} 个候选）`,
+      { type: 'button', class: `${this.mode === 'delete' ? 'danger' : 'primary'} wide`, id: 'create-plan', disabled: n === 0 || !this.mode || this.creating },
+      this.creating ? T.freezing : n === 0 ? T.pickFirst : !this.mode ? T.pickMode : T.create(n),
     );
     create.addEventListener('click', () => void this.createPlan());
     const list = d?.items() ?? [];
+    const sum = sumSizes(list.map((c) => ({ bytes: c.logical_known_bytes, unknown: c.unknown_size_count })));
     return h(
       'aside',
       { class: 'panel work-aside draft', 'aria-labelledby': 'draft-title' },
-      h('h2', { id: 'draft-title' }, '选择草稿'),
+      h('h2', { id: 'draft-title' }, T.draft),
       n === 0
-        ? h('p', { class: 'muted small' }, '没有预先勾选任何项目。勾选候选后，在这里选择处理方式并生成计划。')
+        ? h('p', { class: 'muted small' }, T.draftEmpty)
         : h(
             'div',
             { class: 'draft-sum' },
-            h('p', { class: 'draft-figure num' }, formatBytes(d!.knownBytes())),
-            h('p', { class: 'muted small' }, `${groupDigits(n)} 个候选的已知逻辑大小。计划会展开到每个文件，审阅时可以看到完整清单。`),
+            h('p', { class: 'draft-figure num', title: formatExactBytes(sum.known) }, atLeast(sum)),
+            h('p', { class: 'muted small' }, T.draftCount(n)),
             h(
               'ul',
               { class: 'draft-list' },
               ...list.slice(0, 5).map((c) =>
-                h(
-                  'li',
-                  {},
-                  h('span', { class: 'path' }, c.name),
-                  h('button', { type: 'button', class: 'icon-btn small-btn', 'aria-label': `移除 ${c.name}`, onclick: () => this.toggle(c) }, icon('close')),
-                ),
+                h('li', {}, h('span', { class: 'path' }, c.name), h('button', { type: 'button', class: 'icon-btn small-btn', 'aria-label': `移除 ${c.name}`, onclick: () => this.toggle(c) }, icon('close'))),
               ),
-              list.length > 5 ? h('li', { class: 'muted small' }, `另外 ${list.length - 5} 项`) : null,
+              list.length > 5 ? h('li', { class: 'muted small' }, T.draftMore(list.length - 5)) : null,
             ),
-            h('button', { type: 'button', class: 'quiet', onclick: () => (this.draft?.clear(), this.syncMode(), this.update()) }, '清空选择'),
+            h('button', { type: 'button', class: 'quiet', onclick: () => (this.draft?.clear(), this.syncMode(), this.update()) }, T.clear),
           ),
-      h('fieldset', { class: 'mode-options', disabled: n === 0 }, h('legend', {}, '处理方式'), ...options),
+      modeOptions({
+        name: 'plan-mode',
+        id: (m) => `mode-${m}`,
+        allowed: modes,
+        current: this.mode,
+        selected: n,
+        onChange: (m) => {
+          this.mode = m;
+          this.createError = null;
+          this.update();
+        },
+      }),
       errorLine(this.createError),
       create,
-      h('p', { class: 'muted small aside-note' }, '生成计划只冻结清单，不会执行。下一步会显示每一个文件、摘要和有效期，由你批准后才可执行。'),
+      h('p', { class: 'muted small aside-note' }, T.createNote),
     );
   }
 }

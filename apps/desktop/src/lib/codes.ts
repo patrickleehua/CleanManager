@@ -8,6 +8,7 @@
 import { ERROR_HINT } from './format';
 import { macOverlay, onPlatform, words } from './platform';
 import type { Issue, PermissionCause } from './types';
+import { CODE_EXPLAIN } from './words';
 
 /** Scan issues and the other issue lists (cleanup analysis, catalogs, startup, apps). */
 export const ISSUE_TEXT: Record<string, string> = {
@@ -66,6 +67,23 @@ export const ISSUE_TEXT: Record<string, string> = {
   receipts_unreadable: '无法读取安装收据。',
   invalid_argument: '读取应用清单的条件无效，清单可能不完整。',
 };
+
+/** Default protection categories (`protection.class` of a candidate, built-in protection rows `dc_<class>`). */
+export const PROTECTION_CLASS_TEXT: Record<string, string> = {
+  credentials: '凭据与密钥（.ssh、.gnupg、.aws、.azure、.kube、凭据管理器、钥匙串、系统证书）',
+  database: '数据库文件及其日志（.db、.sqlite、-wal、-shm、.mdb、.accdb）',
+  browser_site_storage: '浏览器站点数据（IndexedDB、Local Storage、Cookie、登录数据、历史记录等）',
+  ai_sessions_config: 'AI 工具的会话与配置（.claude、.codex）；会话可以逐项审阅',
+  source_worktree: 'Git 工作树（含 .git 的文件夹）；没有未提交改动的工作树可以逐项审阅，有改动的被阻止',
+  models: '模型权重（.gguf、.safetensors、.ckpt、.pt、.onnx）',
+  user_documents: '用户文档（按身份识别）',
+  system_repair: '系统修复与安装存储（按身份识别）',
+};
+
+/** A protection class in words; a class the table does not know reads as the unknown-code line. */
+export function protectionText(cls: string): string {
+  return PROTECTION_CLASS_TEXT[cls] ?? unknownCodeText(cls);
+}
 
 /** Why a permission issue happened (`permission_cause`). */
 export const PERMISSION_CAUSE_TEXT: Record<PermissionCause, string> = {
@@ -193,10 +211,10 @@ export interface IssueGroup {
   raws: { code: string; scope: string; message: string }[];
 }
 
-export function groupIssues(issues: Issue[]): IssueGroup[] {
+export function groupIssues(issues: Issue[], explain: (i: Issue) => ExplainedIssue = explainIssue): IssueGroup[] {
   const groups = new Map<string, IssueGroup>();
   for (const i of issues) {
-    const e = explainIssue(i);
+    const e = explain(i);
     // Unknown codes stay one per code; known ones group by meaning (code + cause).
     const key = `${e.code}|${e.cause ?? ''}`;
     let g = groups.get(key);
@@ -210,6 +228,23 @@ export function groupIssues(issues: Issue[]): IssueGroup[] {
   }
   // Waiting for an answer comes first: it is the one thing the person can act on right now.
   return [...groups.values()].sort((a, b) => Number(b.issue.cause === 'privacy_prompt_pending') - Number(a.issue.cause === 'privacy_prompt_pending'));
+}
+
+/**
+ * A per-item execution result (operation items: skipped, failed, unknown…) in words. The result table
+ * (`CODE_EXPLAIN`) comes first, then the issue and refusal tables; an unknown code reads
+ * "未识别的问题（代码 x）" and the host's message stays for the collapsed detail.
+ */
+export function explainResult(i: Issue): ExplainedIssue {
+  const known = CODE_EXPLAIN[i.code];
+  if (known) return { code: i.code, rawCode: i.code, known: true, cause: null, text: known, raw: i.message ?? '', scope: i.scope_display ?? '' };
+  return explainIssue(i);
+}
+
+/** The main text of a result code: Chinese, or the unknown-code line — never the host's raw message. */
+export function resultText(code: string | null): string {
+  if (!code) return '';
+  return explainResult({ code, scope_display: '', message: '' }).text;
 }
 
 /** Codes a root refusal reports: the scan ends before any row and the next step is choosing another root. */

@@ -284,12 +284,12 @@ main { width: 100%; max-width: 1480px; margin: 0 auto; padding: 28px 28px 64px; 
 .status-banner[data-kind='failed'] { --tone: var(--danger); }
 .status-banner[data-kind='cancelled'] { --tone: var(--muted); }
 .sb-mark { width: 16px; height: 16px; margin-top: 6px; flex: none; color: var(--tone); }
-.status-banner[data-kind='success'] .sb-mark { border-radius: 50%; background: currentColor; }
-.status-banner[data-kind='partial'] .sb-mark { border-radius: 50%; box-shadow: inset 0 0 0 2px currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
-.status-banner[data-kind='pending-permission'] .sb-mark { border-radius: 50%; border: 2px dashed currentColor; }
-.status-banner[data-kind='failed'] .sb-mark { border-radius: 3px; background: currentColor; transform: scale(0.85); }
-.status-banner[data-kind='cancelled'] .sb-mark { height: 4px; margin-top: 12px; border-radius: 2px; background: currentColor; }
-.status-banner[data-kind='running'] .sb-mark { border-radius: 50%; box-shadow: inset 0 0 0 2.5px currentColor; animation: pulse 1.4s ease-in-out infinite; }
+:is(.status-banner, .state-line)[data-kind='success'] .sb-mark { border-radius: 50%; background: currentColor; }
+:is(.status-banner, .state-line)[data-kind='partial'] .sb-mark { border-radius: 50%; box-shadow: inset 0 0 0 2px currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+:is(.status-banner, .state-line)[data-kind='pending-permission'] .sb-mark { border-radius: 50%; border: 2px dashed currentColor; }
+:is(.status-banner, .state-line)[data-kind='failed'] .sb-mark { border-radius: 3px; background: currentColor; transform: scale(0.85); }
+:is(.status-banner, .state-line)[data-kind='cancelled'] .sb-mark { height: 4px; margin-top: 12px; border-radius: 2px; background: currentColor; }
+:is(.status-banner, .state-line)[data-kind='running'] .sb-mark { border-radius: 50%; box-shadow: inset 0 0 0 2.5px currentColor; animation: pulse 1.4s ease-in-out infinite; }
 .sb-body { min-width: 0; }
 .sb-title { font-size: var(--fs-2xl); line-height: var(--lh-tight); margin: 0; }
 .sb-sentence { font-size: var(--fs-lg); margin: var(--sp-2) 0 0; max-width: 38em; }
@@ -467,38 +467,67 @@ fieldset.scope-panel { margin: 0; min-width: 0; padding: var(--sp-5); }
   .sb-mark, .sw-mark { forced-color-adjust: none; border: 1px solid CanvasText; }
 }
 
-/* P03 */
-.disk-head { margin-bottom: 14px; }
-.crumbs { list-style: none; padding: 0; margin: 8px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
-.crumbs li { display: flex; align-items: center; }
-.crumbs li + li::before { content: '›'; color: var(--muted); margin: 0 4px; }
-.crumb { border: 0; background: transparent; padding: 3px 6px; color: var(--accent); max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.crumb:disabled { opacity: 1; color: var(--text); font-weight: 600; cursor: default; }
-.layer-info { font-size: 12px; margin: 0; }
+/* P03 disk. The chart and the table are one view: the table's current row lights its tile (an inner
+   ring plus a corner dot, never colour alone) and the other tiles step back; choosing a tile makes the
+   same row current. The detail pane reads what it is → how big → what you can do. */
+.disk-head { margin-bottom: var(--sp-4); }
+.disk-head.bare .crumb-bar, .disk-head.bare .disk-meta { display: none; }
+.crumb-bar { display: flex; align-items: center; gap: var(--sp-1); margin: var(--sp-2) 0 0; min-width: 0; }
+.crumb-up { width: 30px; height: 30px; flex: none; border: 1px solid var(--line); }
+.crumb-up .icon { width: 16px; height: 16px; }
+.crumbs { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; min-width: 0; }
+.crumbs li { display: flex; align-items: center; min-width: 0; }
+.crumbs li + li::before { content: '›'; color: var(--muted); margin: 0 2px; }
+.crumb { border: 0; background: transparent; padding: 4px 6px; color: var(--accent); font-size: var(--fs-md); max-width: 100%; min-width: 0; }
+.crumb:hover:not(:disabled) { background: var(--soft); }
+.crumb { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb .pt-shown { overflow-wrap: normal; white-space: nowrap; }
+.crumb:disabled { opacity: 1; color: var(--text); font-weight: var(--fw-strong); cursor: default; }
+.crumb-more { color: var(--muted); letter-spacing: 0.08em; padding-inline: 8px; }
+.crumb-bar > .crumbs:first-child li:first-child .crumb, .crumb-up[hidden] + .crumbs li:first-child .crumb { margin-left: -6px; }
+.disk-meta { margin-top: var(--sp-1); }
+.disk-state { margin: 0 0 var(--sp-4); }
+.disk-state:empty { display: none; }
+.page-disk > .notice { margin-bottom: var(--sp-4); }
 .disk-layout {
-  display: grid; gap: 16px;
+  display: grid; gap: var(--sp-4);
   grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-areas: 'chart side' 'table side';
   align-items: start;
 }
-.chart-panel { grid-area: chart; padding: 14px; }
-.table-panel { grid-area: table; padding: 14px 14px 10px; container-type: inline-size; }
-.side-panel { grid-area: side; position: sticky; top: 74px; max-height: calc(100vh - 92px); overflow: auto; }
+.chart-panel { grid-area: chart; padding: var(--sp-4); min-width: 0; }
+.table-panel { grid-area: table; padding: var(--sp-4) var(--sp-4) var(--sp-3); container-type: inline-size; min-width: 0; }
+.side-panel { grid-area: side; position: sticky; top: 74px; max-height: calc(100vh - 92px); overflow: auto; min-width: 0; }
 
-.treemap { position: relative; height: clamp(220px, 32vh, 380px); border-radius: 10px; background: var(--surface); overflow: hidden; }
+/* The folder's known size is the page's one figure; unknown sizes sit beside it, never folded in. */
+.chart-head { margin: 0 0 var(--sp-3); min-height: 30px; }
+.chart-figure { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
+.cf-num { font-size: var(--fs-2xl); font-weight: var(--fw-regular); letter-spacing: -0.02em; line-height: 1.2; }
+.cf-cap { font-size: var(--fs-sm); color: var(--muted); }
+.cf-unknown, .ds-unknown { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-size: var(--fs-xs); }
+.cf-unknown::before, .ds-unknown::before { content: ''; width: 8px; height: 8px; border-radius: 50%; border: 1.5px dashed currentColor; flex: none; }
+
+.treemap { position: relative; height: clamp(220px, 32vh, 380px); border-radius: 10px; background: var(--surface); overflow: hidden; outline: none; }
+.treemap:focus-visible { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
 .tile[data-shade='1'] { filter: brightness(0.96); }
 .tile[data-shade='2'] { filter: brightness(1.03) saturate(0.9); }
 .treemap.loading { opacity: 0.55; transition: opacity 0.2s; }
 .tile {
   position: absolute; border-radius: 5px; padding: 7px 9px; overflow: hidden; cursor: pointer;
   color: var(--tile-ink); background: var(--cat-other);
-  display: flex; flex-direction: column; gap: 1px; font-size: 12px; line-height: 1.3;
+  display: flex; flex-direction: column; gap: 1px; font-size: var(--fs-xs); line-height: 1.3;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tile-ink) 6%, transparent);
+  transition: filter 0.15s;
 }
-.tile:hover { filter: brightness(0.93) saturate(1.15); }
-.tile.active { box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 2px var(--surface); z-index: 1; }
-.tile-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile-size { opacity: 0.8; font-size: 11px; }
+.tile:hover, .tile.hover { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+/* The other tiles step back by colour only (saturation): their labels keep full contrast. */
+.treemap[data-has-active] .tile:not(.active) { filter: saturate(0.55); }
+.tile.active { opacity: 1; filter: none; z-index: 1; box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 4px var(--surface); }
+.tile.active::after { content: ''; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+.tile.active .tile-name { padding-right: 12px; }
+.tile-name { font-weight: var(--fw-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-size { opacity: 0.85; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-share { margin-left: 6px; }
 [data-cat='folder'] { background: var(--cat-folder); }
 [data-cat='media'] { background: var(--cat-media); }
 [data-cat='archive'] { background: var(--cat-archive); }
@@ -509,14 +538,20 @@ fieldset.scope-panel { margin: 0; min-width: 0; padding: var(--sp-5); }
 [data-cat='merged'] { background: var(--cat-merged); box-shadow: inset 0 0 0 1px var(--line-strong); }
 [data-cat='boundary'] { background: repeating-linear-gradient(45deg, var(--soft) 0 5px, var(--line) 5px 7px); }
 .treemap-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); margin: 0; }
-.legend { list-style: none; padding: 0; margin: 10px 2px 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.legend { list-style: none; padding: 0; margin: 10px 2px 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--fs-xs); color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: 6px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
-.gaps { margin-top: 10px; }
+/* What the chart could not draw: a quiet list, one shape per kind of gap. */
+.gaps { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 .gaps:empty { display: none; }
-.gaps-title { font-size: 12px; font-weight: 600; margin: 0 0 6px; color: var(--muted); }
-.gaps ul { list-style: none; padding: 10px 12px; margin: 0; display: grid; gap: 6px; font-size: 12px; border-radius: var(--radius); border: 1px dashed var(--line-strong); }
-.gap-names { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; }
+.gaps-title { font-size: var(--fs-xs); font-weight: var(--fw-strong); margin: 0 0 6px; color: var(--muted); }
+.gaps ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; font-size: var(--fs-xs); }
+.gaps li { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: var(--sp-2); align-items: baseline; }
+.gap-mark { width: 9px; height: 9px; border-radius: 50%; border: 1.5px dashed var(--warn); transform: translateY(1px); }
+.gaps li[data-mark='unread'] .gap-mark { border: 0; box-shadow: inset 0 0 0 1.5px var(--warn); background: linear-gradient(90deg, var(--warn) 50%, transparent 50%); }
+.gaps li[data-mark='zero'] .gap-mark { height: 2px; width: 9px; border: 0; border-radius: 1px; background: var(--muted); transform: translateY(-3px); }
+.gap-text { min-width: 0; }
+.gap-names { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 2px; }
 
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
 .seg { display: inline-flex; border: 0; padding: 3px; margin: 0; background: var(--soft); border-radius: var(--radius); }
@@ -556,7 +591,8 @@ input[type='search'] { flex: 1 1 160px; }
 .col-num { text-align: right; position: relative; }
 .col-note { font-size: 12px; color: var(--warn); }
 .col-kind { font-size: 12px; color: var(--muted); }
-.share { position: absolute; left: 10px; right: 10px; bottom: 4px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--accent) calc(var(--share, 0) * 100%), transparent 0); opacity: 0.4; }
+/* Share of the folder's known size: the row's bottom divider fills from the left, like a gauge. */
+.share { position: absolute; left: 0; bottom: -1px; height: 2px; width: calc(100% * var(--share, 0)); background: color-mix(in srgb, var(--accent) 55%, transparent); pointer-events: none; }
 .check { width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--control-line); flex: none; cursor: pointer; display: grid; place-items: center; }
 .grid-row.selected .check { background: var(--accent); border-color: var(--accent); }
 .grid-row.selected .check::after { content: ''; width: 7px; height: 4px; border: 2px solid var(--accent-ink); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
@@ -575,13 +611,50 @@ input[type='search'] { flex: 1 1 160px; }
   .col-note { display: none; }
 }
 
-.detail-name { font-size: 17px; overflow-wrap: anywhere; margin-bottom: 4px; }
-.details .path { font-size: 12px; color: var(--muted); }
-.selection-box:not(:empty) { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+/* DIN-05 "可手动清理": a quiet word with a dotted ring — advice, never a selection or a risk badge. */
+.hint-tag { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; font-weight: var(--fw-medium); color: var(--muted); white-space: nowrap; }
+.hint-mark { width: 8px; height: 8px; border-radius: 50%; border: 1.5px dotted var(--accent); flex: none; }
+
+.detail-empty-title { margin-bottom: var(--sp-1); }
+.detail-kind { display: flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+.detail-name { font-size: var(--fs-xl); overflow-wrap: anywhere; margin-bottom: 2px; }
+.detail-path { font-size: var(--fs-xs); color: var(--muted); }
+.detail-size { margin: var(--sp-4) 0 0; padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.ds-figure { font-size: var(--fs-3xl); font-weight: var(--fw-regular); letter-spacing: -0.02em; line-height: 1.15; margin: 0; font-variant-numeric: tabular-nums; }
+.ds-cap { display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); margin: var(--sp-1) 0 0; font-size: var(--fs-xs); color: var(--muted); }
+.detail-actions { margin-top: var(--sp-4); }
+.details > .notice { margin: var(--sp-3) 0 0; }
+.details > .tech { margin-top: var(--sp-4); }
+.hint-entry { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line); display: grid; gap: var(--sp-1); justify-items: start; }
+.hint-entry p { margin: 0; }
+.hint-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-2); }
+.hint-entry .quiet { padding-inline: 0; }
+.selection-box:not(:empty) { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+.selection-box h2 { margin-bottom: var(--sp-1); }
+.sel-figure { margin: 0; }
+.sel-figure .ds-figure { display: block; font-size: var(--fs-2xl); }
+.selection-box .card-actions { margin-top: var(--sp-3); }
+.selection-box > p.muted { margin: var(--sp-2) 0 0; }
 .selected-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; font-size: 12px; max-height: 220px; overflow: auto; }
 .selected-list li { display: flex; justify-content: space-between; gap: 10px; }
-.disk-blocked { display: grid; gap: 16px; }
-.disk-blocked .empty { padding: 32px 28px; }
+.disk-blocked { display: grid; gap: var(--sp-5); max-width: 820px; }
+.disk-others .recent-item { display: grid; gap: 2px; padding: var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); width: calc(100% + 2 * var(--sp-2)); font-size: var(--fs-sm); }
+.disk-others .recent-item:hover:not(:disabled) { background: var(--soft); }
+
+/* The quiet form of the status banner: one shape, one sentence, one action on a line. */
+.state-line {
+  --tone: var(--accent);
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line);
+  box-shadow: inset 3px 0 0 var(--tone);
+}
+.state-line[data-kind='partial'], .state-line[data-kind='pending-permission'] { --tone: var(--warn); }
+.state-line[data-kind='failed'] { --tone: var(--danger); }
+.state-line[data-kind='cancelled'] { --tone: var(--muted); }
+.state-line .sb-mark { margin-top: 0; width: 14px; height: 14px; }
+.state-line[data-kind='cancelled'] .sb-mark { margin-top: 0; }
+.sl-text { margin: 0; font-size: var(--fs-sm); min-width: 0; }
+.sl-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 
 /* ---------------------------------------------------------------------------------------------
    P04–P10 share one skeleton with P03: page head, a work column and a 340px aside that carries
@@ -639,7 +712,10 @@ button.quiet .icon { width: 15px; height: 15px; margin-right: 4px; vertical-alig
 .gmark[data-group='blocked'] .gmark-shape { box-shadow: inset 0 0 0 2px var(--danger); background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%); }
 
 /* Tables (semantic <table>; rows collapse to blocks in a narrow container) */
-.table-wrap { container-type: inline-size; }
+/* A table that cannot fit scrolls inside its own container, never the page (scaling, narrow windows). */
+.table-wrap { container-type: inline-size; overflow-x: auto; overscroll-behavior-x: contain; }
+.table-wrap:focus-visible { outline-offset: -2px; }
+.meta-sep { display: inline-block; width: 1px; height: 11px; background: var(--line-strong); margin: 0 var(--sp-2); vertical-align: -1px; }
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .data-table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 8px 10px; background: var(--soft); border-bottom: 1px solid var(--line); }
 .data-table th:first-child { border-top-left-radius: var(--radius-sm); }
@@ -696,6 +772,9 @@ th.col-size { text-align: right; }
   .data-table tr.cdetail > td { display: block; border-radius: var(--radius-sm); }
   .col-size { width: auto; max-width: 8.5em; white-space: normal; }
   .data-table td.col-result { grid-column: 1 / -1; }
+  /* The action id (shared with the CLI) becomes a small first line; the object takes the width. */
+  .data-table td.col-id { grid-column: 1 / -1; padding-bottom: 0; font-size: var(--fs-xs); }
+  .data-table td.col-id ~ td.col-object { grid-column: 1 / span 2; }
   .data-table td.col-result ~ td.col-object { grid-column: 1 / span 2; }
   .data-table td { min-width: 0; }
   .data-table .pill { white-space: normal; max-width: 100%; }
@@ -745,15 +824,75 @@ th.col-size { text-align: right; }
 .mode-text b { color: var(--text); font-size: 13px; }
 .mode-option[data-mode='quarantine'] .mode-text b + span { color: var(--warn); font-weight: 600; }
 .mode-option[data-mode='delete'] .mode-text b { color: var(--danger); }
+.mode-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px var(--sp-2); }
+/* A chosen permanent mode keeps a hatched edge: the same mark the plan review uses for 无法撤销. */
+.mode-option[data-mode='delete'].checked {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+  background: repeating-linear-gradient(-45deg, var(--danger) 0 2px, transparent 2px 5px) left / 4px 100% no-repeat, var(--danger-bg);
+}
+
+/* Reversibility: a shape and a word. 无法撤销 also sits on a hatched ground, so it reads apart in grey. */
+.undo-badge { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--accent); white-space: nowrap; line-height: 1.5; }
+.undo-mark { display: inline-grid; place-items: center; }
+.undo-mark .icon { width: 14px; height: 14px; }
+.undo-badge[data-undo='recoverable'] { color: var(--warn); }
+.undo-badge[data-undo='external'], .undo-badge[data-undo='none'] { color: var(--muted); }
+.undo-badge[data-undo='irreversible'] {
+  color: var(--text); font-weight: var(--fw-strong); padding: 1px 9px 1px 7px; border-radius: 999px;
+  background: repeating-linear-gradient(-45deg, var(--danger-bg) 0 4px, color-mix(in srgb, var(--danger) 16%, var(--danger-bg)) 4px 8px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.undo-badge[data-undo='irreversible'] .undo-mark { color: var(--danger); }
+
+/* Candidate summary (GUI-09: summary → groups → rows): one sentence, then the groups as one ledger row. */
+.cand-summary { display: grid; gap: var(--sp-1); }
+.cs-sentence { font-size: var(--fs-2xl); margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-4); }
+.cs-size { font-size: var(--fs-md); font-weight: var(--fw-regular); color: var(--muted); }
+.cs-note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.summary-strip {
+  list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden;
+}
+.summary-strip li { display: flex; background: var(--surface); min-width: 0; }
+.ss-cell { display: grid; gap: 2px; align-content: start; justify-items: start; width: 100%; text-align: left; padding: var(--sp-3) var(--sp-4); border: 0; border-radius: 0; background: transparent; font-size: var(--fs-sm); line-height: 1.4; }
+button.ss-cell:hover:not(:disabled) { background: var(--soft); }
+button.ss-cell:focus-visible { outline-offset: -3px; }
+.ss-count { font-size: var(--fs-xl); font-weight: var(--fw-strong); margin-top: var(--sp-1); }
+.ss-size { color: var(--text); }
+.ss-note { color: var(--muted); font-size: var(--fs-xs); }
+.summary-strip li[data-zero='yes'] { background: var(--bg); }
+.summary-strip li[data-zero='yes'] .ss-count { color: var(--muted); font-weight: var(--fw-medium); }
+.group-unknown { margin-left: var(--sp-2); font-size: var(--fs-xs); font-weight: var(--fw-regular); color: var(--warn); }
+.col-size small { white-space: nowrap; }
+.work-main > .notices { display: grid; gap: var(--sp-2); }
+.work-main > .notices > .notice, .work-main > .notices > .issues-details { margin: 0; }
 
 /* P05 plan: statement, facts, and the digest seal */
-.statement { border-radius: var(--radius); background: var(--soft); padding: 14px 16px 14px 18px; margin: 4px 0 18px; box-shadow: inset 4px 0 0 var(--accent); }
-.statement[data-mode='quarantine'], .statement[data-mode='trash'] { box-shadow: inset 4px 0 0 var(--warn); }
-.statement[data-mode='delete'] { box-shadow: inset 4px 0 0 var(--danger); }
-.statement-verb { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 10px; }
-.statement-lines { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; font-size: 13px; }
-.statement-lines dt { color: var(--muted); }
-.statement-lines dd { margin: 0; }
+/* The plan statement is the review page's one primary element: what will happen (one sentence), how
+   much, and whether it can be undone — before any table. The edge carries the mode; a permanent plan's
+   edge is hatched, its badge is hatched and says 无法撤销, so it never depends on colour. */
+.plan-statement {
+  --edge: var(--accent);
+  position: relative; display: grid; gap: var(--sp-3); justify-items: start;
+  margin: 0 0 var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5) calc(var(--sp-5) + 6px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden;
+}
+.plan-statement::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--edge); }
+.plan-statement[data-mode='quarantine'], .plan-statement[data-mode='review'] { --edge: var(--warn); }
+.plan-statement[data-irreversible='yes'] { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.plan-statement[data-irreversible='yes']::before { width: 10px; background: repeating-linear-gradient(-45deg, var(--danger) 0 3px, var(--danger-bg) 3px 7px); }
+.ps-sentence { font-size: var(--fs-2xl); line-height: var(--lh-tight); margin: 0; letter-spacing: -0.015em; }
+.ps-counts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; row-gap: var(--sp-2); min-width: 0; max-width: 100%; }
+.ps-counts li { display: grid; gap: 1px; padding-right: var(--sp-5); margin-right: var(--sp-5); border-right: 1px solid var(--line); min-width: 0; }
+.ps-counts li:last-child { border-right: 0; padding-right: 0; margin-right: 0; }
+.ps-count-label { font-size: var(--fs-xs); color: var(--muted); }
+.ps-count-value { font-size: var(--fs-lg); font-weight: var(--fw-medium); }
+.ps-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); width: 100%; padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.ps-undo .undo-badge { font-size: var(--fs-sm); }
+.ps-undo .undo-mark .icon { width: 16px; height: 16px; }
+.ps-undo-text, .ps-space { margin: 0; font-size: var(--fs-sm); max-width: 72ch; }
+.ps-space { color: var(--muted); margin-top: calc(-1 * var(--sp-2)); }
+.ps-space.strong-note { color: var(--warn); }
 .strong-note { font-weight: 600; color: var(--warn); }
 .fact-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 22px; margin: 0; font-size: 13px; }
 .fact-grid dt { color: var(--muted); }
@@ -767,6 +906,8 @@ th.col-size { text-align: right; }
 /* The authorization panel can be taller than the window: it scrolls with the page, never inside itself. */
 .work-aside.auth-panel { position: static; max-height: none; overflow: visible; }
 .auth-state { display: grid; gap: 6px; justify-items: start; }
+.auth-panel > button.quiet { justify-self: start; padding-inline: 0; }
+.auth-panel > .auth-source { margin: calc(-1 * var(--sp-1)) 0 0; }
 .auth-state p { margin: 0; }
 
 .seal { display: grid; gap: 10px; padding: 16px; border-radius: var(--radius); background: var(--seal-bg); border: 1px solid var(--line-strong); }
@@ -816,6 +957,12 @@ th.col-size { text-align: right; }
 .figure-label { font-size: 12px; color: var(--muted); }
 .figure-value { font-size: 22px; letter-spacing: -0.02em; margin: 2px 0 !important; }
 .figure-note { font-size: 12px; color: var(--muted); }
+.op-head { align-items: center; margin-bottom: var(--sp-3); }
+.op-head .back-link { margin-bottom: 0; }
+.page-operation .status-banner { margin-bottom: var(--sp-4); }
+.page-operation .status-banner .segbar-wrap { margin-top: var(--sp-4); max-width: 720px; }
+.op-issues h2 { display: flex; align-items: center; gap: var(--sp-2); }
+.op-issues .il-count { margin-left: 0; }
 .recovery-line h3 { margin: 0 0 4px; }
 .recovery-line p { margin: 0; }
 
@@ -854,7 +1001,9 @@ th.col-size { text-align: right; }
 .settings-main { display: grid; gap: 16px; min-width: 0; max-width: 940px; }
 .settings-section h2:focus { outline: none; }
 .settings-section h3 { margin: 18px 0 4px; }
-.settings-section > p.muted { font-size: 13px; max-width: 76ch; }
+.settings-section > p.muted { font-size: 13px; max-width: 76ch; margin-bottom: var(--sp-1); }
+.settings-section > .learn-more, .work-aside > .learn-more, .aside-section > .learn-more { margin: 0 0 var(--sp-3); }
+.settings-section > .tech { margin-top: var(--sp-1); }
 .prot-list { list-style: none; padding: 0; margin: 6px 0 0; }
 .prot-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: start; }
 .prot-row .confirm-inline { grid-column: 1 / -1; }
@@ -1286,7 +1435,6 @@ th.col-num-s { text-align: right; }
 
 /* Old downloads, plan statement tone, alerts */
 .dl-panel .panel-head { margin-bottom: 6px; }
-.statement[data-mode='review'] { box-shadow: inset 4px 0 0 var(--warn); }
 .alert-line .alert-actions { display: inline-flex; gap: 4px; }
 
 
@@ -1384,7 +1532,8 @@ th.col-num-s { text-align: right; }
 
 /* Responsive */
 @media (max-width: 1180px) {
-  .disk-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'chart' 'table' 'side'; }
+  /* The detail pane stays next to the chart it explains; the table takes the full width below. */
+  .disk-layout { grid-template-columns: minmax(0, 1fr) 280px; grid-template-areas: 'chart side' 'table table'; }
   .side-panel { position: static; max-height: none; }
   .work-layout { grid-template-columns: minmax(0, 1fr); }
   .work-aside { position: static; max-height: none; }
@@ -1397,6 +1546,9 @@ th.col-num-s { text-align: right; }
   .local-nav { position: static; display: flex; flex-wrap: wrap; }
   .status-row[data-shape], .pref-grid { grid-template-columns: minmax(0, 1fr); }
   .res-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 820px) {
+  .disk-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'chart' 'side' 'table'; }
 }
 /* The tool shelf becomes an icon rail; names stay available to assistive tech and as tooltips. */
 @media (max-width: 900px) {
@@ -1500,6 +1652,11 @@ th.col-num-s { text-align: right; }
   .app-mark-arc { stroke: Canvas; }
   .app-mark-dot { fill: Canvas; }
   .selection-bar, .mtile, .icard, .tier-summary > div { border: 1px solid CanvasText; }
+  /* P3–P5: the shapes stay drawn; the hatched 无法撤销 edge becomes a solid system-colour edge plus its word and icon. */
+  .state-line, .plan-statement, .summary-strip, .undo-badge[data-undo='irreversible'] { border: 1px solid CanvasText; }
+  .plan-statement::before { forced-color-adjust: none; background: CanvasText; }
+  .tile.active::after, .gap-mark, .hint-mark, .cf-unknown::before, .ds-unknown::before, .share { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .tile.active { outline: 3px solid Highlight; outline-offset: -3px; }
   .tp-menu, .tp-icon, .res-meter { forced-color-adjust: none; border: 1px solid CanvasText; }
   .res-meter-fill { forced-color-adjust: none; background: Highlight; }
   .res-batt li[data-available='no'] .res-meter { border: 0; border-top: 1px dashed CanvasText; }

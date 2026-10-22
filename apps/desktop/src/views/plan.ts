@@ -7,90 +7,37 @@
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
-import { h, keepFocus, replace } from '../lib/dom';
+import { refusalText, unknownCodeText } from '../lib/codes';
+import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
+import { authView, kindVerb, NO_SPACE, planExplain, planStatement } from '../lib/planModel';
 import type { IpcError, PlanDetail, PlanItem } from '../lib/types';
-import {
-  AUTH_LABEL,
-  MODE_EXPLAIN,
-  MODE_LABEL,
-  OPERATION_STATE_LABEL,
-  PLAN_KIND_LABEL,
-  POLICY_MISMATCH_LABEL,
-  POLICY_STATE_LABEL,
-  RECOVERY_EXPLAIN,
-  STALE_LABEL,
-  digestGroups,
-  formatCountdown,
-  normalizeCode,
-} from '../lib/words';
-import { copyField, emptyState, errorLine, pageHead, pill, type Tone } from './parts';
+import { AUTH_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, POLICY_MISMATCH_LABEL, POLICY_STATE_LABEL, digestGroups, formatCountdown, normalizeCode } from '../lib/words';
+import { copyField, errorLine, pageHead, pill, type Tone } from './parts';
 import { EXTENSIONS, TOOLS } from '../lib/nav';
 import { words } from '../lib/platform';
 import type { Page } from '../lib/store';
 import { LEFTOVER_GROUP, ROUTE_WORD, TASK_WORDS } from '../lib/suiteWords';
-import { noticeLine, stageSteps } from './kit';
+import { noticeLine, stageSteps, undoBadge } from './kit';
 import { UNINSTALL_STEPS } from './uninstall';
 import { rowsByApp } from './uninstallBatch';
+import { emptyBlock, pathText, stateLine, statusBanner } from './ui';
 
-const STARTUP_EXPLAIN = {
-  get effect(): string {
-    return words().startupEffect;
-  },
-  space: '不影响磁盘空间。',
-  recovery: '执行前记录每一项原来的状态；之后可以在“活动”中为这次执行生成还原计划。',
-};
-
-/** What a plan of this kind does, in one line, and how it reads on the execute button. */
-function kindVerb(d: PlanDetail, items: PlanItem[]): { verb: string; run: string; permanent: boolean } {
-  const n = groupDigits(d.item_count);
-  switch (d.kind) {
-    case 'cleanup':
-      return {
-        verb: `${d.mode ? MODE_LABEL[d.mode] : '处理'}：${n} 个${d.catalog === 'purge' ? '构建产物中的文件' : d.catalog === 'installer' ? '安装包' : '文件'}`,
-        run: `执行：${d.mode ? MODE_LABEL[d.mode] : '处理'}（${n} 项）`,
-        permanent: d.mode === 'delete',
-      };
-    case 'manual_trash':
-      return { verb: `${words().moveToBin}：${n} 个手选对象`, run: `执行：${words().moveToBin}（${n} 项）`, permanent: false };
-    case 'manual_purge':
-      return { verb: `从${words().bin}永久删除：${n} 个对象`, run: `执行：永久删除 ${n} 项`, permanent: true };
-    case 'startup': {
-      const disable = items.every((i) => i.action_type === 'startup_disable');
-      const enable = items.every((i) => i.action_type === 'startup_enable');
-      const what = disable ? '停用' : enable ? '启用' : '修改';
-      const name = d.item_count === 1 && items[0] ? `“${items[0].name}”` : `${n} 个启动项`;
-      return { verb: `${what}启动项：${name}`, run: `执行：${what}${d.item_count === 1 ? '这个启动项' : ` ${n} 个启动项`}`, permanent: false };
-    }
-    case 'startup_restore':
-      return { verb: `还原启动项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
-    case 'uninstall': {
-      const apps = d.kind_detail?.apps ?? [];
-      if (apps.length > 1)
-        return { verb: `卸载 ${apps.length} 个应用：逐个先请它退出，${words().uninstallRuns}`, run: `执行：卸载 ${apps.length} 个应用`, permanent: false };
-      const name = d.kind_detail?.app?.name ?? items[0]?.name ?? '应用';
-      return { verb: `卸载“${name}”：先请它退出，${words().uninstallRuns}`, run: `执行：卸载 ${name}`, permanent: false };
-    }
-    case 'uninstall_leftovers': {
-      const name = d.kind_detail?.noted?.app_name;
-      return { verb: `处理${name ? `“${name}”的` : ''}卸载残留：${n} 个动作`, run: `执行：处理 ${n} 项残留`, permanent: false };
-    }
-    case 'uninstall_restore':
-      return { verb: `从备份还原注册表项：${n} 项`, run: `执行：还原 ${n} 项`, permanent: false };
-    case 'update':
-      return { verb: `更新 ${n} 个应用`, run: `执行：更新 ${n} 个应用`, permanent: false };
-    case 'process': {
-      const name = d.kind_detail?.noted?.name ?? items[0]?.name ?? '进程';
-      return { verb: `结束进程：${items[0]?.name ?? name}`, run: '执行：结束这个进程', permanent: true };
-    }
-    case 'maintenance':
-      return { verb: `运行 ${n} 项维护任务`, run: `执行：运行 ${n} 项维护任务`, permanent: false };
-    case 'restore':
-      return { verb: `恢复到原位置：${n} 个对象`, run: `执行：恢复 ${n} 项`, permanent: false };
-    default:
-      return { verb: `永久清空：${n} 个隔离对象`, run: `执行：永久清空 ${n} 项`, permanent: true };
-  }
-}
+/** Words of the plan page that are not data (one table for the language switch). */
+export const PLAN_PAGE_TEXT = {
+  title: '计划',
+  review: '审阅计划',
+  noneTitle: '没有打开的计划',
+  noneBody: '在清理页选择候选并生成计划，或在活动记录中打开一份已有计划。',
+  toCleanup: '前往清理',
+  loadFailed: '无法读取这份计划',
+  loading: '正在读取计划…',
+  countsLabel: '这份计划的范围',
+  irreversibleSr: '无法撤销',
+  everyItemIrreversible: '每一项都无法撤销',
+  approvePermanent: '批准这份永久删除计划',
+  ledger: '范围与依据',
+} as const;
 
 /** Human name of the page a plan was opened from (its back link). */
 function pageName(p: Page): string {
@@ -98,43 +45,6 @@ function pageName(p: Page): string {
   const ext = EXTENSIONS.find((e) => e.page === p);
   return ext ? ext.label : p === 'plan' ? '计划' : '上一页';
 }
-
-/** What plans of the newer kinds do, in the same three lines as the file modes. */
-const KIND_EXPLAIN: Partial<Record<PlanDetail['kind'], { effect: string; space: string; recovery: string }>> = {
-  uninstall: {
-    effect: '先请应用退出并等待；应用没有退出时什么都不做。然后运行它自己的卸载程序（保留它的界面），记录退出码和耗时，再重新检查安装目录和卸载登记。',
-    space: '卸载程序删除的内容不经过 CleanManager；留下的文件在下一步单独审阅。',
-    recovery: '卸载无法由 CleanManager 撤销；需要时重新安装这个应用。',
-  },
-  uninstall_leftovers: {
-    effect: '文件与文件夹移到回收站；注册表项先把整棵键备份到 CleanManager 的记录中再删除；启动项先备份再移除。',
-    space: '回收站仍占用这个卷的空间，清空回收站后才释放。',
-    recovery: '文件在回收站中还原；注册表项与启动项可以用“生成还原计划”从备份放回，目标已被重新创建时跳过，不覆盖。',
-  },
-  uninstall_restore: {
-    effect: '从执行时保存的备份重新创建注册表项与启动值。',
-    space: '不影响磁盘空间。',
-    recovery: '目标已被重新创建时跳过该项，从不覆盖。',
-  },
-  update: {
-    effect: '逐个应用执行：下载这个确切版本，验证安装包签名者与已安装应用一致，然后升级并回读版本。',
-    space: '新版本可能比旧版本略大；下载的安装包放在临时目录。',
-    recovery: '更新不能由 CleanManager 撤销；签名不一致或无法验证时不安装，原应用不变。',
-  },
-  process: {
-    effect: '执行前按 PID、启动时间和程序文件重新核对这个进程，相符才结束它。',
-    space: '不影响磁盘空间。',
-    recovery: '无法撤销：进程中未保存的工作会丢失。需要时重新打开该程序。',
-  },
-  maintenance: {
-    effect: '按顺序运行列出的固定任务；每项运行前再次只读探测，不适用的跳过并说明原因。',
-    space: '维护不承诺释放空间，也不承诺“加速”。',
-    recovery: '维护操作没有通用撤销；每项结果和原因都记录在运行记录中。',
-  },
-};
-
-/** Kinds whose actions are not about space: no size column or figure. */
-const NO_SPACE = new Set<PlanDetail['kind']>(['startup', 'startup_restore', 'uninstall', 'uninstall_restore', 'update', 'process', 'maintenance']);
 
 /** Item kinds that have a size (files and folders); registry keys and startup entries do not. */
 const SIZED = new Set(['file', 'directory']);
@@ -318,17 +228,18 @@ export class PlanPage {
   }
 
   private render(): void {
+    const P = PLAN_PAGE_TEXT;
     if (!this.planId) {
-      replace(this.body, h('h1', { id: 'plan-title' }, '计划'), emptyState('没有打开的计划', '在清理页选择候选并生成计划，或在活动记录中打开一份已有计划。', h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('cleanup') }, '前往清理')));
+      replace(this.body, h('h1', { id: 'plan-title' }, P.title), emptyBlock({ title: P.noneTitle, body: P.noneBody, actions: [h('button', { type: 'button', class: 'primary', onclick: () => this.app.navigate('cleanup') }, P.toCleanup)] }));
       return;
     }
     if (this.error && !this.detail) {
-      replace(this.body, pageHead({ id: 'plan-title', title: '计划', back: this.back() }), h('div', { class: 'panel' }, errorLine(this.error)));
+      replace(this.body, pageHead({ id: 'plan-title', title: P.title, back: this.back() }), statusBanner({ kind: 'failed', level: 2, titleId: 'plan-load-title', title: P.loadFailed, sentence: refusalText(this.error) }));
       return;
     }
     const d = this.detail;
     if (!d) {
-      replace(this.body, pageHead({ id: 'plan-title', title: '审阅计划', back: this.back() }), h('p', { class: 'muted', role: 'status' }, '正在读取计划…'));
+      replace(this.body, pageHead({ id: 'plan-title', title: P.review, back: this.back() }), h('p', { class: 'muted', role: 'status' }, P.loading));
       return;
     }
     const tone: Tone = d.authorization.status === 'authorized' ? 'good' : d.authorization.status === 'required' ? 'busy' : 'muted';
@@ -340,73 +251,52 @@ export class PlanPage {
         title: `审阅${d.catalog === 'purge' ? '构建产物清理计划' : d.catalog === 'installer' ? '安装包清理计划' : PLAN_KIND_LABEL[d.kind]}`,
         back: this.back(),
         meta: [
-          h('code', { class: 'selectable' }, d.plan_id),
           pill(d.operation ? `已执行：${OPERATION_STATE_LABEL[d.operation.state] ?? d.operation.state}` : AUTH_LABEL[d.authorization.status], d.operation ? 'muted' : tone),
           `冻结于 ${formatTime(d.created_at)}`,
           h('span', { 'data-countdown': '' }, left > 0 ? `剩余 ${formatCountdown(left)}` : '已过期'),
         ],
       }),
       d.kind === 'uninstall' || d.kind === 'uninstall_leftovers' ? stageSteps('卸载分两步，每步单独审阅', UNINSTALL_STEPS, d.kind === 'uninstall' ? 0 : 1) : null,
-      this.notices(d),
+      this.statementEl(d),
       h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.ledger(d), this.itemsPanel(d)), this.authPanel(d)),
     );
   }
 
-  private notices(d: PlanDetail): HTMLElement | null {
-    const parts: HTMLElement[] = [];
-    if (d.operation) {
-      parts.push(
-        h(
-          'div',
-          { class: 'notice', role: 'status' },
-          h('span', {}, '这份计划已经执行过。同一份计划不会再次执行；需要处理剩余对象时，请重新分析并生成新计划。'),
-          h('button', { type: 'button', class: 'link', onclick: () => this.app.openOperation(d.operation!.operation_id, 'plan') }, '查看执行结果'),
-        ),
-      );
-    } else if (d.stale_reason) {
-      parts.push(h('div', { class: 'notice warn', role: 'status' }, h('span', {}, STALE_LABEL[d.stale_reason] ?? d.stale_reason)));
-    }
-    return parts.length ? h('div', { class: 'notices' }, ...parts) : null;
-  }
-
-  private statement(d: PlanDetail): HTMLElement {
-    const { verb, permanent } = kindVerb(d, this.items);
-    const explain =
-      (d.kind === 'cleanup' || d.kind === 'manual_trash') && d.mode
-        ? MODE_EXPLAIN[d.mode]
-        : d.kind === 'startup' || d.kind === 'startup_restore'
-          ? STARTUP_EXPLAIN
-          : d.kind === 'manual_purge'
-            ? MODE_EXPLAIN.delete
-            : d.kind === 'restore' || d.kind === 'purge'
-              ? RECOVERY_EXPLAIN[d.kind]
-              : (words().kindExplain[d.kind] ?? KIND_EXPLAIN[d.kind] ?? null);
-    const kind = permanent ? 'delete' : d.kind === 'uninstall_leftovers' ? 'trash' : d.kind === 'uninstall' || d.kind === 'update' || d.kind === 'maintenance' ? 'review' : (d.mode ?? 'restore');
+  /**
+   * The page's one primary element: what will happen in one sentence, the counts, and whether it
+   * can be undone — before any table. A permanent plan carries a hatched edge, a warning shape and
+   * the word 无法撤销, so it never depends on colour.
+   */
+  private statementEl(d: PlanDetail): HTMLElement {
+    const s = planStatement(d, this.items);
     return h(
-      'div',
-      { class: 'statement', 'data-mode': kind },
-      h('p', { class: 'statement-verb' }, verb),
-      explain
-        ? h(
-            'dl',
-            { class: 'statement-lines' },
-            h('dt', {}, '做什么'),
-            h('dd', {}, explain.effect),
-            h('dt', {}, '空间'),
-            h('dd', { class: kind === 'quarantine' ? 'strong-note' : '' }, explain.space),
-            h('dt', {}, '恢复'),
-            h('dd', {}, explain.recovery),
-          )
-        : null,
+      'section',
+      { class: 'plan-statement', 'data-mode': s.tone, 'data-irreversible': s.irreversible ? 'yes' : 'no', 'aria-labelledby': 'ps-sentence' },
+      h('h2', { id: 'ps-sentence', class: 'ps-sentence' }, s.irreversible ? h('span', { class: 'sr-only' }, `${PLAN_PAGE_TEXT.irreversibleSr}：`) : null, s.sentence),
+      h(
+        'ul',
+        { class: 'ps-counts', 'aria-label': PLAN_PAGE_TEXT.countsLabel },
+        ...s.counts.map((c) => h('li', {}, h('span', { class: 'ps-count-label' }, c.label), c.path ? pathText(c.value, { max: 40, className: 'ps-count-value' }) : h('span', { class: 'ps-count-value num' }, c.value))),
+      ),
+      h(
+        'div',
+        { class: 'ps-undo' },
+        undoBadge(s.undo, s.undoLabel),
+        s.undoText ? h('p', { class: 'ps-undo-text' }, s.undoText) : null,
+      ),
+      s.spaceText ? h('p', { class: `ps-space${s.tone === 'quarantine' ? ' strong-note' : ''}` }, s.spaceText) : null,
     );
   }
 
+  /** Secondary: where the plan comes from and what binds it; then what is not in it. */
   private ledger(d: PlanDetail): HTMLElement {
     const total = parseBytes(d.total_logical_bytes);
     const facts: (HTMLElement | null)[] = [];
     const fact = (k: string, ...v: (Node | string | null)[]) => facts.push(h('dt', {}, k), h('dd', {}, ...v));
+    const explain = planExplain(d);
+    if (explain) fact('做什么', explain.effect);
     if (d.kind === 'manual_trash') {
-      fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}；按条目编号选择，不按路径`));
+      fact('来源扫描', pathText(d.scan_root_display ?? '（范围不可用）', { max: 56 }), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}；按条目编号选择，不按路径`));
     }
     if (d.kind === 'maintenance' && d.kind_detail?.admin_tasks)
       fact('权限', `${d.kind_detail.admin_tasks} 项需要${words().admin}`, h('small', {}, d.kind_detail.is_admin ? 'CleanManager 已以管理员身份运行，这些任务直接执行。' : words().maintAdminReview));
@@ -432,21 +322,18 @@ export class PlanPage {
       fact('进程', `${kd.noted.name ?? ''}（PID ${kd.noted.pid ?? '—'}）`, h('small', {}, kd.noted.purpose ?? (kd.noted.unidentified_reason ? `未识别：${kd.noted.unidentified_reason}` : '')));
     }
     if (d.kind === 'cleanup') {
-      fact('来源扫描', h('span', { class: 'path' }, d.scan_root_display ?? '（范围不可用）'), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}`));
+      fact('来源扫描', pathText(d.scan_root_display ?? '（范围不可用）', { max: 56 }), h('small', {}, `扫描 ${d.scan_id ?? '—'}，版本 ${d.scan_revision ?? '—'}`));
       fact(d.catalog ? '内置目录规则' : '规则版本', d.rule_refs.length ? h('span', { class: 'rule-list' }, ...d.rule_refs.map((r) => h('code', { class: 'selectable' }, r))) : '—');
+      fact('对象', `${groupDigits(d.item_count ?? 0)} 项`, h('small', {}, `其中 ${groupDigits(d.default_selected_items)} 项来自低风险规则`));
     }
-    fact('对象', `${groupDigits(d.item_count)} 项`, d.kind === 'cleanup' ? h('small', {}, `其中 ${groupDigits(d.default_selected_items)} 项来自低风险规则`) : null);
-    if (!NO_SPACE.has(d.kind))
-      fact('已知逻辑大小', total === null ? '未知' : formatBytes(total), h('small', {}, total === null ? '计划中不允许大小未知的文件' : formatExactBytes(total)));
-    if (d.allocated_known_bytes !== null)
+    if (!NO_SPACE.has(d.kind)) fact('已知逻辑大小', total === null ? '未知' : formatBytes(total), h('small', {}, total === null ? '计划中不允许大小未知的文件' : formatExactBytes(total)));
+    if (d.allocated_known_bytes !== null && !NO_SPACE.has(d.kind))
       fact('分配大小', d.allocated_unknown_count ? `至少 ${formatBytes(d.allocated_known_bytes)}，${d.allocated_unknown_count} 项未知` : formatBytes(d.allocated_known_bytes));
-    fact('冻结于', formatTime(d.created_at));
     fact('有效至', formatTime(d.expires_at), h('small', {}, '计划有效 15 分钟；过期后需要重新生成，不会在旧计划上修补'));
     return h(
       'section',
       { class: 'panel ledger', 'aria-labelledby': 'ledger-title' },
-      h('h2', { id: 'ledger-title' }, '这份计划会做什么'),
-      this.statement(d),
+      h('h2', { id: 'ledger-title' }, PLAN_PAGE_TEXT.ledger),
       h('dl', { class: 'fact-grid' }, ...facts),
       this.notIncluded(d),
     );
@@ -477,7 +364,7 @@ export class PlanPage {
       lines.push('执行前再次核对卸载登记、程序文件的摘要和签名者；有任何变化就跳过。');
       if ((d.kind_detail?.apps?.length ?? 0) > 1) lines.push('一个应用没有退出、卸载失败或已变化时只跳过它自己；其余应用照常执行，结果逐个报告。卸载没有完成的应用，它的残留不会进入第 2 步。');
       const refused = d.kind_detail?.noted?.refused ?? [];
-      if (refused.length) lines.push(`你选择的 ${refused.length} 个应用不在计划中，与单独卸载时一样被拒绝：${refused.map((r) => `${r.name ?? r.app_instance_id}（${r.message}）`).join('；')}。`);
+      if (refused.length) lines.push(`你选择的 ${refused.length} 个应用不在计划中，与单独卸载时一样被拒绝：${refused.map((r) => `${r.name ?? r.app_instance_id}（${refusalText({ reason: r.reason })}）`).join('；')}。`);
     } else if (d.kind === 'uninstall_leftovers') {
       lines.push('只包含你在残留审阅中选中的对象；保留、已阻止和需要手动处理的对象不在其中。');
       lines.push('文件夹只移走其中的内容，空文件夹保留；对象已变化、正被占用或受保护时跳过。');
@@ -502,6 +389,7 @@ export class PlanPage {
   private itemsPanel(d: PlanDetail): HTMLElement {
     const recovery = d.kind === 'restore' || d.kind === 'purge';
     const toggles = NO_SPACE.has(d.kind);
+    const irreversible = kindVerb(d, this.items).permanent;
     const ACTION: Record<string, string> = {
       startup_disable: '停用',
       startup_enable: '启用',
@@ -534,16 +422,16 @@ export class PlanPage {
           'td',
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, nameOf(i), i.item_kind === 'directory' && d.kind !== 'uninstall_leftovers' ? h('span', { class: 'muted small' }, '（空文件夹，内容成功后才移除）') : null),
-          h('span', { class: 'obj-path path' }, recovery ? `回到 ${i.original_path_display ?? '—'}` : i.path_display),
+          recovery ? h('span', { class: 'obj-path' }, '回到 ', pathText(i.original_path_display ?? '—', { max: 72 })) : pathText(i.path_display, { max: 76, className: 'obj-path' }),
           d.kind !== 'cleanup' && actionText(i) ? h('span', { class: 'obj-reason' }, actionText(i), i.scope && i.item_kind !== 'maintenance_task' ? `（${i.scope === 'user' ? '当前用户' : '所有用户'}）` : '') : null,
           i.detail?.command ? h('span', { class: 'obj-reason muted' }, h('code', {}, String(i.detail.command))) : null,
         ),
         toggles ? null : h('td', { class: 'col-size num', title: SIZED.has(i.item_kind) ? formatExactBytes(parseBytes(i.logical_bytes)) : '' }, SIZED.has(i.item_kind) ? formatBytes(i.logical_bytes) : '—'),
       );
-    const table =(items: PlanItem[], caption: string) =>
+    const table = (items: PlanItem[], caption: string) =>
       h(
         'div',
-        { class: 'table-wrap' },
+        { class: 'table-wrap table-scroll' },
         h(
           'table',
           { class: 'data-table' },
@@ -559,11 +447,11 @@ export class PlanPage {
         ? rowsByApp(this.items, apps).flatMap((g, n) =>
             g.items.length ? [h('h3', { id: `items-app-${n}` }, `${n + 1}. ${g.name}`, h('span', { class: 'muted small' }, `（${g.items.length} 个动作）`)), table(g.items, `${g.name} 的动作`)] : [],
           )
-        : [table(this.items, '计划中的全部动作')];
+        : [table(this.items, irreversible ? `计划中的全部动作；每一项都${PLAN_PAGE_TEXT.irreversibleSr}` : '计划中的全部动作')];
     return h(
       'section',
       { class: 'panel items-panel', 'aria-labelledby': 'items-title' },
-      h('h2', { id: 'items-title' }, `完整清单（${groupDigits(d.item_count)} 项）`),
+      h('div', { class: 'panel-head' }, h('h2', { id: 'items-title' }, `完整清单（${groupDigits(d.item_count ?? 0)} 项）`), irreversible ? undoBadge('irreversible', PLAN_PAGE_TEXT.everyItemIrreversible) : null),
       h('p', { class: 'muted small' }, apps.length > 1 ? `按应用分组，按计划顺序执行：${apps.length} 个应用各自退出、各自卸载。这里就是将被处理的全部对象，没有隐藏项。` : '按计划顺序列出每一个动作。这里就是将被处理的全部对象，没有隐藏项。'),
       this.items.length ? h('div', {}, ...body) : h('p', { class: 'muted small', role: 'status' }, this.itemsLoading ? '正在加载清单…' : '清单为空。'),
       errorLine(this.itemsError),
@@ -573,23 +461,18 @@ export class PlanPage {
     );
   }
 
+  /** The decision: one state line, then only the action that state allows. */
   private authPanel(d: PlanDetail): HTMLElement {
     const a = d.authorization;
     const { run, permanent: danger } = kindVerb(d, this.items);
+    const v = authView(d);
     const blocks: (HTMLElement | null)[] = [];
-    blocks.push(
-      h(
-        'div',
-        { class: 'auth-state' },
-        pill(AUTH_LABEL[a.status], a.status === 'authorized' ? 'good' : a.status === 'required' ? 'busy' : 'muted'),
-        a.status === 'authorized'
-          ? h('p', { class: 'small' }, a.source === 'policy' ? `来源：策略 ${a.policy_id}（版本 ${a.policy_version}）` : `来源：人工审阅（${a.principal ?? ''}）于 ${formatTime(a.authorized_at)}`)
-          : null,
-      ),
-    );
-    if (d.operation) {
-      blocks.push(h('button', { type: 'button', class: 'primary wide', onclick: () => this.app.openOperation(d.operation!.operation_id, 'plan') }, '查看执行结果'));
-    } else if (a.status === 'required' && d.terminal_only) {
+    if (v.line) blocks.push(stateLine({ kind: v.line.kind, text: v.line.text, className: 'auth-line' }));
+    if (a.status === 'authorized' && !d.operation)
+      blocks.push(h('p', { class: 'small muted auth-source' }, a.source === 'policy' ? `来源：策略 ${a.policy_id}（版本 ${a.policy_version}）` : `来源：人工审阅（${a.principal ?? ''}）于 ${formatTime(a.authorized_at)}`));
+    if (v.view === 'executed') {
+      blocks.push(h('button', { type: 'button', class: 'primary wide', id: 'plan-view-result', onclick: () => this.app.openOperation(d.operation!.operation_id, 'plan') }, '查看执行结果'));
+    } else if (v.view === 'terminal') {
       blocks.push(
         noticeLine(
           d.terminal_only === 'end_processes'
@@ -600,10 +483,10 @@ export class PlanPage {
         copyField('在终端中审阅并批准', d.cli.review),
         copyField('在终端中执行', d.cli.apply),
       );
-    } else if (a.status === 'required' && d.review_token) {
+    } else if (v.view === 'review') {
       blocks.push(this.seal(d, danger));
-    } else if (a.status === 'authorized' && !d.stale_reason) {
-      const apply = h('button', { type: 'button', id: 'plan-apply', class: `${danger ? 'danger' : 'primary'} wide`, disabled: this.busy }, run);
+    } else if (v.view === 'authorized') {
+      const apply = h('button', { type: 'button', id: 'plan-apply', class: `${danger ? 'danger' : 'primary'} wide`, disabled: this.busy }, danger ? icon('warn') : null, run);
       apply.addEventListener('click', () => void this.apply());
       const revoke = h('button', { type: 'button', class: 'quiet', id: 'plan-revoke', disabled: this.busy }, '撤销批准');
       revoke.addEventListener('click', () => void this.revoke());
@@ -613,10 +496,7 @@ export class PlanPage {
         revoke,
       );
     } else {
-      blocks.push(
-        h('p', { class: 'small' }, a.status === 'revoked' ? '批准已撤销，这份计划不能执行。' : d.stale_reason ? (STALE_LABEL[d.stale_reason] ?? d.stale_reason) : '这份计划不能再批准。'),
-        h('button', { type: 'button', class: 'wide', onclick: () => this.back().onClick() }, this.back().label),
-      );
+      blocks.push(h('button', { type: 'button', class: 'wide', onclick: () => this.back().onClick() }, this.back().label));
     }
     blocks.push(errorLine(this.actionError));
     return h(
@@ -647,7 +527,7 @@ export class PlanPage {
       'aria-describedby': 'seal-help',
     }) as HTMLInputElement;
     input.value = this.typed;
-    const approve = h('button', { type: 'button', id: 'plan-approve', class: `${danger ? 'danger' : 'primary'} wide`, disabled: normalizeCode(this.typed) !== d.digest_prefix || this.busy }, this.busy ? '正在批准…' : '批准这份计划') as HTMLButtonElement;
+    const approve = h('button', { type: 'button', id: 'plan-approve', class: `${danger ? 'danger' : 'primary'} wide`, disabled: normalizeCode(this.typed) !== d.digest_prefix || this.busy }, danger ? icon('warn') : null, this.busy ? '正在批准…' : danger ? PLAN_PAGE_TEXT.approvePermanent : '批准这份计划') as HTMLButtonElement;
     input.addEventListener('input', () => {
       this.typed = input.value;
       approve.disabled = normalizeCode(this.typed) !== d.digest_prefix || this.busy;
@@ -660,7 +540,7 @@ export class PlanPage {
     approve.addEventListener('click', () => void this.approve());
     return h(
       'div',
-      { class: 'seal' },
+      { class: 'seal', 'data-irreversible': danger ? 'yes' : 'no' },
       h('p', { class: 'seal-label' }, '计划摘要'),
       h('p', { class: 'seal-digest', 'aria-label': `计划摘要，前 8 位是 ${d.digest_prefix.split('').join(' ')}` }, ...groups.map((g, i) => h('span', { class: i === 0 ? 'grp first' : 'grp' }, g))),
       h('label', { for: 'plan-code', class: 'seal-ask' }, '输入摘要的前 8 位，批准这份确切的计划'),
@@ -676,15 +556,15 @@ export class PlanPage {
         'li',
         {},
         h('code', { class: 'selectable' }, p.policy_id),
-        h('span', { class: 'small' }, `${POLICY_STATE_LABEL[p.state]}，${p.covers ? '覆盖这份计划（仍按额度检查）' : `不覆盖：${POLICY_MISMATCH_LABEL[p.reason ?? ''] ?? p.reason ?? ''}`}`),
+        h('span', { class: 'small' }, `${POLICY_STATE_LABEL[p.state]}，${p.covers ? '覆盖这份计划（仍按额度检查）' : `不覆盖：${POLICY_MISMATCH_LABEL[p.reason ?? ''] ?? (p.reason ? unknownCodeText(p.reason) : '')}`}`),
       ),
     );
     const create = h('button', { type: 'button', class: 'quiet', id: 'policy-from-plan' }, '为同类计划创建有限策略');
     create.addEventListener('click', () => void this.policyFromPlan());
     return h(
-      'div',
-      { class: 'aside-section' },
-      h('h3', {}, '预授权策略'),
+      'details',
+      { class: 'aside-section', open: d.policies.some((p) => p.covers) ? true : null },
+      h('summary', {}, `预授权策略（${rows.length}）`),
       rows.length ? h('ul', { class: 'policy-mini' }, ...rows) : h('p', { class: 'muted small' }, '没有策略。默认所有计划都需要人工批准。'),
       this.policyNote ? h('p', { class: 'small', role: 'status' }, this.policyNote) : null,
       d.default_selected_items === d.item_count ? create : h('p', { class: 'muted small' }, '策略只覆盖全部来自低风险规则的计划，这份计划不适用。'),
@@ -693,10 +573,11 @@ export class PlanPage {
 
   private handoff(d: PlanDetail): HTMLElement {
     return h(
-      'div',
+      'details',
       { class: 'aside-section' },
-      h('h3', {}, '在终端中使用同一份计划'),
+      h('summary', {}, '在终端中使用同一份计划'),
       h('p', { class: 'muted small' }, 'CLI 读取同一个计划编号与摘要；在任一入口批准都对另一入口有效。'),
+      h('p', { class: 'small' }, '计划编号 ', h('code', { class: 'selectable' }, d.plan_id)),
       copyField('查看', d.cli.show),
       copyField('审阅并批准', d.cli.review),
       copyField('执行', d.cli.apply),

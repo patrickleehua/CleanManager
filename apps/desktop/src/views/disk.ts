@@ -2,25 +2,106 @@
 // scan_id + revision and entry IDs. Every query takes a ticket from a RequestGate; responses for
 // an older ticket (left directory, changed sort/filter) are dropped. Selection is a map keyed by
 // entry_id, frozen to one revision, and survives paging, filtering and drilling.
+//
+// The chart and the table are one view of the same layer: the table's current row lights its tile,
+// choosing a tile (pointer or arrow keys) makes the same entry current in the table, and the detail
+// pane follows both. Hierarchy of the detail pane: what it is → how big → what you can do.
 
 import type { App } from '../main';
 import { words } from '../lib/platform';
 import { reviewTrash } from './trash';
 import { toIpcError } from '../lib/api';
-import { formatBytes, formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
+import { formatExactBytes, groupDigits, parseBytes } from '../lib/bytes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
-import { basisLabel, ERROR_HINT, formatTime, isTerminal, kindLabel, STATE_LABEL, taskTitle } from '../lib/format';
+import { ERROR_HINT, formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { MERGED_ID } from '../lib/treemap';
 import { HINT_LABEL, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
+import { categoryOf } from '../lib/category';
+import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, type DiskView } from '../lib/diskModel';
+import { sizeLabel } from '../lib/display';
 import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, SortKey, Summary, TreemapLayer } from '../lib/types';
 import { canOpen, EntryGrid } from './grid';
 import { REST_ID, TreemapView } from './treemapView';
 import { refusalText } from '../lib/codes';
+import { emptyBlock, pathText, sizeEl, stateLine, statusBanner, techBlock } from './ui';
 
 const PAGE_SIZE = 200;
 const TREEMAP_LIMIT = 120;
 const LOCATE_PAGE_BUDGET = 10;
+
+/** Words of the working page (the state words are in DISK_TEXT). */
+const T = {
+  crumbsLabel: '当前位置',
+  up: '返回上一级',
+  upKey: 'Backspace',
+  more: '显示中间的文件夹',
+  basis: '面积与排序按逻辑大小',
+  known: '此文件夹的已知大小',
+  unknownIn: (n: number) => `${groupDigits(n)} 项大小未知`,
+  chart: '空间分布图',
+  table: '条目表格',
+  tableLabel: '当前文件夹的条目',
+  side: '详情与选择',
+  filters: '表格过滤与排序',
+  scope: '范围',
+  scopeLayer: '当前文件夹',
+  scopeAll: '整个扫描',
+  kind: '类型',
+  kindAny: '全部',
+  kindDir: '文件夹',
+  kindFile: '文件',
+  filter: '按名称过滤',
+  sort: '排序',
+  sortLogical: '逻辑大小（大到小）',
+  sortAllocated: '分配大小（大到小）',
+  sortName: '名称（A–Z）',
+  showMore: '显示更多',
+  detailTitle: '详情',
+  detailEmpty: '在图或表格中选中一项，这里会显示它是什么、有多大。',
+  logical: '逻辑大小',
+  allocated: (s: string) => `分配 ${s}`,
+  openFolder: '打开此文件夹',
+  select: '选择',
+  unselect: '取消选择',
+  diag: 'AI 诊断',
+  diagTip: '解释这个对象的用途与删除后果',
+  techBasis: '大小依据',
+  techIdentity: '身份',
+  identityStrong: '卷 + 文件 ID',
+  identityWeak: '较弱（仅供浏览，不作执行依据）',
+  techExact: '精确逻辑大小',
+  techEntry: '条目编号',
+  hintNote: '只是提示：不会替你选中，也不改变保护或风险判断。',
+  selected: (n: number) => `已选 ${groupDigits(n)} 项`,
+  hiddenSelected: (n: number) => `其中 ${groupDigits(n)} 项不在当前表格中（其他文件夹或被过滤）。`,
+  dedup: '去重后逻辑大小',
+  unknownSel: (n: number) => `${groupDigits(n)} 项，未计入`,
+  unknownSelLabel: '大小未知',
+  overlap: '包含关系',
+  overlapText: (n: number) => `${groupDigits(n)} 项位于另一已选文件夹内，只计一次`,
+  summing: '正在汇总…',
+  binNote: (moveToBin: string) => `可以把选中的对象${moveToBin}：先逐项检查保护与占用，再生成计划，由你审阅批准后才会移动。`,
+  clear: '清除选择',
+  showSelected: '查看全部已选',
+  hideSelected: '收起已选',
+  cleared: '已清除选择',
+  opened: (n: string) => `已打开 ${n}`,
+  back: (n: string) => `已返回 ${n}`,
+  switched: '已切换到另一份扫描结果，之前的选择不会套用到新结果上。',
+  revision: '扫描结果的版本已变化，页面已按新版本重新加载。',
+  notInTable: '此条目不在表格当前的过滤或已加载范围内；详情已显示在右侧。清除过滤或继续加载可在表格中找到它。',
+  restTile: '“其余”图块里的条目没有单独绘制；在表格中继续向下加载可以逐项看到它们。',
+  mergedTile: (n: number) => `这个图块合并了 ${groupDigits(n)} 个较小的条目；表格已定位到其中最大的一项。`,
+  emptyFiltered: '没有符合过滤条件的条目。清除过滤可查看全部。',
+  emptyFolder: '这个文件夹是空的。',
+  loadFailed: (r: string) => `无法加载：${r}`,
+  chartFailed: (r: string) => `图表无法加载：${r}。表格仍可使用。`,
+  count: (n: number) => `共 ${groupDigits(n)} 项`,
+  loaded: (n: number) => `已加载 ${groupDigits(n)} 项，还有更多`,
+  selectedHidden: (n: number, hidden: number) => `；已选 ${groupDigits(n)} 项${hidden ? `（${groupDigits(hidden)} 项不在当前表格中）` : ''}`,
+  revisionTip: (r: number) => `扫描版本 ${r}`,
+} as const;
 
 interface Crumb {
   entryId: string;
@@ -31,9 +112,12 @@ export class DiskPage {
   el: HTMLElement;
   private header: HTMLElement;
   private crumbs: HTMLElement;
-  private layerInfo: HTMLElement;
+  private upBtn: HTMLButtonElement;
+  private metaRow: HTMLElement;
+  private stateNote: HTMLElement;
   private notice: HTMLElement;
   private controls: HTMLElement;
+  private chartHead: HTMLElement;
   private details: HTMLElement;
   private selectionBox: HTMLElement;
   private gridStatus: HTMLElement;
@@ -47,6 +131,7 @@ export class DiskPage {
   private scanId: string | null = null;
   private revision: number | null = null;
   private path: Crumb[] = [];
+  private crumbsOpen = false;
   private scope: 'layer' | 'all' = 'layer';
   private sort: SortKey = 'logical_desc';
   private kind: KindFilter = 'any';
@@ -65,24 +150,30 @@ export class DiskPage {
   private summaryError: string | null = null;
   private showSelected = false;
 
+
   private listGate = new RequestGate();
   private layerGate = new RequestGate();
   private summaryGate = new RequestGate();
 
   constructor(private app: App) {
     this.crumbs = h('ol', { class: 'crumbs' });
-    this.layerInfo = h('p', { class: 'layer-info muted' });
+    this.upBtn = h('button', { type: 'button', id: 'disk-up', class: 'icon-btn crumb-up', 'aria-label': T.up, title: `${T.up}（${T.upKey}）`, 'aria-keyshortcuts': 'Backspace' }, icon('back')) as HTMLButtonElement;
+    this.upBtn.addEventListener('click', () => this.up());
+    this.metaRow = h('p', { class: 'meta-row disk-meta' });
+    this.stateNote = h('div', { class: 'disk-state' });
     this.notice = h('div', { class: 'notice', role: 'status', hidden: true });
     this.header = h(
       'div',
       { class: 'page-head disk-head' },
-      h('div', {}, h('h1', { id: 'disk-title' }, '磁盘'), h('nav', { 'aria-label': '当前位置' }, this.crumbs), this.layerInfo),
+      h('div', { class: 'page-head-text' }, h('h1', { id: 'disk-title' }, DISK_TEXT.title), h('nav', { class: 'crumb-bar', 'aria-label': T.crumbsLabel }, this.upBtn, this.crumbs), this.metaRow),
     );
     this.treemap = new TreemapView({
-      onSelect: (id, members) => void this.locate(id === MERGED_ID || id === REST_ID ? (members?.[0] ?? id) : id),
-      onOpen: (e) => this.drill(e),
+      onSelect: (id, members, how) => this.fromTile(id, members, how),
+      onOpen: (e) => this.drill(e, 'chart'),
+      onUp: () => this.up('chart'),
+      onToggle: (e) => this.toggle(e),
     });
-    this.grid = new EntryGrid('disk', '当前文件夹的条目', {
+    this.grid = new EntryGrid('disk', T.tableLabel, {
       onActive: (e) => this.setActive(e),
       onOpen: (e) => this.drill(e),
       onUp: () => this.up(),
@@ -90,29 +181,31 @@ export class DiskPage {
       onSort: (s) => this.setSort(s),
       onNeedMore: () => void this.loadMore(),
       isSelected: (id) => this.selection.has(id),
+      onHover: (e) => this.treemap.setHover(e?.entry_id ?? null),
     });
-    this.controls = h('div', { class: 'controls', role: 'group', 'aria-label': '表格过滤与排序' });
+    this.controls = h('div', { class: 'controls', role: 'group', 'aria-label': T.filters });
     this.gridStatus = h('p', { class: 'grid-status muted', 'aria-live': 'polite' });
-    this.moreBtn = h('button', { type: 'button', id: 'disk-more', class: 'quiet' }, '显示更多');
+    this.moreBtn = h('button', { type: 'button', id: 'disk-more', class: 'quiet' }, T.showMore);
     this.moreBtn.addEventListener('click', () => void this.loadMore());
-    this.details = h('div', { class: 'details' });
+    this.chartHead = h('div', { class: 'chart-head' });
+    this.details = h('div', { class: 'details', 'aria-live': 'polite', 'aria-atomic': 'false' });
     this.selectionBox = h('div', { class: 'selection-box' });
     this.content = h(
       'div',
       { class: 'disk-layout' },
-      h('section', { class: 'panel chart-panel', 'aria-label': '空间分布图' }, this.treemap.el),
+      h('section', { class: 'panel chart-panel', 'aria-label': T.chart }, this.chartHead, this.treemap.el),
       h(
         'section',
         { class: 'panel table-panel', 'aria-labelledby': 'table-title' },
-        h('h2', { id: 'table-title', class: 'sr-only' }, '条目表格'),
+        h('h2', { id: 'table-title', class: 'sr-only' }, T.table),
         this.controls,
         this.grid.el,
         h('div', { class: 'grid-foot' }, this.gridStatus, this.moreBtn),
       ),
-      h('aside', { class: 'panel side-panel', 'aria-label': '详情与选择' }, this.details, this.selectionBox),
+      h('aside', { class: 'panel side-panel', 'aria-label': T.side }, this.details, this.selectionBox),
     );
     this.blocked = h('div', { class: 'disk-blocked' });
-    this.el = h('section', { class: 'page page-disk', 'aria-labelledby': 'disk-title' }, this.header, this.notice, this.blocked, this.content);
+    this.el = h('section', { class: 'page page-disk', 'aria-labelledby': 'disk-title' }, this.header, this.stateNote, this.notice, this.blocked, this.content);
     this.renderControls();
   }
 
@@ -124,18 +217,24 @@ export class DiskPage {
   update(): void {
     const s = this.app.store.state;
     const status = s.status;
-    const ready = !!status && status.published && !!status.root_entry_id && status.scan_id === s.scanId;
-    if (!s.scanId || !status || !ready) {
+    const v = diskView({ scanId: s.scanId, status, statusError: s.statusError });
+
+    if (v.layout !== 'ready' || !status) {
       this.content.hidden = true;
       this.blocked.hidden = false;
-      this.renderBlocked();
+      this.header.classList.add('bare');
+      replace(this.stateNote);
+      this.renderBlocked(v);
       return;
     }
+    this.header.classList.remove('bare');
     this.blocked.hidden = true;
     this.content.hidden = false;
     if (status.scan_id !== this.scanId || status.revision !== this.revision) {
       this.bind(status.scan_id, status.revision!, status.root_entry_id!, status.root_display ?? '扫描根目录');
     }
+    this.renderStateNote(v);
+    this.renderMeta();
     if (s.revealEntry) {
       const id = s.revealEntry;
       queueMicrotask(() => this.app.store.set({ revealEntry: null }));
@@ -162,12 +261,13 @@ export class DiskPage {
     this.scanId = scanId;
     this.revision = revision;
     this.path = [{ entryId: rootId, name: rootName }];
+    this.crumbsOpen = false;
     this.scope = 'layer';
     this.selection.clear();
     this.summary = null;
     this.activeEntry = null;
     this.grid.reset();
-    this.showNotice(hadSelection ? '已切换到另一份扫描结果，之前的选择不会套用到新结果上。' : null);
+    this.showNotice(hadSelection ? T.switched : null);
     this.renderControls();
     this.reloadAll();
   }
@@ -199,7 +299,7 @@ export class DiskPage {
     const ticket = this.layerGate.next();
     this.layer = null;
     this.treemap.setLoading();
-    this.renderHeader();
+    this.renderChartHead();
     try {
       const res = await this.layerGate.run(ticket, this.app.backend.treemapLayer(this.scanId!, this.layerId, TREEMAP_LIMIT));
       if (res.stale) return;
@@ -207,11 +307,11 @@ export class DiskPage {
       this.layer = res.value;
       this.treemap.setLayer(res.value);
       this.treemap.setActive(this.activeEntry?.entry_id ?? null);
-      this.renderHeader();
+      this.renderChartHead();
       this.pushGrid();
     } catch (e) {
       const err = toIpcError(e);
-      this.treemap.setError(`图表无法加载：${refusalText(err)}。表格仍可使用。`);
+      this.treemap.setError(T.chartFailed(refusalText(err)));
     }
   }
 
@@ -267,13 +367,14 @@ export class DiskPage {
   }
 
   private revisionChanged(): void {
-    this.showNotice('扫描结果的版本已变化，页面已按新版本重新加载。');
+    this.showNotice(T.revision);
     void this.app.refreshStatus();
   }
 
   // ---- navigation ------------------------------------------------------------------------
 
-  private drill(e: Entry): void {
+  /** Open a folder. Focus stays in the widget the person used (the chart or the table). */
+  private drill(e: Entry, from: 'chart' | 'table' = 'table'): void {
     if (!canOpen(e)) return;
     this.path = [...this.path, { entryId: e.entry_id, name: e.name }];
     this.scope = 'layer';
@@ -281,26 +382,30 @@ export class DiskPage {
     this.activeEntry = null;
     this.renderControls();
     this.reloadAll();
-    this.app.announce(`已打开 ${e.name}`);
-    this.grid.focus();
+    this.app.announce(T.opened(e.name));
+    if (from === 'chart') this.treemap.focus();
+    else this.grid.focus();
   }
 
-  private goTo(depth: number): void {
+  private goTo(depth: number, from: 'chart' | 'table' | 'crumb' = 'crumb'): void {
     if (depth >= this.path.length - 1) return;
     const left = this.path[depth + 1];
     this.path = this.path.slice(0, depth + 1);
+    this.crumbsOpen = false;
     this.scope = 'layer';
     this.grid.reset();
     this.activeEntry = null;
     this.renderControls();
     this.reloadAll();
-    this.app.announce(`已返回 ${this.path[depth].name}`);
+    this.app.announce(T.back(this.path[depth].name));
+    if (from === 'chart') this.treemap.focus();
+    else if (from === 'crumb') requestAnimationFrame(() => (document.getElementById(`crumb-${depth}`) ?? this.upBtn).focus());
     // Put the cursor back on the folder we came from once the page arrives.
     void this.locate(left.entryId, true);
   }
 
-  private up(): void {
-    if (this.path.length > 1) this.goTo(this.path.length - 2);
+  private up(from: 'chart' | 'table' | 'crumb' = 'table'): void {
+    if (this.path.length > 1) this.goTo(this.path.length - 2, from === 'crumb' ? 'table' : from);
   }
 
   private setSort(s: SortKey): void {
@@ -310,6 +415,21 @@ export class DiskPage {
     const keep = this.activeEntry?.entry_id;
     this.grid.reset();
     void this.loadFirstPage().then(() => (keep ? this.locate(keep, true) : undefined));
+  }
+
+  /** A tile became current: the table locates the same entry (never a look-alike). */
+  private fromTile(id: string, members: string[] | undefined, how: 'pointer' | 'keyboard'): void {
+    const target = entryForTile({ id, members }, REST_ID);
+    if (!target.entryId) {
+      this.showNotice(T.restTile);
+      this.app.announce(T.restTile);
+      return;
+    }
+    if (id === MERGED_ID && members?.length) {
+      this.showNotice(T.mergedTile(members.length));
+      if (how === 'keyboard') this.app.announce(T.mergedTile(members.length));
+    } else this.showNotice(null);
+    void this.locate(target.entryId, true);
   }
 
   /**
@@ -338,7 +458,7 @@ export class DiskPage {
     if (!this.listGate.isCurrent(ticket)) return;
     const layerEntry = this.layer?.items.find((e) => e.entry_id === id);
     if (layerEntry) this.setActive(layerEntry);
-    if (!quiet) this.showNotice('此条目不在表格当前的过滤或已加载范围内；详情已显示在右侧。清除过滤或继续加载可在表格中找到它。');
+    if (!quiet || layerEntry) this.showNotice(T.notInTable);
   }
 
   // ---- selection and details ---------------------------------------------------------------
@@ -364,7 +484,7 @@ export class DiskPage {
     this.showSelected = false;
     this.grid.refreshSelection();
     this.renderSide();
-    this.app.announce('已清除选择');
+    this.app.announce(T.cleared);
   }
 
   private async loadSummary(): Promise<void> {
@@ -378,7 +498,7 @@ export class DiskPage {
       this.summary = res.value;
     } catch (e) {
       if (!this.summaryGate.isCurrent(ticket)) return;
-      this.summaryError = toIpcError(e).message;
+      this.summaryError = refusalText(toIpcError(e));
     }
     this.renderSide();
   }
@@ -392,49 +512,87 @@ export class DiskPage {
 
   private pushGrid(): void {
     const filtered = this.kind !== 'any' || this.name.trim() !== '';
-    const emptyText = this.listError
-      ? `无法加载：${refusalText(this.listError)}`
-      : filtered
-        ? '没有符合过滤条件的条目。清除过滤可查看全部。'
-        : '这个文件夹是空的。';
+    const emptyText = this.listError ? T.loadFailed(refusalText(this.listError)) : filtered ? T.emptyFiltered : T.emptyFolder;
     const base = this.scope === 'layer' && this.layer ? parseBytes(this.layer.parent_summary.logical_known_bytes) : null;
     this.grid.setData({ rows: this.rows, complete: this.complete, loading: this.loading, shareBase: base, sort: this.sort, emptyText });
     const visibleSelected = this.rows.filter((r) => this.selection.has(r.entry_id)).length;
     this.gridStatus.textContent = this.listError
       ? ''
-      : `${this.complete ? `共 ${groupDigits(this.rows.length)} 项` : `已加载 ${groupDigits(this.rows.length)} 项，还有更多`}${
-          this.selection.size ? `；已选 ${groupDigits(this.selection.size)} 项${this.selection.size > visibleSelected ? `（${groupDigits(this.selection.size - visibleSelected)} 项不在当前表格中）` : ''}` : ''
-        }`;
+      : `${this.complete ? T.count(this.rows.length) : T.loaded(this.rows.length)}${this.selection.size ? T.selectedHidden(this.selection.size, this.selection.size - visibleSelected) : ''}`;
     this.moreBtn.hidden = this.complete;
     this.moreBtn.disabled = this.loading;
   }
 
+  /** The trail of folders; long trails fold their middle into "…" (it opens the whole trail). */
   private renderHeader(): void {
+    const names = this.path.map((c) => c.name);
+    const trail = this.crumbsOpen ? crumbTrail(names, names.length) : crumbTrail(names);
     keepFocus(this.crumbs, () =>
       replace(
         this.crumbs,
-        ...this.path.map((c, i) => {
-          const last = i === this.path.length - 1;
-          const b = h('button', { type: 'button', id: `crumb-${i}`, class: 'crumb', 'aria-current': last ? 'location' : null, disabled: last }, c.name);
-          b.addEventListener('click', () => this.goTo(i));
+        ...trail.map((c) => {
+          if (c.kind === 'more') {
+            const b = h('button', { type: 'button', id: 'crumb-more', class: 'crumb crumb-more', 'aria-label': `${T.more}（${groupDigits(c.depths.length)} 层）`, title: c.depths.map((d) => names[d]).join(' › ') }, '…');
+            b.addEventListener('click', () => {
+              this.crumbsOpen = true;
+              this.renderHeader();
+              requestAnimationFrame(() => document.getElementById(`crumb-${c.depths[0]}`)?.focus());
+            });
+            return h('li', {}, b);
+          }
+          const last = c.depth === this.path.length - 1;
+          const label = c.depth === 0 ? pathText(c.name, { max: 36 }) : pathText(c.name, { max: 28 });
+          const b = h('button', { type: 'button', id: `crumb-${c.depth}`, class: 'crumb', 'aria-current': last ? 'location' : null, disabled: last }, label);
+          b.addEventListener('click', () => this.goTo(c.depth));
           return h('li', {}, b);
         }),
       ),
     );
+    // At the root there is nowhere to go up to: the button leaves the trail rather than sit disabled.
+    this.upBtn.hidden = this.path.length <= 1;
+    this.renderChartHead();
+  }
+
+  /** One quiet line under the title: the scan's state word, when it ended, what the area means. */
+  private renderMeta(): void {
     const st = this.app.store.state.status;
+    if (!st) return replace(this.metaRow);
+    const when = st.finished_at ?? st.started_at;
+    replace(
+      this.metaRow,
+      // The state word only when no state line says it already.
+      this.stateNote.childElementCount ? null : h('span', {}, h('span', { class: 'state-word', 'data-tone': stateTone(st.state) }, h('span', { class: 'sw-mark', 'aria-hidden': 'true' }), STATE_LABEL[st.state])),
+      when ? h('span', { title: st.revision !== null ? T.revisionTip(st.revision) : null }, formatTime(when)) : null,
+      h('span', {}, T.basis),
+    );
+  }
+
+  private renderStateNote(v: DiskView): void {
+    if (!v.note) return replace(this.stateNote);
+    const go = h('button', { type: 'button', class: 'link', id: 'disk-reason' }, DISK_TEXT.goReason);
+    go.addEventListener('click', () => this.app.navigate('overview'));
+    replace(this.stateNote, stateLine({ kind: v.note.kind, text: v.note.text, actions: [v.action === 'overview' && v.note.kind !== 'cancelled' ? go : null] }));
+  }
+
+  /** The chart's own heading: the folder's known size (the page's one figure) and what is unknown. */
+  private renderChartHead(): void {
     const sum = this.layer?.parent_summary;
-    const parts: string[] = [];
-    if (sum) {
-      parts.push(`此文件夹已知 ${formatBytes(sum.logical_known_bytes)}`);
-      if (sum.logical_unknown_count) parts.push(`${groupDigits(sum.logical_unknown_count)} 项大小未知`);
-    }
-    if (st) parts.push(`${STATE_LABEL[st.state]} · ${formatTime(st.finished_at ?? st.started_at)} · 修订 ${st.revision}`);
-    parts.push('面积与排序按逻辑大小');
-    this.layerInfo.textContent = parts.join('　');
+    if (!sum) return replace(this.chartHead, h('p', { class: 'chart-figure muted', role: 'status' }, '…'));
+    const unknown = sum.logical_unknown_count;
+    replace(
+      this.chartHead,
+      h(
+        'p',
+        { class: 'chart-figure' },
+        sizeEl(sum.logical_known_bytes, { className: 'cf-num' }),
+        h('span', { class: 'cf-cap' }, T.known),
+        unknown ? h('span', { class: 'cf-unknown' }, T.unknownIn(unknown)) : null,
+      ),
+    );
   }
 
   private renderControls(): void {
-    const seg = <T extends string>(label: string, name: string, value: T, options: [T, string][], on: (v: T) => void) =>
+    const seg = <V extends string>(label: string, name: string, value: V, options: [V, string][], on: (v: V) => void) =>
       h(
         'fieldset',
         { class: 'seg' },
@@ -447,7 +605,7 @@ export class DiskPage {
           return h('label', { for: id }, input, h('span', {}, text));
         }),
       );
-    const search = h('input', { type: 'search', id: 'disk-filter', placeholder: '按名称过滤', 'aria-label': '按名称过滤', value: this.name, maxlength: '256' });
+    const search = h('input', { type: 'search', id: 'disk-filter', placeholder: T.filter, 'aria-label': T.filter, value: this.name, maxlength: '256' });
     search.addEventListener('input', () => {
       window.clearTimeout(this.nameTimer);
       this.nameTimer = window.setTimeout(() => {
@@ -458,22 +616,22 @@ export class DiskPage {
     });
     const sortSel = h(
       'select',
-      { id: 'disk-sort', 'aria-label': '排序' },
-      h('option', { value: 'logical_desc' }, '逻辑大小（大到小）'),
-      h('option', { value: 'allocated_desc' }, '分配大小（大到小）'),
-      h('option', { value: 'name_asc' }, '名称（A–Z）'),
+      { id: 'disk-sort', 'aria-label': T.sort },
+      h('option', { value: 'logical_desc' }, T.sortLogical),
+      h('option', { value: 'allocated_desc' }, T.sortAllocated),
+      h('option', { value: 'name_asc' }, T.sortName),
     );
     sortSel.value = this.sort;
     sortSel.addEventListener('change', () => this.setSort(sortSel.value as SortKey));
     keepFocus(this.controls, () =>
       replace(
         this.controls,
-        seg('范围', 'disk-scope', this.scope, [['layer', '当前文件夹'], ['all', '整个扫描']], (v) => {
+        seg(T.scope, 'disk-scope', this.scope, [['layer', T.scopeLayer], ['all', T.scopeAll]], (v) => {
           this.scope = v;
           this.grid.reset();
           void this.loadFirstPage();
         }),
-        seg('类型', 'disk-kind', this.kind, [['any', '全部'], ['directory', '文件夹'], ['file', '文件']], (v) => {
+        seg(T.kind, 'disk-kind', this.kind, [['any', T.kindAny], ['directory', T.kindDir], ['file', T.kindFile]], (v) => {
           this.kind = v;
           this.grid.reset();
           void this.loadFirstPage();
@@ -491,19 +649,20 @@ export class DiskPage {
     });
   }
 
+  /** What it is → how big → what you can do; the evidence behind the size is in 技术详情. */
   private renderDetails(): void {
     const e = this.activeEntry;
     if (!e) {
-      replace(this.details, h('h2', {}, '详情'), h('p', { class: 'muted' }, '在图或表格中选中一项，这里会显示它的大小依据和覆盖情况。'));
+      replace(this.details, h('h2', { class: 'detail-empty-title' }, T.detailTitle), h('p', { class: 'muted small' }, T.detailEmpty));
       return;
     }
-    const logical = parseBytes(e.logical_bytes);
-    const open = canOpen(e) ? h('button', { type: 'button', id: 'detail-open', class: 'primary' }, '打开此文件夹') : null;
+    const d = entryDetail(e);
+    const open = canOpen(e) ? h('button', { type: 'button', id: 'detail-open', class: 'primary' }, T.openFolder) : null;
     open?.addEventListener('click', () => this.drill(e));
-    const sel = h('button', { type: 'button', id: 'detail-select' }, this.selection.has(e.entry_id) ? '取消选择' : '选择');
+    const sel = h('button', { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false' }, this.selection.has(e.entry_id) ? T.unselect : T.select);
     sel.addEventListener('click', () => this.toggle(e));
     // Optional AI diagnosis of this one object (no rule needed). Sends nothing until previewed.
-    const diag = this.scanId ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: '解释这个对象的用途与删除后果' }, icon('diag'), 'AI 诊断') : null;
+    const diag = this.scanId ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: T.diagTip }, icon('diag'), T.diag) : null;
     diag?.addEventListener('click', () => this.app.openDiagnosis({ scanId: this.scanId!, entryId: e.entry_id, origin: 'disk', name: e.name }, 'disk'));
     // Platform idiom (GUI-12): show the object in the file manager; the host resolves the path from the index.
     const reveal = this.scanId ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
@@ -511,36 +670,42 @@ export class DiskPage {
     const hint = hintOf(e);
     replace(
       this.details,
+      // 1. What it is.
+      h('p', { class: 'detail-kind' }, h('span', { class: 'swatch', 'data-cat': categoryOf(e), 'aria-hidden': 'true' }), d.kind),
       h('h2', { class: 'detail-name' }, e.name),
-      h('p', { class: 'path selectable' }, e.path_display),
+      pathText(e.path_display, { max: 44, copy: true, className: 'detail-path' }),
+      // 2. How big.
       h(
-        'dl',
-        { class: 'facts-list' },
-        h('dt', {}, '逻辑大小'),
-        h('dd', { class: 'num' }, formatBytes(logical), logical !== null ? h('small', {}, formatExactBytes(logical)) : null),
-        h('dt', {}, '分配大小'),
-        h('dd', { class: 'num' }, formatBytes(e.allocated_bytes)),
-        h('dt', {}, '大小依据'),
-        h('dd', {}, basisLabel(e)),
-        h('dt', {}, '类型'),
-        h('dd', {}, kindLabel(e)),
-        e.unknown_descendants ? h('dt', {}, '未知子项') : null,
-        e.unknown_descendants ? h('dd', {}, `${groupDigits(e.unknown_descendants)} 项（未计入大小）`) : null,
-        h('dt', {}, '身份'),
-        h('dd', {}, e.identity_quality === 'strong' ? '卷 + 文件 ID' : '较弱（仅供浏览，不作执行依据）'),
-        hint ? h('dt', {}, HINT_LABEL) : null,
-        hint ? h('dd', { id: 'detail-hint-basis' }, hintBasisText(hint)) : null,
+        'div',
+        { class: 'detail-size' },
+        h('p', { class: 'ds-figure num', title: formatExactBytes(d.sizeBytes) }, d.size),
+        h('p', { class: 'ds-cap' }, h('span', {}, T.logical), h('span', { class: 'num' }, T.allocated(d.allocated)), d.unknownNote ? h('span', { class: 'ds-unknown' }, d.unknownNote) : null),
       ),
-      e.boundary ? h('p', { class: 'notice' }, '这是一个链接或云端边界。扫描记录了它，但没有进入其中，也不会把目标的大小算进来。') : null,
+      d.boundaryNote ? h('p', { class: 'notice' }, d.boundaryNote) : null,
+      // 3. What you can do.
+      h('div', { class: 'card-actions detail-actions' }, open, sel, reveal, diag),
       hint ? this.hintEntry(e, hint) : null,
-      h('div', { class: 'card-actions' }, open, sel, diag, reveal),
+      techBlock(
+        h(
+          'dl',
+          { class: 'facts-list small' },
+          h('dt', {}, T.techBasis),
+          h('dd', {}, d.basis),
+          h('dt', {}, T.techExact),
+          h('dd', { class: 'num' }, formatExactBytes(d.sizeBytes)),
+          h('dt', {}, T.techIdentity),
+          h('dd', {}, d.weakIdentity ? T.identityWeak : T.identityStrong),
+          h('dt', {}, T.techEntry),
+          h('dd', {}, h('code', { class: 'selectable' }, e.entry_id)),
+        ),
+      ),
     );
   }
 
   /** DIN-05: the review flow a cleanable hint leads to. Read-only here: the selection is not touched. */
   private hintEntry(e: Entry, hint: CleanableHint): HTMLElement {
     const action = hintAction(hint);
-    const go = h('button', { type: 'button', id: 'detail-hint-go', 'aria-describedby': 'detail-hint-basis detail-hint-note' }, action.label);
+    const go = h('button', { type: 'button', id: 'detail-hint-go', class: 'quiet', 'aria-describedby': 'detail-hint-basis detail-hint-note' }, action.label);
     go.addEventListener('click', () => {
       if (action.flow === 'purge') this.app.navigate('purge');
       else void reviewTrash(this.app, this.scanId!, [e]);
@@ -548,8 +713,9 @@ export class DiskPage {
     return h(
       'div',
       { class: 'hint-entry' },
-      h('p', { class: 'muted small', id: 'detail-hint-note' }, `只是提示：不会替你选中，也不改变保护或风险判断。${action.note}`),
-      h('div', { class: 'card-actions' }, go),
+      h('p', { class: 'hint-head' }, h('span', { class: 'hint-tag' }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), HINT_LABEL), h('span', { id: 'detail-hint-basis', class: 'small' }, hintBasisText(hint))),
+      h('p', { class: 'muted small', id: 'detail-hint-note' }, `${T.hintNote}${action.note}`),
+      go,
     );
   }
 
@@ -560,11 +726,11 @@ export class DiskPage {
     }
     const visible = new Set(this.rows.map((r) => r.entry_id));
     const hidden = [...this.selection.keys()].filter((id) => !visible.has(id)).length;
-    const clear = h('button', { type: 'button', id: 'sel-clear', class: 'quiet' }, '清除选择');
+    const clear = h('button', { type: 'button', id: 'sel-clear', class: 'quiet' }, T.clear);
     const trash = h('button', { type: 'button', id: 'sel-trash', class: 'primary' }, `${words().moveToBin}…`);
     trash.addEventListener('click', () => void reviewTrash(this.app, this.scanId!, [...this.selection.values()]));
     clear.addEventListener('click', () => this.clearSelection());
-    const toggleList = h('button', { type: 'button', id: 'sel-list', class: 'quiet', 'aria-expanded': this.showSelected ? 'true' : 'false' }, this.showSelected ? '收起已选' : '查看全部已选');
+    const toggleList = h('button', { type: 'button', id: 'sel-list', class: 'quiet', 'aria-expanded': this.showSelected ? 'true' : 'false' }, this.showSelected ? T.hideSelected : T.showSelected);
     toggleList.addEventListener('click', () => {
       this.showSelected = !this.showSelected;
       this.renderSide();
@@ -572,65 +738,69 @@ export class DiskPage {
     const s = this.summary;
     replace(
       this.selectionBox,
-      h('h2', {}, `已选 ${groupDigits(this.selection.size)} 项`),
-      hidden ? h('p', { class: 'notice warn' }, `其中 ${groupDigits(hidden)} 项不在当前表格中（其他文件夹或被过滤）。`) : null,
+      h('h2', {}, T.selected(this.selection.size)),
       s
         ? h(
-            'dl',
-            { class: 'facts-list' },
-            h('dt', {}, '去重后逻辑大小'),
-            h('dd', { class: 'num' }, formatBytes(s.logical_known_bytes)),
-            s.logical_unknown_count ? h('dt', {}, '大小未知') : null,
-            s.logical_unknown_count ? h('dd', {}, `${groupDigits(s.logical_unknown_count)} 项，未计入`) : null,
-            s.overlapping_selected ? h('dt', {}, '包含关系') : null,
-            s.overlapping_selected ? h('dd', {}, `${groupDigits(s.overlapping_selected)} 项位于另一已选文件夹内，只计一次`) : null,
+            'p',
+            { class: 'sel-figure' },
+            sizeEl(s.logical_known_bytes, { unknownCount: s.logical_unknown_count, className: 'ds-figure' }),
+            h('span', { class: 'ds-cap' }, h('span', {}, T.dedup), s.logical_unknown_count ? h('span', { class: 'ds-unknown' }, `${T.unknownSelLabel} ${T.unknownSel(s.logical_unknown_count)}`) : null),
           )
         : this.summaryError
           ? h('p', { class: 'form-error' }, this.summaryError)
-          : h('p', { class: 'muted' }, '正在汇总…'),
-      h('p', { class: 'muted small' }, `可以把选中的对象${words().moveToBin}：先逐项检查保护与占用，再生成计划，由你审阅批准后才会移动。`),
-      this.showSelected
-        ? h(
-            'ul',
-            { class: 'selected-list' },
-            ...[...this.selection.values()].map((e) => h('li', {}, h('span', { class: 'path' }, e.path_display), h('span', { class: 'num' }, formatBytes(e.logical_bytes)))),
-          )
-        : null,
+          : h('p', { class: 'muted small', role: 'status' }, T.summing),
+      hidden ? h('p', { class: 'notice warn' }, T.hiddenSelected(hidden)) : null,
+      s?.overlapping_selected ? h('p', { class: 'muted small' }, `${T.overlap}：${T.overlapText(s.overlapping_selected)}`) : null,
       h('div', { class: 'card-actions' }, trash, toggleList, clear),
+      h('p', { class: 'muted small' }, T.binNote(words().moveToBin)),
+      this.showSelected
+        ? h('ul', { class: 'selected-list' }, ...[...this.selection.values()].map((e) => h('li', {}, pathText(e.path_display, { max: 34 }), h('span', { class: 'num' }, sizeLabel(e.logical_bytes)))))
+        : null,
     );
   }
 
-  private renderBlocked(): void {
+  private renderBlocked(v: DiskView): void {
     const s = this.app.store.state;
     const st = s.status;
-    let title = '还没有可浏览的结果';
-    let text = '先选择一个范围并完成一次扫描。';
-    if (st && !isTerminal(st.state)) {
-      title = taskTitle(st.state);
-      text = '结果在扫描结束并发布后才能浏览。CleanManager 不读取未发布的暂存数据来拼凑实时排名。你可以留在这里或切换页面，扫描会继续进行。';
-    } else if (st && st.published && !st.root_entry_id) {
-      title = '这次扫描没有记录任何条目';
-      text = '扫描根目录可能无法读取。请在概览中查看原因，或重新选择范围。';
-    } else if (s.statusError) {
-      title = '无法读取扫描记录';
-      text = refusalText(s.statusError);
-    }
-    const others = s.recent.filter((r) => r.scan_id !== s.scanId && r.state && isTerminal(r.state));
-    const go = h('button', { type: 'button', id: 'disk-go-scope' }, '选择扫描范围');
-    go.addEventListener('click', () => this.app.navigate('scope'));
+    const go = (kind: string) => {
+      const toScope = v.action === 'scope';
+      const b = h('button', { type: 'button', id: toScope ? 'disk-go-scope' : 'disk-go-overview', class: kind }, toScope ? DISK_TEXT.goScope : v.layout === 'running' ? DISK_TEXT.goOverview : DISK_TEXT.goReason);
+      b.addEventListener('click', () => this.app.navigate(toScope ? 'scope' : 'overview'));
+      return b;
+    };
+    let main: HTMLElement;
+    if (v.layout === 'loading') main = h('p', { class: 'muted', role: 'status' }, DISK_TEXT.loading);
+    else if (v.layout === 'none' || !v.banner) main = emptyBlock({ icon: 'disk', title: DISK_TEXT.noneTitle, body: DISK_TEXT.noneBody, actions: [go('primary')] });
+    else
+      main = statusBanner({
+        kind: v.banner.kind,
+        level: 2,
+        titleId: 'disk-state-title',
+        title: v.banner.title,
+        sentence: v.banner.sentence,
+        meta: st?.root_display ? [pathText(st.root_display, { max: 64, className: 'sb-path' })] : [],
+        extra: v.layout === 'running' ? [h('div', { class: 'indeterminate', role: 'progressbar', 'aria-label': DISK_TEXT.runningTitle, 'aria-valuetext': `已发现 ${groupDigits(st?.entries_seen ?? 0)} 个条目` })] : [],
+        actions: [go(v.layout === 'running' ? '' : 'primary')],
+      });
+    const others = v.offerOthers ? s.recent.filter((r) => r.scan_id !== s.scanId && r.state && isTerminal(r.state) && r.published && r.state !== 'failed') : [];
     replace(
       this.blocked,
-      h('div', { class: 'panel empty' }, icon('disk'), h('h2', {}, title), h('p', { class: 'lede' }, text), h('div', { class: 'card-actions' }, go)),
+      main,
       others.length
         ? h(
-            'div',
-            { class: 'panel' },
-            h('h2', {}, '可以浏览的其他扫描'),
+            'section',
+            { class: 'quiet-section disk-others', 'aria-labelledby': 'disk-others-title' },
+            h('h2', { id: 'disk-others-title' }, DISK_TEXT.others),
             h(
               'ul',
               { class: 'recent-list' },
               ...others.slice(0, 5).map((r) => {
-                const b = h('button', { type: 'button', class: 'recent-item' }, h('span', { class: 'path' }, r.root_display), h('span', { class: 'muted' }, `${formatTime(r.started_at)} · ${STATE_LABEL[r.state!]}`));
+                const b = h(
+                  'button',
+                  { type: 'button', class: 'recent-item' },
+                  pathText(r.root_display, { max: 48, className: 'ri-path' }),
+                  h('span', { class: 'ri-meta' }, h('span', { class: 'state-word', 'data-tone': stateTone(r.state!) }, h('span', { class: 'sw-mark', 'aria-hidden': 'true' }), STATE_LABEL[r.state!]), formatTime(r.started_at)),
+                );
                 b.addEventListener('click', () => void this.app.openScan(r.scan_id, 'disk'));
                 return h('li', {}, b);
               }),

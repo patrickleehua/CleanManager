@@ -9,13 +9,14 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { notOnThisPlatform, platform, words } from '../lib/platform';
-import { metricReason } from '../lib/suiteWords';
+import { isRawHostText, metricReason } from '../lib/suiteWords';
+import { unknownCodeText } from '../lib/codes';
 import { DEFAULT_PREFS, PANEL_LABEL, REFRESH_SECONDS, type StatusPanel, type StatusPrefs, layoutRows, loadPrefs, movePanel, sanitize, savePrefs, setShown } from '../lib/statusPrefs';
 import type { CpuAlert, Insight, InsightsList, IpcError, NetworkTotals, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
 import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
 import { atLeast, capabilityPage, ensureReady, noticeLine, selectionBar, sumSizes, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, type Tone } from './parts';
-import { issueList } from './ui';
+import { issueList, learnMore, techBlock } from './ui';
 
 interface PageLike {
   el: HTMLElement;
@@ -198,15 +199,14 @@ export class StartupPage implements PageLike {
                   h('h2', { id: 'startup-how' }, '怎样修改'),
                   h('p', { class: 'small' }, `这一版只列出启动项，不修改。登录项和后台项目在“${w.startupSettings}”中开关；LaunchAgent 和 LaunchDaemon 由安装它们的应用管理。`),
                   this.settingsButton('startup-open-settings'),
-                  h('p', { class: 'muted small' }, '状态来自 launchd：没有加载的作业显示为“状态未知”，不会被猜成已启用或已停用。macOS 自带的作业只读显示。'),
+                  learnMore(h('p', {}, '状态来自 launchd：没有加载的作业显示为“状态未知”，不会被猜成已启用或已停用。macOS 自带的作业只读显示。')),
                 )
               : h(
                   'aside',
                   { class: 'panel work-aside', 'aria-labelledby': 'startup-how' },
                   h('h2', { id: 'startup-how' }, '怎样修改'),
                   h('p', { class: 'small' }, `停用和启用只改系统的启用记录（与${w.startupSettings}相同），不删除程序或它的设置。`),
-                  h('p', { class: 'small' }, '每次修改都先生成计划，由你审阅批准后执行；执行前记录原来的状态，可在“活动”中生成还原计划。'),
-                  h('p', { class: 'muted small' }, '安全软件和系统组件只读显示。'),
+                  learnMore(h('p', {}, '每次修改都先生成计划，由你审阅批准后执行；执行前记录原来的状态，可在“活动”中生成还原计划。'), h('p', {}, '安全软件和系统组件只读显示。')),
                 ),
           )
         : !this.error
@@ -239,8 +239,10 @@ export class StartupPage implements PageLike {
           h('span', { class: 'obj-name' }, v.name),
           v.settingsLink ? null : h('span', { class: 'obj-path path' }, i.target?.display ?? i.definition),
           h('span', { class: 'obj-reason muted' }, `${SOURCE_WORD[i.source] ?? i.source} · ${i.scope === 'user' ? '当前用户' : '所有用户'}${i.publisher ? ` · ${i.publisher}` : ' · 发布者未验证'}`),
-          v.reason ? h('span', { class: v.settingsLink ? 'obj-reason' : 'why-not' }, v.reason) : null,
-          err ? h('span', { class: 'form-error', role: 'alert' }, err.message) : null,
+          // A host reason without words is a technical detail; the state and the action column say it in Chinese.
+          v.reason && !isRawHostText(v.reason) ? h('span', { class: v.settingsLink ? 'obj-reason' : 'why-not' }, v.reason) : null,
+          v.reason && isRawHostText(v.reason) ? techBlock(h('p', { class: 'selectable small' }, v.reason)) : null,
+          errorLine(err ?? null),
         ),
         h('td', { class: 'col-flags' }, pill(word, tone), v.stateNote ? h('span', { class: 'small muted block' }, v.stateNote) : null),
         h('td', { class: 'col-status' }, act, why ? h('span', { class: 'why-not' }, why) : null),
@@ -524,7 +526,8 @@ export class InsightsPage implements PageLike {
     // An unreadable or pending folder: neither the file count nor the size is known (never "0 files").
     const known = dl.total_logical_bytes !== null;
     const pending = !known && privacyPending(dl.note);
-    const summary = known ? `${groupDigits(dl.item_count)} 个文件，共 ${formatBytes(dl.total_logical_bytes as string)}` : pending ? PRIVACY_PENDING_SIZE : '文件数与大小未知';
+    const files = dl.item_count === null ? '文件数未知' : `${groupDigits(dl.item_count)} 个文件`;
+    const summary = known ? `${files}，共 ${formatBytes(dl.total_logical_bytes as string)}` : pending ? PRIVACY_PENDING_SIZE : '文件数与大小未知';
     const rows = dl.items.map((x) => {
       const id = `dl-${x.item_id}`;
       const check = h('input', { type: 'checkbox', id: `${id}-check`, 'aria-label': `选择 ${x.name}` }) as HTMLInputElement;
@@ -567,7 +570,7 @@ export class InsightsPage implements PageLike {
         : known
           ? h('p', { class: 'small' }, `没有超过 ${dl.older_than_days} 天没有修改的文件。`)
           : null,
-      dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, `显示最大的 ${groupDigits(dl.items.length)} 个，共 ${groupDigits(dl.item_count)} 个；合计包括全部文件。`) : null,
+      dl.item_count !== null && dl.items.length < dl.item_count ? h('p', { class: 'muted small' }, `显示最大的 ${groupDigits(dl.items.length)} 个，共 ${groupDigits(dl.item_count)} 个；合计包括全部文件。`) : null,
       errorLine(this.createError),
     );
   }
@@ -649,7 +652,14 @@ export interface MetricTile {
   value: string;
   note: string;
   available: boolean;
+  /** The host's own reason when it has no words yet (shown as a tooltip, never as the note). */
+  raw?: string | null;
 }
+
+/** Words of the status page that are not data (one table for the language switch). */
+export const STATUS_TEXT = {
+  noReading: '系统没有提供这个读数',
+} as const;
 
 /**
  * STS-01 tiles. Windows: the eight shared tiles. macOS adds fans (unavailable with the reason: SMC is private) and the
@@ -659,7 +669,9 @@ export function metricTiles(s: StatusSnapshot, mac = platform() === 'macos'): Me
   const tile = (label: string, name: string, extra?: string | null): MetricTile => {
     const m = metric(s, name);
     const available = !!m && m.availability === 'available';
-    return { label, value: valueText(m), note: m && !available ? metricReason(m.reason ?? '不可用') : (extra ?? ''), available };
+    const reason = m && !available ? metricReason(m.reason ?? '不可用') : null;
+    const raw = reason !== null && isRawHostText(reason) ? reason : null;
+    return { label, value: valueText(m), note: reason === null ? (extra ?? '') : raw ? STATUS_TEXT.noReading : reason, available, raw };
   };
   const memTotal = metric(s, 'memory.total_bytes');
   const diskTotal = metric(s, 'disk.system.total_bytes');
@@ -901,7 +913,7 @@ export class StatusPage implements PageLike {
         ? h(
             'div',
             { class: 'notice warn diag-line' },
-            h('span', {}, DIAGNOSIS_LABEL[diag.code] ?? diag.message),
+            h('span', { title: DIAGNOSIS_LABEL[diag.code] ? null : diag.message }, DIAGNOSIS_LABEL[diag.code] ?? unknownCodeText(diag.code)),
             diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, '去分析磁盘') : null,
           )
         : null,
@@ -917,7 +929,7 @@ export class StatusPage implements PageLike {
         'ul',
         { class: 'mtiles' },
         ...metricTiles(s).map((t) =>
-          h('li', { class: 'mtile', 'data-available': t.available ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, t.label), h('span', { class: 'mtile-value num' }, t.value), h('span', { class: 'mtile-note muted' }, t.note)),
+          h('li', { class: 'mtile', 'data-available': t.available ? 'yes' : 'no' }, h('span', { class: 'mtile-label' }, t.label), h('span', { class: 'mtile-value num' }, t.value), h('span', { class: 'mtile-note muted', title: t.raw ?? null }, t.note)),
         ),
       ),
       h('p', { class: 'muted small' }, '不可用的指标会写明原因，从不显示为 0。'),

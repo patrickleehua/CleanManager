@@ -13,6 +13,15 @@ import type { HistoryItem, IpcError, PlanRow, QuarantineItem, QuarantinePage } f
 import { ACTION_LABEL, AUTH_LABEL, AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, QUARANTINE_STATE_LABEL, operationTone } from '../lib/words';
 import { emptyState, errorLine, exactTitle, pageHead, pill, tabList } from './parts';
 import { words } from '../lib/platform';
+import { pathText } from './ui';
+
+/** The page heading per entry (one table for the language switch). */
+const ACTIVITY_HEAD: Record<ActivityTab, { title: string; meta: string }> = {
+  operations: { title: '活动', meta: '执行、计划和扫描的持久记录；CLI 与桌面端发起的记录都在这里' },
+  scans: { title: '活动', meta: '执行、计划和扫描的持久记录；CLI 与桌面端发起的记录都在这里' },
+  plans: { title: '计划', meta: '已冻结的计划：审阅、批准，或查看它们的执行结果' },
+  quarantine: { title: '恢复', meta: '隔离区中的对象：恢复到原位置，或另建计划永久清空' },
+};
 
 const PAGE = 50;
 
@@ -148,7 +157,8 @@ export class ActivityPage {
       tab === 'operations' ? this.operations() : tab === 'plans' ? this.planList() : tab === 'scans' ? this.scans() : this.quarantinePanel();
     replace(
       this.body,
-      pageHead({ id: 'activity-title', title: '活动', meta: ['执行、计划和扫描的持久记录；CLI 与桌面端发起的记录都在这里'] }),
+      // The heading follows the entry the person used (计划 / 活动 / 恢复 open tabs of this one page).
+      pageHead({ id: 'activity-title', title: ACTIVITY_HEAD[tab].title, meta: [ACTIVITY_HEAD[tab].meta] }),
       reconcile,
       tabs,
       h('div', { role: 'tabpanel', id: `panel-${tab}`, 'aria-labelledby': `tab-${tab}`, class: 'tab-panel' }, panel),
@@ -279,7 +289,7 @@ export class ActivityPage {
         'tr',
         { class: check.checked ? 'selected' : '' },
         h('td', { class: 'col-check' }, check),
-        h('td', { class: 'col-object' }, h('label', { for: `q-${q.quarantine_id}`, class: 'obj-name' }, q.name), h('span', { class: 'obj-path path' }, q.original_path_display)),
+        h('td', { class: 'col-object' }, h('label', { for: `q-${q.quarantine_id}`, class: 'obj-name' }, q.name), pathText(q.original_path_display, { max: 64, className: 'obj-path' })),
         h('td', { class: 'col-size num', title: exactTitle(q.logical_bytes) }, formatBytes(q.logical_bytes)),
         h('td', { class: 'col-when' }, formatTime(q.quarantined_at), q.reminder_due ? h('span', { class: 'why-not' }, '已到提醒时间') : null),
         h('td', { class: 'col-status', id: `q-${q.quarantine_id}-state` }, pill(QUARANTINE_STATE_LABEL[q.state] ?? q.state, ok ? 'good' : q.state === 'target_conflict' ? 'warn' : 'bad')),

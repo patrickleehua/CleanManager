@@ -9,10 +9,10 @@ import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import type { Catalog, CatalogItem, CatalogPreview, InstallerLocations, IpcError, Mode, PurgeRoots } from '../lib/types';
-import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOptions, noticeLine, selectionBar, sumSizes, tierBadge, toIpcError } from './kit';
+import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOptions, noticeLine, selectionBar, sumSizes, summaryStrip, tierBadge, toIpcError } from './kit';
 import { confirmInline, emptyState, errorLine, exactTitle, pageHead, sizeText } from './parts';
 import { notOnThisPlatform } from '../lib/platform';
-import { issueList, learnMore } from './ui';
+import { issueList, learnMore, pathText } from './ui';
 
 const SOURCE_LABEL: Record<string, string> = {
   downloads: '下载文件夹',
@@ -47,6 +47,17 @@ interface Copy {
   more: string;
   empty: string;
 }
+
+/** Words of the summary (one table for the language switch). */
+const CATALOG_TEXT = {
+  found: (n: number) => `找到 ${groupDigits(n)} 个对象`,
+  plannable: (size: string) => `可以放入计划的合计 ${size}`,
+  note: '没有预先勾选任何项目；大小未知的不按 0 计算。',
+  summaryLabel: '各档位的对象数',
+  lowNote: '可以选择',
+  reviewNote: '逐项确认',
+  blockedNote: '只能查看',
+} as const;
 
 const COPY: Record<Catalog, Copy> = {
   purge: {
@@ -291,17 +302,17 @@ export class CatalogPage {
     for (const i of p.items) groups.set(i.group_label, [...(groups.get(i.group_label) ?? []), i]);
     const s = p.summary;
     const lowCount = p.items.filter((i) => i.plannable && i.tier === 'default_selected').length;
+    const known = sumSizes(p.items.filter((i) => i.plannable).map((i) => ({ bytes: i.logical_bytes, unknown: i.unknown_size_count })));
     const summary = h(
       'section',
-      { class: 'panel catalog-summary', 'aria-labelledby': `${this.catalog}-sum` },
-      h('h2', { id: `${this.catalog}-sum`, class: 'sr-only' }, '摘要'),
-      h(
-        'dl',
-        { class: 'tier-summary' },
-        h('div', {}, h('dt', {}, tierBadge('default_selected')), h('dd', { class: 'num' }, `${groupDigits(s.default_selected_count)} 项`, h('small', {}, s.default_selected_count ? atLeast({ known: BigInt(s.default_selected_known_bytes), unknown: s.default_selected_unknown_count }) : '—'))),
-        h('div', {}, h('dt', {}, tierBadge('review_only')), h('dd', { class: 'num' }, `${groupDigits(s.review_only_count)} 项`, h('small', {}, '逐项确认'))),
-        h('div', {}, h('dt', {}, tierBadge('blocked')), h('dd', { class: 'num' }, `${groupDigits(s.blocked_count)} 项`, h('small', {}, '只能查看'))),
-      ),
+      { class: 'cand-summary catalog-summary', 'aria-labelledby': `${this.catalog}-sum` },
+      h('h2', { id: `${this.catalog}-sum`, class: 'cs-sentence' }, CATALOG_TEXT.found(p.items.length), h('span', { class: 'cs-size num' }, CATALOG_TEXT.plannable(atLeast(known)))),
+      h('p', { class: 'cs-note' }, CATALOG_TEXT.note),
+      summaryStrip(CATALOG_TEXT.summaryLabel, [
+        { mark: tierBadge('default_selected'), count: s.default_selected_count, size: s.default_selected_count ? atLeast({ known: BigInt(s.default_selected_known_bytes), unknown: s.default_selected_unknown_count }) : null, note: CATALOG_TEXT.lowNote },
+        { mark: tierBadge('review_only'), count: s.review_only_count, note: CATALOG_TEXT.reviewNote },
+        { mark: tierBadge('blocked'), count: s.blocked_count, note: CATALOG_TEXT.blockedNote },
+      ]),
       lowCount && this.catalog === 'purge' ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => this.selectLowRisk() }, `选择全部低风险项（${lowCount}）`) : null,
     );
     return h('div', { class: 'catalog-results' }, summary, this.issues(p), ...[...groups.entries()].map(([label, items], gi) => this.group(label, items, gi)));
@@ -368,7 +379,7 @@ export class CatalogPage {
           'tr',
           { class: `crow${check.checked ? ' selected' : ''}${i.plannable ? '' : ' locked'}` },
           h('td', { class: 'col-check' }, check),
-          h('td', { class: 'col-object' }, h('label', { for: `${id}-check`, class: 'obj-name' }, i.name), h('span', { class: 'obj-path path' }, i.path_display), h('span', { class: 'obj-reason', id: `${id}-why` }, reason)),
+          h('td', { class: 'col-object' }, h('label', { for: `${id}-check`, class: 'obj-name' }, i.name), pathText(i.path_display, { max: 64, className: 'obj-path' }), h('span', { class: 'obj-reason', id: `${id}-why` }, reason)),
           h('td', { class: 'col-size num', title: exactTitle(i.logical_bytes) }, sizeText(i.logical_bytes, i.unknown_size_count)),
           h('td', { class: 'col-status' }, tierBadge(i.tier), more),
         ),
@@ -416,7 +427,7 @@ export class CatalogPage {
         'section',
         { class: 'panel roots-panel', 'aria-labelledby': 'inst-loc-title' },
         h('h2', { id: 'inst-loc-title' }, '查找位置'),
-        h('p', { class: 'muted small' }, `只查找下面这些位置，向下最多 ${l?.max_depth ?? '—'} 层。与命令行 installer locations 一致。`),
+        h('p', { class: 'muted small' }, `只查找下面这些位置，向下最多 ${l?.max_depth ?? '—'} 层（与命令行 installer locations 一致）。`),
         l
           ? h(
               'ul',
@@ -434,7 +445,8 @@ export class CatalogPage {
       'section',
       { class: 'panel roots-panel', 'aria-labelledby': 'purge-roots-title' },
       h('div', { class: 'panel-head' }, h('h2', { id: 'purge-roots-title' }, '项目扫描根目录'), add),
-      h('p', { class: 'muted small' }, `只在这些文件夹里找项目，向下最多 ${r?.max_depth ?? '—'} 层；${r?.recent_days ?? '—'} 天内修改过的项目只列出、不归入低风险。与命令行 purge roots 使用同一份设置。`),
+      h('p', { class: 'muted small' }, `只在这些文件夹里找项目，向下最多 ${r?.max_depth ?? '—'} 层。`),
+      learnMore(h('p', {}, `${r?.recent_days ?? '—'} 天内修改过的项目只列出、不归入低风险。与命令行 purge roots 使用同一份设置。`)),
       r
         ? h(
             'ul',
@@ -495,7 +507,7 @@ export class CatalogPage {
       modeOptions({ name: `${this.catalog}-mode`, allowed: commonModes(items), current: this.mode, selected: n, onChange: (m) => ((this.mode = m), (this.createError = null), this.update()) }),
       errorLine(this.createError),
       create,
-      h('p', { class: 'muted small aside-note' }, '生成计划只冻结清单，不会执行。下一步显示每一个文件、摘要和有效期，由你批准后才可执行。'),
+      h('p', { class: 'muted small aside-note' }, '生成计划只冻结清单，不会执行；下一步由你逐项审阅并批准。'),
     );
   }
 

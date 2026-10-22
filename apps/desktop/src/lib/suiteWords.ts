@@ -354,7 +354,19 @@ const METRIC_REASONS: [string, string][] = [
   ['the battery does not report a cycle count', '电池没有报告循环次数。'],
   ['the battery does not report its design and full-charge capacity', '电池没有报告设计容量和满充容量。'],
   ['IOPSCopyPowerSourcesInfo returned no power-source snapshot', '系统没有返回电源信息（这台 Mac 可能没有电池）。'],
+  // Windows host (cm-platform windows/status.rs).
+  ['No documented Windows interface reports GPU temperature', 'Windows 没有公开的接口可以在不装显卡厂商软件的情况下读取显卡温度。'],
+  ['GPU engine counters are not published', '显卡驱动没有公布使用率（驱动不提供 WDDM 2 性能数据）。'],
+  ['Windows does not publish the memory compression store size', 'Windows 没有通过公开接口提供内存压缩的大小。'],
+  ['no paging file is configured or the counter is not available', '没有配置页面文件，或读不到它的计数器。'],
+  ['neither the interface table nor the Network Interface performance counters could be read', '网卡列表和网络性能计数器都无法读取。'],
+  ["the battery reports 0 cycles, which its driver uses for 'not supported'", '电池报告 0 次循环（它的驱动用 0 表示“不支持”）。'],
 ];
+
+/** Host text that was not put in words (English): it belongs in 技术详情 or a tooltip, never as the main text. */
+export function isRawHostText(text: string | null | undefined): boolean {
+  return !!text && !/[㐀-鿿]/.test(text);
+}
 
 export function metricReason(text: string): string {
   return METRIC_REASONS.find(([prefix]) => text.startsWith(prefix))?.[1] ?? text;

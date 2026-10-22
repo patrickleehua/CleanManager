@@ -8,6 +8,8 @@
 //! - The switch is `cm_app::features` in the shared store, so the CLI and the desktop see one value.
 //! - `set_experimental_features` changes only CleanManager's own `features.json`; turning it off also stops the
 //!   resident utilities and removes their startup value, as turning the tray off does.
+//! - A change made from the CLI is noticed by the running app within `resident::FEATURES_POLL`
+//!   (`resident::watch_features`): off runs the same stop path, and the page re-reads the capabilities.
 
 use std::sync::Arc;
 
@@ -73,7 +75,8 @@ pub async fn set_experimental_features(app: AppHandle, state: St<'_>, resident: 
         if !enabled {
             crate::resident::turn_off_all(&a, &r).map_err(|e| IpcError::new(ErrorCode::InternalError, "internal", e))?;
         }
-        cm_app::features::set_experimental(&dir, enabled).map_err(|e| IpcError::new(ErrorCode::IoError, "io_error", e.to_string()))?;
+        let saved = cm_app::features::set_experimental(&dir, enabled).map_err(|e| IpcError::new(ErrorCode::IoError, "io_error", e.to_string()))?;
+        r.note_features(saved);
         let _ = a.emit(crate::resident::EVENT_CHANGED, ());
         Ok(())
     })

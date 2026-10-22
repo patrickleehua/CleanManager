@@ -11,6 +11,12 @@
 //! The tray only shows the compact status (CPU, memory, free space on the system disk, camera/microphone use)
 //! and opens app pages from a fixed list; it never cleans, uninstalls or runs maintenance.
 //!
+//! D15 (the experimental-features switch, shared with the CLI): besides the tray's sampling loop the app runs one
+//! more timer, [`watch_features`], which re-reads `<store>/features.json` every [`FEATURES_POLL`]. Turning the switch
+//! off from the CLI (`cleanmanager experimental --state off`) therefore stops the tray, sampling, battery alerts and
+//! keep-awake and removes the startup value within that time, as 设置 › 实验功能 does; turning it on only makes the
+//! gated pages available again (nothing is started). Either way the page hears [`EVENT_FEATURES`].
+//!
 //! macOS (same commands; `cm_platform::macos::resident`): the tray is a menu-bar status item; keep-awake holds an
 //! `IOPMAssertion` (PreventUserIdleDisplaySleep) released the same way; clean screen is one borderless, always-on-top
 //! black webview window per display plus this app's presentation options (Dock and menu bar hidden, Command-Tab and
@@ -19,8 +25,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use cm_app::features::FeatureSettings;
 use cm_core::error::ErrorCode;
 use cm_core::resident::{BatteryAlert, DeviceBattery, PrivacySnapshot, ResidentLoop, ResidentSettings, StartupState, StartupStore, TraySummary, TurnOffReport};
 #[cfg(target_os = "macos")]
@@ -38,6 +47,11 @@ pub const TRAY_ID: &str = "cm-resident";
 pub const EVENT_NAVIGATE: &str = "resident-navigate";
 pub const EVENT_CHANGED: &str = "resident-changed";
 pub const EVENT_ALERT: &str = "resident-alert";
+/// The experimental-features switch changed outside this window (payload [`FeaturesEvent`]).
+pub const EVENT_FEATURES: &str = "features-changed";
+/// How often the running app re-reads the experimental-features switch (D15): a change made from the CLI takes
+/// effect here within this time.
+pub const FEATURES_POLL: Duration = Duration::from_secs(3);
 
 fn bad(message: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidArgument, "invalid_argument", message)
@@ -73,6 +87,18 @@ pub struct Resident {
     pub quitting: AtomicBool,
     keep_awake: Mutex<Option<plat::KeepAwake>>,
     alerts: Mutex<cm_core::resident::BatteryAlerts>,
+    /// The experimental-features switch as this app last saw it ([`Resident::recheck_features`]).
+    features_seen: Mutex<FeatureSettings>,
+    /// Stops the [`watch_features`] thread when dropped.
+    features_watch: Mutex<Option<Sender<()>>>,
+}
+
+/// A change of the experimental-features switch found by [`Resident::recheck_features`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeaturesChange {
+    pub experimental_features: bool,
+    /// The resident utilities are no longer allowed, so [`Resident::stop_all`] ran (its result).
+    pub stopped: Option<Result<TurnOffReport, String>>,
 }
 
 fn load(path: Option<&Path>) -> ResidentSettings {
@@ -105,6 +131,8 @@ impl Resident {
             quitting: AtomicBool::new(false),
             keep_awake: Mutex::new(None),
             alerts: Mutex::new(Default::default()),
+            features_seen: Mutex::new(cm_app::features::load(store_dir)),
+            features_watch: Mutex::new(None),
         }
     }
 
@@ -152,8 +180,10 @@ impl Resident {
     }
 
     /// Stop everything this component holds (app exit): sampling and any keep-awake request. The startup value
-    /// and settings stay as the person chose.
+    /// and settings stay as the person chose. The switch watcher is told to end but not joined (a check in flight
+    /// may be waiting for the main thread, which is running this).
     pub fn shutdown(&self) {
+        drop(lock(&self.features_watch).take());
         if let Some(mut l) = lock(&self.sampling).take() {
             l.stop();
         }
@@ -171,16 +201,102 @@ impl Resident {
         cm_app::features::enabled(self.store_dir.as_deref(), "resident.utilities")
     }
 
-    /// Experimental features turned off: stop everything the resident utilities hold, as turning the tray off does —
-    /// sampling, battery alerts, the startup value — and release any keep-awake request. Settings are saved off.
+    /// Experimental features turned off (here or from the CLI): stop everything the resident utilities hold, as
+    /// turning the tray off does — sampling, battery alerts, the startup value — and release any keep-awake request.
+    /// Settings are saved off. Everything is stopped even when they cannot be saved; that error is returned after.
     pub fn stop_all(&self) -> Result<TurnOffReport, String> {
         let off = ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, ..lock(&self.settings).clone() };
-        let report = self.apply(off, || Err("not starting".into()))?.unwrap_or(TurnOffReport { sampling_stopped: false, startup_value_removed: false, startup_error: None });
+        let saved = save(self.settings_path.as_deref(), &off);
+        *lock(&self.settings) = off;
+        let report = cm_core::resident::turn_off(&mut lock(&self.sampling), self.store.as_ref());
+        *lock(&self.seen) = Seen::default();
         if let Some(mut k) = lock(&self.keep_awake).take() {
             k.release();
         }
-        Ok(report)
+        saved.map(|()| report)
     }
+
+    /// The switch this app wrote itself (设置 › 实验功能), so the watcher does not handle that change again.
+    pub fn note_features(&self, now: FeatureSettings) {
+        *lock(&self.features_seen) = now;
+    }
+
+    /// D15 from outside this window: re-read the shared switch. `None` when it is as this app last saw it. When it
+    /// changed and the resident utilities are no longer allowed, everything they hold is stopped first
+    /// ([`Resident::stop_all`]); turning it on starts nothing (the tray stays the person's choice).
+    pub fn recheck_features(&self) -> Option<FeaturesChange> {
+        let now = cm_app::features::load(self.store_dir.as_deref());
+        {
+            let mut seen = lock(&self.features_seen);
+            if *seen == now {
+                return None;
+            }
+            *seen = now;
+        }
+        let stopped = (!self.allowed()).then(|| self.stop_all());
+        Some(FeaturesChange { experimental_features: now.experimental_features, stopped })
+    }
+}
+
+/// Run [`Resident::recheck_features`] every `interval` on a thread of its own and call `changed` after each change
+/// was handled. The thread ends when the Resident is gone or [`Resident::shutdown`] drops its stop handle.
+pub fn start_features_watch(r: &Arc<Resident>, interval: Duration, changed: impl Fn(&FeaturesChange) + Send + 'static) -> std::io::Result<()> {
+    let res = Arc::downgrade(r);
+    let (tx, rx) = channel::<()>();
+    std::thread::Builder::new().name("cm-features".into()).spawn(move || {
+        while let Err(RecvTimeoutError::Timeout) = rx.recv_timeout(interval) {
+            let Some(r) = res.upgrade() else { break };
+            if let Some(change) = r.recheck_features() {
+                changed(&change);
+            }
+        }
+    })?;
+    *lock(&r.features_watch) = Some(tx);
+    Ok(())
+}
+
+/// Payload of [`EVENT_FEATURES`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FeaturesEvent {
+    pub experimental_features: bool,
+    /// The resident utilities were stopped because the switch was turned off.
+    pub resident_stopped: bool,
+    /// They stopped, but something could not be undone (the startup value or the saved settings); the next start
+    /// retries.
+    pub error: Option<String>,
+}
+
+impl From<&FeaturesChange> for FeaturesEvent {
+    fn from(c: &FeaturesChange) -> FeaturesEvent {
+        let error = match &c.stopped {
+            Some(Ok(report)) => report.startup_error.as_ref().map(|e| format!("the resident utilities stopped, but their startup value could not be removed: {e}")),
+            Some(Err(e)) => Some(format!("the resident utilities stopped, but their settings could not be saved: {e}")),
+            None => None,
+        };
+        FeaturesEvent { experimental_features: c.experimental_features, resident_stopped: c.stopped.is_some(), error }
+    }
+}
+
+/// D15: watch the switch every [`FEATURES_POLL`]. Turned off elsewhere (the CLI), the same stop path as
+/// 设置 › 实验功能 runs ([`Resident::stop_all`] and the tray icon), and a window hidden to the tray is shown again
+/// (nothing else would lead back to it). The page hears [`EVENT_FEATURES`] and re-reads the capabilities, so gated
+/// tools show or leave their "默认关闭" page.
+pub fn watch_features(app: &AppHandle, r: &Arc<Resident>) {
+    let app = app.clone();
+    let _ = start_features_watch(r, FEATURES_POLL, move |change| {
+        if change.stopped.is_some() {
+            // On the main thread, which created the tray icon; not waited for.
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                remove_tray(&a);
+                if a.get_webview_window("main").is_some_and(|w| !w.is_visible().unwrap_or(true)) {
+                    show_main(&a);
+                }
+            });
+            let _ = app.emit(EVENT_CHANGED, ());
+        }
+        let _ = app.emit(EVENT_FEATURES, FeaturesEvent::from(change));
+    });
 }
 
 /// [`Resident::stop_all`] plus the tray icon. Fails when the startup value could not be removed.
@@ -953,6 +1069,106 @@ mod tests {
         assert!(!r.sampling_running() && r.startup_entry().is_none());
         let saved = ResidentSettings::parse(&std::fs::read_to_string(dir.join("resident.json")).unwrap());
         assert_eq!(saved, ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, battery_threshold: 30 });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// D15 from the CLI: `cleanmanager experimental --state off` rewrites `<store>/features.json` while the app runs. The
+    /// next check notices it once and runs the stop path; turning it back on is noticed and starts nothing.
+    fn cli_flips_the_switch(store: Box<dyn StartupStore>, read: impl Fn() -> Option<String>) {
+        let dir = temp("cli-flip");
+        cm_app::features::set_experimental(&dir, true).unwrap();
+        let r = Resident::new(Some(&dir), store, r"C:\Apps\cleanmanager-desktop.exe".into());
+        assert_eq!(r.recheck_features(), None, "unchanged since start");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let on = ResidentSettings { tray: true, start_at_login: true, battery_alerts: true, battery_threshold: 25 };
+        r.apply(on, counting(&calls)).unwrap();
+        assert!(r.sampling_running() && read().is_some());
+
+        cm_app::features::set_experimental(&dir, false).unwrap();
+        let change = r.recheck_features().expect("the change is noticed");
+        assert!(!change.experimental_features);
+        let report = change.stopped.clone().expect("stop path ran").unwrap();
+        assert!(report.sampling_stopped && report.startup_value_removed && report.startup_error.is_none(), "{report:?}");
+        assert_eq!(FeaturesEvent::from(&change), FeaturesEvent { experimental_features: false, resident_stopped: true, error: None });
+        assert!(!r.sampling_running());
+        assert_eq!(read(), None, "no startup value remains");
+        assert_eq!(r.startup_entry(), None);
+        let after = calls.load(Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(calls.load(Ordering::SeqCst), after, "no sampling after the switch went off");
+        let saved = ResidentSettings::parse(&std::fs::read_to_string(dir.join("resident.json")).unwrap());
+        assert_eq!(saved, ResidentSettings { tray: false, start_at_login: false, battery_alerts: false, battery_threshold: 25 });
+        assert_eq!(r.recheck_features(), None, "handled once");
+
+        cm_app::features::set_experimental(&dir, true).unwrap();
+        let back = r.recheck_features().expect("turned on again is noticed");
+        assert_eq!(back, FeaturesChange { experimental_features: true, stopped: None });
+        assert!(!r.sampling_running() && read().is_none(), "turning it on starts nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn experimental_features_turned_off_from_the_cli_stop_the_resident_utilities() {
+        let mem = Arc::new(Mem(Mutex::new(None)));
+        struct Shared(Arc<Mem>);
+        impl StartupStore for Shared {
+            fn read(&self) -> Result<Option<String>, String> {
+                self.0.read()
+            }
+            fn write(&self, c: &str) -> Result<(), String> {
+                self.0.write(c)
+            }
+            fn remove(&self) -> Result<bool, String> {
+                self.0.remove()
+            }
+        }
+        let m = mem.clone();
+        cli_flips_the_switch(Box::new(Shared(mem)), move || m.read().unwrap());
+    }
+
+    /// The same through the real `Run` value code, against a throwaway `HKCU\Software\CleanManagerTest\…` key.
+    #[cfg(windows)]
+    #[test]
+    fn experimental_features_turned_off_from_the_cli_leave_no_run_value() {
+        use cm_platform::windows::resident::{RunValue, delete_test_key};
+        let key = format!(r"Software\CleanManagerTest\desktop-cli-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let probe = RunValue { subkey: key.clone() };
+        cli_flips_the_switch(Box::new(RunValue { subkey: key.clone() }), move || probe.read().unwrap());
+        delete_test_key(&key);
+    }
+
+    /// The app's own change (设置 › 实验功能) is noted, so the watcher does not handle it again.
+    #[test]
+    fn the_apps_own_switch_change_is_not_handled_twice() {
+        let dir = temp("own");
+        let r = Resident::new(Some(&dir), Box::new(Mem(Mutex::new(None))), "cm.exe".into());
+        r.note_features(cm_app::features::set_experimental(&dir, true).unwrap());
+        assert_eq!(r.recheck_features(), None);
+        r.note_features(cm_app::features::set_experimental(&dir, false).unwrap());
+        assert_eq!(r.recheck_features(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The watcher thread notices a change made elsewhere within a bounded time and ends at shutdown.
+    #[test]
+    fn the_switch_watcher_reports_changes_and_ends_at_shutdown() {
+        let dir = temp("watch");
+        cm_app::features::set_experimental(&dir, true).unwrap();
+        let r = Arc::new(Resident::new(Some(&dir), Box::new(Mem(Mutex::new(None))), "cm.exe".into()));
+        let (tx, rx) = std::sync::mpsc::channel::<FeaturesChange>();
+        let tx = Mutex::new(tx);
+        start_features_watch(&r, Duration::from_millis(20), move |c| {
+            let _ = lock(&tx).send(c.clone());
+        })
+        .unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err(), "nothing changed yet");
+        cm_app::features::set_experimental(&dir, false).unwrap();
+        let c = rx.recv_timeout(Duration::from_secs(5)).expect("noticed within the bound");
+        assert!(!c.experimental_features && c.stopped.as_ref().is_some_and(Result::is_ok), "{c:?}");
+        r.shutdown();
+        std::thread::sleep(Duration::from_millis(100));
+        cm_app::features::set_experimental(&dir, true).unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "nothing is checked after shutdown");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -411,7 +411,7 @@ mod imp {
             supported: true,
             is_admin: env.is_admin,
             items,
-            issues: issues.iter().map(|i| IssueDto { code: i.code.clone(), scope_display: i.source.clone(), message: i.message.clone() }).collect(),
+            issues: issues.iter().map(|i| IssueDto::new(i.code.clone(), i.source.clone(), i.message.clone())).collect(),
             recent,
         })
     }

@@ -387,7 +387,7 @@ fn set_dto(stores: &Stores, set: &CandidateSet, created_at: Option<String>, issu
 }
 
 fn issue(code: &str, scope: &str, message: impl Into<String>) -> IssueDto {
-    IssueDto { code: code.into(), scope_display: scope.into(), message: message.into() }
+    IssueDto::new(code, scope, message)
 }
 
 fn standing_issues(l: &Loaded) -> Vec<IssueDto> {

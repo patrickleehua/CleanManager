@@ -315,7 +315,7 @@ pub fn apps(s: &AppState, scan_id: Option<&str>) -> IpcResult<AppsDto> {
             }
         })
         .collect();
-    let issues = issues.into_iter().map(|i| crate::dto::IssueDto { code: i.code, scope_display: i.source, message: i.message }).collect();
+    let issues = issues.into_iter().map(|i| crate::dto::IssueDto::new(i.code, i.source, i.message)).collect();
     Ok(AppsDto { items, issues, scan_id: scan_id.map(str::to_owned), scan_root_display: root_display, supported })
 }
 

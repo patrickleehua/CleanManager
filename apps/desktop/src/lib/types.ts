@@ -110,6 +110,8 @@ export interface ScanStatus {
   finished_at: string | null;
   root_display: string | null;
   root_entry_id: string | null;
+  /** Null until published, for an empty scan, and always for a `failed` scan (its sizes are unknown, never 0). A
+   *  summary that is present always carries decimal strings. */
   summary: Summary | null;
   backend: string | null;
   backend_reason: string | null;
@@ -202,6 +204,15 @@ export interface FinishedEvent {
   scan_id: string;
   state: ScanState | null;
   error: IpcError | null;
+}
+
+/** `features-changed`: the experimental-features switch changed outside this window (the CLI). */
+export interface FeaturesChangedEvent {
+  experimental_features: boolean;
+  /** The resident utilities were stopped because the switch was turned off. */
+  resident_stopped: boolean;
+  /** They stopped, but the startup value or the saved settings could not be updated (retried at the next start). */
+  error: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -746,6 +757,8 @@ export interface Insight {
   size_basis: string;
   size_note: string | null;
   observed_at: string | null;
+  /** Structured cause named by `size_note` (absent when it names none). */
+  permission_cause?: PermissionCause | null;
   explanation: string;
   handling: string;
   guidance: { tool: string; steps: string; requires_admin: boolean; impact: string }[];

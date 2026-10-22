@@ -11,6 +11,7 @@ import { h, icon } from '../lib/dom';
 import { words } from '../lib/platform';
 import type { IpcError, Mode, Readiness, ReadinessCheck, ReadinessOp, Tier } from '../lib/types';
 import { MODE_EXPLAIN, MODE_LABEL } from '../lib/words';
+import { MODE_UNDO, UNDO_LABEL, UNDO_SHORT, type Undo } from '../lib/planModel';
 import { copyField, errorLine, errorText, pill, type Tone } from './parts';
 import { learnMore } from './ui';
 
@@ -114,15 +115,30 @@ export function selectionBar(o: SelectionBarOpts): HTMLElement {
 // ---------------------------------------------------------------------------------------------
 // Processing mode choice (the plan draft)
 
-export function modeOptions(opts: { name: string; allowed: Mode[]; current: Mode | null; selected: number; onChange: (m: Mode) => void; modes?: Mode[] }): HTMLElement {
+/**
+ * How reversible something is: a shape and a word, never colour alone. "无法撤销" also carries a
+ * hatched ground, so a permanent action reads differently even in grey.
+ */
+export function undoBadge(undo: Undo, label = UNDO_LABEL[undo]): HTMLElement {
+  const mark = undo === 'irreversible' ? icon('warn') : undo === 'restorable' || undo === 'recoverable' ? icon('ext-recovery') : undo === 'external' ? icon('lock') : icon('check');
+  return h('span', { class: 'undo-badge', 'data-undo': undo }, h('span', { class: 'undo-mark', 'aria-hidden': 'true' }, mark), h('span', {}, label));
+}
+
+/** Words of the mode choice (one table for the language switch). */
+export const MODE_CHOICE_TEXT = {
+  legend: '处理方式',
+  notAllowed: '所选项目中有规则不允许这种方式',
+} as const;
+
+export function modeOptions(opts: { name: string; allowed: Mode[]; current: Mode | null; selected: number; onChange: (m: Mode) => void; modes?: Mode[]; id?: (m: Mode) => string }): HTMLElement {
   const modes = opts.modes ?? (['trash', 'quarantine', 'delete'] as Mode[]);
   return h(
     'fieldset',
     { class: 'mode-options', id: `${opts.name}-modes`, disabled: opts.selected === 0 },
-    h('legend', {}, '处理方式'),
+    h('legend', {}, MODE_CHOICE_TEXT.legend),
     ...modes.map((m) => {
       const allowed = opts.allowed.includes(m);
-      const id = `${opts.name}-${m}`;
+      const id = opts.id ? opts.id(m) : `${opts.name}-${m}`;
       const input = h('input', { type: 'radio', name: opts.name, id, value: m, disabled: !allowed, 'aria-describedby': `${id}-desc` }) as HTMLInputElement;
       input.checked = opts.current === m;
       input.addEventListener('change', () => opts.onChange(m));
@@ -133,11 +149,43 @@ export function modeOptions(opts: { name: string; allowed: Mode[]; current: Mode
         h(
           'span',
           { class: 'mode-text', id: `${id}-desc` },
-          h('b', {}, MODE_LABEL[m]),
+          h('span', { class: 'mode-head' }, h('b', {}, MODE_LABEL[m]), undoBadge(MODE_UNDO[m], UNDO_SHORT[MODE_UNDO[m]])),
           h('span', {}, MODE_EXPLAIN[m].space),
           h('span', { class: 'mode-recovery' }, MODE_EXPLAIN[m].recovery),
-          opts.selected > 0 && !allowed ? h('span', { class: 'why-not' }, '所选项目中有规则不允许这种方式') : null,
+          opts.selected > 0 && !allowed ? h('span', { class: 'why-not' }, MODE_CHOICE_TEXT.notAllowed) : null,
         ),
+      );
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Summary strip: the counts of each risk group before the groups themselves (GUI-09 summary → groups)
+
+export interface SummaryCell {
+  /** The group's shape + word (tierBadge / groupMark). */
+  mark: HTMLElement;
+  count: number;
+  /** Known size ("至少 X", "未知"); omitted for groups whose size is not the point. */
+  size?: string | null;
+  /** One short note under the count ("逐项确认", "只能查看"). */
+  note?: string | null;
+  /** Jump to (and open) the group below. */
+  onJump?: () => void;
+  id?: string;
+}
+
+/** One row of group counts; each cell jumps to its group. Zero groups stay visible but quiet. */
+export function summaryStrip(label: string, cells: SummaryCell[]): HTMLElement {
+  return h(
+    'ul',
+    { class: 'summary-strip', 'aria-label': label },
+    ...cells.map((c) => {
+      const body = [c.mark, h('span', { class: 'ss-count num' }, `${groupDigits(c.count)} 项`), c.size ? h('span', { class: 'ss-size num' }, c.size) : null, c.note ? h('span', { class: 'ss-note' }, c.note) : null];
+      return h(
+        'li',
+        { 'data-zero': c.count === 0 ? 'yes' : 'no' },
+        c.onJump && c.count > 0 ? h('button', { type: 'button', class: 'ss-cell', id: c.id ?? null, onclick: c.onJump }, ...body) : h('span', { class: 'ss-cell' }, ...body),
       );
     }),
   );

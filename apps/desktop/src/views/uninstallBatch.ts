@@ -7,6 +7,7 @@
 import type { AppOutcome, AppOutcomeStatus, Leftovers, UninstallApp } from '../lib/suiteTypes';
 import type { KindDetail, OperationItem, PlanItem } from '../lib/types';
 import { explainCode } from '../lib/words';
+import { resultText } from '../lib/codes';
 import { words } from '../lib/platform';
 import type { Tone } from './parts';
 
@@ -39,10 +40,10 @@ export const APP_OUTCOME: Record<AppOutcomeStatus, { label: string; tone: Tone }
   pending: { label: '等待执行', tone: 'busy' },
 };
 
-/** Why an application ended as it did, in words (the core's message when there is no explanation). */
+/** Why an application ended as it did, in words (a code without words reads as such; the raw message never). */
 export function outcomeReason(o: Pick<AppOutcome, 'status' | 'code' | 'message'>): string {
   if (o.status === 'completed') return '卸载程序已运行，重新检查后安装目录与卸载登记都已不在。';
-  return explainCode(o.code, o.message);
+  return o.code ? resultText(o.code) : explainCode(o.code, o.message);
 }
 
 /** Review rows of one application of an uninstall plan. */

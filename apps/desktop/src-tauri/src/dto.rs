@@ -175,6 +175,28 @@ pub struct IssueDto {
     pub code: String,
     pub scope_display: String,
     pub message: String,
+    /// Structured cause of a `permission_required` issue (docs/platforms/macos.md §6): the stored record's field or
+    /// the message's `permission_cause=…` marker; absent when neither names one (nothing is guessed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_cause: Option<cm_core::permission::PermissionCause>,
+}
+
+impl IssueDto {
+    /// An issue whose structured cause is read from its message ([`cm_core::permission::cause_in`]).
+    pub fn new(code: impl Into<String>, scope_display: impl Into<String>, message: impl Into<String>) -> IssueDto {
+        let message = message.into();
+        IssueDto { code: code.into(), scope_display: scope_display.into(), permission_cause: cm_core::permission::cause_in(&message), message }
+    }
+
+    /// From a stored wire issue (`{code, scope_display, message[, permission_cause]}`); its own field wins.
+    pub fn from_wire(i: &serde_json::Value) -> IssueDto {
+        let text = |k: &str| i[k].as_str().unwrap_or("").to_owned();
+        let mut d = IssueDto::new(text("code"), text("scope_display"), text("message"));
+        if let Some(c) = i["permission_cause"].as_str().and_then(cm_core::permission::PermissionCause::parse) {
+            d.permission_cause = Some(c);
+        }
+        d
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -322,5 +344,22 @@ mod tests {
         assert_eq!(d.allocated_unknown_count, 1);
         let json = serde_json::to_value(&d).unwrap();
         assert!(json["logical_known_bytes"].is_string(), "byte counts never travel as JSON numbers");
+    }
+
+    /// The structured `permission_cause` reaches the page: from the stored field, else the message marker, else absent.
+    #[test]
+    fn issues_carry_their_permission_cause() {
+        use cm_core::permission::PermissionCause;
+        let pending = IssueDto::new("permission_required", "/Users/a/Documents", "permission_required (permission_cause=privacy_prompt_pending): macOS did not answer");
+        assert_eq!(pending.permission_cause, Some(PermissionCause::PrivacyPromptPending));
+        assert_eq!(serde_json::to_value(&pending).unwrap()["permission_cause"], "privacy_prompt_pending");
+        let plain = IssueDto::new("root_missing", "D:\\x", "gone");
+        assert!(serde_json::to_value(&plain).unwrap().get("permission_cause").is_none(), "no marker, no field");
+        let stored = serde_json::json!({"code": "permission_required", "scope_display": "/y", "message": "m", "permission_cause": "undetermined"});
+        assert_eq!(IssueDto::from_wire(&stored).permission_cause, Some(PermissionCause::Undetermined), "the stored field wins");
+        let marked = serde_json::json!({"code": "permission_required", "scope_display": "/y", "message": "x (permission_cause=undetermined)"});
+        assert_eq!(IssueDto::from_wire(&marked).permission_cause, Some(PermissionCause::Undetermined));
+        let odd = serde_json::json!({"code": "c", "scope_display": "s", "message": "m", "permission_cause": "guessed"});
+        assert_eq!(IssueDto::from_wire(&odd).permission_cause, None, "an unknown spelling is not passed on");
     }
 }

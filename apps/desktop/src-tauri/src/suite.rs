@@ -43,7 +43,7 @@ fn ipc(code: ErrorCode, reason: &'static str, message: impl Into<String>) -> Ipc
 }
 
 fn issue(code: &str, scope: &str, message: impl Into<String>) -> IssueDto {
-    IssueDto { code: code.into(), scope_display: scope.into(), message: message.into() }
+    IssueDto::new(code, scope, message)
 }
 
 /// Stable opaque id of a configured root: the first 16 hex digits of SHA-256 over the raw path bytes (the same

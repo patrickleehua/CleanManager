@@ -16,6 +16,7 @@ import type {
   Capabilities,
   EntriesPage,
   EntriesQuery,
+  FeaturesChangedEvent,
   FinishedEvent,
   Group,
   HistoryPage,
@@ -159,6 +160,8 @@ export interface Backend extends DiagBackend, ResidentBackend {
   onProgress(cb: (e: ProgressEvent) => void): Promise<() => void>;
   onFinished(cb: (e: FinishedEvent) => void): Promise<() => void>;
   onClosing(cb: (e: { waiting_for: string[] }) => void): Promise<() => void>;
+  /** D15: the experimental-features switch changed outside this window (the CLI); re-read the capabilities. */
+  onFeaturesChanged(cb: (e: FeaturesChangedEvent) => void): Promise<() => void>;
   onApplyProgress(cb: (e: ApplyProgressEvent) => void): Promise<() => void>;
   onApplyFinished(cb: (e: ApplyFinishedEvent) => void): Promise<() => void>;
   /** True when the data comes from the development fixture, not a real scan. */
@@ -261,6 +264,7 @@ async function tauriBackend(): Promise<Backend> {
     onProgress: (cb) => listen<ProgressEvent>('scan-progress', (e) => cb(e.payload)),
     onFinished: (cb) => listen<FinishedEvent>('scan-finished', (e) => cb(e.payload)),
     onClosing: (cb) => listen<{ waiting_for: string[] }>('app-closing', (e) => cb(e.payload)),
+    onFeaturesChanged: (cb) => listen<FeaturesChangedEvent>('features-changed', (e) => cb(e.payload)),
     onApplyProgress: (cb) => listen<ApplyProgressEvent>('apply-progress', (e) => cb(e.payload)),
     onApplyFinished: (cb) => listen<ApplyFinishedEvent>('apply-finished', (e) => cb(e.payload)),
     // Optional AI diagnosis: ids only; keys go through the host's system prompt.

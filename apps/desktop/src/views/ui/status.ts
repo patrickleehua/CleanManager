@@ -36,6 +36,21 @@ export interface BannerOpts {
   srPrefix?: string;
 }
 
+/**
+ * The quiet form of the banner: the same shape and one sentence on one line, for a page whose main
+ * element is something else (the disk chart, a candidate list, an authorization panel).
+ */
+export function stateLine(o: { kind: BannerKind; text: string; actions?: Child[]; className?: string }): HTMLElement {
+  const actions = (o.actions ?? []).filter(Boolean);
+  return h(
+    'div',
+    { class: `state-line${o.className ? ` ${o.className}` : ''}`, 'data-kind': o.kind },
+    h('span', { class: 'sb-mark', 'aria-hidden': 'true' }),
+    h('p', { class: 'sl-text' }, h('span', { class: 'sr-only' }, `${BANNER_WORD[o.kind]}：`), o.text),
+    actions.length ? h('div', { class: 'sl-actions' }, ...actions) : null,
+  );
+}
+
 export function statusBanner(o: BannerOpts): HTMLElement {
   const tag = o.level === 2 ? 'h2' : 'h1';
   return h(

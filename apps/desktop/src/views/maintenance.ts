@@ -14,11 +14,12 @@ import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import { notOnThisPlatform, words } from '../lib/platform';
 import type { MaintenanceCatalog, MaintenanceDiagnosis, MaintenanceHistory, MaintenanceReport, MaintenanceSearch, MaintenanceTask, Prohibited } from '../lib/suiteTypes';
-import { APPLICABILITY, ELEVATION_WORD, FINDING_WORD, PROHIBITED_WORDS, TASK_CODE_WORD, TASK_WORDS } from '../lib/suiteWords';
+import { APPLICABILITY, ELEVATION_WORD, FINDING_WORD, PROHIBITED_WORDS, TASK_CODE_WORD, TASK_WORDS, isRawHostText } from '../lib/suiteWords';
 import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, outcomeMark, outcomeTally, selectionBar, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
-import { learnMore } from './ui';
+import { learnMore, techBlock } from './ui';
+import { unknownCodeText } from '../lib/codes';
 
 export function taskTitle(id: string, fallback: string): string {
   return TASK_WORDS[id]?.title ?? fallback;
@@ -40,6 +41,11 @@ export function allDone(r: Pick<MaintenanceReport, 'counts'>): boolean {
 }
 
 /** The reason text of a task result, in words when the code is one we know. */
+/** A reason in words as a line; a raw host reason (no words yet) only as the tooltip of an empty line. */
+function rawAware(text: string, cls: string): HTMLElement {
+  return isRawHostText(text) ? h('span', { class: `${cls} sr-only`, title: text }, text) : h('span', { class: cls }, text);
+}
+
 export function taskReason(code: string, reason: string): string {
   return TASK_CODE_WORD[code] ?? reason;
 }
@@ -225,14 +231,20 @@ export class MaintenancePage {
           h('label', { for: `${id}-check`, class: 'obj-name' }, taskTitle(t.task_id, t.title)),
           h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '解决：'), w?.problem ?? t.problem),
           h('span', { class: 'obj-reason' }, h('span', { class: 'muted' }, '影响：'), w?.impact ?? t.impact),
-          h('span', { class: 'obj-path' }, `${t.task_id}@${t.task_version} · 约 ${t.estimated_seconds} 秒 · ${t.reversible ? '可还原原来的设置' : '不可撤销'}`),
+          // The task id is a machine fact: a tooltip here, the full id in the plan and the run record.
+          h('span', { class: 'obj-path', title: `${t.task_id}@${t.task_version}` }, `约 ${t.estimated_seconds} 秒`, h('span', { class: 'meta-sep', 'aria-hidden': 'true' }), t.reversible ? '可还原原来的设置' : '不可撤销'),
         ),
         h(
           'td',
           { class: 'col-status' },
           pill(ap.label, ap.tone),
           t.requires_admin ? h('span', { class: 'row-tag block-tag' }, '需要管理员') : null,
-          h('span', { class: 'small muted block' }, t.user_protected ? '你把它加入了保护，执行时一律跳过' : (t.applicability_reason ?? w?.applies ?? t.applies_when)),
+          // The probe's own sentence is shown only when it is in words; a raw host reason is the tooltip.
+          h(
+            'span',
+            { class: 'small muted block', title: isRawHostText(t.applicability_reason) ? t.applicability_reason : null },
+            t.user_protected ? '你把它加入了保护，执行时一律跳过' : t.applicability_reason && !isRawHostText(t.applicability_reason) ? t.applicability_reason : (w?.applies ?? t.applies_when),
+          ),
         ),
       );
     });
@@ -306,7 +318,7 @@ export class MaintenancePage {
         ? h(
             'ul',
             { class: 'task-results' },
-            ...r.items.map((i) => h('li', {}, outcomeMark(i.outcome), h('span', { class: 'task-result-text' }, h('b', {}, taskTitle(i.task_id, i.task_id)), h('span', { class: 'muted small' }, taskReason(i.code, i.reason))))),
+            ...r.items.map((i) => h('li', {}, outcomeMark(i.outcome), h('span', { class: 'task-result-text' }, h('b', {}, taskTitle(i.task_id, i.task_id)), rawAware(taskReason(i.code, i.reason), 'muted small')))),
           )
         : null,
     );
@@ -436,7 +448,14 @@ export class DiagnosisPage {
                 'li',
                 { 'data-severity': f.severity },
                 h('span', { class: 'finding-mark', 'aria-hidden': 'true' }, icon(f.severity === 'info' ? 'info' : 'warn')),
-                h('span', { class: 'finding-text' }, h('b', {}, w?.title ?? f.code), h('span', { class: 'path small' }, f.subject), h('span', { class: 'muted small' }, f.detail)),
+                h(
+                  'span',
+                  { class: 'finding-text' },
+                  h('b', {}, w?.title ?? unknownCodeText(f.code)),
+                  h('span', { class: 'path small' }, f.subject),
+                  f.detail && !isRawHostText(f.detail) ? h('span', { class: 'muted small' }, f.detail) : null,
+                  f.detail && isRawHostText(f.detail) ? techBlock(h('p', { class: 'selectable small' }, h('code', {}, f.code), ` ${f.detail}`)) : null,
+                ),
                 next(f.next_step),
               );
             }),

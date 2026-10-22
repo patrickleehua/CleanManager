@@ -21,7 +21,7 @@ import { OPERATION_STATE_LABEL, operationTone } from '../lib/words';
 import { LongProgress, atLeast, ensureReady, selectionBar, stageSteps, sumSizes, tierBadge, toIpcError, type Step } from './kit';
 import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, sizeText } from './parts';
 import { APP_OUTCOME, MAX_BATCH, batchActionText, batchSelectable, batchSelection, leftoverSections, leftoversTitle, type LeftoverSection } from './uninstallBatch';
-import { issueList } from './ui';
+import { issueList, learnMore } from './ui';
 
 type Filter = 'all' | 'available' | 'settings' | 'protected';
 
@@ -341,7 +341,7 @@ export class UninstallPage {
           a.adapter ? h('span', { class: 'obj-reason muted' }, '方式：', adapterText(a.adapter)) : null,
           st.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not' }, st.reason) : null,
           st.guidance ? h('span', { class: 'obj-reason' }, st.guidance) : null,
-          err ? h('span', { class: 'form-error', role: 'alert' }, err.message) : null,
+          errorLine(err ?? null),
         ),
         h('td', { class: 'col-flags' }, pill(st.label, st.tone)),
         h('td', { class: 'col-status' }, action),
@@ -385,21 +385,26 @@ export class UninstallPage {
       { class: 'panel work-aside', 'aria-labelledby': 'uninstall-how' },
       h('h2', { id: 'uninstall-how' }, '卸载怎样进行'),
       h('p', { class: 'small' }, words().uninstallHowReview),
-      h('p', { class: 'small' }, words().uninstallHowRescan),
-      h('p', { class: 'small' }, '一次选择多个应用时，它们在同一份计划中依次执行：每个应用单独退出、单独卸载、单独报告结果。一个应用没有退出或卸载失败，不影响其他应用；它的残留也不会进入第 2 步。'),
+      learnMore(
+        h('p', {}, words().uninstallHowRescan),
+        h('p', {}, '一次选择多个应用时，它们在同一份计划中依次执行：每个应用单独退出、单独卸载、单独报告结果。一个应用没有退出或卸载失败，不影响其他应用；它的残留也不会进入第 2 步。'),
+      ),
       h(
         'div',
         { class: 'aside-section' },
         h('h3', {}, '应用还在运行时'),
         h('p', { class: 'small' }, words().uninstallHowRunning),
-        h('p', { class: 'muted small' }, '确实需要结束仍在运行的进程时，只能在终端中创建一份单独审阅的计划，执行时还要输入 END 确认：'),
-        copyField('在终端中（需要人工确认）', 'cleanmanager apps uninstall plan create --instance <应用编号> --end-running'),
+        learnMore(
+          h('p', {}, '确实需要结束仍在运行的进程时，只能在终端中创建一份单独审阅的计划，执行时还要输入 END 确认：'),
+          copyField('在终端中（需要人工确认）', 'cleanmanager apps uninstall plan create --instance <应用编号> --end-running'),
+        ),
       ),
       h(
         'div',
         { class: 'aside-section' },
         h('h3', {}, '没有卸载入口的应用'),
-        h('p', { class: 'small' }, `安全软件、系统组件、共享运行库和 CleanManager 自己不能在这里卸载。${words().uninstallManually}`),
+        h('p', { class: 'small' }, '安全软件、系统组件、共享运行库和 CleanManager 自己不能在这里卸载。'),
+        learnMore(h('p', {}, words().uninstallManually)),
       ),
     );
   }

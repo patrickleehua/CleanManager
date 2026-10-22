@@ -600,5 +600,8 @@ export function mockBackend(): Backend {
     async onClosing() {
       return () => {};
     },
+    async onFeaturesChanged() {
+      return () => {};
+    },
   };
 }

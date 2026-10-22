@@ -78,9 +78,13 @@ pub struct DownloadsDto {
     pub root_display: Option<String>,
     pub older_than_days: u32,
     pub observed_at: String,
-    pub item_count: u64,
+    /// The number of old files; `None` when the folder could not be read (unknown, never 0).
+    pub item_count: Option<u64>,
     pub total_logical_bytes: Option<String>,
     pub note: Option<String>,
+    /// Structured cause named by `note` (docs/platforms/macos.md §6); absent when it names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_cause: Option<cm_core::permission::PermissionCause>,
     /// Largest first; nothing is selected.
     pub items: Vec<DownloadItemDto>,
 }
@@ -119,22 +123,30 @@ pub fn downloads_dto(r: &cm_core::insights::OldDownloadsReview, shown: usize) ->
         root_display: r.root.as_ref().map(RawPath::display),
         older_than_days: r.older_than_days,
         observed_at: r.observed_at.clone(),
-        item_count: r.item_count,
+        item_count: r.known_item_count(),
         total_logical_bytes: r.total_logical_bytes.map(|b| b.to_string()),
         note: r.note.clone(),
+        permission_cause: r.note.as_deref().and_then(cm_core::permission::cause_in),
         items,
     };
     (dto, DownloadsCache { root: r.root.clone(), items: ids })
 }
 
-/// Overview cards as the page shows them (paths and links stay in the host).
+/// Overview cards as the page shows them (paths and links stay in the host). The optional `permission_cause` is kept
+/// when the card has one.
 pub fn cards_of(wire: &Value) -> Vec<Value> {
     wire["cards"]
         .as_array()
         .map(|cards| {
             cards
                 .iter()
-                .map(|c| json!({"card_id": c["card_id"], "kind": c["kind"], "title": c["title"], "logical_bytes": c["logical_bytes"], "count": c["count"], "size_note": c["size_note"], "observed_at": c["observed_at"]}))
+                .map(|c| {
+                    let mut v = json!({"card_id": c["card_id"], "kind": c["kind"], "title": c["title"], "logical_bytes": c["logical_bytes"], "count": c["count"], "size_note": c["size_note"], "observed_at": c["observed_at"]});
+                    if let Some(cause) = c.get("permission_cause").filter(|x| !x.is_null()) {
+                        v["permission_cause"] = cause.clone();
+                    }
+                    v
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -608,13 +620,27 @@ mod tests {
         let r = old_downloads(Some(p(r"C:\Users\Lin\Downloads")), entries, now, 90, "2026-10-15T00:00:00Z", None);
         let (dto, cache) = downloads_dto(&r, 10);
         assert_eq!(dto.items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["big.iso", "small.zip"], "recent files are not old; largest first");
-        assert_eq!(dto.item_count, 2);
+        assert_eq!(dto.item_count, Some(2));
         assert_eq!(dto.total_logical_bytes.as_deref(), Some("9010"));
         assert!(dto.items[0].installer_like);
         assert_eq!(cache.items[0].0, dto.items[0].item_id);
         assert_eq!(cache.items[0].1.display(), r"C:\Users\Lin\Downloads\big.iso");
         let (short, _) = downloads_dto(&r, 1);
-        assert_eq!((short.items.len(), short.item_count), (1, 2), "the totals cover every file even when fewer rows are shown");
+        assert_eq!((short.items.len(), short.item_count), (1, Some(2)), "the totals cover every file even when fewer rows are shown");
+        assert!(serde_json::to_value(&dto).unwrap().get("permission_cause").is_none(), "no cause, no field");
+    }
+
+    /// An unreadable or pending Downloads folder has no known file count (null, never 0); its cause travels along.
+    #[test]
+    fn an_unknown_downloads_folder_has_no_file_count_and_keeps_its_cause() {
+        let note = "permission_required (permission_cause=privacy_prompt_pending): macOS did not answer within 5 s";
+        let mut r = old_downloads(Some(p(r"C:\Users\Lin\Downloads")), Vec::new(), 1_800_000_000, 90, "2026-10-15T00:00:00Z", Some(note.into()));
+        r.total_logical_bytes = None;
+        let (dto, _) = downloads_dto(&r, 10);
+        assert_eq!((dto.item_count, dto.total_logical_bytes.as_deref()), (None, None));
+        let wire = serde_json::to_value(&dto).unwrap();
+        assert!(wire["item_count"].is_null(), "{wire}");
+        assert_eq!(wire["permission_cause"], "privacy_prompt_pending");
     }
 
     #[test]
@@ -633,6 +659,24 @@ mod tests {
         let cards = cards_of(&wire);
         assert_eq!(cards[0]["logical_bytes"], "12");
         assert!(cards[0].get("link").is_none());
+        assert!(cards[0].get("permission_cause").is_none(), "no cause, no field");
+        let pending = json!({"cards": [{"card_id": "c2", "kind": "old_downloads", "title": "Old downloads", "logical_bytes": null, "count": null,
+            "size_note": "permission_required (permission_cause=privacy_prompt_pending): x", "observed_at": "t", "permission_cause": "privacy_prompt_pending"}]});
+        let cards = cards_of(&pending);
+        assert_eq!((cards[0]["permission_cause"].as_str(), cards[0]["count"].is_null()), (Some("privacy_prompt_pending"), true));
+    }
+
+    /// The overview the page gets keeps the structured cause of cards and of the old-downloads review.
+    #[test]
+    fn overview_wire_causes_reach_the_page() {
+        let note = "permission_required (permission_cause=undetermined): denied";
+        let mut r = old_downloads(Some(p(r"C:\Users\Lin\Downloads")), Vec::new(), 1_800_000_000, 90, "t", Some(note.into()));
+        r.total_logical_bytes = None;
+        let wire = cm_app::insights::overview_wire(&[], &r, &[], "t");
+        let cards = cards_of(&wire);
+        let dl = cards.iter().find(|c| c["kind"] == "old_downloads").expect("old downloads card");
+        assert_eq!(dl["permission_cause"], "undetermined", "{dl}");
+        assert_eq!(downloads_dto(&r, 10).0.permission_cause, Some(cm_core::permission::PermissionCause::Undetermined));
     }
 
     /// Scripted tasks: nothing on the machine is touched.

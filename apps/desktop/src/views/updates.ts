@@ -15,6 +15,7 @@ import type { IpcError } from '../lib/types';
 import { LongProgress, ensureReady, noticeLine, selectionBar, toIpcError } from './kit';
 import { copyField, emptyState, errorLine, pageHead, pill } from './parts';
 import { notOnThisPlatform, words } from '../lib/platform';
+import { learnMore } from './ui';
 
 type Filter = 'all' | 'update_available' | 'cannot_check' | 'up_to_date';
 
@@ -288,7 +289,7 @@ export class UpdatesPage {
         counts.not_checked ? h('li', {}, h('span', {}, UPDATE_STATE.not_checked.label), h('b', { class: 'num' }, groupDigits(counts.not_checked))) : null,
       ),
       h('p', { class: 'small' }, words().updatesPlanNote),
-      h('p', { class: 'small' }, '正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。'),
+      learnMore(h('p', {}, '正在运行的应用会被跳过并提示“请先关闭”；CleanManager 不会为了更新而关闭应用。')),
       errorLine(this.createError),
       create,
       h(

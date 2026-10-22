@@ -21,6 +21,8 @@ export interface GridCallbacks {
   onSort(sort: SortKey): void;
   onNeedMore(): void;
   isSelected(id: string): boolean;
+  /** The row under the pointer (the chart marks its tile); null when the pointer leaves the table. */
+  onHover?(entry: Entry | null): void;
 }
 
 export interface GridData {
@@ -65,6 +67,7 @@ export class EntryGrid {
       this.empty,
     );
     this.body.addEventListener('scroll', () => this.schedule());
+    this.body.addEventListener('mouseleave', () => this.cb.onHover?.(null));
     this.el.addEventListener('keydown', (e) => this.onKey(e));
     this.el.addEventListener('focus', () => {
       if (!this.activeId && this.data.rows.length) this.setActive(this.data.rows[0].entry_id, true, true);
@@ -202,7 +205,7 @@ export class EntryGrid {
     // DIN-05: read-only marker; the basis is in the tooltip and for screen readers. It never selects.
     const hint = hintOf(e);
     const hintTag = hint
-      ? h('span', { class: 'row-tag hint-tag', title: hintTitle(hint) }, HINT_LABEL, h('span', { class: 'sr-only' }, `，依据：${hintBasisText(hint)}`))
+      ? h('span', { class: 'hint-tag', title: hintTitle(hint) }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), HINT_LABEL, h('span', { class: 'sr-only' }, `，依据：${hintBasisText(hint)}`))
       : null;
     const row = h(
       'div',
@@ -223,12 +226,14 @@ export class EntryGrid {
         hintTag,
         canOpen(e) ? h('span', { class: 'chev', 'aria-hidden': 'true' }, '›') : null,
       ),
-      h('div', { role: 'gridcell', class: 'col col-num', title: formatExactBytes(logical) }, bar, h('span', {}, formatBytes(logical))),
+      h('div', { role: 'gridcell', class: 'col col-num', title: formatExactBytes(logical) }, h('span', {}, formatBytes(logical))),
       h('div', { role: 'gridcell', class: 'col col-num col-alloc', title: formatExactBytes(e.allocated_bytes) }, formatBytes(e.allocated_bytes)),
-      h('div', { role: 'gridcell', class: 'col col-kind' }, kindLabel(e)),
-      h('div', { role: 'gridcell', class: 'col col-note' }, note.join('，')),
+      h('div', { role: 'gridcell', class: 'col col-kind', title: kindLabel(e) }, kindLabel(e)),
+      h('div', { role: 'gridcell', class: 'col col-note', title: note.join('，') || null }, note.join('，')),
     );
     row.style.top = `${i * ROW_HEIGHT}px`;
+    // The share bar runs along the row's bottom edge (a fill of the divider), so it never reads as an underline.
+    row.append(bar);
     row.addEventListener('mousedown', (ev) => {
       if ((ev.target as HTMLElement).classList.contains('check') || ev.ctrlKey || ev.metaKey) {
         ev.preventDefault();
@@ -243,6 +248,7 @@ export class EntryGrid {
     row.addEventListener('dblclick', () => {
       if (canOpen(e)) this.cb.onOpen(e);
     });
+    row.addEventListener('mouseenter', () => this.cb.onHover?.(e));
     return row;
   }
 

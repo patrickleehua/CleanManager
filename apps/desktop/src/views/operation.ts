@@ -7,11 +7,14 @@
 import type { App } from '../main';
 import { toIpcError } from '../lib/api';
 import { formatBytes, groupDigits, parseBytes } from '../lib/bytes';
-import { h, keepFocus, replace } from '../lib/dom';
+import { explainResult, refusalText, resultText } from '../lib/codes';
+import { h, icon, keepFocus, replace } from '../lib/dom';
+import { OPERATION_TEXT, operationAction, operationBanner, resultIssues } from '../lib/operationModel';
 import { formatElapsed, formatTime } from '../lib/format';
 import type { IpcError, ItemFilter, Operation, OperationItem } from '../lib/types';
-import { AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, explainCode, operationTone } from '../lib/words';
-import { copyField, emptyState, errorLine, pageHead, pill, segBar, statusWord } from './parts';
+import { AVAILABILITY_LABEL } from '../lib/words';
+import { copyField, errorLine, pageHead, pill, segBar, statusWord } from './parts';
+import { emptyBlock, issueList, statusBanner } from './ui';
 import type { MaintenanceReport } from '../lib/suiteTypes';
 import { ELEVATION_WORD, TASK_WORDS } from '../lib/suiteWords';
 import { platform, words } from '../lib/platform';
@@ -150,8 +153,11 @@ export class OperationPage {
     this.actionError = null;
     this.update();
     try {
-      this.op = await this.app.backend.reconcileOperation(this.opId);
-      this.app.announce('核对完成');
+      const op = await this.app.backend.reconcileOperation(this.opId);
+      this.op = op;
+      // The end of a run is announced globally (main.ts); a reconciliation says its new outcome here, once.
+      const b = operationBanner({ state: op.state, plan_kind: op.plan_kind, mode: op.mode, counts: op.counts, total: op.total, needs_reconcile: op.needs_reconcile, live: false, apps: op.uninstall_apps?.length ?? 0 });
+      this.app.announce(`核对完成：${b.title}。${b.sentence}`);
       await this.loadItems(false);
     } catch (e) {
       this.actionError = toIpcError(e);
@@ -170,11 +176,11 @@ export class OperationPage {
 
   private render(): void {
     if (!this.opId) {
-      replace(this.body, h('h1', { id: 'op-title' }, '执行结果'), emptyState('没有打开的执行记录', '执行一份已批准的计划后，这里显示逐项结果。', h('button', { type: 'button', onclick: () => this.app.navigate('activity') }, '查看活动记录')));
+      replace(this.body, h('h1', { id: 'op-title' }, '执行结果'), emptyBlock({ title: '没有打开的执行记录', body: '执行一份已批准的计划后，这里显示逐项结果。', actions: [h('button', { type: 'button', onclick: () => this.app.navigate('activity') }, '查看活动记录')] }));
       return;
     }
     if (this.error && !this.op) {
-      replace(this.body, pageHead({ id: 'op-title', title: '执行结果', back: this.back() }), h('div', { class: 'panel' }, errorLine(this.error)));
+      replace(this.body, pageHead({ id: 'op-title', title: '执行结果', back: this.back() }), statusBanner({ kind: 'failed', level: 2, titleId: 'op-load-title', title: '无法读取执行记录', sentence: refusalText(this.error) }));
       return;
     }
     const op = this.op;
@@ -187,56 +193,49 @@ export class OperationPage {
     const counts = live ? live.counts : op.counts;
     const total = live ? live.total : op.total;
     const state = live ? (live.cancelRequested ? 'stopping' : 'running') : op.state;
-    const action = (op.plan_kind === 'cleanup' || op.plan_kind === 'manual_trash') && op.mode ? MODE_LABEL[op.mode] : op.plan_kind === 'unknown' ? '未知计划' : (PLAN_KIND_LABEL[op.plan_kind] ?? op.plan_kind);
+    const banner = operationBanner({ state, plan_kind: op.plan_kind, mode: op.mode, counts, total, needs_reconcile: op.needs_reconcile && !live, live: !!live, apps: op.uninstall_apps?.length ?? 0 });
     replace(
       this.body,
-      pageHead({
-        id: 'op-title',
-        title: '执行结果',
-        back: this.back(),
+      // The page head keeps the way back and the plan; the outcome banner is the page's heading.
+      h('div', { class: 'page-head op-head' }, h('div', { class: 'page-head-text' }, h('button', { type: 'button', class: 'back-link', onclick: this.back().onClick }, icon('back'), h('span', {}, this.back().label))), h('div', { class: 'head-actions' }, h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openPlan(op.plan_id, 'activity') }, '查看计划'))),
+      statusBanner({
+        kind: banner.kind,
+        titleId: 'op-title',
+        srPrefix: '执行结果：',
+        title: banner.title,
+        sentence: banner.sentence,
         meta: [
-          h('code', { class: 'selectable' }, op.operation_id),
-          pill(OPERATION_STATE_LABEL[state] ?? state, operationTone(state)),
-          action,
+          operationAction(op),
           op.started_at ? `开始于 ${formatTime(op.started_at)}` : null,
           op.finished_at ? `用时 ${formatElapsed(op.started_at, op.finished_at)}` : null,
         ],
-        actions: [h('button', { type: 'button', class: 'quiet', onclick: () => this.app.openPlan(op.plan_id, 'activity') }, '查看计划')],
+        extra: [segBar(total, counts, live ? '执行进度' : '执行结果')],
+        actions: this.bannerActions(op, state, !!live),
       }),
-      h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.progressPanel(op, state, total, counts, !!live), this.appsPanel(op, !!live), this.itemsPanel()), this.summaryPanel(op, state)),
+      errorLine(this.actionError),
+      h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.issuesPanel(op, !!live), this.appsPanel(op, !!live), this.itemsPanel()), this.summaryPanel(op, state)),
     );
   }
 
-  private progressPanel(op: Operation, state: string, total: number, counts: Operation['counts'], live: boolean): HTMLElement {
-    const lines: (HTMLElement | null)[] = [];
-    if (state === 'running')
-      lines.push(h('p', { class: 'muted' }, '每一项在执行前都会重新检查对象、占用和保护。计划条目数是进度的分母，不代表释放空间的比例。'));
-    if (state === 'stopping') lines.push(h('p', {}, '已请求停止：正在进行的动作结束后不再开始新的动作。已处理的项目不会自动撤销。'));
-    if (op.needs_reconcile && !live)
-      lines.push(
-        h(
-          'div',
-          { class: 'notice warn', role: 'status' },
-          h('span', {}, '有动作的结果无法确认，可能已经生效。先进行只读核对；核对不会重新执行任何动作，也不会自动重试。'),
-          h('button', { type: 'button', id: 'op-reconcile', class: 'primary', disabled: this.busy, onclick: () => void this.reconcile() }, this.busy ? '正在核对…' : '核对结果'),
-        ),
-      );
-    if (state === 'cancelled') lines.push(h('p', {}, '你停止了这次执行。停止前完成的项目保留其结果；未开始的项目没有被触碰。'));
-    if (state === 'partial' && op.plan_kind === 'uninstall' && counts.failed + counts.skipped === 0)
-      lines.push(h('p', {}, '卸载程序已运行，但重新检查发现安装目录或卸载登记仍在，所以记为“部分完成”。剩下的内容在“审阅残留”中单独处理。'));
-    else if (state === 'partial' && op.plan_kind === 'maintenance' && counts.failed + counts.skipped === 0)
-      lines.push(h('p', {}, '有任务需要你跟进（见下表），所以记为“部分完成”。'));
-    else if (state === 'partial' && op.plan_kind === 'uninstall' && (op.uninstall_apps?.length ?? 0) > 1)
-      lines.push(h('p', {}, '有应用没有卸载或卸载后仍有剩余，所以整体记为“部分完成”。每个应用的结果见“逐个应用”；一个应用失败没有影响其他应用。'));
-    else if (state === 'partial') lines.push(h('p', {}, '部分项目被跳过或失败，原因见下表。需要处理剩余对象时，请重新分析并生成新计划；系统不会重做已成功的项目。'));
-    const stop = live && state === 'running' ? h('button', { type: 'button', id: 'op-stop', class: 'danger-quiet', onclick: () => void this.stop() }, '停止后续操作') : null;
+  private bannerActions(op: Operation, state: string, live: boolean): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    if (live && state === 'running') out.push(h('button', { type: 'button', id: 'op-stop', class: 'danger-quiet', onclick: () => void this.stop() }, '停止后续操作'));
+    if (op.needs_reconcile && !live) out.push(h('button', { type: 'button', id: 'op-reconcile', class: 'primary', disabled: this.busy, onclick: () => void this.reconcile() }, this.busy ? '正在核对…' : '核对结果'));
+    return out;
+  }
+
+  /** What did not succeed, grouped by meaning through the shared issue lines (codes in 技术详情). */
+  private issuesPanel(op: Operation, live: boolean): HTMLElement | null {
+    if (live || op.plan_kind === 'maintenance') return null;
+    const issues = resultIssues(this.items);
+    if (!issues.length) return null;
+    const notOk = op.counts.skipped + op.counts.failed + op.counts.unknown + op.counts.not_started;
     return h(
       'section',
-      { class: 'panel progress-panel', 'aria-labelledby': 'progress-title' },
-      h('div', { class: 'panel-head' }, h('h2', { id: 'progress-title' }, live ? '进度' : '结果'), stop),
-      segBar(total, counts, live ? '执行进度' : '执行结果'),
-      ...lines,
-      errorLine(this.actionError),
+      { class: 'panel gaps-panel op-issues', 'data-tone': 'warn', 'aria-labelledby': 'op-issues-title' },
+      h('h2', { id: 'op-issues-title' }, OPERATION_TEXT.issuesTitle, h('span', { class: 'il-count num' }, `${groupDigits(notOk)} 项`)),
+      issueList(issues, { label: OPERATION_TEXT.issuesLabel, explain: explainResult, pathMax: 72 }),
+      this.itemsNext && this.filter !== 'succeeded' ? h('p', { class: 'muted small' }, `这里按原因合并了已加载的 ${groupDigits(this.items.length)} 项；下方表格可以继续加载其余项目。`) : null,
     );
   }
 
@@ -426,7 +425,7 @@ export class OperationPage {
       const outcome = maintenance && i.code && OUTCOMES.has(i.code) ? (i.code as Outcome) : null;
       const taskId = maintenance ? i.path_display.split('@')[0] : '';
       const [code, ...rest] = (i.message ?? '').split(': ');
-      const reason = outcome ? taskReason(code, rest.join(': ') || (i.message ?? '')) : i.code ? explainCode(i.code, i.message) : null;
+      const reason = outcome ? taskReason(code, rest.join(': ') || (i.message ?? '')) : i.code ? resultText(i.code) : null;
       return h(
         'tr',
         {},
@@ -436,7 +435,8 @@ export class OperationPage {
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, maintenance ? (TASK_WORDS[taskId]?.title ?? i.name) : i.name),
           h('span', { class: 'obj-path path' }, i.original_path_display ? `${i.original_path_display}` : i.path_display),
-          reason ? h('span', { class: 'obj-reason' }, reason) : null,
+          // The code and the host's message are in the grouped issue lines' 技术详情 above; here only as a tooltip.
+          reason ? h('span', { class: 'obj-reason', title: i.code ? `${i.code}${i.message ? `：${i.message}` : ''}` : null }, reason) : null,
         ),
         sizes ? h('td', { class: 'col-size num' }, formatBytes(i.logical_bytes)) : null,
       );

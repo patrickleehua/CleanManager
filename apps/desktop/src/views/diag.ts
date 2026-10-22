@@ -28,6 +28,7 @@ import {
 } from '../lib/diagWords';
 import { emptyState, errorText, pageHead, pill } from './parts';
 import { openPreview } from './diagPreview';
+import { techBlock } from './ui';
 import { words } from '../lib/platform';
 
 const ORIGIN_LABEL: Record<string, string> = { cleanup: '清理', disk: '磁盘', apps: '应用' };
@@ -367,7 +368,7 @@ export class DiagPage {
       { class: 'panel diag-stopped' },
       h('h2', {}, failed ? '诊断失败' : '诊断已取消'),
       failed && d.failure
-        ? h('p', {}, h('b', {}, FAILURE_HINT[d.failure.code] ?? '诊断失败。'), ' ', d.failure.message)
+        ? h('div', {}, h('p', {}, h('b', {}, FAILURE_HINT[d.failure.code] ?? '诊断失败。')), d.failure.message ? techBlock(h('p', { class: 'selectable small' }, h('code', {}, d.failure.code), ` ${d.failure.message}`)) : null)
         : h('p', {}, '没有采用任何回答；文件保持原状。'),
       h('p', { class: 'small muted' }, '右侧的本机依据仍然有效。没有尝试其他提供方或模型。'),
       failed && d.failure?.code && ['auth_failed', 'credential_missing', 'model_unavailable', 'unsupported_mode'].includes(d.failure.code)

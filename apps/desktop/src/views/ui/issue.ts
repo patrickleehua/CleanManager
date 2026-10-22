@@ -1,7 +1,7 @@
 // Issue lines: the Chinese explanation is always the main text; the code and the host's raw (English)
 // message sit in a collapsed "技术详情". Issues with the same meaning are one line with a count.
 
-import { groupIssues, type IssueGroup } from '../../lib/codes';
+import { groupIssues, type ExplainedIssue, type IssueGroup } from '../../lib/codes';
 import { groupDigits } from '../../lib/bytes';
 import { h, icon } from '../../lib/dom';
 import type { Issue } from '../../lib/types';
@@ -59,7 +59,10 @@ function techDetails(g: IssueGroup): HTMLElement {
   );
 }
 
-/** A list of issues, grouped by meaning. */
-export function issueList(issues: Issue[], opts: { label: string; pathMax?: number }): HTMLElement {
-  return h('ul', { class: 'issue-lines', 'aria-label': opts.label }, ...groupIssues(issues).map((g) => issueLine(g, opts)));
+/**
+ * A list of issues, grouped by meaning. `explain` picks the code table: scan and inventory issues by
+ * default, `explainResult` for the per-item results of an execution.
+ */
+export function issueList(issues: Issue[], opts: { label: string; pathMax?: number; explain?: (i: Issue) => ExplainedIssue }): HTMLElement {
+  return h('ul', { class: 'issue-lines', 'aria-label': opts.label }, ...groupIssues(issues, opts.explain).map((g) => issueLine(g, opts)));
 }

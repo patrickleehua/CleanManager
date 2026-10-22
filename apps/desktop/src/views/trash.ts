@@ -11,6 +11,7 @@ import { words } from '../lib/platform';
 import type { Entry, TrashInspection } from '../lib/types';
 import { atLeast, ensureReady, sumSizes, toIpcError } from './kit';
 import { errorText } from './parts';
+import { refusalText as codeRefusalText } from '../lib/codes';
 
 const MAX_ENTRIES = 50;
 
@@ -28,7 +29,8 @@ const REFUSAL: Record<string, string> = {
 function refusalText(i: TrashInspection): string {
   const r = i.refusal;
   if (!r) return '';
-  const base = REFUSAL[r.reason] ?? r.message;
+  // A reason without words here reads through the shared code table (never the host's raw message).
+  const base = REFUSAL[r.reason] ?? codeRefusalText({ reason: r.reason });
   return base.replace('回收站', words().bin);
 }
 

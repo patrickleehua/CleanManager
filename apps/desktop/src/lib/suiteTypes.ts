@@ -1,7 +1,7 @@
 // IPC shapes of 软件 › 卸载 / 更新, 优化, 状态 › 进程 and the space-insight overview (mirrors
 // src-tauri/src/{software,system}.rs). Byte counts are decimal strings or null.
 
-import type { Issue } from './types';
+import type { Issue, PermissionCause } from './types';
 
 // ---------------------------------------------------------------------------------------------
 // 软件 › 卸载 (UNI-01..10)
@@ -337,6 +337,8 @@ export interface InsightCard {
   count: number | null;
   size_note: string | null;
   observed_at: string | null;
+  /** Structured cause named by `size_note` (absent when it names none). */
+  permission_cause?: PermissionCause | null;
 }
 
 export interface DownloadItem {
@@ -353,9 +355,12 @@ export interface OldDownloads {
   root_display: string | null;
   older_than_days: number;
   observed_at: string;
-  item_count: number;
+  /** Null when the folder could not be read or macOS has not answered its prompt (unknown, never 0). */
+  item_count: number | null;
   total_logical_bytes: string | null;
   note: string | null;
+  /** Structured cause named by `note` (absent when it names none). */
+  permission_cause?: PermissionCause | null;
   /** Largest first; nothing is selected. */
   items: DownloadItem[];
 }

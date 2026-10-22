@@ -74,6 +74,8 @@ fn main() {
             app.manage(state);
             app.manage(resident.clone());
             resident::setup(app.handle(), &resident);
+            // D15: the experimental-features switch is shared with the CLI; a change made there takes effect here.
+            resident::watch_features(app.handle(), &resident);
             Ok(())
         })
         .on_window_event(|window, event| {

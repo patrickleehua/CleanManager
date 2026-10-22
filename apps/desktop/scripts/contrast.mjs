@@ -26,6 +26,8 @@ export const PAIRS = [
   ['danger', 'danger-bg', 4.5, '危险通知'],
   ['danger', 'surface', 4.5, '危险文字 / 面板'],
   ['danger-ink', 'danger', 4.5, '危险按钮文字'],
+  ['text', 'danger-bg', 4.5, '“无法撤销”徽标文字 / 斜纹底'],
+  ['warn', 'bg', 4.5, '大小未知提示 / 页面底色'],
   ['tile-ink', 'cat-folder', 4.5, '矩形图文字 / 文件夹'],
   ['tile-ink', 'cat-media', 4.5, '矩形图文字 / 媒体'],
   ['tile-ink', 'cat-archive', 4.5, '矩形图文字 / 压缩包'],

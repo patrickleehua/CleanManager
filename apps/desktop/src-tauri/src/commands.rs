@@ -192,15 +192,7 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
     }
     let report = idx.scan_report(id)?.unwrap_or(serde_json::Value::Null);
     let all_issues = report["issues"].as_array().cloned().unwrap_or_default();
-    let issues = all_issues
-        .iter()
-        .take(MAX_ISSUES)
-        .map(|i| IssueDto {
-            code: i["code"].as_str().unwrap_or("").to_owned(),
-            scope_display: i["scope_display"].as_str().unwrap_or("").to_owned(),
-            message: i["message"].as_str().unwrap_or("").to_owned(),
-        })
-        .collect();
+    let issues = all_issues.iter().take(MAX_ISSUES).map(IssueDto::from_wire).collect();
     Ok(ScanStatusDto {
         scan_id: id.to_owned(),
         scope_id: Some(v.scope_id),

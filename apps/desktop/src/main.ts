@@ -260,6 +260,13 @@ async function boot(): Promise<void> {
     announce(alerts.map((a) => `电量低：${a.name} ${a.percent}%`).join('；'));
     (pages.resident as ResidentPage).alerted(alerts);
   });
+  // D15: the switch changed from the CLI; the host already stopped the resident utilities when it went off. Fresh
+  // capabilities make open gated pages show (or leave) their "默认关闭" page.
+  await backend.onFeaturesChanged((e) => {
+    void backend.capabilities().then((caps) => store.set({ caps }), () => undefined);
+    const stopped = e.resident_stopped ? (e.error ? '；常驻工具已停止，但开机启动项未能更新，下次启动时会重试' : '；未通过门禁的工具和常驻工具已停止') : '';
+    announce(`${e.experimental_features ? '实验功能已在命令行中开启' : '实验功能已在命令行中关闭'}${stopped}`);
+  });
   await backend.onClosing((e) => {
     store.set({ closing: true });
     announce(e.waiting_for.includes('operation') ? '正在停止后续操作，当前动作结束后关闭窗口' : '正在安全停止扫描，完成后关闭窗口');

@@ -15,7 +15,14 @@ import type { GateRow, IpcError, Policy, ProtectionItem, ProtectionList } from '
 import { LAYER_LABEL, MATCH_LABEL, MODE_LABEL, POLICY_STATE_LABEL } from '../lib/words';
 import { DiagSettings } from './diagSettings';
 import { confirmInline, copyField, errorLine, errorText, pageHead, pill } from './parts';
-import { refusalText } from '../lib/codes';
+import { protectionText, refusalText, unknownCodeText } from '../lib/codes';
+import { learnMore, techBlock } from './ui';
+
+/** Words of the settings page that are not data (one table for the language switch). */
+const SETTINGS_TEXT = {
+  experimentalLede: '下面这些工具还没有通过发布前验收，默认关闭；开启后只供你在这台电脑上评估。',
+  capsSummary: (n: number, unverified: number) => (unverified ? `${n} 项读取与执行能力，其中 ${unverified} 项尚未在真机验证。` : `${n} 项读取与执行能力。`),
+} as const;
 
 type Pending = { kind: 'remove'; id: string } | { kind: 'enable'; id: string } | { kind: 'revoke'; id: string } | null;
 
@@ -193,7 +200,9 @@ export class SettingsPage {
         h('dt', {}, '授权身份'),
         h('dd', {}, h('code', { class: 'selectable' }, c.principal)),
       ),
-      h('ul', { class: 'cap-list' }, ...c.capabilities.map((x) => h('li', {}, h('code', {}, x.name), h('span', { class: 'muted' }, capState[x.state] ?? x.state)))),
+      // The backend capability names are machine facts: one line in words, the list in 技术详情.
+      h('p', { class: 'muted small' }, SETTINGS_TEXT.capsSummary(c.capabilities.length, c.capabilities.filter((x) => x.state === 'unverified').length)),
+      techBlock(h('ul', { class: 'cap-list' }, ...c.capabilities.map((x) => h('li', {}, h('code', {}, x.name), h('span', { class: 'muted' }, capState[x.state] ?? unknownCodeText(x.state)))))),
     );
   }
 
@@ -208,10 +217,11 @@ export class SettingsPage {
     return this.section(
       'set-experimental',
       '实验功能',
-      h(
-        'p',
-        { class: 'muted' },
-        `下面这些工具还没有通过发布门禁 G1、G3、G4 或 AID：它们还没有在 Windows 和 macOS 真机上完成验收，所以默认关闭，关闭时界面只说明原因，命令行也会拒绝。开启后它们只供你在这台电脑上评估，并不因此算作已发布；每项更改仍然要由你审阅计划。关闭时会停止常驻工具（${words().tray}、亮屏、清洁屏幕、隐私指示和电量提醒），并删除它们创建的登录启动项。`,
+      h('p', { class: 'muted' }, SETTINGS_TEXT.experimentalLede),
+      learnMore(
+        h('p', {}, '下面这些工具还没有通过发布门禁 G1、G3、G4 或 AID：它们还没有在 Windows 和 macOS 真机上完成验收，所以默认关闭，关闭时界面只说明原因，命令行也会拒绝。'),
+        h('p', {}, '开启后它们只供你在这台电脑上评估，并不因此算作已发布；每项更改仍然要由你审阅计划。'),
+        h('p', {}, `关闭时会停止常驻工具（${words().tray}、亮屏、清洁屏幕、隐私指示和电量提醒），并删除它们创建的登录启动项。`),
       ),
       h(
         'div',
@@ -264,7 +274,8 @@ export class SettingsPage {
     return this.section(
       'set-protection',
       '保护清单',
-      h('p', { class: 'muted' }, '受保护的对象不会成为候选，执行前也会再次检查。保护只会收紧可清理的范围；保护单个位置或整条规则也可以在清理页的候选详情里完成。'),
+      h('p', { class: 'muted' }, '受保护的对象不会成为候选，执行前也会再次检查。'),
+      learnMore(h('p', {}, '保护只会收紧可清理的范围；保护单个位置或整条规则也可以在清理页的候选详情里完成。')),
       p.problem
         ? h('div', { class: 'notice warn', role: 'alert' }, h('span', {}, `保护清单无法读取（${p.problem}）。所有写操作已停止；文件 ${p.file_display ?? ''} 保持原样，修复后恢复。`))
         : null,
@@ -291,7 +302,7 @@ export class SettingsPage {
     return h(
       'li',
       { class: 'prot-row', 'data-layer': i.layer },
-      h('div', { class: 'prot-main' }, h('span', { class: 'path' }, i.display), h('span', { class: 'muted small' }, `${LAYER_LABEL[i.layer]}，${MATCH_LABEL[i.match] ?? i.match}${i.note ? `，备注：${i.note}` : ''}${i.added_at ? `，添加于 ${formatTime(i.added_at)}` : ''}`)),
+      h('div', { class: 'prot-main' }, h('span', { class: 'path', title: i.layer === 'default_category' ? i.display : null }, i.layer === 'default_category' ? protectionText(i.protection_id.replace(/^dc_/, '')) : i.display), h('span', { class: 'muted small' }, `${LAYER_LABEL[i.layer]}，${MATCH_LABEL[i.match] ?? i.match}${i.note ? `，备注：${i.note}` : ''}${i.added_at ? `，添加于 ${formatTime(i.added_at)}` : ''}`)),
       remove,
       removing
         ? confirmInline({
@@ -320,7 +331,8 @@ export class SettingsPage {
     return this.section(
       'set-policies',
       '有限策略',
-      h('p', { class: 'muted' }, '默认没有任何策略，每份计划都需要你批准。策略只覆盖同一扫描范围、指定规则版本和处理方式下、全部为低风险项的计划，并受单次与 24 小时额度限制。在计划页可以为同类计划创建暂停状态的策略。'),
+      h('p', { class: 'muted' }, '默认没有任何策略，每份计划都需要你批准。'),
+      learnMore(h('p', {}, '策略只覆盖同一扫描范围、指定规则版本和处理方式下、全部为低风险项的计划，并受单次与 24 小时额度限制。'), h('p', {}, '在计划页可以为同类计划创建暂停状态的策略。')),
       this.policyError ? errorLine(this.policyError) : null,
       !list ? h('p', { class: 'muted', role: 'status' }, '正在读取…') : list.length ? h('ul', { class: 'policy-list' }, ...list.map((p) => this.policyRow(p))) : h('p', { class: 'small' }, '没有策略。所有计划都需要人工批准。'),
     );
