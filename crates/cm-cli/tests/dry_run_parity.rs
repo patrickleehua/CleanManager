@@ -137,6 +137,10 @@ fn dry_run_equals_the_plan_consumes_nothing_and_marks_changed_rows_stale() {
     let stale = plan["stale_items"].as_array().unwrap();
     assert_eq!(stale.len(), 1, "{plan}");
     assert_eq!((stale[0]["object_id"].as_str(), stale[0]["reason"].as_str()), (Some(two.as_str()), Some("missing")));
+    // R3-07: the left-out row stays with the stored plan: `plan show` lists it the same way later.
+    let pid = plan["body"]["plan_id"].as_str().unwrap().to_owned();
+    let (code, shown) = cli(&["plan", "show", &pid], &store, &local, &rules);
+    assert_eq!((code, &shown["stale_items"]), (0, &plan["stale_items"]), "{shown}");
 
     // Every requested row changed: plan_stale, exit 6, nothing created.
     let plans_before = audit_counts(&store).0;

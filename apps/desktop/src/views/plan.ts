@@ -11,7 +11,7 @@ import { refusalText, unknownCodeText } from '../lib/codes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
 import { authView, kindVerb, NO_SPACE, planCapability, planExplain, planStatement } from '../lib/planModel';
-import type { IpcError, PlanDetail, PlanItem } from '../lib/types';
+import type { IpcError, PlanDetail, PlanExcluded, PlanItem } from '../lib/types';
 import { AUTH_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, POLICY_MISMATCH_LABEL, POLICY_STATE_LABEL, digestGroups, formatCountdown, normalizeCode } from '../lib/words';
 import { copyField, errorLine, pageHead, pill, type Tone } from './parts';
 import { EXTENSIONS, TOOLS, capabilityOff, type GatedSection } from '../lib/nav';
@@ -25,7 +25,7 @@ import { emptyBlock, gateBadge, pathText, stateLine, statusBanner } from './ui';
 import { openExperimentalSettings } from './gateOff';
 import { capabilityLabel } from './settings';
 import { processPurpose, unidentifiedReason } from '../lib/processWords';
-import { adapterDisplay } from '../lib/uninstallWords';
+import { adapterDisplay, rowDisplay } from '../lib/uninstallWords';
 import { t } from '../i18n';
 
 /** Words of the plan page that are not data (one table for the language switch). */
@@ -55,6 +55,26 @@ function pageName(p: Page): string {
 const SIZED = new Set(['file', 'directory']);
 
 const ITEM_PAGE = 100;
+
+/** Why a selected row was left out of a plan when it was frozen (R3-07), in words. */
+export function excludedReason(reason: string): string {
+  return reason === 'changed' ? t('plan.excludedChanged') : reason === 'missing' ? t('plan.excludedMissing') : t('plan.excludedOther');
+}
+
+/** R3-07: the selected rows this plan left out (changed or gone since discovery), each with its reason. */
+function excludedList(excluded: PlanExcluded[]): HTMLElement | null {
+  if (!excluded.length) return null;
+  return h(
+    'div',
+    { class: 'notice warn plan-excluded', id: 'plan-excluded', role: 'note' },
+    h('h3', {}, t('plan.excludedTitle', { n: excluded.length })),
+    h(
+      'ul',
+      {},
+      ...excluded.map((x) => h('li', {}, h('span', { class: 'obj-name' }, x.name), ' ', pathText(x.path_display, { max: 64, className: 'obj-path' }), ' ', h('span', { class: 'obj-reason', title: x.detail }, excludedReason(x.reason)))),
+    ),
+  );
+}
 
 export class PlanPage {
   el: HTMLElement;
@@ -405,7 +425,7 @@ export class PlanPage {
       lines.push(t('plan.containsOnlySelectedQuarantine'));
       lines.push(d.kind === 'restore' ? t('plan.ifObjectSameName') : t('plan.emptyingRecoversNothingCreate'));
     }
-    return h('div', { class: 'not-included' }, h('h3', {}, t('plan.notIncluded')), h('ul', {}, ...lines.map((l) => h('li', {}, l))));
+    return h('div', { class: 'not-included' }, excludedList(d.excluded ?? []), h('h3', {}, t('plan.notIncluded')), h('ul', {}, ...lines.map((l) => h('li', {}, l))));
   }
 
   private itemsPanel(d: PlanDetail): HTMLElement {
@@ -444,7 +464,7 @@ export class PlanPage {
           'td',
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, nameOf(i), i.item_kind === 'directory' && d.kind !== 'uninstall_leftovers' ? h('span', { class: 'muted small' }, t('plan.emptyFolderRemovedOnly')) : null),
-          recovery ? h('span', { class: 'obj-path' }, t('plan.returnsTo'), pathText(i.original_path_display ?? '—', { max: 72 })) : pathText(i.path_display, { max: 76, className: 'obj-path' }),
+          recovery ? h('span', { class: 'obj-path' }, t('plan.returnsTo'), pathText(i.original_path_display ?? '—', { max: 72 })) : pathText(rowDisplay(i.path_display, i.item_kind === 'uninstaller'), { max: 76, className: 'obj-path' }),
           d.kind !== 'cleanup' && actionText(i) ? h('span', { class: 'obj-reason' }, actionText(i), i.scope && i.item_kind !== 'maintenance_task' ? t('common.parenthetical', { p: i.scope === 'user' ? t('plan.currentUser') : t('plan.allUsers') }) : '') : null,
           i.detail?.command ? h('span', { class: 'obj-reason muted' }, h('code', {}, String(i.detail.command))) : null,
         ),

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, neighborTile, protectedBy, tileForEntry, type TileRef } from './diskModel';
+import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, neighborTile, plainPath, protectedBy, selectionBlock, tileForEntry, type TileRef } from './diskModel';
 import type { ProtectionItem } from './types';
 
 describe('NEW-06: the detail pane knows what the protection list already covers', () => {
@@ -217,5 +217,29 @@ describe('breadcrumb and detail pane', () => {
   it('a boundary explains why it was not entered', () => {
     expect(entryDetail(entry({ boundary: 'cloud_provider', logical_bytes: '0' })).boundaryNote).toContain('没有进入');
     expect(entryDetail(entry()).boundaryNote).toBeNull();
+  });
+});
+
+describe('R3-03 (WFA-63): links are not offered for a selection; one into a protected location says where it leads', () => {
+  const e = (over: Partial<Pick<import('./types').Entry, 'kind' | 'boundary' | 'protected_link'>>) => ({ kind: 'directory' as const, boundary: null, protected_link: null, ...over });
+
+  it('a junction into System32 names the protected target (the check dialog wording)', () => {
+    const why = selectionBlock(e({ kind: 'reparse', boundary: 'junction', protected_link: '\\\\?\\C:\\Windows\\System32' }));
+    expect(why).toBe('这是指向受保护系统位置 C:\\Windows\\System32 的链接，不会被跟随，也不会被移动');
+    expect(plainPath('\\\\?\\UNC\\srv\\share\\x')).toBe('\\\\srv\\share\\x');
+    expect(plainPath('C:\\Windows')).toBe('C:\\Windows');
+  });
+
+  it('any other link, junction or mount point is the plain link refusal; other boundaries say they were not entered', () => {
+    for (const over of [{ kind: 'symlink' as const }, { kind: 'reparse' as const }, { boundary: 'junction' as const }, { boundary: 'symlink' as const }, { boundary: 'mount_point' as const }]) {
+      expect(selectionBlock(e(over)), JSON.stringify(over)).toBe('这是链接或重分析点，不会被跟随，也不会被移动。');
+    }
+    expect(selectionBlock(e({ boundary: 'other_volume' }))).toMatch(/不会移动它/);
+    expect(selectionBlock(e({ kind: 'other' }))).toMatch(/不会移动它/);
+  });
+
+  it('plain files and folders stay selectable', () => {
+    expect(selectionBlock(e({ kind: 'file' }))).toBeNull();
+    expect(selectionBlock(e({}))).toBeNull();
   });
 });

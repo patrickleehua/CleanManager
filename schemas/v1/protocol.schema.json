@@ -4327,6 +4327,10 @@
             }
           ]
         },
+        "authorization_source": {
+          "type": "string",
+          "minLength": 1
+        },
         "uninstall_apps": {
           "type": "array",
           "items": {
@@ -4425,7 +4429,8 @@
         "estimated_freed_bytes",
         "volume_free_before_bytes",
         "volume_free_after_bytes",
-        "observed_free_delta_bytes"
+        "observed_free_delta_bytes",
+        "authorization_source"
       ],
       "additionalProperties": false
     },

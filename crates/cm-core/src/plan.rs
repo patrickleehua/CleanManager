@@ -105,6 +105,23 @@ pub struct Plan {
     pub rule_refs: Vec<String>,
     /// Per item (same order as `body.items`): probes and rule owner needed at execution.
     pub item_meta: Vec<ItemMeta>,
+    /// Selected rows that were left out when the plan was frozen because they changed or disappeared since the
+    /// discovery (CLI-11 / WFA-50, `stale_items`), kept so every later review says so (R3-07). Not part of the digest:
+    /// the plan authorizes only its items.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded: Vec<ExcludedItem>,
+}
+
+/// One selected row left out of a plan (R3-07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcludedItem {
+    pub object_id: String,
+    /// `missing` or `changed`.
+    pub reason: String,
+    /// What was found (English, with the path), as `stale_items[].detail` reports it.
+    pub detail: String,
+    /// The row's path, for people.
+    pub path_display: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,7 +398,7 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
         items,
     };
     let digest = body.digest()?;
-    Ok(Plan { body, digest, observations, tiers, rule_refs, item_meta })
+    Ok(Plan { body, digest, observations, tiers, rule_refs, item_meta, excluded: vec![] })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

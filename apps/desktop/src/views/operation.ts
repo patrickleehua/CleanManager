@@ -21,6 +21,7 @@ import { platform, words } from '../lib/platform';
 import { outcomeMark, outcomeTally, type Outcome } from './kit';
 import { allDone, taskReason } from './maintenance';
 import { APP_OUTCOME, leftoversReviewable, outcomeReason } from './uninstallBatch';
+import { rowDisplay } from '../lib/uninstallWords';
 import { t } from '../i18n';
 
 /** Kinds whose results are not about disk space (no size figures). */
@@ -480,7 +481,7 @@ export class OperationPage {
           'td',
           { class: 'col-object' },
           h('span', { class: 'obj-name' }, maintenance ? (TASK_WORDS[taskId]?.title ?? i.name) : i.name),
-          h('span', { class: 'obj-path path' }, i.original_path_display ? `${i.original_path_display}` : i.path_display),
+          h('span', { class: 'obj-path path' }, i.original_path_display ? `${i.original_path_display}` : rowDisplay(i.path_display, kind === 'uninstall')),
           // The code and the host's message are in the grouped issue lines' 技术详情 above; here only as a tooltip.
           reason ? h('span', { class: 'obj-reason', title: i.code ? `${i.code}${i.message ? t('operation.message', { message: i.message }) : ''}` : null }, reason) : null,
         ),

@@ -18,7 +18,7 @@ import { RequestGate } from '../lib/gate';
 import { MERGED_ID } from '../lib/treemap';
 import { hintLabel, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
 import { categoryOf } from '../lib/category';
-import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, protectedBy, type DiskView } from '../lib/diskModel';
+import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, protectedBy, selectionBlock, type DiskView } from '../lib/diskModel';
 import { sizeLabel } from '../lib/display';
 import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, ProtectionList, SortKey, Summary, TreemapLayer } from '../lib/types';
 import { canOpen, EntryGrid } from './grid';
@@ -551,7 +551,12 @@ export class DiskPage {
 
   private toggle(e: Entry): void {
     if (this.selection.has(e.entry_id)) this.selection.delete(e.entry_id);
-    else this.selection.set(e.entry_id, e);
+    else {
+      // R3-03: a link (or one into a protected system location) is never offered, from the table or chart either.
+      const blocked = selectionBlock(e);
+      if (blocked) return this.app.announce(blocked);
+      this.selection.set(e.entry_id, e);
+    }
     this.grid.refreshSelection();
     void this.loadSummary();
     this.renderSide();
@@ -744,7 +749,13 @@ export class DiskPage {
       (this.protection ? protectedBy(e.path_display, this.protection.items, platform() === 'windows') : null) ??
       (this.protectDone?.entryId === e.entry_id ? { protection_id: '', display: e.path_display } : null);
     // A protected object cannot be moved: it is not offered for a selection (one already made can still be undone).
-    const sel = h('button', { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false', disabled: !!covered && !this.selection.has(e.entry_id) }, this.selection.has(e.entry_id) ? T.unselect : T.select);
+    // R3-03: nor is a link: one into a protected system location says where it leads (the host's check), here already.
+    const blocked = covered ? null : selectionBlock(e);
+    const sel = h(
+      'button',
+      { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false', disabled: (!!covered || !!blocked) && !this.selection.has(e.entry_id), 'aria-describedby': blocked ? 'detail-not-selectable' : null },
+      this.selection.has(e.entry_id) ? T.unselect : T.select,
+    );
     sel.addEventListener('click', () => this.toggle(e));
     // NEW-06: protect this object from here. Links and mount points are never entered, so they are not offered.
     const listBroken = !!this.protection?.problem;
@@ -776,6 +787,7 @@ export class DiskPage {
       d.boundaryNote ? h('p', { class: 'notice' }, d.boundaryNote) : null,
       // 3. What you can do.
       h('div', { class: 'card-actions detail-actions' }, open, sel, reveal, diag),
+      blocked ? h('p', { class: 'small muted', id: 'detail-not-selectable', 'data-state': e.protected_link ? 'protected' : 'link' }, blocked) : null,
       this.protectLine(e, covered, protect),
       hint ? this.hintEntry(e, hint) : null,
       techBlock(

@@ -26,6 +26,15 @@ pub struct Stale {
     /// `missing` or `changed`.
     pub reason: &'static str,
     pub detail: String,
+    /// The row's path, for people.
+    pub path_display: String,
+}
+
+impl Stale {
+    /// What a plan keeps of it (R3-07).
+    pub fn excluded(&self) -> cm_core::plan::ExcludedItem {
+        cm_core::plan::ExcludedItem { object_id: self.object_id.clone(), reason: self.reason.into(), detail: self.detail.clone(), path_display: self.path_display.clone() }
+    }
 }
 
 /// The local path of a recorded path on this platform.
@@ -102,8 +111,8 @@ pub fn split_stale(candidates: &[Candidate], view: &dyn IndexView, selected: Vec
     let mut keep = Vec::new();
     let mut stale = Vec::new();
     for id in selected {
-        match candidates.iter().find(|c| c.candidate_id == id).and_then(|c| stale_reason(c, view)) {
-            Some((reason, detail)) => stale.push(Stale { object_id: id, reason, detail }),
+        match candidates.iter().find(|c| c.candidate_id == id).and_then(|c| stale_reason(c, view).map(|r| (r, c.path.display()))) {
+            Some(((reason, detail), path_display)) => stale.push(Stale { object_id: id, reason, detail, path_display }),
             None => keep.push(id),
         }
     }

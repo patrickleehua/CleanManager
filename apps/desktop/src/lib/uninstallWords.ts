@@ -59,6 +59,14 @@ export function adapterDisplay(display: string): string {
   return m && kind ? t('uninstallWords.adapter.commandKind', { command: m[1], kind: kind() }) : display;
 }
 
+/**
+ * R3-04: the object line of a plan-review or result row. An uninstaller row's line is the host's route display
+ * (`"…\uninst.exe" /c … (vendor uninstaller, its own UI)`), so its kind is put in words; any other row as sent.
+ */
+export function rowDisplay(display: string, uninstaller: boolean): string {
+  return uninstaller ? adapterDisplay(display) : display;
+}
+
 /** Why a leftover belongs to the application (its evidence lines), by their fixed shapes. */
 const EVIDENCE: [RegExp, Words][] = [
   [/^contains only caches and logs$/, () => t('uninstallWords.evidence.cachesOnly')],

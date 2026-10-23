@@ -232,6 +232,10 @@ fn an_interrupted_operation_shows_a_report_to_reconcile_and_reconciling_keeps_it
     assert_eq!(item(&shown, "a0000002")["status"], "not_started", "{shown}");
     assert_eq!((shown["succeeded"].as_u64(), shown["unknown"].as_u64(), shown["not_started"].as_u64()), (Some(1), Some(1), Some(1)), "{shown}");
     assert!(shown.get("reconciled_at").is_none(), "{shown}");
+    // R3-01: `operations show` names the same authorization source as `operations list`, before reconciling too.
+    let (_, ops) = fx.cli(&["operations", "list"]);
+    let listed = ops["items"].as_array().unwrap().iter().find(|o| o["operation_id"] == op.as_str()).unwrap().clone();
+    assert_eq!((shown["authorization_source"].as_str(), listed["authorization_source"].as_str()), (Some("interactive_review"), Some("interactive_review")), "{shown} {listed}");
 
     let (code, rec) = fx.cli(&["operations", "reconcile", &op]);
     assert_eq!((code, rec["status"].as_str()), (5, Some("partial")), "{rec}");
@@ -247,6 +251,7 @@ fn an_interrupted_operation_shows_a_report_to_reconcile_and_reconciling_keeps_it
     assert_eq!(again["reconciled_at"].as_str(), Some(at.as_str()), "{again}");
     let (code, shown) = fx.cli(&["operations", "show", &op]);
     assert_eq!((code, shown["reconciled_at"].as_str()), (5, Some(at.as_str())), "{shown}");
+    assert_eq!(shown["authorization_source"], "interactive_review", "{shown}");
 }
 
 /// WFA-42/43: refusals and `plan show` say which policy applies and why the others do not; once a policy authorized

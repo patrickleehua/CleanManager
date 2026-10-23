@@ -173,6 +173,81 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// R3-01: an operation whose host stopped before its report (`reconciliation_required`, not reconciled yet) shows the
+/// authorization source and what the journal knows on the result page, the same values `operations list` (the
+/// activity list) and `operations show` give, not "—".
+#[test]
+fn an_interrupted_operation_shows_its_recorded_authorization_source() {
+    let base = temp_base("interrupted");
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, store, rules) = (base.join("root"), base.join("store"), base.join("rules"));
+    std::fs::create_dir_all(root.join("cache")).unwrap();
+    std::fs::create_dir_all(rules.join(if cfg!(windows) { "windows" } else { "macos" })).unwrap();
+    std::fs::write(root.join("cache").join("a.bin"), vec![1u8; 3000]).unwrap();
+    std::fs::write(root.join("cache").join("b.bin"), vec![2u8; 1000]).unwrap();
+    let digest = crate::rules::load(Some(&rules)).expect("empty rule pack loads").digest;
+    let stores = Stores::open(&store).unwrap();
+    let request = ScanRequest {
+        scan_id: "s_int".into(),
+        scope_id: "scope_int".into(),
+        root: cm_platform::paths::raw_path(root.as_os_str()).unwrap(),
+        host: cm_platform::host::OsHostProbe.current("desktop"),
+    };
+    cm_core_scan(&stores, &request);
+    let query = EntryQuery {
+        scan_id: "s_int".into(),
+        sort: Sort::NameAsc,
+        filter: Filter { kind: KindFilter::Directory, name_contains: Some("cache".into()), parent_entry_id: None },
+        page_size: 5,
+        cursor: None,
+    };
+    let page = stores.index.list_entries(&query).unwrap();
+    let cache = &page.items[0];
+    let set = candidate_set("s_int", cache.entry_id.parse().unwrap(), &cache.path, 4000, &digest);
+    stores.index.save_candidates(&set).unwrap();
+    let s = AppState::with_store(Some(store.clone()), Some(rules.clone()), None);
+    let facts = set.candidates.iter().map(|c| (c.candidate_id.clone(), cm_core::analysis::CatalogFacts::default())).collect();
+    *crate::host::lock(&s.candidates) =
+        Some(std::sync::Arc::new(cleanup::Loaded { set, catalog: Some(cm_core::analysis::CatalogSet { facts, undetermined: vec![] }) }));
+    let plan_id = s
+        .with_stores(|st| {
+            let plan_id = cleanup::create(&s, st, "cs_flow", &["c_flow".into()], Mode::Quarantine)?.plan_id;
+            let d = cleanup::detail(&s, st, &plan_id)?;
+            cleanup::approve(&s, st, &plan_id, d.review_token.as_deref().unwrap(), &d.digest_prefix)?;
+            Ok(plan_id)
+        })
+        .unwrap();
+    // Stopped right after its first action, on behalf of a host that has exited (as a killed process would leave it).
+    let host = cm_core::host::HostRef { kind: "cli".into(), pid: std::process::id(), started_at: "2000-01-01T00:00:00Z".into() };
+    let ctx = cm_app::execute::ApplyContext {
+        principal: &cm_core::authz::current_principal(),
+        host: &host,
+        current_rule_set_digest: &digest,
+        now: &cleanup::now_unix,
+        cancel: &|| false,
+        fault: &|p, id| p == cm_app::execute::FaultPoint::AfterAction && id == "a0000000",
+        protect: &|_| Ok(()),
+    };
+    let err = cm_app::execute::apply_plan(&stores, &crate::plat::file_actions(&store), &plan_id, &ctx).unwrap_err();
+    assert!(matches!(err, cm_app::execute::ApplyError::Crashed(_)), "{err:?}");
+    s.with_stores(|st| {
+        let _ = st.audit.reconcile_hosts(|h| cm_platform::host::OsHostProbe.liveness(h));
+        let listed = ops::history(st, 10, None)?.items.into_iter().next().expect("the operation is listed");
+        let op = ops::operation(&s, st, &listed.operation_id)?;
+        assert_eq!(op.state, "reconciliation_required");
+        assert!(op.needs_reconcile && !op.report_available, "provisional, nothing resolved");
+        assert_eq!(op.authorization_source.as_deref(), Some("interactive_review"));
+        assert_eq!(op.authorization_source, listed.authorization_source, "the same source as the list");
+        assert_eq!((op.counts.unknown, op.counts.not_started, op.counts.in_flight), (1, 1, 0), "{:?}", op.counts);
+        assert!(op.processed_logical_bytes.is_some(), "what the journal knows so far");
+        Ok(())
+    })
+    .unwrap();
+    drop(stores);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 fn cm_core_scan(stores: &Stores, request: &ScanRequest) {
     let out = run_scan(&stores.index, crate::plat::scan_backend().as_ref(), request, &cm_core::scan::ScanOptions::default()).unwrap();
     assert_eq!(out.state, cm_core::model::ScanState::Completed);
@@ -348,6 +423,15 @@ fn catalog_plans_check_selections_like_the_cli() {
     assert!(st.detail.contains("x.o") && st.detail.contains("3000 bytes now, 2000 when scanned"), "{}", st.detail);
     let plan = stores.audit.load_plan(&created.plan_id).unwrap();
     assert!(plan.body.items.iter().all(|i| i.candidate_id == "c_new"), "only the unchanged folder is frozen");
+    // R3-07: the left-out folder stays with the plan, so its review (opened now or later) lists it with its reason.
+    assert_eq!(plan.excluded.iter().map(|x| (x.object_id.as_str(), x.reason.as_str())).collect::<Vec<_>>(), [("c_old", "changed")]);
+    let s = AppState::with_store(Some(store.clone()), None, None);
+    let review = s.with_stores(|st| cleanup::detail(&s, st, &created.plan_id)).unwrap();
+    assert_eq!(review.excluded.len(), 1, "{:?}", review.excluded);
+    let x = &review.excluded[0];
+    assert_eq!((x.candidate_id.as_str(), x.reason.as_str(), x.name.as_str()), ("c_old", "changed", "target"));
+    assert!(x.path_display.ends_with("rustold\\target") || x.path_display.ends_with("rustold/target"), "{}", x.path_display);
+    drop(s);
     let only_old = catalog_plan(&stores, Catalog::Purge, "cs_purge", &["c_old".into()], cm_core::rules::Mode::Quarantine).unwrap_err();
     assert_eq!((only_old.code, only_old.reason), (cm_core::error::ErrorCode::PlanStale, "selection_stale"));
 
@@ -403,6 +487,17 @@ fn a_link_into_system32_is_refused_as_protected_and_named() {
     let ins = crate::suite::imp::trash_inspect(&s, "s_links", plain_e).unwrap();
     assert_eq!((ins.refusal.as_ref().map(|r| r.reason.as_str()), ins.link_target_display.as_deref()), (Some("link_or_reparse"), None));
     assert_eq!(crate::suite::imp::trash_plan(&s, "s_links", &[plain_e]).unwrap_err().reason, "link_or_reparse");
+    // R3-03: the disk page's own listing already names where the protected link leads (so it offers no selection);
+    // the plain link carries no target, and the non-link folder beside them is not probed.
+    let page = stores
+        .index
+        .list_entries(&EntryQuery { scan_id: "s_links".into(), sort: Sort::NameAsc, filter: Filter { kind: KindFilter::Any, name_contains: None, parent_entry_id: None }, page_size: 50, cursor: None })
+        .unwrap();
+    let links = crate::commands::page_links(&page.items);
+    let named = |n: &str| page.items.iter().position(|i| i.path.display().ends_with(n)).map(|at| links[at].clone()).expect(n);
+    assert!(named("link-sys").is_some_and(|t| t.to_lowercase().ends_with("system32")), "{:?}", named("link-sys"));
+    assert_eq!((named("link-plain"), named("target"), named("x.bin")), (None, None, None));
+    assert_eq!(crate::commands::page_links(&page.items[..0]), Vec::<Option<String>>::new());
     drop(s);
     drop(stores);
     std::fs::remove_dir(&sys).unwrap();

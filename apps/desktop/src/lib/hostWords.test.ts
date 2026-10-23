@@ -3,7 +3,9 @@
 import { describe, expect, it } from 'vitest';
 import { processPurpose, purposeKey, unidentifiedReason } from './processWords';
 import { guidanceText, sizeNoteText } from './insightWords';
-import { adapterDisplay, evidenceText, uninstallReason } from './uninstallWords';
+import { adapterDisplay, evidenceText, rowDisplay, uninstallReason } from './uninstallWords';
+import planView from '../views/plan.ts?raw';
+import operationView from '../views/operation.ts?raw';
 import { diagnosisLine } from '../views/tools';
 import { RESOURCES, setLocale } from '../i18n';
 import winProcess from '../../../../crates/cm-core/src/process.rs?raw';
@@ -121,6 +123,19 @@ describe('uninstall: reasons, routes and leftover evidence', () => {
     expect(adapterDisplay('something else')).toBe('something else');
     // Every kind the core writes is in the table.
     for (const m of coreUninstall.matchAll(/\(([^()"]+)\)"\)\)?;?/g)) if (/uninstaller|package manager|Installer/.test(m[1])) expect(adapterDisplay(`x (${m[1]})`), m[1]).not.toBe(`x (${m[1]})`);
+  });
+
+  it('R3-04: the full plan list and the result rows show an uninstaller route in words too', () => {
+    const route = '"C:\\Apps\\Bar\\uninst.exe" /c exit 3 (vendor uninstaller, its own UI)';
+    expect(rowDisplay(route, true)).toBe('"C:\\Apps\\Bar\\uninst.exe" /c exit 3（厂商的卸载程序，使用它自己的界面）');
+    expect(rowDisplay('C:\\Program Files (x86)\\App (vendor uninstaller, its own UI)', false)).toContain('vendor uninstaller');
+    expect(rowDisplay('C:\\Apps (x86)', true)).toBe('C:\\Apps (x86)');
+    setLocale('en');
+    expect(rowDisplay(route, true)).not.toContain('its own UI');
+    setLocale('zh-CN');
+    // Both pages put the row's object line through it (the plan's uninstaller rows, an uninstall operation's rows).
+    expect(planView).toContain("rowDisplay(i.path_display, i.item_kind === 'uninstaller')");
+    expect(operationView).toContain("rowDisplay(i.path_display, kind === 'uninstall')");
   });
 
   it('leftover evidence and notes read in words; paths and names stay as sent', () => {

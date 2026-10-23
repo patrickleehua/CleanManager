@@ -370,6 +370,9 @@ pub struct PlanRow {
 
 /// Opaque keyset cursor: the insertion key (rowid) of the last row and the page size it was
 /// issued for. Rows are never renumbered, so a page boundary is stable while history grows.
+/// The quarantine listing's cursor kind: newest first (R3-05).
+const QUARANTINE_CURSOR: &str = "quarantine_newest";
+
 fn encode_cursor(kind: &str, rowid: i64, page_size: u32) -> String {
     use base64::Engine;
     let text = serde_json::json!([kind, rowid, page_size]).to_string();
@@ -423,17 +426,19 @@ impl AuditStore {
     /// `reminder_at` changes nothing here: expired items stay listed until a person decides.
     pub fn quarantine_page(&self, page_size: u32, cursor: Option<&str>) -> Result<(Vec<QuarantineEntry>, Option<String>)> {
         check_page(page_size)?;
-        let after = cursor.map(|c| decode_cursor("quarantine", c, page_size)).transpose()?.unwrap_or(0);
+        // R3-05: most recently quarantined first, like `operations list` (one order for the CLI and the desktop; the
+        // cursor names its own order, so a cursor of the older oldest-first listing is stale, never misread).
+        let before = cursor.map(|c| decode_cursor(QUARANTINE_CURSOR, c, page_size)).transpose()?.unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare(
             "SELECT quarantine_id, operation_id, action_id, plan_id, record_json, state, quarantined_at, reminder_at, rowid FROM quarantine_items
-             WHERE state='recoverable' AND rowid > ?1 ORDER BY rowid LIMIT ?2",
+             WHERE state='recoverable' AND rowid < ?1 ORDER BY rowid DESC LIMIT ?2",
         )?;
         let mut rows: Vec<(QuarantineEntry, i64)> = stmt
-            .query_map(params![after, i64::from(page_size) + 1], |r| Ok((Self::quarantine_row(r)?, r.get(8)?)))?
+            .query_map(params![before, i64::from(page_size) + 1], |r| Ok((Self::quarantine_row(r)?, r.get(8)?)))?
             .collect::<std::result::Result<_, _>>()?;
         let next = (rows.len() > page_size as usize).then(|| {
             rows.truncate(page_size as usize);
-            encode_cursor("quarantine", rows.last().expect("page is not empty").1, page_size)
+            encode_cursor(QUARANTINE_CURSOR, rows.last().expect("page is not empty").1, page_size)
         });
         let rows = rows.into_iter().map(|(e, _)| e).collect();
         Ok((rows, next))
@@ -903,10 +908,12 @@ mod tests {
         let (last, next) = a.operations_page(2, next.as_deref()).unwrap();
         assert_eq!((last.len(), next), (1, None));
         let (q, next) = a.quarantine_page(3, None).unwrap();
-        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q0", "q1", "q3"], "restored items leave the list");
+        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q4", "q3", "q1"], "most recent first; restored items leave the list");
         let (q, _) = a.quarantine_page(3, next.as_deref()).unwrap();
-        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q4"]);
+        assert_eq!(q.iter().map(|e| e.quarantine_id.as_str()).collect::<Vec<_>>(), ["q0"]);
         assert!(matches!(a.quarantine_page(2, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its page size");
+        let oldest_first = encode_cursor("quarantine", 2, 3);
+        assert!(matches!(a.quarantine_page(3, Some(&oldest_first)), Err(StoreError::CursorStale(_))), "a cursor of the old order is stale");
         assert!(matches!(a.operations_page(3, next.as_deref()), Err(StoreError::CursorStale(_))), "cursor bound to its listing");
         assert!(matches!(a.operations_page(501, None), Err(StoreError::InvalidArgument(_))));
     }

@@ -347,10 +347,12 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
         observed_at: a.status.finished_at.as_deref().unwrap_or(&a.status.started_at),
         policy_digest: &pdigest,
     };
-    let plan = match build_plan(&view, &a.set, &selected, mode, &input) {
+    let mut plan = match build_plan(&view, &a.set, &selected, mode, &input) {
         Ok(plan) => plan,
         Err(e) => return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format),
     };
+    // R3-07: the rows left out stay with the plan, so `plan show` and the desktop review list them too.
+    plan.excluded = stale.iter().map(Stale::excluded).collect();
     // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume; refused before the plan is stored.
     if let Err(c) = crate::trash_cmd::plan_bins_ready(req, p, &a.set, &selected, mode) {
         return c;

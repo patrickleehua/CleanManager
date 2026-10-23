@@ -10,7 +10,7 @@ import { h, keepFocus, replace } from '../lib/dom';
 import { formatTime, STATE_LABEL, stateTone } from '../lib/format';
 import type { ActivityTab } from '../lib/store';
 import type { HistoryItem, IpcError, PlanRow, QuarantineItem, QuarantinePage } from '../lib/types';
-import { ACTION_LABEL, AUTH_LABEL, AVAILABILITY_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, QUARANTINE_STATE_LABEL, operationTone } from '../lib/words';
+import { ACTION_LABEL, AUTH_LABEL, MODE_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, QUARANTINE_STATE_LABEL, historyRecoveryLabel, operationTone } from '../lib/words';
 import { emptyState, errorLine, exactTitle, pageHead, pill, tabList } from './parts';
 import { words } from '../lib/platform';
 import { pathText } from './ui';
@@ -36,6 +36,20 @@ interface Listing<T> {
 
 function listing<T>(): Listing<T> {
   return { items: [], next: null, loading: false, error: null, loaded: false };
+}
+
+/**
+ * R3-05: the control that takes focus after "显示更多" loaded a page: the first newly listed row (a quarantine row's
+ * checkbox, an operation's or plan's row button), so a keyboard user goes on from where the list grew instead of from
+ * the top of the page. `null` when nothing new was listed.
+ */
+export function firstNewRowId(tab: ActivityTab, items: readonly (HistoryItem | PlanRow | QuarantineItem)[], before: number): string | null {
+  const row = items[before];
+  if (!row) return null;
+  if (tab === 'quarantine') return `q-${(row as QuarantineItem).quarantine_id}`;
+  if (tab === 'operations') return `op-${(row as HistoryItem).operation_id}`;
+  if (tab === 'plans') return `plan-${(row as PlanRow).plan_id}`;
+  return null;
 }
 
 export class ActivityPage {
@@ -168,7 +182,24 @@ export class ActivityPage {
 
   private moreButton<T>(l: Listing<T>, tab: ActivityTab): HTMLElement | null {
     if (!l.next) return null;
-    return h('button', { type: 'button', class: 'quiet more', disabled: l.loading, onclick: () => void this.loadTab(tab, true) }, l.loading ? t('common.loading') : t('activity.showMore'));
+    return h('button', { type: 'button', class: 'quiet more', id: `more-${tab}`, disabled: l.loading, onclick: () => void this.showMore(tab) }, l.loading ? t('common.loading') : t('activity.showMore'));
+  }
+
+  /** Load the next page and put the focus on its first row (R3-05); the new rows are announced. */
+  private async showMore(tab: ActivityTab): Promise<void> {
+    const l: Listing<HistoryItem | PlanRow | QuarantineItem> = tab === 'operations' ? this.ops : tab === 'plans' ? this.plans : this.quarantine;
+    const before = l.items.length;
+    await this.loadTab(tab, true);
+    const id = firstNewRowId(tab, l.items, before);
+    if (!id) return;
+    const el = document.getElementById(id);
+    // A row whose checkbox is not available (it cannot be restored now) is focused as a row.
+    const target = el instanceof HTMLInputElement && el.disabled ? el.closest('tr') : el;
+    if (target instanceof HTMLElement) {
+      if (target.tagName === 'TR') target.tabIndex = -1;
+      target.focus();
+    }
+    this.app.announce(t('activity.moreShown', { n: l.items.length - before }));
   }
 
   private operations(): HTMLElement {
@@ -195,7 +226,7 @@ export class ActivityPage {
               h('span', { class: 'tl-title' }, ACTION_LABEL[o.action ?? ''] ?? t('activity.unknownAction'), o.processed_logical_bytes && o.processed_logical_bytes !== '0' ? h('span', { class: 'muted num' }, formatBytes(o.processed_logical_bytes)) : null),
               h('span', { class: 'tl-sub' }, counts),
             ),
-            h('span', { class: 'tl-side' }, pill(OPERATION_STATE_LABEL[o.state] ?? o.state, operationTone(o.state)), h('span', { class: 'tl-note' }, AVAILABILITY_LABEL[o.availability])),
+            h('span', { class: 'tl-side' }, pill(OPERATION_STATE_LABEL[o.state] ?? o.state, operationTone(o.state)), h('span', { class: 'tl-note' }, historyRecoveryLabel(o))),
           );
           b.addEventListener('click', () => this.app.openOperation(o.operation_id, 'activity'));
           return h('li', {}, b);

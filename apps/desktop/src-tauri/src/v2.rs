@@ -209,6 +209,7 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str, contract: String) ->
         authorization,
         policies: vec![],
         not_included: None,
+        excluded: vec![],
         operation: operation_ref(stores, plan_id, &plan.digest)?,
         review_token,
         cli: cli(plan_id),

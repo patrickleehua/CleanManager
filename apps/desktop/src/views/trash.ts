@@ -12,6 +12,7 @@ import type { Entry, TrashInspection } from '../lib/types';
 import { atLeast, ensureReady, sumSizes, toIpcError } from './kit';
 import { errorText } from './parts';
 import { protectionText, refusalText as codeRefusalText } from '../lib/codes';
+import { plainPath } from '../lib/diskModel';
 import { t } from '../i18n';
 
 const MAX_ENTRIES = 50;
@@ -31,7 +32,7 @@ function refusalText(i: TrashInspection): string {
   const r = i.refusal;
   if (!r) return '';
   // WFA-47/63: a link into a protected system location names where it leads.
-  if (r.reason === 'protected' && i.link_target_display) return t('trash.refusal.linkProtected', { target: i.link_target_display });
+  if (r.reason === 'protected' && i.link_target_display) return t('trash.refusal.linkProtected', { target: plainPath(i.link_target_display) });
   // A reason without words here reads through the shared code table (never the host's raw message).
   return REFUSAL[r.reason] ?? codeRefusalText({ reason: r.reason });
 }

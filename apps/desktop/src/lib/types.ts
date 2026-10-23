@@ -150,6 +150,8 @@ export interface Entry {
   link_count: number | null;
   /** DIN-05: read-only "cleanable by hand" hint on a listed directory; absent or null = none confirmed. */
   cleanable_hint?: CleanableHint | null;
+  /** R3-03: where this link leads when that is a protected system location (host-checked, link entries only). */
+  protected_link?: string | null;
 }
 
 /** The verified evidence behind a cleanable hint and the review flow it leads to (never a selection). */
@@ -368,6 +370,8 @@ export interface PlanDetail {
   authorization: Authorization;
   policies: PolicyMatch[];
   not_included: { low_unselected: number; review_unselected: number; pending: number; blocked: number } | null;
+  /** R3-07: selected rows left out when the plan was frozen (changed or gone since discovery). */
+  excluded?: PlanExcluded[];
   operation: { operation_id: string; state: string } | null;
   review_token: string | null;
   cli: { show: string; review: string; apply: string };
@@ -573,6 +577,17 @@ export interface HistoryItem {
   counts: Counts | null;
   processed_logical_bytes: string | null;
   availability: Availability;
+  /** R3-02: some succeeded action moved an object to the system bin (its recorded recovery is `trash`). */
+  recycle_bin_items: boolean;
+}
+
+/** One selected row a plan left out (R3-07): `reason` is `changed` or `missing`; `detail` is the host's English. */
+export interface PlanExcluded {
+  candidate_id: string;
+  name: string;
+  path_display: string;
+  reason: string;
+  detail: string;
 }
 
 export interface HistoryPage {

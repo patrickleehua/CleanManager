@@ -80,6 +80,9 @@ pub struct EntryDto {
     pub link_count: Option<u32>,
     /// DIN-05: read-only "cleanable by hand" hint (listed directories only); never a selection.
     pub cleanable_hint: Option<cm_core::cleanable::CleanableHint>,
+    /// R3-03 (WFA-63): where this link leads when that is a protected system location (the bin dialog's own check,
+    /// `cm_app::trash::protected_link`); probed for the link entries of a listed page only, `None` for anything else.
+    pub protected_link: Option<String>,
 }
 
 impl EntryDto {
@@ -100,6 +103,7 @@ impl EntryDto {
             identity_quality: item.identity_quality,
             link_count: item.link_count,
             cleanable_hint: None,
+            protected_link: None,
         }
     }
 }

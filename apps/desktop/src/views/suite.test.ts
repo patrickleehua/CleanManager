@@ -82,3 +82,17 @@ describe('UNI-05 leftovers and DIN-03/STS-05 words', () => {
     expect(text).toContain('80%');
   });
 });
+
+describe('R3-07 a plan review lists the selected rows it left out', () => {
+  it('each reason reads as words in both languages', async () => {
+    const { excludedReason } = await import('./plan');
+    expect(excludedReason('changed')).toBe('扫描后已变化，没有放入；重新扫描后再选择');
+    expect(excludedReason('missing')).toBe('扫描后已不存在，没有放入');
+    expect(excludedReason('other')).toBe('没有放入');
+    const { setLocale, t } = await import('../i18n');
+    setLocale('en');
+    expect(excludedReason('changed')).toMatch(/^changed since the scan/);
+    expect(t('plan.excludedTitle', { n: 1 })).toBe('1 selected item was left out of this plan');
+    setLocale('zh-CN');
+  });
+});

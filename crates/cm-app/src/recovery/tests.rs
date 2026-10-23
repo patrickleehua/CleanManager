@@ -186,7 +186,8 @@ fn occupied_destination_is_skipped_and_both_objects_are_kept() {
     let f = seed(&s, 2);
     f.originals.borrow_mut().insert("/r/f1".into(), "inode64:00000000000000aa".into());
     let (list, _) = quarantine_page(&s, &f, 50, None, T0).unwrap();
-    assert_eq!((list[0].state.clone(), list[1].state.clone()), (QuarantineState::TargetConflict, QuarantineState::Recoverable));
+    // Most recently quarantined first (R3-05): q2, then q1 (whose original place is occupied now).
+    assert_eq!((list[0].state.clone(), list[1].state.clone()), (QuarantineState::Recoverable, QuarantineState::TargetConflict));
     let p = plan(&s, RecoveryKind::Restore, &["q1", "q2"], "rp", T0);
     approve(&s, &p);
     let r = run(&s, &f, "rp", T0 + 10, None).unwrap();
@@ -290,7 +291,7 @@ fn cleanup_op(s: &Stores, mode: Mode, n: u8) -> String {
         engine_contract: "plan/v1".into(), plan_id: format!("p{n}"), scope_id: "scope".into(), scan_id: "s".into(), scan_revision: 1,
         rule_set_digest: "0".repeat(64), policy_digest: "0".repeat(64), created_at: utc_from_unix(T0), expires_at: utc_from_unix(T0 + 900), mode, items: vec![],
     };
-    let plan = Plan { digest: body.digest().unwrap(), body, observations: vec![], tiers: vec![], rule_refs: vec!["rule@1.0.0".into()], item_meta: vec![] };
+    let plan = Plan { digest: body.digest().unwrap(), body, observations: vec![], tiers: vec![], rule_refs: vec!["rule@1.0.0".into()], item_meta: vec![], excluded: vec![] };
     s.audit.save_plan(&plan).unwrap();
     let op = format!("op{n}");
     let host = HostRef { kind: "cli".into(), pid: 1, started_at: "t".into() };

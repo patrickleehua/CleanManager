@@ -96,6 +96,10 @@ pub fn plan_record(req: &str, stores: &Stores, plan: &Plan) -> Value {
     if matches!(auth["status"].as_str(), Some("required" | "revoked")) {
         rec["policy_matches"] = json!(cm_app::execute::policy_matches(stores, plan, &principal, now).unwrap_or_default());
     }
+    // R3-07: the selected rows left out when it was frozen (changed or gone since discovery), as at creation.
+    if !plan.excluded.is_empty() {
+        rec["stale_items"] = json!(plan.excluded.iter().map(|x| json!({"object_id": x.object_id, "reason": x.reason, "detail": x.detail})).collect::<Vec<_>>());
+    }
     rec
 }
 

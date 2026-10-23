@@ -34,5 +34,6 @@
   "estimated_freed_bytes": "0",
   "volume_free_before_bytes": "1000000000",
   "volume_free_after_bytes": null,
-  "observed_free_delta_bytes": null
+  "observed_free_delta_bytes": null,
+  "authorization_source": "interactive_review"
 }

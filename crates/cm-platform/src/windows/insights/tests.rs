@@ -106,3 +106,28 @@ fn download_entries_list_files_with_times() {
     assert!(review.items[0].age_days >= 199);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Unplanned-read finding (WFA-68): `CM_RESOLVE_DOWNLOADS` points the old-downloads review at a fixture folder, the
+/// redirect the macOS review honours too; with it set, the review lists the fixture and never the real Downloads.
+#[test]
+fn the_downloads_override_redirects_the_review_into_a_fixture() {
+    assert_eq!(DOWNLOADS_OVERRIDE, "CM_RESOLVE_DOWNLOADS");
+    let root = std::env::temp_dir().join(format!("cm-insights-dl-override-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("fixture-old.bin"), vec![0u8; 64]).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120 * 86_400);
+    std::fs::File::options().write(true).open(root.join("fixture-old.bin")).unwrap().set_modified(old).unwrap();
+    let redirected = downloads_root_from(Some(root.clone().into_os_string())).expect("the fixture folder");
+    assert_eq!(redirected.display(), root.display().to_string());
+    let review = old_downloads_in(Some(redirected), 90);
+    assert_eq!(review.root.as_ref().map(|r| r.display()), Some(root.display().to_string()));
+    assert_eq!(review.items.iter().map(|i| i.path.display()).collect::<Vec<_>>(), [root.join("fixture-old.bin").display().to_string()]);
+    // A missing fixture is reported as unreadable, never replaced by the real folder.
+    let gone = root.join("missing");
+    let review = old_downloads_in(downloads_root_from(Some(gone.clone().into_os_string())), 90);
+    assert_eq!((review.root.as_ref().map(|r| r.display()), review.items.len()), (Some(gone.display().to_string()), 0));
+    // Unset or empty: the known folder (whatever it is on this machine), the same answer both ways.
+    assert_eq!(downloads_root_from(Some(std::ffi::OsString::new())), downloads_root_from(None));
+    let _ = std::fs::remove_dir_all(&root);
+}

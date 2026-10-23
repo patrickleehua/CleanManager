@@ -652,6 +652,30 @@ pub struct NotIncludedDto {
     pub blocked: u64,
 }
 
+/// One selected row the plan left out (R3-07).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ExcludedDto {
+    pub candidate_id: String,
+    pub name: String,
+    pub path_display: String,
+    /// `missing` or `changed`.
+    pub reason: String,
+    /// The host's English description (technical details).
+    pub detail: String,
+}
+
+impl ExcludedDto {
+    pub fn of(x: &cm_core::plan::ExcludedItem) -> Self {
+        ExcludedDto {
+            candidate_id: x.object_id.clone(),
+            name: last_component(&x.path_display).to_owned(),
+            path_display: x.path_display.clone(),
+            reason: x.reason.clone(),
+            detail: x.detail.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationRefDto {
     pub operation_id: String,
@@ -695,6 +719,8 @@ pub struct PlanDetailDto {
     pub authorization: AuthorizationDto,
     pub policies: Vec<PolicyMatchDto>,
     pub not_included: Option<NotIncludedDto>,
+    /// R3-07: selected rows left out when the plan was frozen (changed or gone since discovery), with the reason.
+    pub excluded: Vec<ExcludedDto>,
     pub operation: Option<OperationRefDto>,
     /// Issued only while a human approval is still possible (`required` and not stale).
     pub review_token: Option<String>,
@@ -810,6 +836,7 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
             authorization,
             policies: vec![],
             not_included: None,
+            excluded: vec![],
             operation: operation_ref(stores, plan_id, &plan.digest)?,
             review_token,
             cli: cli(plan_id),
@@ -885,6 +912,7 @@ pub fn detail(s: &AppState, stores: &Stores, plan_id: &str) -> IpcResult<PlanDet
         authorization,
         policies,
         not_included: not_included(s, stores, &plan),
+        excluded: plan.excluded.iter().map(ExcludedDto::of).collect(),
         operation: operation_ref(stores, plan_id, &plan.digest)?,
         review_token,
         cli: cli(plan_id),

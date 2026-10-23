@@ -478,6 +478,7 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
         rule_refs: plans.get(op.plan_id)?.detail.rule_refs ?? [],
         counts: op.report_available ? op.counts : null,
         processed_logical_bytes: op.processed_logical_bytes,
+        recycle_bin_items: op.mode === 'trash' && op.counts.succeeded > 0,
         availability: (op.needs_reconcile
           ? 'unknown'
           : op.counts.succeeded === 0
@@ -887,8 +888,10 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
       await delay(130);
       const start = cursor ? Number(cursor.slice(1)) : 0;
       const total = quarantine.reduce((a, q) => a + BigInt(q.logical_bytes), 0n);
+      // Most recently quarantined first, as the host lists it (R3-05).
+      const ordered = [...quarantine].sort((a, b) => (a.quarantined_at < b.quarantined_at ? 1 : a.quarantined_at > b.quarantined_at ? -1 : 0));
       return {
-        items: quarantine.slice(start, start + pageSize),
+        items: ordered.slice(start, start + pageSize),
         next_cursor: start + pageSize < quarantine.length ? `o${start + pageSize}` : null,
         held_count: cursor ? null : quarantine.length,
         held_logical_bytes: cursor ? null : total.toString(),

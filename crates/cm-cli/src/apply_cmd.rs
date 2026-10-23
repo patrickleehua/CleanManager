@@ -57,6 +57,8 @@ pub fn report_record(req: &str, r: &OperationReport) -> Value {
         "volume_free_before_bytes": r.volume_free_before_bytes,
         "volume_free_after_bytes": r.volume_free_after_bytes,
         "observed_free_delta_bytes": r.observed_free_delta_bytes,
+        // R3-01: the same source `operations list` shows (an interrupted operation's provisional report included).
+        "authorization_source": r.authorization_source,
     })));
     // WFA-40: a reconciliation is its own fact next to the operation's (unchanged) authorization.
     if let Some(at) = &r.reconciled_at {

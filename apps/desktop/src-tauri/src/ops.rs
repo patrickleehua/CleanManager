@@ -316,7 +316,15 @@ pub fn operation(s: &AppState, stores: &Stores, operation_id: &str) -> IpcResult
     };
     let active = lock(&s.apply).as_ref().filter(|a| a.operation_id == operation_id && !a.done.load(Ordering::Acquire)).map(|a| a.cancel.load(Ordering::Acquire));
     let report = report_of(stores, operation_id)?;
-    let counts = match &report {
+    // R3-01: an interrupted operation (no report yet) shows what `operations show` / `operations list` show: the
+    // provisional report from the journal, with its recorded authorization source; nothing is resolved here.
+    let provisional = if report.is_none() && state == "reconciliation_required" && active.is_none() {
+        cm_app::execute::interrupted_report(stores, operation_id).ok()
+    } else {
+        None
+    };
+    let known = report.as_ref().or(provisional.as_ref());
+    let counts = match known {
         Some(r) => Counts { succeeded: r.succeeded, skipped: r.skipped, failed: r.failed, not_started: r.not_started, unknown: r.unknown, in_flight: 0 },
         None => journal_counts(stores, operation_id),
     };
@@ -338,13 +346,13 @@ pub fn operation(s: &AppState, stores: &Stores, operation_id: &str) -> IpcResult
         cancel_requested: active.unwrap_or(false),
         started_at: report.as_ref().map(|r| r.started_at.clone()).or_else(|| started.as_ref().map(|r| r.started_at.clone())),
         finished_at: report.as_ref().map(|r| r.finished_at.clone()).or_else(|| started.and_then(|r| r.finished_at)),
-        authorization_source: report.as_ref().map(|r| r.authorization_source.clone()),
+        authorization_source: known.map(|r| r.authorization_source.clone()),
         total,
         counts,
         report_available: report.is_some(),
-        processed_logical_bytes: report.as_ref().map(|r| r.processed_logical_bytes.clone()),
-        quarantined_logical_bytes: report.as_ref().map(|r| r.quarantined_logical_bytes.clone()),
-        estimated_freed_bytes: report.as_ref().map(|r| r.estimated_freed_bytes.clone()),
+        processed_logical_bytes: known.map(|r| r.processed_logical_bytes.clone()),
+        quarantined_logical_bytes: known.map(|r| r.quarantined_logical_bytes.clone()),
+        estimated_freed_bytes: known.map(|r| r.estimated_freed_bytes.clone()),
         volume_free_before_bytes: report.as_ref().and_then(|r| r.volume_free_before_bytes.clone()),
         volume_free_after_bytes: report.as_ref().and_then(|r| r.volume_free_after_bytes.clone()),
         observed_free_delta_bytes: report.as_ref().and_then(|r| r.observed_free_delta_bytes.clone()),
@@ -496,6 +504,9 @@ pub struct HistoryItemDto {
     pub processed_logical_bytes: Option<String>,
     /// `in_app_restore`, `system_recycle_bin`, `unavailable`, `not_applicable` or `unknown`.
     pub availability: &'static str,
+    /// R3-02: some succeeded action of it moved an object to the system bin (its recorded `recovery` is `trash`), so a
+    /// restore from backups (uninstall leftovers) does not bring those back; the list says where each part is.
+    pub recycle_bin_items: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -524,6 +535,7 @@ pub fn history(stores: &Stores, page_size: u32, cursor: Option<&str>) -> IpcResu
                 rule_refs: h.rule_refs,
                 counts: h.report.as_ref().map(|r| Counts { succeeded: r.succeeded, skipped: r.skipped, failed: r.failed, not_started: r.not_started, unknown: r.unknown, in_flight: 0 }),
                 processed_logical_bytes: h.report.as_ref().map(|r| r.processed_logical_bytes.clone()),
+                recycle_bin_items: h.report.as_ref().is_some_and(|r| r.items.iter().any(|i| i.status == ActionStatus::Succeeded && i.recovery == "trash")),
                 availability: h.availability,
             })
             .collect(),

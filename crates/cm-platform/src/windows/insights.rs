@@ -351,8 +351,20 @@ pub fn list() -> Vec<Insight> {
 pub const DOWNLOADS_LIMIT: usize = 20_000;
 pub const CARD_WALK_LIMIT: usize = 200_000;
 
-/// The user's Downloads folder (known folder).
+/// Validation redirect of the Downloads folder the old-downloads review reads: the catalog resolver's variable, as on
+/// macOS (docs/platforms/windows.md). Test and acceptance use only; when it is set the real folder is never read.
+pub const DOWNLOADS_OVERRIDE: &str = "CM_RESOLVE_DOWNLOADS";
+
+/// The user's Downloads folder (known folder), or the [`DOWNLOADS_OVERRIDE`] fixture folder.
 pub fn downloads_root() -> Option<RawPath> {
+    downloads_root_from(std::env::var_os(DOWNLOADS_OVERRIDE))
+}
+
+/// [`downloads_root`] with the override's value given (`None` or empty: the known folder).
+pub fn downloads_root_from(over: Option<std::ffi::OsString>) -> Option<RawPath> {
+    if let Some(dir) = over.filter(|v| !v.is_empty()) {
+        return crate::paths::raw_path(&dir).ok();
+    }
     super::installer::declared_locations().into_iter().find(|(_, label)| *label == "downloads").map(|(p, _)| p)
 }
 
@@ -394,11 +406,16 @@ pub fn download_entries(root: &std::path::Path) -> (Vec<cm_core::insights::Downl
     (out, note)
 }
 
-/// The old-downloads review of this user's Downloads folder.
+/// The old-downloads review of this user's Downloads folder (or of the [`DOWNLOADS_OVERRIDE`] fixture).
 pub fn old_downloads(days: u32) -> cm_core::insights::OldDownloadsReview {
+    old_downloads_in(downloads_root(), days)
+}
+
+/// The old-downloads review of `root` (`None`: the folder could not be resolved).
+pub fn old_downloads_in(root: Option<RawPath>, days: u32) -> cm_core::insights::OldDownloadsReview {
     let now = cm_core::time::now_utc();
     let now_unix = cm_core::plan::parse_utc(&now).unwrap_or(0);
-    match downloads_root() {
+    match root {
         Some(root) => {
             let (entries, note) = download_entries(std::path::Path::new(&root.display()));
             cm_core::insights::old_downloads(Some(root), entries, now_unix, days, &now, note)

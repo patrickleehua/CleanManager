@@ -87,6 +87,9 @@ $env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\cm-acc-webview"   # 独立的 WebVie
 - 实现：`apps/desktop/src-tauri/src/main.rs` 的 `webview_debug` 模块在构建 Tauri 上下文之后、窗口创建之前，给配置中的每个窗口加上 `--remote-debugging-port=<端口>`（并保留 wry 默认的 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`，因为窗口一旦指定参数就会替换默认值）。Chromium 只在回环地址上监听这个端口。启动时 stderr 打印一行说明端口已打开。
 - 只在调试构建中存在：模块与调用都在 `#[cfg(debug_assertions)]` 下，发行构建没有任何读取该变量或打开端口的代码（`main.rs` 中的 `webview_debug_tests` 检查所有相关字符串都在这个模块内，调用也带同样的 `cfg`）。验收报告必须写明桌面部分使用的是调试构建。
 - WebView2 要求参数不同的实例使用不同的数据目录：带调试端口启动时用独立的 `WEBVIEW2_USER_DATA_FOLDER`，不要和平时运行的配置目录混用；否则 WebView2 会拒绝创建或沿用已在运行的浏览器进程的参数。结束后删除该目录（含主题、语言等本机偏好）。
+- 启动钩子在打开端口前检查 `%USERPROFILE%\AppData\Local` 是否存在，缺失时创建这一个空目录并在 stderr 说明。原因（R3-06）：Chromium（WebView2 155 实测，headless Edge 155 同样）只在能确定默认用户数据目录时才开启远程调试，而它由 `%USERPROFILE%` 展开的 Local AppData 已知文件夹得出；把进程的 `USERPROFILE` 指向没有 `AppData\Local` 的测试目录时，浏览器进程虽然带着 `--remote-debugging-port`，却不监听、也不写 `DevToolsActivePort`，没有任何报错。给测试目录预先建好 `AppData\Local` 效果相同。
+- 只接受来自回环地址页面的 WebSocket 连接（`--remote-allow-origins=http://127.0.0.1:<端口>,http://localhost:<端口>`）；不带 `Origin` 的 CDP 客户端（Python `websockets`、Playwright `connectOverCDP`）不受影响，本机网页不能借此连上调试端口。
+- 验收中不要用 `CM_INSTALLER_LOCATIONS` 重定向“下载”：它只作用于安装包清理。空间洞察的旧下载用 `CM_RESOLVE_DOWNLOADS`（[Windows 平台说明](platforms/windows.md)）。
 - 调试端口让本机任何进程都能读取和操作页面内容（包括扫描到的路径），只在验收机器上、验收期间打开；页面仍然只能调用宿主列出的命令，批准仍需要审阅令牌加摘要前 8 位，调试端口不会绕过这些检查。
 
 ## 3. 核心与 v1 协议共同判据

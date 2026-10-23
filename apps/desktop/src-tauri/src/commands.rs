@@ -291,6 +291,7 @@ pub async fn list_entries(state: St<'_>, query: ListEntriesArgs) -> IpcResult<En
         let page = s.with_index(|idx| Ok(idx.list_entries(&q)?))?;
         // Probed after the index is released: the page's directories only, never the whole scan.
         let hints = page_hints(&s, &page.items);
+        let links = page_links(&page.items);
         Ok(EntriesPageDto {
             scan_id: page.scan_id,
             scope_id: page.scope_id,
@@ -300,7 +301,7 @@ pub async fn list_entries(state: St<'_>, query: ListEntriesArgs) -> IpcResult<En
             name_contains: page.filter.name_contains,
             parent_entry_id: page.filter.parent_entry_id.map(|p| p.to_string()),
             page_size: page.page_size,
-            items: page.items.iter().zip(hints).map(|(i, cleanable_hint)| EntryDto { cleanable_hint, ..EntryDto::from_item(i) }).collect(),
+            items: page.items.iter().zip(hints).zip(links).map(|((i, cleanable_hint), protected_link)| EntryDto { cleanable_hint, protected_link, ..EntryDto::from_item(i) }).collect(),
             next_cursor: page.next_cursor,
             unknown_size_items: page.unknown_size_items,
         })
@@ -318,6 +319,23 @@ pub fn page_hints(s: &AppState, items: &[cm_store::index::EntryItem]) -> Vec<Opt
     }
     let caches = crate::rules::load(s.rules_dir.as_deref()).map(|r| cm_platform::cleanable::cache_locations(&r.rules)).unwrap_or_default();
     cm_platform::cleanable::page_hints(&dirs, s.store_dir.as_deref(), &caches)
+}
+
+/// Whether an entry is a link the scan did not follow (symlink, junction, mount point, or another reparse point).
+fn is_link(i: &cm_store::index::EntryItem) -> bool {
+    use cm_core::model::{BoundaryKind, ObjectKind};
+    matches!(i.kind, ObjectKind::Symlink | ObjectKind::Reparse) || matches!(i.boundary, Some(BoundaryKind::Symlink | BoundaryKind::Junction | BoundaryKind::MountPoint))
+}
+
+/// R3-03 (WFA-63): for the link entries of one page only, where each leads when that is a protected system location
+/// (`cm_app::trash::protected_link`, resolved read-only, the check the bin dialog makes later), so the page names it
+/// and offers no selection. Nothing else is probed, and nothing is probed when the page has no link.
+pub fn page_links(items: &[cm_store::index::EntryItem]) -> Vec<Option<String>> {
+    if !items.iter().any(is_link) {
+        return vec![None; items.len()];
+    }
+    let hard = cm_platform::protection::hard_deny_set();
+    items.iter().map(|i| if is_link(i) { cm_app::trash::protected_link(&i.path, &hard).map(|l| l.target) } else { None }).collect()
 }
 
 /// The children not drawn as tiles (u128 sum: no overflow for any count of u64 sizes).
@@ -351,7 +369,8 @@ pub fn layer_of(s: &AppState, idx: &cm_store::IndexStore, id: &str, parent: u64,
     let first = idx.list_entries(&q)?;
     let revision = first.revision;
     let parent_summary = root_summary(s, idx, id, revision, parent)?;
-    let items: Vec<EntryDto> = first.items.iter().take(limit).map(EntryDto::from_item).collect();
+    let shown = &first.items[..first.items.len().min(limit)];
+    let items: Vec<EntryDto> = shown.iter().zip(page_links(shown)).map(|(i, protected_link)| EntryDto { protected_link, ..EntryDto::from_item(i) }).collect();
     let shown: std::collections::BTreeSet<u64> = first.items.iter().take(limit).filter_map(|i| i.entry_id.parse().ok()).collect();
     let rest = match first.next_cursor {
         None => cm_store::index::ChildrenRest { complete: true, ..Default::default() },

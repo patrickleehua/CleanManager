@@ -270,6 +270,28 @@ export const AVAILABILITY_LABEL: Record<Availability, string> = {
   get unknown() { return t('words.availabilityLabel.unknown'); },
 };
 
+/**
+ * R3-02: the Activity list's recovery note for one operation, from the host's facts (`availability` and the history
+ * `action`, plus whether a succeeded action went to the system bin), never from the plan's mode. "In-app restore"
+ * means a different thing per kind: the quarantine, a recorded startup state, a recorded setting value, or the
+ * registry backups of uninstall leftovers (whose files, when any were removed, are in the system bin).
+ */
+export function historyRecoveryLabel(o: { action: string | null; availability: Availability; recycle_bin_items?: boolean }): string {
+  if (o.availability !== 'in_app_restore') return AVAILABILITY_LABEL[o.availability];
+  switch (o.action) {
+    case 'quarantine':
+      return AVAILABILITY_LABEL.in_app_restore;
+    case 'startup':
+      return t('words.recoveryLabel.startup');
+    case 'maintenance':
+      return t('words.recoveryLabel.maintenance');
+    case 'uninstall_leftovers':
+      return o.recycle_bin_items ? t('words.recoveryLabel.leftoversAndBin', { bin: words().bin }) : t('words.recoveryLabel.leftovers');
+    default:
+      return t('words.recoveryLabel.inApp');
+  }
+}
+
 export const ACTION_LABEL: Record<string, string> = {
   get trash() { return words().moveToBin; },
   get quarantine() { return t('words.actionLabel.quarantine'); },

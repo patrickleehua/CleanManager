@@ -49,6 +49,7 @@
   "volume_free_before_bytes": null,
   "volume_free_after_bytes": null,
   "observed_free_delta_bytes": null,
+  "authorization_source": "interactive_review",
   "uninstall_apps": [
     {
       "app_instance_id": "app_demo",

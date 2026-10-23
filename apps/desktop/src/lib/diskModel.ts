@@ -204,6 +204,27 @@ export function entryDetail(e: Entry): EntryDetail {
 }
 
 // ---------------------------------------------------------------------------------------------
+// R3-03 (WFA-63): what is never offered for a selection. The bin flow refuses every link, junction, mount point and
+// other scan boundary (none is moved or followed), and a link into a protected system location is refused as
+// protected: the host names where it leads (`protected_link`). The page says why instead of offering "选择" and
+// refusing only in the check dialog.
+
+/** A resolved Windows path as people write it: without the `\\?\` (or `\\?\UNC\`) prefix of the host's resolution. */
+export function plainPath(p: string): string {
+  if (p.startsWith('\\\\?\\UNC\\')) return `\\\\${p.slice(8)}`;
+  return p.startsWith('\\\\?\\') ? p.slice(4) : p;
+}
+
+/** Why this entry cannot be selected for the bin, or `null` when it can be offered. */
+export function selectionBlock(e: Pick<Entry, 'kind' | 'boundary' | 'protected_link'>): string | null {
+  if (e.protected_link) return t('trash.refusal.linkProtected', { target: plainPath(e.protected_link) });
+  const link = e.kind === 'symlink' || e.kind === 'reparse' || e.boundary === 'symlink' || e.boundary === 'junction' || e.boundary === 'mount_point';
+  if (link) return refusalText({ reason: 'link_or_reparse' });
+  if (e.boundary || (e.kind !== 'file' && e.kind !== 'directory')) return t('diskModel.notMovableBoundary');
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------
 // NEW-06 (WFA-44): the detail pane's "protect" action. Which of the person's own protection entries already covers an
 // entry (an exact entry on it, or a folder entry above it), so the pane says "protected" instead of offering it again.
 

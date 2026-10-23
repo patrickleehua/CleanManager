@@ -639,6 +639,7 @@ pub(crate) mod imp {
         // are listed as stale, not planned (the CLI's check, `cm_app::selection`).
         let view = stores.index.view(&set.scan_id)?;
         let (keep, stale) = cm_app::selection::split_stale(&set.candidates, &view, selected.to_vec());
+        let excluded: Vec<cm_core::plan::ExcludedItem> = stale.iter().map(cm_app::selection::Stale::excluded).collect();
         let stale: Vec<StaleItemDto> = stale.into_iter().map(|s| StaleItemDto { candidate_id: s.object_id, reason: s.reason, detail: s.detail }).collect();
         if keep.is_empty() {
             let list: Vec<String> = stale.iter().map(|s| format!("{}: {}", s.candidate_id, s.reason)).collect();
@@ -654,7 +655,9 @@ pub(crate) mod imp {
             observed_at: status.finished_at.as_deref().unwrap_or(&status.started_at),
             policy_digest: &pdigest,
         };
-        let plan = cm_core::plan::build_plan(&view, &set, &keep, mode, &input).map_err(crate::cleanup::plan_error)?;
+        let mut plan = cm_core::plan::build_plan(&view, &set, &keep, mode, &input).map_err(crate::cleanup::plan_error)?;
+        // R3-07: the left-out rows stay with the plan, so its review lists them with their reason.
+        plan.excluded = excluded;
         // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume.
         crate::cleanup::bins_ready(&set, &keep, mode)?;
         stores.audit.save_plan(&plan)?;

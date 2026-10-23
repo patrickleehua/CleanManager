@@ -62,6 +62,13 @@ fn gated<R: tauri::Runtime>(handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Se
 /// starts its windows with `--remote-debugging-port=<port>` (Chromium binds it to the loopback interface). The whole
 /// module is compiled only with `debug_assertions`: a release build has no code that reads the variable or opens the
 /// port, and the call in `main` is under the same `cfg`, so a release build without it would not compile.
+///
+/// R3-06: Chromium opens the port only when it can tell the default user-data directory, which it derives from the
+/// Local AppData known folder (`%USERPROFILE%\AppData\Local`, expanded with this process's environment). An acceptance
+/// run that points `USERPROFILE` at a test home without that folder got a browser process with the switch that never
+/// listened and wrote no `DevToolsActivePort`, silently. The hook therefore creates that one empty folder when it is
+/// missing (and says so). Only loopback pages may open a CDP WebSocket (`--remote-allow-origins`); clients that send no
+/// `Origin` (Playwright, Python `websockets`) are unaffected.
 #[cfg(debug_assertions)]
 mod webview_debug {
     pub const ENV: &str = "CM_WEBVIEW_DEBUG_PORT";
@@ -74,9 +81,19 @@ mod webview_debug {
         (port >= 1024).then_some(port)
     }
 
-    /// The browser arguments of a window: its own (or wry's defaults) plus the debugging port.
+    /// The browser arguments of a window: its own (or wry's defaults) plus the debugging port, open to loopback pages.
     pub fn browser_args(own: Option<&str>, port: u16) -> String {
-        format!("{} --remote-debugging-port={port}", own.unwrap_or(WRY_DEFAULT_ARGS))
+        format!(
+            "{} --remote-debugging-port={port} --remote-allow-origins=http://127.0.0.1:{port},http://localhost:{port}",
+            own.unwrap_or(WRY_DEFAULT_ARGS)
+        )
+    }
+
+    /// The Local AppData folder Chromium needs to resolve before it opens the port, when it is missing:
+    /// `%USERPROFILE%\AppData\Local` (the known folder's default, expanded with this process's `USERPROFILE`).
+    pub fn missing_local_app_data(user_profile: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+        let local = std::path::Path::new(user_profile.filter(|p| !p.is_empty())?).join("AppData").join("Local");
+        (!local.is_dir()).then_some(local)
     }
 
     /// Add the debugging port to every window of the configuration when the variable asks for it.
@@ -88,6 +105,14 @@ mod webview_debug {
             }
             return;
         };
+        if cfg!(windows)
+            && let Some(local) = missing_local_app_data(std::env::var_os("USERPROFILE").as_deref())
+        {
+            match std::fs::create_dir_all(&local) {
+                Ok(()) => eprintln!("{ENV}: created {} (empty): WebView2 opens its debugging port only when the Local AppData folder of USERPROFILE exists", local.display()),
+                Err(e) => eprintln!("{ENV}: {} is missing and could not be created ({e}); WebView2 will not open the debugging port", local.display()),
+            }
+        }
         for w in &mut config.app.windows {
             w.additional_browser_args = Some(browser_args(w.additional_browser_args.as_deref(), port));
         }
@@ -258,7 +283,7 @@ fn main() {
 
 #[cfg(test)]
 mod webview_debug_tests {
-    use super::webview_debug::{ENV, WRY_DEFAULT_ARGS, browser_args, port};
+    use super::webview_debug::{ENV, WRY_DEFAULT_ARGS, browser_args, missing_local_app_data, port};
 
     #[test]
     fn the_debug_port_is_a_non_system_port_number_or_nothing() {
@@ -274,8 +299,24 @@ mod webview_debug_tests {
 
     #[test]
     fn wry_defaults_are_kept_and_the_port_is_added() {
-        assert_eq!(browser_args(None, 9222), format!("{WRY_DEFAULT_ARGS} --remote-debugging-port=9222"));
-        assert_eq!(browser_args(Some("--foo"), 9300), "--foo --remote-debugging-port=9300");
+        let loopback = |p: u16| format!("--remote-allow-origins=http://127.0.0.1:{p},http://localhost:{p}");
+        assert_eq!(browser_args(None, 9222), format!("{WRY_DEFAULT_ARGS} --remote-debugging-port=9222 {}", loopback(9222)));
+        assert_eq!(browser_args(Some("--foo"), 9300), format!("--foo --remote-debugging-port=9300 {}", loopback(9300)));
+        assert!(!browser_args(None, 9222).contains('*'), "never any origin");
+    }
+
+    /// R3-06: a redirected USERPROFILE without `AppData\Local` is the case where WebView2 silently does not listen.
+    #[test]
+    fn a_test_home_without_local_app_data_is_found() {
+        let home = std::env::temp_dir().join(format!("cm-webview-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(missing_local_app_data(Some(home.as_os_str())), Some(home.join("AppData").join("Local")));
+        std::fs::create_dir_all(home.join("AppData").join("Local")).unwrap();
+        assert_eq!(missing_local_app_data(Some(home.as_os_str())), None);
+        assert_eq!(missing_local_app_data(None), None);
+        assert_eq!(missing_local_app_data(Some(std::ffi::OsStr::new(""))), None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// Release builds never contain the hook: every line that names the variable or the switch is inside the

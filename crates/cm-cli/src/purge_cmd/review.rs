@@ -241,10 +241,12 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         observed_at: status.finished_at.as_deref().unwrap_or(&status.started_at),
         policy_digest: &pdigest,
     };
-    let plan = match cm_core::plan::build_plan(&view, set, &selected, mode, &input) {
+    let mut plan = match cm_core::plan::build_plan(&view, set, &selected, mode, &input) {
         Ok(p) => p,
         Err(e) => return fail(req, ErrorCode::PolicyDenied, &e.to_string(), p.format),
     };
+    // R3-07: the rows left out stay with the plan, so `plan show` and the desktop review list them too.
+    plan.excluded = stale.iter().map(crate::clean_cmd::Stale::excluded).collect();
     // MTR-03 / WFA-35: trash mode (the default here) needs a usable bin on every target's volume.
     if let Err(c) = crate::trash_cmd::plan_bins_ready(req, p, set, &selected, mode) {
         return c;

@@ -309,7 +309,10 @@ def main():
         # from the observed (signed, unattributed) volume free-space change.
         "processed_logical_bytes": UINT, "quarantined_logical_bytes": UINT, "estimated_freed_bytes": UINT,
         "volume_free_before_bytes": nullable(UINT),
-        "volume_free_after_bytes": nullable(UINT), "observed_free_delta_bytes": nullable(SINT)})
+        "volume_free_after_bytes": nullable(UINT), "observed_free_delta_bytes": nullable(SINT),
+        # R3-01: who authorized it (`interactive_review`, `policy:ID@VERSION`), the same value `operations list` shows;
+        # an interrupted operation's provisional report carries it too, and a reconciliation never replaces it.
+        "authorization_source": STR})
     # UNI-11: a stage-1 uninstall also reports each application's own result (optional; other plans omit it).
     defs["operation_report"]["properties"]["uninstall_apps"] = arr(uninstall_app_outcome, 1)
     # WFA-40: when `operations reconcile` last resolved unconfirmed actions (optional). The reconciliation is recorded next
@@ -746,7 +749,8 @@ def main():
             succeeded=1, skipped=0, failed=0, not_started=0, unknown=0,
             items=[{"action_id": "a_demo", "status": "succeeded", "code": "moved_to_trash", "message": "Synthetic same-volume move", "recovery": "trash"}],
             processed_logical_bytes="104857600", quarantined_logical_bytes="0", estimated_freed_bytes="0",
-            volume_free_before_bytes="1000000000", volume_free_after_bytes="1000000000", observed_free_delta_bytes="0"),
+            volume_free_before_bytes="1000000000", volume_free_after_bytes="1000000000", observed_free_delta_bytes="0",
+            authorization_source="interactive_review"),
         "progress": rec("progress", task_id="s_demo", sequence=0, phase="discovering", completed_units=12, total_units=None, emitted_at=t1)
     }
     for name, example in examples.items():
@@ -1296,7 +1300,7 @@ def main():
                result("u0010000", "succeeded", "not_running", "Example Tool is not running"),
                result("u0010001", "succeeded", "done", "uninstaller exited with code 0 after 8410 ms; rescan: install folder and registration are gone")],
         processed_logical_bytes="0", quarantined_logical_bytes="0", estimated_freed_bytes="0", volume_free_before_bytes=None,
-        volume_free_after_bytes=None, observed_free_delta_bytes=None, uninstall_apps=[
+        volume_free_after_bytes=None, observed_free_delta_bytes=None, authorization_source="interactive_review", uninstall_apps=[
             {"app_instance_id": "app_demo", "name": "Example App", "status": "failed", "code": "uninstaller_failed",
              "message": "uninstaller exited with code 1603 after 5120 ms; rescan: the install folder and the uninstall registration still present",
              "action_ids": ["q0000000", "u0000001"], "leftovers_reviewable": False},
