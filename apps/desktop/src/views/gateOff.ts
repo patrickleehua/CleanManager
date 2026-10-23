@@ -12,6 +12,7 @@ import { t } from '../i18n';
 
 /** What each gated section does, in the person's words (shown while it is off). */
 const DOES: Partial<Record<Page, () => string[]>> = {
+  rulecatalog: () => [t('gateOff.does.rulecatalog.0'), t('gateOff.does.rulecatalog.1')],
   purge: () => [t('gateOff.does.purge.0'), t('gateOff.does.purge.1')],
   installer: () => [t('gateOff.does.installer.0'), t('gateOff.does.installer.1')],
   recyclebin: () => [t('gateOff.does.recyclebin.0', { bin: words().bin }), t('gateOff.does.recyclebin.1', { moveToBin: words().moveToBin })],

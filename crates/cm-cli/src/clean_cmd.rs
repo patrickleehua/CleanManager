@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use cm_core::adapter::{ADAPTERS, AdapterPreview, adapter};
 use cm_core::analysis::{Candidate, CandidateState, CatalogFacts, apply_probes, default_selected, plannable};
 use cm_core::capability::Platform;
-use cm_core::catalog::{CATALOG_VERSION, CATEGORIES, CatalogContext, RegistryStatus, SkipReason, category_status};
+use cm_core::catalog::{CATALOG_VERSION, RegistryStatus, SkipReason};
 use cm_core::error::ErrorCode;
 use cm_core::plan::{PlanInput, build_plan};
 use cm_core::protocol::record;
@@ -68,46 +68,15 @@ pub fn clean_list(req: &str, p: &Parsed) -> ExitCode {
     };
     let platform = platform();
     let installed = installed_versions(&rules.rules);
-    let ctx = CatalogContext { registry: Some(&registry), installed: Some(&installed) };
-    let categories: Vec<Value> = CATEGORIES
-        .iter()
-        .map(|info| {
-            let rows: Vec<Value> = rules
-                .rules
-                .iter()
-                .filter(|r| r.category == info.id && r.platforms.contains(&platform))
-                .map(|r| {
-                    let verdict = ctx.verdict(r);
-                    let entry = r.tested_registry_ref.as_ref().and_then(|k| registry.get(k));
-                    json!({
-                        "rule_id": r.rule_id, "version": r.version, "status": snake!(r.status), "max_tier": snake!(r.max_tier),
-                        "effective_tier_ceiling": snake!(cm_core::catalog::compute_tier(&cm_core::catalog::TierInputs {
-                            rule_max: r.max_tier, dependency: cm_core::catalog::is_dependency_store(r), registry: verdict.status,
-                            ..Default::default()
-                        }).tier),
-                        "rebuild_class": snake!(r.rebuild_class), "action_kind": snake!(r.action_kind), "adapter_ref": r.adapter_ref,
-                        "owner_id": r.owner.id, "installed_version": verdict.installed,
-                        "registry_status": if r.status == cm_core::rules::RuleStatus::Enabled { registry_wire(verdict.status) } else { "not_registered" },
-                        "tested_range": entry.map(|e| format!("{}..{}", e.version_range.min_inclusive, e.version_range.max_exclusive.as_deref().unwrap_or(""))),
-                        "tested_at": entry.map(|e| e.tested_at.clone()),
-                        "evidence_refs": r.evidence_refs,
-                        "summary": r.impact.summary,
-                    })
-                })
-                .collect();
-            json!({
-                "category": info.id, "label": info.label, "wave": info.wave,
-                "status": snake!(category_status(info, platform, &rules.rules)), "rules": rows,
-            })
-        })
-        .collect();
+    // The same read model the desktop's 清理 › 清理目录 page shows (WFA-49).
+    let categories = cm_app::clean_catalog::categories(&rules, &registry, &installed, platform);
     let adapters: Vec<Value> = adapter_previews().into_iter().map(|a| snake!(a)).collect();
     emit(
         &record("cleanup_catalog", req, fields(json!({
             "platform": snake!(platform),
             "catalog_version": CATALOG_VERSION,
             "rule_set_digest": rules.digest,
-            "categories": categories,
+            "categories": snake!(categories),
             "adapters": adapters,
         }))),
         p.format,

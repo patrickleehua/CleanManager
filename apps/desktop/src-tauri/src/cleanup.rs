@@ -469,27 +469,32 @@ pub fn latest(s: &AppState, stores: &Stores, scan_id: &str) -> IpcResult<Option<
 }
 
 /// One page of one group: largest known size first, unknown sizes after known ones (they
-/// never rank as "frees the most"), then candidate id.
-pub fn page(l: &Loaded, group: Group, page_size: u32, cursor: Option<&str>) -> IpcResult<CandidatePageDto> {
+/// never rank as "frees the most"), then candidate id. `rule` limits the group to one rule's
+/// candidates (the catalog page's "show its candidates"); the cursor is bound to it.
+pub fn page(l: &Loaded, group: Group, page_size: u32, cursor: Option<&str>, rule: Option<&str>) -> IpcResult<CandidatePageDto> {
     let set = &l.set;
     let size = args::page_size(Some(page_size))? as usize;
     let key = |c: &&Candidate| (c.logical.unknown_count > 0, std::cmp::Reverse(c.logical.known.0), c.candidate_id.clone());
-    let mut members: Vec<&Candidate> = set.candidates.iter().filter(|c| group_of(c) == group).collect();
+    let mut members: Vec<&Candidate> =
+        set.candidates.iter().filter(|c| group_of(c) == group && rule.is_none_or(|r| c.rules.iter().any(|x| x.rule_id == r))).collect();
     members.sort_by_key(key);
+    let bound = match rule {
+        None => format!("{}.{:?}.{size}", set.candidate_set_id, group),
+        Some(r) => format!("{}.{:?}.{size}.{r}", set.candidate_set_id, group),
+    };
     let start = match cursor {
         None => 0,
         Some(c) => {
-            let (bound, offset) = c.rsplit_once(':').ok_or_else(|| ipc(ErrorCode::CursorStale, "cursor_stale", "malformed cursor"))?;
-            let expect = format!("{}.{:?}.{size}", set.candidate_set_id, group);
-            if bound != expect {
-                return Err(ipc(ErrorCode::CursorStale, "cursor_stale", "cursor belongs to another set, group or page size"));
+            let (got, offset) = c.rsplit_once(':').ok_or_else(|| ipc(ErrorCode::CursorStale, "cursor_stale", "malformed cursor"))?;
+            if got != bound {
+                return Err(ipc(ErrorCode::CursorStale, "cursor_stale", "cursor belongs to another set, group, rule or page size"));
             }
             args::offset_cursor(Some(offset))?
         }
     };
     let end = (start + size).min(members.len());
     let items = members.get(start..end).unwrap_or_default().iter().map(|c| candidate_dto(c, l.facts(c))).collect();
-    let next = (end < members.len()).then(|| format!("{}.{:?}.{size}:o{end}", set.candidate_set_id, group));
+    let next = (end < members.len()).then(|| format!("{bound}:o{end}"));
     Ok(CandidatePageDto { candidate_set_id: set.candidate_set_id.clone(), group, total: members.len() as u64, items, next_cursor: next })
 }
 
@@ -1226,13 +1231,16 @@ pub async fn analyze_scan(state: St<'_>, scan_id: String) -> IpcResult<Candidate
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_candidates(state: St<'_>, candidate_set_id: String, group: String, page_size: Option<u32>, cursor: Option<String>) -> IpcResult<CandidatePageDto> {
+pub async fn list_candidates(
+    state: St<'_>, candidate_set_id: String, group: String, page_size: Option<u32>, cursor: Option<String>, rule_id: Option<String>,
+) -> IpcResult<CandidatePageDto> {
     let s = state.inner().clone();
     blocking(move || {
         let id = args::record_id("candidate set", &candidate_set_id)?;
         let group = Group::parse(&group)?;
         let size = args::page_size(page_size)?;
-        s.with_stores(|st| page(load_set(&s, st, &id)?.as_ref(), group, size, cursor.as_deref()))
+        let rule = rule_id.as_deref().map(|r| args::record_id("rule", r)).transpose()?;
+        s.with_stores(|st| page(load_set(&s, st, &id)?.as_ref(), group, size, cursor.as_deref(), rule.as_deref()))
     })
     .await
 }
@@ -1384,18 +1392,38 @@ mod tests {
         let facts = set.candidates.iter().map(|c| (c.candidate_id.clone(), CatalogFacts::default())).collect();
         let set = Loaded { set, catalog: Some(CatalogSet { facts, undetermined: vec![] }) };
         assert_eq!(g.low.unknown_size_count, 2);
-        let p = page(&set, Group::Low, 2, None).unwrap();
+        let p = page(&set, Group::Low, 2, None, None).unwrap();
         let ids: Vec<_> = p.items.iter().map(|c| c.candidate_id.as_str()).collect();
         assert_eq!(ids, ["c_b", "c_a"], "known sizes rank first; a partly unknown total never ranks as largest");
-        let p2 = page(&set, Group::Low, 2, p.next_cursor.as_deref()).unwrap();
+        let p2 = page(&set, Group::Low, 2, p.next_cursor.as_deref(), None).unwrap();
         assert_eq!(p2.items[0].candidate_id, "c_c");
         assert_eq!(p2.items[0].not_selectable, Some("unknown_size"));
         assert_eq!(p2.items[0].logical_exact_bytes, None, "unknown never becomes an exact total");
         assert!(p2.items[0].allowed_modes.is_empty());
-        assert!(page(&set, Group::Review, 2, p.next_cursor.as_deref()).is_err(), "cursor bound to its group");
-        let blocked = page(&set, Group::Blocked, 10, None).unwrap();
+        assert!(page(&set, Group::Review, 2, p.next_cursor.as_deref(), None).is_err(), "cursor bound to its group");
+        let blocked = page(&set, Group::Blocked, 10, None, None).unwrap();
         assert!(blocked.items.iter().all(|c| c.not_selectable.is_some() && c.allowed_modes.is_empty()));
-        assert_eq!(page(&set, Group::Pending, 10, None).unwrap().items[0].not_selectable, Some("pending_evidence"));
+        assert_eq!(page(&set, Group::Pending, 10, None, None).unwrap().items[0].not_selectable, Some("pending_evidence"));
+    }
+
+    #[test]
+    fn a_rule_filter_pages_only_that_rules_candidates_and_binds_the_cursor() {
+        let mut other = cand("c_z", CandidateState::Allowed, Tier::DefaultSelected, 99_999, 0);
+        other.rules[0].rule_id = "other.rule".into();
+        let set = set_of(vec![
+            cand("c_a", CandidateState::Allowed, Tier::DefaultSelected, 10, 0),
+            cand("c_b", CandidateState::Allowed, Tier::DefaultSelected, 500, 0),
+            cand("c_c", CandidateState::Allowed, Tier::DefaultSelected, 900, 0),
+            other,
+        ]);
+        let l = Loaded { set, catalog: None };
+        let p = page(&l, Group::Low, 2, None, Some("r")).unwrap();
+        assert_eq!((p.total, p.items.iter().map(|c| c.candidate_id.as_str()).collect::<Vec<_>>()), (3, vec!["c_c", "c_b"]));
+        assert_eq!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), Some("r")).unwrap().items[0].candidate_id, "c_a");
+        assert!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), None).is_err(), "cursor bound to its rule");
+        assert_eq!(page(&l, Group::Low, 10, None, Some("other.rule")).unwrap().total, 1);
+        assert_eq!(page(&l, Group::Low, 10, None, Some("missing.rule")).unwrap().total, 0);
+        assert_eq!(page(&l, Group::Low, 10, None, None).unwrap().total, 4);
     }
 
     #[test]

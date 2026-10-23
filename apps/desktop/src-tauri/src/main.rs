@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod args;
+mod catalog;
 mod cleanup;
 mod commands;
 mod diag;
@@ -180,6 +181,7 @@ fn main() {
             cleanup::candidate_summary,
             cleanup::analyze_scan,
             cleanup::list_candidates,
+            catalog::clean_catalog,
             cleanup::create_plan,
             cleanup::plan_detail,
             cleanup::plan_items,

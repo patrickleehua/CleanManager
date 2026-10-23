@@ -10,6 +10,7 @@ export type Page =
   | 'disk'
   | 'insights'
   | 'cleanup'
+  | 'rulecatalog'
   | 'purge'
   | 'installer'
   | 'recyclebin'
@@ -84,6 +85,8 @@ export interface AppState {
   leftoversOp: string | null;
   /** Process the process page should select when it is shown next (an alert's link). */
   processFocus: number | null;
+  /** Rule the cleanup candidates are limited to (the catalog page's "show its candidates"); null = every rule. */
+  cleanupRule?: string | null;
   /** NEW-04: when the scan index was rebuilt from this window (the startup store problem no longer applies). */
   indexRepairedAt?: number | null;
 }

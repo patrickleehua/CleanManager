@@ -39,7 +39,7 @@ describe('D15 gated sections', () => {
 
   it('features keep their place: gating changes no tool, section or shortcut', () => {
     expect(TOOLS.map((t) => t.sections.map((s) => s.page))).toEqual([
-      ['cleanup', 'purge', 'installer', 'recyclebin'],
+      ['cleanup', 'rulecatalog', 'purge', 'installer', 'recyclebin'],
       ['apps', 'uninstall', 'updates', 'startup'],
       ['maintenance', 'diagnosis'],
       ['overview', 'disk', 'insights', 'scope'],

@@ -24,6 +24,7 @@ import hostDto from '../../src-tauri/src/dto.rs?raw';
 import hostHost from '../../src-tauri/src/host.rs?raw';
 import hostCommands from '../../src-tauri/src/commands.rs?raw';
 import hostCleanup from '../../src-tauri/src/cleanup.rs?raw';
+import hostCatalog from '../../src-tauri/src/catalog.rs?raw';
 import hostOps from '../../src-tauri/src/ops.rs?raw';
 import hostV2 from '../../src-tauri/src/v2.rs?raw';
 import hostSettings from '../../src-tauri/src/settings.rs?raw';
@@ -57,7 +58,7 @@ function issueCodes(): Map<string, string> {
 
 /** Refusal reasons: `IpcError::new(ErrorCode::…, "x"`, the per-module `ipc(ErrorCode::…, "x"` helpers and the error→reason maps. */
 function refusalCodes(): Map<string, string> {
-  const sources: Record<string, string> = { hostDto, hostHost, hostCommands, hostCleanup, hostOps, hostV2, hostSettings, hostSoftware, hostSuite, hostSystem, hostResident, hostGate, hostDiag };
+  const sources: Record<string, string> = { hostDto, hostHost, hostCommands, hostCleanup, hostCatalog, hostOps, hostV2, hostSettings, hostSoftware, hostSuite, hostSystem, hostResident, hostGate, hostDiag };
   const out = new Map<string, string>();
   for (const [name, src] of Object.entries(sources)) {
     for (const re of [/IpcError::new\(\s*ErrorCode::\w+,\s*"([a-z][a-z0-9_]*)"/g, /\bipc\(\s*ErrorCode::\w+,\s*"([a-z][a-z0-9_]*)"/g, /StoreError::\w+[^=\n]*=>\s*"([a-z][a-z0-9_]*)"/g]) for (const c of all(src, re)) out.set(c, name);

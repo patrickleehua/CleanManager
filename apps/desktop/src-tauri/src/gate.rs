@@ -24,6 +24,7 @@ use crate::resident::Resident;
 /// The gated capability an IPC command belongs to. `catalog` is `create_catalog_plan`'s argument.
 pub fn capability_of(command: &str, catalog: Option<&str>) -> Option<&'static str> {
     Some(match command {
+        "clean_catalog" => "clean.catalog",
         "purge_roots" | "purge_roots_add" | "purge_roots_remove" | "purge_scan" => "purge.artifacts",
         "installer_locations" | "installer_scan" => "installer.cleanup",
         "create_catalog_plan" if catalog == Some("installer") => "installer.cleanup",

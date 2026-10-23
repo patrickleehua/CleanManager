@@ -24,13 +24,19 @@ import type {
   Policy,
   ProtectionItem,
   QuarantineItem,
+  RuleCatalog,
+  RuleCatalogCategory,
+  RuleCatalogEntry,
+  RuleEstimate,
 } from './types';
+import { previewPlatform } from './platform';
 
 type OpsBackend = Pick<
   Backend,
   | 'candidateSummary'
   | 'analyzeScan'
   | 'listCandidates'
+  | 'cleanCatalog'
   | 'createPlan'
   | 'planDetail'
   | 'planItems'
@@ -205,6 +211,108 @@ const CANDIDATES: Candidate[] = [
     protection: { class: 'models', describe: 'Model weights (.gguf, .safetensors, .ckpt, .pt, .onnx)', reviewable: false },
   }),
 ];
+
+// ---------------------------------------------------------------------------------------------
+// 清理 › 清理目录 (WFA-49): the host's `clean_catalog` answer (cm-app clean_catalog.rs). The rule pack's sentences are
+// its own English, as a real host sends them; sizes come only from the preview analysis (CANDIDATES), never 0.
+
+/** The 15 shared categories (cm-core catalog.rs `CATEGORIES`): id, host label, wave. */
+const CATALOG_CATEGORIES: [string, string, number][] = [
+  ['system_data', 'System data', 1],
+  ['user_essentials', 'User temporary files and logs', 1],
+  ['trash', 'Recycle Bin / Trash', 1],
+  ['app_caches', 'Application caches', 2],
+  ['browsers', 'Browsers', 1],
+  ['cloud_office', 'Cloud and office', 2],
+  ['developer', 'Developer tools', 1],
+  ['ai_tools', 'AI tools', 1],
+  ['virtualization', 'Virtualization', 2],
+  ['logs', 'Logs and crash reports', 1],
+  ['leftovers', 'Application leftovers', 2],
+  ['firmware_backups', 'Device firmware and backups', 2],
+  ['incomplete_downloads', 'Incomplete downloads', 1],
+  ['large_items', 'Large items (review hints only)', 1],
+  ['removable_metadata', 'External volume metadata', 2],
+];
+
+type MockRule = Omit<RuleCatalogEntry, 'estimate' | 'version' | 'evidence_refs' | 'tested_range' | 'tested_at' | 'installed_version' | 'adapter_ref' | 'pattern' | 'requires_admin' | 'offline_effect' | 'max_tier'> & {
+  category: string;
+  mac: RuleCatalogEntry['locations'];
+} & Partial<Pick<RuleCatalogEntry, 'installed_version' | 'adapter_ref' | 'pattern' | 'requires_admin' | 'tested_range' | 'tested_at' | 'max_tier'>>;
+
+const W = '%USERPROFILE%\\AppData\\Local';
+const R = '%USERPROFILE%\\AppData\\Roaming';
+const there = (display: string) => ({ display, state: 'present' as const });
+const absent = (display: string) => ({ display, state: 'missing' as const });
+const hidden = (display: string) => ({ display, state: 'not_examined' as const });
+
+const CATALOG_RULES: MockRule[] = [
+  { category: 'browsers', rule_id: 'google.chrome.code-cache', status: 'enabled', effective_tier_ceiling: 'default_selected', rebuild_class: 'local_rebuild', action_kind: 'filesystem', owner_id: 'google.chrome', installed_version: '141.0.7390.66', registry_status: 'covered', tested_range: '120.0..', tested_at: '2026-10-08T09:12:00Z', summary: 'Chrome compiled JavaScript bytecode cache (per profile). Bookmarks, passwords, history and site data are not here.', regeneration: 'Recompiled by Chrome as pages load.', allowed_modes: ['trash', 'quarantine', 'delete'], locations: [there(`${W}\\Google\\Chrome\\User Data\\Default\\Code Cache`), there(`${W}\\Google\\Chrome\\User Data\\Profile 1\\Code Cache`)], applicability: 'applicable', applicability_reason: 'present', mac: [there('~/Library/Application Support/Google/Chrome/Default/Code Cache')] },
+  { category: 'browsers', rule_id: 'google.chrome.http-cache', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'google.chrome', installed_version: '141.0.7390.66', registry_status: 'covered', tested_range: '120.0..', tested_at: '2026-10-08T09:12:00Z', summary: 'Chrome HTTP disk cache (per profile): downloaded page resources.', regeneration: 'Downloaded again as pages are visited.', allowed_modes: ['trash', 'quarantine'], locations: [there(`${W}\\Google\\Chrome\\User Data\\Default\\Cache`)], applicability: 'applicable', applicability_reason: 'present', mac: [there('~/Library/Caches/Google/Chrome/Default/Cache')] },
+  { category: 'browsers', rule_id: 'microsoft.edge.code-cache', status: 'enabled', effective_tier_ceiling: 'default_selected', rebuild_class: 'local_rebuild', action_kind: 'filesystem', owner_id: 'microsoft.edge', installed_version: '141.0.3537.71', registry_status: 'covered', tested_range: '120.0..', tested_at: '2026-10-08T09:30:00Z', summary: 'Edge compiled JavaScript bytecode cache (per profile).', regeneration: 'Recompiled by Edge as pages load.', allowed_modes: ['trash', 'quarantine', 'delete'], locations: [there(`${W}\\Microsoft\\Edge\\User Data\\Default\\Code Cache`)], applicability: 'applicable', applicability_reason: 'present', mac: [absent('~/Library/Application Support/Microsoft Edge/Default/Code Cache')] },
+  { category: 'browsers', rule_id: 'mozilla.firefox.cache2', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'mozilla.firefox', registry_status: 'not_registered', summary: 'Firefox disk cache (cache2) kept apart from the profile.', regeneration: 'Downloaded again as pages are visited.', allowed_modes: ['trash', 'quarantine'], locations: [], applicability: 'not_present', applicability_reason: 'owner_not_found', mac: [] },
+  { category: 'user_essentials', rule_id: 'windows.user-temp.stale-files', status: 'enabled', effective_tier_ceiling: 'default_selected', rebuild_class: 'local_rebuild', action_kind: 'filesystem', owner_id: 'windows', registry_status: 'covered', tested_range: '10.0.22000..', tested_at: '2026-10-07T15:02:00Z', summary: 'Files in the user temporary folder not modified for 30 days.', regeneration: 'Programs create new temporary files when they need them.', allowed_modes: ['trash', 'quarantine', 'delete'], pattern: '*', locations: [there(`${W}\\Temp`)], applicability: 'applicable', applicability_reason: 'present', mac: [there('/private/var/folders/xy/T')] },
+  { category: 'app_caches', rule_id: 'microsoft.teams.cache', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'microsoft.teams', installed_version: '25.1.0', registry_status: 'version_untested', max_tier: 'default_selected', summary: 'New Teams web view cache: interface resources, not messages or files.', regeneration: 'Downloaded again when Teams starts.', allowed_modes: ['trash', 'quarantine'], locations: [there(`${W}\\Packages\\MSTeams_8wekyb3d8bbwe\\LocalCache\\Microsoft\\MSTeams\\EBWebView`)], applicability: 'applicable', applicability_reason: 'present', mac: [hidden('~/Library/Containers/com.microsoft.teams2/Data/Library/Caches')] },
+  { category: 'app_caches', rule_id: 'adobe.media-cache', status: 'experimental', effective_tier_ceiling: 'review_only', rebuild_class: 'local_rebuild', action_kind: 'filesystem', owner_id: 'adobe.creative-cloud', registry_status: 'not_registered', summary: 'Adobe Premiere Pro / After Effects / Media Encoder media cache (conformed audio and indexes). Project files and source media are not here.', regeneration: 'Rebuilt from the source media when projects are opened again; this can take a while for large projects.', allowed_modes: ['trash', 'quarantine'], locations: [absent(`${R}\\Adobe\\Common\\Media Cache Files`)], applicability: 'not_applicable', applicability_reason: 'not_enabled', mac: [absent('~/Library/Application Support/Adobe/Common/Media Cache Files')] },
+  { category: 'developer', rule_id: 'npm.cache', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'npm', registry_status: 'covered', tested_range: '10.0.0..', tested_at: '2026-10-09T10:40:00Z', summary: 'npm download cache (content-addressed tarballs).', regeneration: 'Packages are downloaded again on the next install.', allowed_modes: ['trash', 'quarantine'], locations: [there(`${W}\\npm-cache\\_cacache`)], applicability: 'applicable', applicability_reason: 'present', mac: [there('~/.npm/_cacache')] },
+  { category: 'developer', rule_id: 'pip.cache', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'pip', registry_status: 'covered', tested_range: '23.0..', tested_at: '2026-10-09T10:55:00Z', summary: 'pip wheel and HTTP cache.', regeneration: 'Packages are downloaded again when installed.', allowed_modes: ['trash', 'quarantine'], locations: [there(`${W}\\pip\\cache`)], applicability: 'applicable', applicability_reason: 'present', mac: [there('~/Library/Caches/pip')] },
+  { category: 'developer', rule_id: 'go.build-cache', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'local_rebuild', action_kind: 'tool_adapter', owner_id: 'go', adapter_ref: 'go.build-cache-clean', registry_status: 'not_registered', summary: 'Go build cache, cleaned by the Go tool itself (go clean -cache).', regeneration: 'Rebuilt by the next go build.', allowed_modes: [], locations: [absent(`${W}\\go-build`)], applicability: 'not_present', applicability_reason: 'location_missing', mac: [absent('~/Library/Caches/go-build')] },
+  { category: 'virtualization', rule_id: 'docker.desktop.data-disk', status: 'experimental', effective_tier_ceiling: 'review_only', rebuild_class: 'not_rebuildable', action_kind: 'review_only_row', owner_id: 'docker.desktop', registry_status: 'not_registered', summary: 'Docker Desktop WSL data disk (images, containers, volumes): listed for review, never planned.', regeneration: 'Not regenerated: images and volumes inside are lost.', allowed_modes: [], pattern: '*.vhdx', locations: [absent(`${W}\\Docker\\wsl`)], applicability: 'not_applicable', applicability_reason: 'not_enabled', mac: [] },
+  { category: 'logs', rule_id: 'windows.wer.report-archive', status: 'enabled', effective_tier_ceiling: 'default_selected', rebuild_class: 'not_rebuildable', action_kind: 'filesystem', owner_id: 'windows.wer', registry_status: 'covered', tested_range: '10.0.22000..', tested_at: '2026-10-07T15:20:00Z', summary: 'Windows Error Reporting archived reports for this user (already sent or not needed).', regeneration: 'Not regenerated; new reports are written when programs crash.', allowed_modes: ['trash', 'quarantine', 'delete'], pattern: '*', locations: [there(`${W}\\Microsoft\\Windows\\WER\\ReportArchive`)], applicability: 'applicable', applicability_reason: 'present', mac: [] },
+  { category: 'logs', rule_id: 'windows.wer.machine-report-archive', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'not_rebuildable', action_kind: 'filesystem', owner_id: 'windows.wer.machine', registry_status: 'covered', tested_range: '10.0.22000..', tested_at: '2026-10-07T15:40:00Z', requires_admin: true, summary: 'Machine-wide Windows Error Reporting archive (administrator only).', regeneration: 'Not regenerated.', allowed_modes: ['trash', 'quarantine'], pattern: '*', locations: [there('C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportArchive')], applicability: 'applicable', applicability_reason: 'present', mac: [] },
+  { category: 'incomplete_downloads', rule_id: 'windows.downloads.incomplete', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'network_redownload', action_kind: 'filesystem', owner_id: 'windows', registry_status: 'covered', tested_range: '10.0.22000..', tested_at: '2026-10-07T16:00:00Z', summary: 'Browser partial downloads (.crdownload, .part) older than 7 days and not open.', regeneration: 'Download the file again if you still need it.', allowed_modes: ['trash', 'quarantine'], pattern: '*.crdownload *.part', locations: [there('%USERPROFILE%\\Downloads')], applicability: 'applicable', applicability_reason: 'present', mac: [hidden('~/Downloads')] },
+  { category: 'large_items', rule_id: 'large.downloads', status: 'enabled', effective_tier_ceiling: 'review_only', rebuild_class: 'not_rebuildable', action_kind: 'review_only_row', owner_id: 'user', registry_status: 'covered', summary: 'Files over 1 GiB in Downloads not modified for 90 days: a hint for you to judge, never planned.', regeneration: 'Not regenerated.', allowed_modes: [], locations: [there('%USERPROFILE%\\Downloads')], applicability: 'applicable', applicability_reason: 'present', mac: [hidden('~/Downloads')] },
+  { category: 'removable_metadata', rule_id: 'apple.metadata.ds-store', status: 'enabled', effective_tier_ceiling: 'default_selected', rebuild_class: 'local_rebuild', action_kind: 'filesystem', owner_id: 'apple', registry_status: 'covered', summary: 'Finder .DS_Store files on an external volume you choose.', regeneration: 'Finder writes them again when it opens the folders.', allowed_modes: ['trash', 'quarantine', 'delete'], pattern: '.DS_Store', locations: [], applicability: 'not_applicable', applicability_reason: 'needs_volume', mac: [] },
+];
+
+/** Per-rule totals of the preview analysis (as `cm_app::clean_catalog::estimates`): rules without candidates are absent. */
+function previewEstimates(): Map<string, RuleEstimate> {
+  const out = new Map<string, RuleEstimate>();
+  for (const c of CANDIDATES) {
+    for (const id of new Set(c.rules.map((r) => r.split('@')[0]))) {
+      const e = out.get(id) ?? { objects: 0, known_bytes: '0', unknown_size_count: 0 };
+      out.set(id, { objects: e.objects + 1, known_bytes: (BigInt(e.known_bytes) + BigInt(c.logical_known_bytes)).toString(), unknown_size_count: e.unknown_size_count + c.unknown_size_count });
+    }
+  }
+  return out;
+}
+
+function previewCatalog(analyzed: boolean, scanId: string | null): RuleCatalog {
+  const mac = previewPlatform() === 'macos';
+  const sized = analyzed && scanId === 's_preview_1';
+  const est = sized ? previewEstimates() : new Map<string, RuleEstimate>();
+  const categories: RuleCatalogCategory[] = CATALOG_CATEGORIES.map(([id, label, wave]) => {
+    const rules = CATALOG_RULES.filter((r) => r.category === id && (!mac || r.mac.length || r.locations.length === 0)).map((r): RuleCatalogEntry => {
+      const { category: _c, mac: macLocs, ...row } = r;
+      const base: RuleCatalogEntry = {
+        version: '1.0.0',
+        max_tier: row.effective_tier_ceiling,
+        installed_version: null,
+        adapter_ref: null,
+        pattern: null,
+        requires_admin: false,
+        offline_effect: row.rebuild_class === 'network_redownload' ? 'Needs a network connection to download again.' : 'None.',
+        tested_range: null,
+        tested_at: null,
+        evidence_refs: [`run_win_catalog_${row.rule_id.replace(/[.-]/g, '_')}`],
+        estimate: est.get(row.rule_id) ?? null,
+        ...row,
+      };
+      if (!mac) return base;
+      // macOS: every rule is experimental until it is registered on a real Mac; privacy-protected places are not opened.
+      return { ...base, status: 'experimental', registry_status: 'not_registered', tested_range: null, tested_at: null, installed_version: null, locations: macLocs, applicability: r.applicability_reason === 'needs_volume' ? 'not_applicable' : macLocs.length ? 'not_applicable' : 'not_present', applicability_reason: r.applicability_reason === 'needs_volume' ? 'needs_volume' : macLocs.length ? 'not_enabled' : 'owner_not_found', effective_tier_ceiling: 'review_only' };
+    });
+    const status = rules.length === 0 ? 'unsupported' : rules.some((r) => r.status === 'enabled') ? 'available' : 'unverified';
+    return { category: id, label, wave, status, rules };
+  });
+  return {
+    platform: mac ? 'macos' : 'windows',
+    catalog_version: 'catalog/1',
+    rule_set_digest: hex('preview-rules'),
+    categories,
+    estimate_source: sized ? { scan_id: 's_preview_1', candidate_set_id: 'cs_preview', analyzed_at: iso(-12), scan_root_display: mac ? '/Users/lin' : HOME, rules_current: true } : null,
+  };
+}
 
 interface MockPlan {
   detail: PlanDetail;
@@ -587,9 +695,13 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
       analyzed = true;
       return setInfo();
     },
-    async listCandidates(_set, group, pageSize, cursor) {
+    async cleanCatalog(scanId) {
+      await delay(160);
+      return previewCatalog(analyzed, scanId);
+    },
+    async listCandidates(_set, group, pageSize, cursor, ruleId = null) {
       await delay(100);
-      const m = CANDIDATES.filter((c) => c.group === group).sort((a, b) => {
+      const m = CANDIDATES.filter((c) => c.group === group && (!ruleId || c.rules.some((r) => r.split('@')[0] === ruleId))).sort((a, b) => {
         const ua = a.unknown_size_count > 0 ? 1 : 0;
         const ub = b.unknown_size_count > 0 ? 1 : 0;
         if (ua !== ub) return ua - ub;

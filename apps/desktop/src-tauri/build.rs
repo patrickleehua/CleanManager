@@ -24,6 +24,8 @@ fn main() {
         "candidate_summary",
         "analyze_scan",
         "list_candidates",
+        // The read-only cleanup catalog (清理 › 清理目录, `clean list`): rules, where they look, applicability, stored sizes.
+        "clean_catalog",
         "create_plan",
         "plan_detail",
         "plan_items",

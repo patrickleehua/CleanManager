@@ -38,6 +38,7 @@ import type {
   QuarantinePage,
   RecentScan,
   RootOffer,
+  RuleCatalog,
   ScanStatus,
   StartScan,
   Summary,
@@ -87,7 +88,10 @@ export interface Backend extends DiagBackend, ResidentBackend {
   // P04/P05
   candidateSummary(scanId: string): Promise<CandidateSetInfo | null>;
   analyzeScan(scanId: string): Promise<CandidateSetInfo>;
-  listCandidates(setId: string, group: Group, pageSize: number, cursor: string | null): Promise<CandidatePage>;
+  /** One page of a group; `ruleId` limits it to one rule's candidates (the catalog page's link). */
+  listCandidates(setId: string, group: Group, pageSize: number, cursor: string | null, ruleId?: string | null): Promise<CandidatePage>;
+  /** 清理 › 清理目录: every rule of this platform with where it looks, applicability and the stored sizes of `scanId`'s analysis. Read-only. */
+  cleanCatalog(scanId: string | null): Promise<RuleCatalog>;
   createPlan(setId: string, candidateIds: string[], mode: Mode): Promise<{ plan_id: string }>;
   planDetail(planId: string): Promise<PlanDetail>;
   planItems(planId: string, pageSize: number, cursor: string | null): Promise<PlanItems>;
@@ -213,7 +217,8 @@ async function tauriBackend(): Promise<Backend> {
     summarizeSelection: (scan_id, entry_ids) => call('summarize_selection', { scan_id, entry_ids }),
     candidateSummary: (scan_id) => call('candidate_summary', { scan_id }),
     analyzeScan: (scan_id) => call('analyze_scan', { scan_id }),
-    listCandidates: (candidate_set_id, group, page_size, cursor) => call('list_candidates', { candidate_set_id, group, page_size, cursor }),
+    listCandidates: (candidate_set_id, group, page_size, cursor, rule_id = null) => call('list_candidates', { candidate_set_id, group, page_size, cursor, rule_id }),
+    cleanCatalog: (scan_id) => call('clean_catalog', { scan_id }),
     createPlan: (candidate_set_id, candidate_ids, mode) => call('create_plan', { candidate_set_id, candidate_ids, mode }),
     planDetail: (plan_id) => call('plan_detail', { plan_id }),
     planItems: (plan_id, page_size, cursor) => call('plan_items', { plan_id, page_size, cursor }),

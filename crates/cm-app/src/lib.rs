@@ -1,6 +1,7 @@
 //! Application services shared by the CLI and the desktop host. Business rules stay in
 //! `cm-core`; this layer only wires backends, stores and the hosting process together.
 
+pub mod clean_catalog;
 pub mod diag;
 pub mod execute;
 pub mod features;

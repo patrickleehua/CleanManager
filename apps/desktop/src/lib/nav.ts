@@ -47,6 +47,7 @@ export const TOOLS: Tool[] = [
     get blurb() { return t('nav.cachesBuildArtifactsInstallers', { bin: words().bin }); },
     sections: [
       { page: 'cleanup', get label() { return t('nav.tools.clean.sections.cleanup.label'); } },
+      { page: 'rulecatalog', get label() { return t('nav.tools.clean.sections.rulecatalog.label'); } },
       { page: 'purge', get label() { return t('nav.tools.clean.sections.purge.label'); } },
       { page: 'installer', get label() { return t('nav.tools.clean.sections.installer.label'); } },
       { page: 'recyclebin', get label() { return words().bin; } },
@@ -191,6 +192,8 @@ export interface GatedSection {
  * section keeps its place in the navigation (GUI-08) and opens an explanatory page. Sections not listed are core.
  */
 export const GATED_PAGES: Partial<Record<Page, GatedSection>> = {
+  // The read-only catalog `clean list` prints (WFA-49): the same capability and gate as the CLI's `clean` group.
+  rulecatalog: { capability: 'clean.catalog', gate: 'G1' },
   purge: { capability: 'purge.artifacts', gate: 'G1' },
   installer: { capability: 'installer.cleanup', gate: 'G1' },
   recyclebin: { capability: 'trash.manual', gate: 'G1' },

@@ -110,6 +110,8 @@ export class CleanupPage {
   private creating = false;
   private createError: IpcError | null = null;
   private notice: string | null = null;
+  /** Rule the groups are limited to (opened from the cleanup catalog page); null = every rule. */
+  private rule: string | null = null;
 
   constructor(private app: App) {
     this.body = h('div', { class: 'cleanup-body' });
@@ -117,17 +119,43 @@ export class CleanupPage {
   }
 
   activate(): void {
+    this.syncRule();
     const id = this.app.store.state.scanId;
     if (id !== this.scanId || (!this.info && !this.loadingInfo)) void this.bind(id);
   }
 
   update(): void {
+    this.syncRule();
     const id = this.app.store.state.scanId;
     if (id !== this.scanId) void this.bind(id);
     keepFocus(this.el, () => this.render());
   }
 
   // ---- data ------------------------------------------------------------------------------
+
+  /** Follow the store's rule focus: every group is reloaded limited to that rule (or to every rule again). */
+  private syncRule(): void {
+    const rule = this.app.store.state.cleanupRule ?? null;
+    if (rule === this.rule) return;
+    this.rule = rule;
+    this.groups.clear();
+    this.expanded.clear();
+    // Limited to one rule, every group is open: its blocked rows are part of what the rule found.
+    this.collapsed = rule ? new Set<Group>() : new Set<Group>(['blocked']);
+    const info = this.info;
+    if (info) for (const g of GROUPS) if (info.groups[g].count > 0 && !this.collapsed.has(g)) void this.loadGroup(g);
+  }
+
+  /** A group's count and known size; under a rule focus the host's filtered total once a page arrived (null before). */
+  private countOf(g: Group): { count: number | null; known: string | null; unknown: number } {
+    const base = this.info!.groups[g];
+    if (!this.rule || base.count === 0) return { count: base.count, known: base.known_logical_bytes, unknown: base.unknown_size_count };
+    const v = this.groups.get(g);
+    if (!v || v.total < 0) return { count: null, known: null, unknown: 0 };
+    if (v.next) return { count: v.total, known: null, unknown: 0 };
+    const sum = sumSizes(v.items.map((c) => ({ bytes: c.logical_known_bytes, unknown: c.unknown_size_count })));
+    return { count: v.total, known: sum.known.toString(), unknown: sum.unknown };
+  }
 
   private async bind(scanId: string | null): Promise<void> {
     this.scanId = scanId;
@@ -185,15 +213,17 @@ export class CleanupPage {
   private async loadGroup(g: Group, more = false): Promise<void> {
     const info = this.info;
     if (!info) return;
-    const cur = this.groups.get(g) ?? { items: [], next: null, total: info.groups[g].count, loading: false, error: null };
+    const rule = this.rule;
+    // Under a rule focus the total is unknown (-1) until the host answers with the filtered one.
+    const cur = this.groups.get(g) ?? { items: [], next: null, total: rule ? -1 : info.groups[g].count, loading: false, error: null };
     if (cur.loading) return;
     cur.loading = true;
     cur.error = null;
     this.groups.set(g, cur);
     this.update();
     try {
-      const page = await this.app.backend.listCandidates(info.candidate_set_id, g, PAGE, more ? cur.next : null);
-      if (this.info !== info) return;
+      const page = await this.app.backend.listCandidates(info.candidate_set_id, g, PAGE, more ? cur.next : null, rule);
+      if (this.info !== info || this.rule !== rule) return;
       cur.items = more ? [...cur.items, ...page.items] : page.items;
       cur.next = page.next_cursor;
       cur.total = page.total;
@@ -309,7 +339,7 @@ export class CleanupPage {
             this.notices(),
             emptyBlock({ icon: 'tool-clean', title: T.noneTitle, body: T.noneBody, actions: [h('button', { type: 'button', onclick: () => this.app.navigate('disk') }, T.browseDisk)] }),
           )
-        : h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.summary(total), this.notices(), ...GROUPS.map((g) => this.groupSection(g))), this.draftPanel()),
+        : h('div', { class: 'work-layout' }, h('div', { class: 'work-main' }, this.rule ? this.ruleFocus(this.rule) : this.summary(total), this.notices(), ...GROUPS.map((g) => this.groupSection(g))), this.draftPanel()),
       this.bar(),
     );
   }
@@ -373,6 +403,19 @@ export class CleanupPage {
     );
   }
 
+  /** In place of the summary while the groups are limited to one rule: which rule, and the way back to every rule. */
+  private ruleFocus(rule: string): HTMLElement {
+    const all = h('button', { type: 'button', class: 'quiet', id: 'rule-focus-clear', onclick: () => this.app.store.set({ cleanupRule: null }) }, t('cleanup.ruleFocusAll'));
+    const back = h('button', { type: 'button', class: 'quiet', id: 'rule-focus-catalog', onclick: () => this.app.navigate('rulecatalog') }, t('cleanup.ruleFocusCatalog'));
+    return h(
+      'section',
+      { class: 'cand-summary rule-focus', 'aria-labelledby': 'rule-focus-title' },
+      h('h2', { id: 'rule-focus-title', class: 'cs-sentence' }, t('cleanup.ruleFocus'), h('code', { class: 'selectable rule-focus-id' }, rule)),
+      h('p', { class: 'cs-note' }, t('cleanup.ruleFocusNote')),
+      h('div', { class: 'card-actions' }, all, back),
+    );
+  }
+
   private jumpTo(g: Group): void {
     if (this.collapsed.has(g)) {
       this.collapsed.delete(g);
@@ -403,7 +446,7 @@ export class CleanupPage {
 
   private groupSection(g: Group): HTMLElement {
     const info = this.info!;
-    const count = info.groups[g];
+    const count = this.countOf(g);
     const view = this.groups.get(g);
     const open = !this.collapsed.has(g);
     const T = CLEANUP_TEXT;
@@ -412,13 +455,13 @@ export class CleanupPage {
       { type: 'button', class: 'group-toggle', id: `group-toggle-${g}`, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `group-body-${g}` },
       h('span', { class: 'chev-icon', 'aria-hidden': 'true' }, icon('chevron')),
       groupMark(g),
-      h('span', { class: 'group-count num' }, t('common.itemsCount', { count: count.count })),
-      count.count
+      h('span', { class: 'group-count num' }, count.count === null ? T.loadingRows : t('common.itemsCount', { count: count.count })),
+      count.count && count.known !== null
         ? h(
             'span',
-            { class: 'group-size num', title: exactTitle(count.known_logical_bytes) },
-            sizeLabel(count.known_logical_bytes, { unknownCount: count.unknown_size_count }),
-            count.unknown_size_count ? h('span', { class: 'group-unknown' }, T.unknownIn(count.unknown_size_count)) : null,
+            { class: 'group-size num', title: exactTitle(count.known) },
+            sizeLabel(count.known, { unknownCount: count.unknown }),
+            count.unknown ? h('span', { class: 'group-unknown' }, T.unknownIn(count.unknown)) : null,
           )
         : null,
     );
@@ -426,11 +469,11 @@ export class CleanupPage {
       if (open) this.collapsed.add(g);
       else {
         this.collapsed.delete(g);
-        if (!this.groups.get(g) && count.count) void this.loadGroup(g);
+        if (!this.groups.get(g) && info.groups[g].count) void this.loadGroup(g);
       }
       this.update();
     });
-    const extra = g === 'low' && count.count > 0 ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => void this.selectAllLow() }, T.selectLow) : null;
+    const extra = g === 'low' && (count.count ?? 0) > 0 ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => void this.selectAllLow() }, T.selectLow) : null;
     const bodyEl = h(
       'div',
       { class: 'group-body', id: `group-body-${g}`, hidden: !open },

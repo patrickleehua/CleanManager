@@ -21,6 +21,7 @@ import { ScopePage } from './views/scope';
 import { SettingsPage } from './views/settings';
 import { ApplyChip, TaskChip } from './views/task';
 import { CatalogPage } from './views/catalog';
+import { RuleCatalogPage } from './views/ruleCatalog';
 import { InsightsPage, StartupPage, StatusPage, capabilityPages } from './views/tools';
 import { RecycleBinPage } from './views/recycleBin';
 import { UninstallPage } from './views/uninstall';
@@ -311,6 +312,7 @@ async function boot(): Promise<void> {
     disk: new DiskPage(app),
     insights: new InsightsPage(app),
     cleanup: new CleanupPage(app),
+    rulecatalog: new RuleCatalogPage(app),
     purge: new CatalogPage(app, 'purge'),
     installer: new CatalogPage(app, 'installer'),
     recyclebin: new RecycleBinPage(app),
@@ -609,7 +611,7 @@ function routeFromHash(app: App): void {
     } else app.navigate('diag');
   }
   else if (
-    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'diagnosis', 'status', 'processes', 'resident', 'agent', 'settings'].includes(page)
+    ['scope', 'overview', 'disk', 'insights', 'cleanup', 'rulecatalog', 'purge', 'installer', 'recyclebin', 'apps', 'uninstall', 'updates', 'startup', 'maintenance', 'diagnosis', 'status', 'processes', 'resident', 'agent', 'settings'].includes(page)
   )
     app.navigate(page as Page);
 }

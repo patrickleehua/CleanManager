@@ -308,6 +308,69 @@ export interface CandidatePage {
   next_cursor: string | null;
 }
 
+// 清理 › 清理目录 (mirrors src-tauri/src/catalog.rs and cm-app clean_catalog.rs; the `clean list` row plus page facts)
+
+export type RuleStatus = 'experimental' | 'verified' | 'enabled';
+export type CategoryStatus = 'available' | 'unverified' | 'unsupported';
+export type Applicability = 'applicable' | 'not_present' | 'not_applicable' | 'unsupported';
+
+export interface RuleLocation {
+  /** Home folder written `%USERPROFILE%` / `~`. */
+  display: string;
+  state: 'present' | 'missing' | 'not_examined';
+}
+
+export interface RuleEstimate {
+  objects: number;
+  known_bytes: string;
+  unknown_size_count: number;
+}
+
+export interface RuleCatalogEntry {
+  rule_id: string;
+  version: string;
+  status: RuleStatus;
+  max_tier: Tier;
+  effective_tier_ceiling: Tier;
+  rebuild_class: string;
+  action_kind: 'filesystem' | 'tool_adapter' | 'review_only_row';
+  adapter_ref: string | null;
+  owner_id: string;
+  installed_version: string | null;
+  registry_status: 'covered' | 'version_untested' | 'not_registered';
+  tested_range: string | null;
+  tested_at: string | null;
+  evidence_refs: string[];
+  /** The rule pack's own sentence (English data). */
+  summary: string;
+  pattern: string | null;
+  allowed_modes: Mode[];
+  requires_admin: boolean;
+  regeneration: string;
+  offline_effect: string;
+  locations: RuleLocation[];
+  applicability: Applicability;
+  applicability_reason: string;
+  /** What the stored analysis found for this rule; null = unknown (never 0). */
+  estimate: RuleEstimate | null;
+}
+
+export interface RuleCatalogCategory {
+  category: string;
+  label: string;
+  wave: number;
+  status: CategoryStatus;
+  rules: RuleCatalogEntry[];
+}
+
+export interface RuleCatalog {
+  platform: 'windows' | 'macos';
+  catalog_version: string;
+  rule_set_digest: string;
+  categories: RuleCatalogCategory[];
+  estimate_source: { scan_id: string; candidate_set_id: string; analyzed_at: string; scan_root_display: string | null; rules_current: boolean } | null;
+}
+
 export type AuthStatus = 'authorized' | 'required' | 'expired' | 'revoked';
 
 export interface Authorization {
