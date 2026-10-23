@@ -4,6 +4,7 @@
 
 import type { Backend } from './api';
 import type {
+  BinItem,
   Catalog,
   CatalogItem,
   CatalogPreview,
@@ -31,6 +32,8 @@ type SuiteBackend = Pick<
   | 'createCatalogPlan'
   | 'trashInspect'
   | 'trashPlan'
+  | 'trashList'
+  | 'trashPurgePlan'
   | 'startupList'
   | 'startupPlan'
   | 'insightsList'
@@ -257,6 +260,16 @@ function ins(id: string, kind: string, title: string, path: string | null, size:
   };
 }
 
+/** The preview bin (WFA-65): what the host's `trash_list` reads from the bins' own records. */
+const binItems: BinItem[] = [
+  { trash_item_id: 'tb_c_1', bin_id: 'bin_c', name: 'drone_raw_0331.mov', original_path_display: 'C:\\Users\\Lin\\Videos\\drone_raw_0331.mov', bin_location_display: 'C:\\$Recycle.Bin\\S-1-5-21-1001\\$R3K9Q1.mov', deleted_at: iso(-35), object_kind: 'file', logical_bytes: b(2n * GiB + 310n * MiB), purgeable: true, refusal: null },
+  { trash_item_id: 'tb_c_2', bin_id: 'bin_c', name: '季度报告-草稿.docx', original_path_display: 'C:\\Users\\Lin\\Documents\\季度报告-草稿.docx', bin_location_display: 'C:\\$Recycle.Bin\\S-1-5-21-1001\\$R8LZ2D.docx', deleted_at: iso(-60 * 26), object_kind: 'file', logical_bytes: b(184n * 1024n), purgeable: true, refusal: null },
+  { trash_item_id: 'tb_c_3', bin_id: 'bin_c', name: 'node-cache', original_path_display: 'C:\\Users\\Lin\\Projects\\site\\node-cache', bin_location_display: 'C:\\$Recycle.Bin\\S-1-5-21-1001\\$RQ01MM', deleted_at: iso(-60 * 24 * 3), object_kind: 'directory', logical_bytes: b(612n * MiB), purgeable: false, refusal: 'contains a link or special object; empty it with Explorer (Recycle Bin, Delete) instead' },
+  { trash_item_id: 'tb_c_4', bin_id: 'bin_c', name: '$RX7TQ2.zip', original_path_display: null, bin_location_display: 'C:\\$Recycle.Bin\\S-1-5-21-1001\\$RX7TQ2.zip', deleted_at: null, object_kind: 'file', logical_bytes: null, purgeable: true, refusal: null },
+  { trash_item_id: 'tb_d_1', bin_id: 'bin_d', name: 'Archives-2019', original_path_display: 'D:\\Work\\Archives-2019', bin_location_display: 'D:\\$Recycle.Bin\\S-1-5-21-1001\\$RAA0K1', deleted_at: iso(-60 * 24 * 9), object_kind: 'directory', logical_bytes: b(5n * GiB + 120n * MiB), purgeable: true, refusal: null },
+  { trash_item_id: 'tb_d_2', bin_id: 'bin_d', name: 'render-tmp', original_path_display: 'D:\\Work\\render-tmp', bin_location_display: 'D:\\$Recycle.Bin\\S-1-5-21-1001\\$RBB2P9', deleted_at: iso(-60 * 24 * 12), object_kind: 'directory', logical_bytes: b(96n * MiB), purgeable: false, refusal: 'part of it could not be read; empty it with Explorer instead' },
+];
+
 export function mockSuite(makePlan: MakePlan, entry: EntryInfo): SuiteBackend {
   let roots: PurgeRoot[] = [
     { root_id: 'r_8c1f0e22a91b', display: `${HOME}\\source\\repos`, source: 'default', exists: true },
@@ -405,6 +418,42 @@ export function mockSuite(makePlan: MakePlan, entry: EntryInfo): SuiteBackend {
       });
       return { plan_id: id };
     },
+    // WFA-65: the bin's own records (two volumes; one folder with a link inside cannot be purged from here).
+    async trashList() {
+      await delay(240);
+      return {
+        supported: true,
+        observed_at: iso(0),
+        bins: [
+          { bin_id: 'bin_c', volume_display: 'C:\\', item_count: 4 },
+          { bin_id: 'bin_d', volume_display: 'D:\\', item_count: 2 },
+        ],
+        items: binItems.map((x) => ({ ...x })),
+        total: binItems.length,
+        truncated: false,
+        issues: [],
+      };
+    },
+    async trashPurgePlan(itemIds) {
+      await delay(280);
+      const chosen = itemIds.map((id) => binItems.find((x) => x.trash_item_id === id));
+      if (chosen.some((x) => !x)) throw err('invalid_argument', 'bin_item_gone', 'none of these items is in your Recycle Bin any more; reload the list');
+      if (new Set(chosen.map((x) => x!.bin_id)).size > 1) throw err('invalid_argument', 'bin_items_mixed', 'plan each volume separately');
+      const items: PlanItem[] = chosen.map((x, i) => ({
+        action_id: `a${String(i + 1).padStart(2, '0')}`,
+        name: x!.name,
+        path_display: x!.bin_location_display,
+        logical_bytes: x!.logical_bytes ?? '0',
+        allocated_bytes: x!.logical_bytes,
+        candidate_id: null,
+        original_path_display: x!.original_path_display,
+        quarantine_id: null,
+        item_kind: x!.object_kind === 'directory' ? 'directory' : 'file',
+        action_type: 'fs_delete',
+      }));
+      const id = makePlan('manual_purge', 'delete', items, { contract: 'plan/v2', plan_kind_v2: 'manual_selection', terminal_only: 'permanent_delete' });
+      return { plan_id: id };
+    },
     async startupList() {
       await delay(220);
       return {
@@ -501,7 +550,8 @@ export function mockSuite(makePlan: MakePlan, entry: EntryInfo): SuiteBackend {
             { dimension: 'io', metric: 'disk.busy_percent', value: 6.5, full_score_at: 50, zero_score_at: 95, score: 100 },
           ],
         },
-        diagnosis: { code: 'low_free_space', message: 'System volume free space is low', link: 'analyze' },
+        // `?status=normal`: no reading crosses a threshold (the host's `normal` line, WFA-91).
+        diagnosis: new URLSearchParams(globalThis.location?.search ?? '').get('status') === 'normal' ? { code: 'normal', message: 'No metric crosses a diagnosis threshold', link: null } : { code: 'low_free_space', message: 'System volume free space is low', link: 'analyze' },
       };
     },
     async readiness(operation: ReadinessOp) {

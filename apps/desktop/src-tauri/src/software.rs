@@ -51,9 +51,10 @@ pub fn note_plan(s: &AppState, plan_id: &str, v: Value) {
     c.plan_notes.insert(plan_id.to_owned(), v);
 }
 
-/// A core refusal as an IPC error (the reason word the UI explains; the Settings route stays in the message).
+/// A core refusal as an IPC error (the reason word the UI explains; the Settings route stays in the message). A specific
+/// reason (an uninstaller signed by someone other than its publisher…) wins over the code's general one (WFA-76).
 pub fn refused(r: &cm_app::uninstall::Refused) -> IpcError {
-    let reason = match r.code.as_str() {
+    let general = match r.code.as_str() {
         "policy_denied" => "policy_denied",
         "unsupported" => "unsupported",
         "permission_required" => "permission_required",
@@ -62,6 +63,7 @@ pub fn refused(r: &cm_app::uninstall::Refused) -> IpcError {
         "internal_error" => "internal",
         _ => "invalid_argument",
     };
+    let reason = r.reason.unwrap_or(general);
     let mut message = r.message.clone();
     if let Some(u) = &r.settings_uri {
         message.push_str(&format!(" ({u})"));
@@ -743,12 +745,19 @@ mod tests {
         // UNI-11: estimates per application and summed; refused applications keep their reason word.
         let foo: BTreeMap<Group, usize> = [(Group::CachesLogs, 2), (Group::Settings, 1)].into_iter().collect();
         let bar: BTreeMap<Group, usize> = [(Group::CachesLogs, 1)].into_iter().collect();
-        let agent = cm_app::uninstall::Refused { code: "policy_denied".into(), message: "endpoint security agent".into(), settings_uri: None };
-        let dto = batch_dto("up_1", &[("app_foo", "Foo", &foo), ("app_bar", "Bar", &bar)], &[("app_agent", Some("Agent"), &agent)]);
+        let agent = cm_app::uninstall::Refused { code: "policy_denied".into(), message: "endpoint security agent".into(), settings_uri: None, reason: None };
+        // WFA-76: an uninstaller signed by someone other than the recorded publisher is explained as that, not as a policy.
+        let mismatch = cm_app::uninstall::Refused {
+            code: "policy_denied".into(), message: "signed by \"Microsoft Windows\", not by the recorded publisher \"Contoso Test\"".into(), settings_uri: None,
+            reason: Some(cm_core::uninstall::UNINSTALLER_SIGNER_MISMATCH),
+        };
+        let dto = batch_dto("up_1", &[("app_foo", "Foo", &foo), ("app_bar", "Bar", &bar)], &[("app_agent", Some("Agent"), &agent), ("app_mm", Some("Mismatch"), &mismatch)]);
         assert_eq!(dto.plan_id, "up_1");
         assert_eq!(dto.apps.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Foo", "Bar"]);
         assert_eq!((dto.leftover_estimate["caches_logs"], dto.leftover_estimate["settings"]), (3, 1));
         assert_eq!((dto.refused[0].reason.as_str(), dto.refused[0].name.as_deref()), ("policy_denied", Some("Agent")));
+        assert_eq!((dto.refused[1].reason.as_str(), refused(&mismatch).code), ("uninstaller_signer_mismatch", cm_core::error::ErrorCode::PolicyDenied));
+        assert!(dto.refused[1].message.contains("Contoso Test"), "the message keeps the names: {}", dto.refused[1].message);
         assert_eq!(names_text(&["A".into(), "B".into()]), "A、B");
         assert_eq!(names_text(&["A".into(), "B".into(), "C".into(), "D".into()]), "A、B 等 4 个应用");
     }

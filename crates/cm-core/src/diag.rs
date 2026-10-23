@@ -599,6 +599,8 @@ pub struct Preview {
     pub destination: Destination,
     pub payload: TransportPayload,
     pub payload_digest: String,
+    /// UTF-8 bytes of `payload.body`: exactly the request body sent (the HTTP `Content-Length`, or the CLI's stdin),
+    /// not its character count (WFA-104).
     pub payload_bytes: u64,
     pub contains_user_additions: bool,
     pub created_at: String,

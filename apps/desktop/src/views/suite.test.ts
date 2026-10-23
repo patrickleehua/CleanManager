@@ -60,7 +60,8 @@ describe('UNI-05 leftovers and DIN-03/STS-05 words', () => {
   });
   it('an overview card without a size shows the count or "unknown", never 0', () => {
     const c = { card_id: 'c', kind: 'snapshots', title: 'Snapshots', logical_bytes: null, count: 3, size_note: 'no admin', observed_at: null };
-    expect(overviewCard(c)).toMatchObject({ title: '还原点与快照', size: '3 个', note: 'no admin' });
+    // NEW-13: the host's English note is the tooltip, never the card's text.
+    expect(overviewCard(c)).toMatchObject({ title: '还原点与快照', size: '3 个', note: '没有测量（原因见提示）', noteRaw: 'no admin' });
     expect(overviewCard({ ...c, count: null }).size).toBe('大小未知');
     expect(overviewCard({ ...c, logical_bytes: '1073741824' }).size).toBe('1.0 GiB');
   });

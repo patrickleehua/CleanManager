@@ -9,6 +9,7 @@ import type {
   ApplyProgressEvent,
   ApplyStart,
   AppsList,
+  BinList,
   Authorization,
   CancelReceipt,
   CandidatePage,
@@ -20,6 +21,7 @@ import type {
   FinishedEvent,
   Group,
   HistoryPage,
+  IndexRepair,
   IpcError,
   ItemFilter,
   Mode,
@@ -110,6 +112,12 @@ export interface Backend extends DiagBackend, ResidentBackend {
   addProtection(target: ProtectTarget, note: string | null): Promise<ProtectionList>;
   removeProtection(protectionId: string, confirm: string): Promise<ProtectionList>;
   listApps(scanId: string | null): Promise<AppsList>;
+  /**
+   * NEW-04: rebuild a damaged or incompatible scan index (the desktop's `doctor --repair-index`): the damaged files are
+   * kept beside the store under a new name and an empty index is created; earlier scans must be run again. History,
+   * quarantine and recovery are not touched. Only called after the person confirmed (the host refuses without it).
+   */
+  repairIndex(confirmed: true): Promise<IndexRepair>;
   // Five-tool suite: catalogs (build artifacts, installers), manual trash, startup, insights,
   // status, permission readiness. Writes still only create plans for the review page.
   purgeRoots(): Promise<PurgeRoots>;
@@ -122,6 +130,10 @@ export interface Backend extends DiagBackend, ResidentBackend {
   createCatalogPlan(catalog: Catalog, setId: string, candidateIds: string[], mode: Mode): Promise<{ plan_id: string; stale_items?: { candidate_id: string; reason: string; detail: string }[] }>;
   trashInspect(scanId: string, entryId: string): Promise<TrashInspection>;
   trashPlan(scanId: string, entryIds: string[]): Promise<{ plan_id: string }>;
+  /** WFA-65 / MTR-03: the current user's bin items (read-only). */
+  trashList(): Promise<BinList>;
+  /** Listed items of one bin frozen into a permanent-delete plan; only a terminal review approves it. */
+  trashPurgePlan(itemIds: string[]): Promise<{ plan_id: string }>;
   startupList(): Promise<StartupList>;
   startupPlan(itemId: string, operation: 'disable' | 'enable'): Promise<{ plan_id: string }>;
   insightsList(): Promise<InsightsList>;
@@ -224,6 +236,7 @@ async function tauriBackend(): Promise<Backend> {
     addProtection: (target, note) => call('add_protection', { target, note }),
     removeProtection: (protection_id, confirm) => call('remove_protection', { protection_id, confirm }),
     listApps: (scan_id) => call('list_apps', { scan_id }),
+    repairIndex: (confirm) => call('repair_index', { confirm }),
     purgeRoots: () => call('purge_roots'),
     purgeRootsAdd: () => call('purge_roots_add'),
     purgeRootsRemove: (root_id) => call('purge_roots_remove', { root_id }),
@@ -233,6 +246,8 @@ async function tauriBackend(): Promise<Backend> {
     createCatalogPlan: (catalog, candidate_set_id, candidate_ids, mode) => call('create_catalog_plan', { catalog, candidate_set_id, candidate_ids, mode }),
     trashInspect: (scan_id, entry_id) => call('trash_inspect', { scan_id, entry_id }),
     trashPlan: (scan_id, entry_ids) => call('trash_plan', { scan_id, entry_ids }),
+    trashList: () => call('trash_list'),
+    trashPurgePlan: (item_ids) => call('trash_purge_plan', { item_ids }),
     startupList: () => call('startup_list'),
     startupPlan: (item_id, operation) => call('startup_plan', { item_id, operation }),
     insightsList: () => call('insights_list'),

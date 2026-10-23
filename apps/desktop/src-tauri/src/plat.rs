@@ -226,16 +226,6 @@ mod imp {
         (os::restart_manager::holders(paths).ok().map(|h| h.iter().map(|x| x.describe()).collect()), None)
     }
 
-    /// Objects this platform's trash action cannot take beyond the core refusals (none on Windows).
-    pub fn trash_refusal(_: &cm_core::manual_trash::Inspection) -> Option<cm_core::manual_trash::TrashRefusal> {
-        None
-    }
-
-    /// Whether objects of this kind may meet [`trash_refusal`] (so planning inspects them first): never on Windows.
-    pub fn trash_may_refuse(_: cm_core::model::ObjectKind) -> bool {
-        false
-    }
-
     /// Guidance added after the "plan it" line of a trashable object (none on Windows).
     pub const PUT_BACK_HINT: Option<&str> = None;
 
@@ -459,16 +449,6 @@ mod imp {
         }
     }
 
-    /// A folder is refused: the macOS Trash action moves single verified files.
-    pub fn trash_refusal(ins: &cm_core::manual_trash::Inspection) -> Option<cm_core::manual_trash::TrashRefusal> {
-        os::actions::trash::folder_refusal(ins)
-    }
-
-    /// Whether objects of this kind may meet [`trash_refusal`] (so planning inspects them first): folders.
-    pub fn trash_may_refuse(kind: cm_core::model::ObjectKind) -> bool {
-        kind == cm_core::model::ObjectKind::Directory
-    }
-
     /// Finder keeps the original location privately: where to look, and how to put it back.
     pub const PUT_BACK_HINT: Option<&str> = Some(cm_core::manual_trash::PUT_BACK_GUIDANCE);
 
@@ -535,10 +515,11 @@ mod tests {
         assert!(["apps_features", "store_updates", "login_items", "software_update"].iter().all(|t| system_page(t).is_some_and(|u| u.starts_with("x-apple.systempreferences:") || u.starts_with("macappstore:"))));
     }
 
-    /// The trash seams: Windows takes folders as they are; macOS refuses a folder before planning and never reports
-    /// "nobody holds it" for a path that cannot be inspected.
+    /// The trash seams (shared with the CLI, `cm_app::trash`): Windows takes folders as they are; macOS refuses a folder
+    /// before planning and never reports "nobody holds it" for a path that cannot be inspected.
     #[test]
     fn trash_seams_follow_the_platform() {
+        use cm_app::trash::platform_refusal as trash_refusal;
         let ins = |kind: cm_core::model::ObjectKind| cm_core::manual_trash::Inspection {
             entry_id: 1, path: cm_core::path::RawPath::Unix(b"/tmp/x".to_vec()), kind, cloud: cm_core::model::CloudState::NotCloud, logical_bytes: Some(0), allocated_bytes: Some(0),
             files: 0, directories: 0, protected: vec![], protected_count: 0, gaps: vec![], gap_count: 0, refusal: None,

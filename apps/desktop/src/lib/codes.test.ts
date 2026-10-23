@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { explainIssue, groupIssues, ISSUE_TEXT, permissionCause, refusalKnown, refusalText, unknownCodeText } from './codes';
+import { explainIssue, explainResult, groupIssues, ISSUE_TEXT, permissionCause, refusalKnown, refusalText, resultText, unknownCodeText } from './codes';
+import { setLocale } from '../i18n';
 import { ERROR_HINT } from './format';
 import { setPlatform } from './platform';
 import mockTs from './mock.ts?raw';
@@ -164,5 +165,43 @@ describe('issue lines', () => {
       ['quota_x', null, 1],
     ]);
     expect(g[1].scopes).toEqual(['D:\\a', 'D:\\b']);
+  });
+});
+
+/** NEW-13: every per-item result code an executor writes, read from the executors' own sources. */
+const EXECUTORS = import.meta.glob(['../../../../crates/cm-app/src/**/*.rs', '../../../../crates/cm-platform/src/**/*.rs', '!**/tests.rs', '!**/*_tests.rs', '!**/tests/**'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+
+function resultCodes(): Map<string, string> {
+  const out = new Map<string, string>();
+  const res = [
+    /\bres\(\s*[a-z_&.]+,\s*ActionStatus::\w+,\s*"([a-z][a-z0-9_]*)"/g,
+    /\b(?:skip|fail|failed|skipped)\(\s*"([a-z][a-z0-9_]*)"/g,
+    /Action(?:Outcome|Result)?::(?:Skipped|Failed)\s*\{\s*code:\s*"([a-z][a-z0-9_]*)"/g,
+  ];
+  for (const [file, src] of Object.entries(EXECUTORS)) for (const re of res) for (const c of all(src, re)) out.set(c, file.split('/crates/')[1] ?? file);
+  // The live checks reported as `precondition_<check>` (cm-app plans.rs `crate_precondition`).
+  const plans = Object.entries(EXECUTORS).find(([f]) => f.endsWith('cm-app/src/plans.rs'))?.[1] ?? '';
+  const live = /const LIVE: \[&str; \d+\] = \[([^\]]+)\]/.exec(plans)?.[1] ?? '';
+  for (const m of live.matchAll(/"([a-z_]+)"/g)) out.set(`precondition_${m[1]}`, 'cm-app/src/plans.rs LIVE');
+  return out;
+}
+
+describe('NEW-13: per-item results read in words, never "未识别的问题"', () => {
+  it('finds the executors and the codes they write', () => {
+    const codes = resultCodes();
+    expect(Object.keys(EXECUTORS).length).toBeGreaterThan(20);
+    for (const c of ['done', 'restored', 'precondition_tree_mismatch', 'precondition_new_descendant', 'tree_mismatch', 'in_use', 'ended_on_request']) expect(codes.has(c), c).toBe(true);
+  });
+
+  it('every result code has words in both languages', () => {
+    const unknown = (locale: 'zh-CN' | 'en') => {
+      setLocale(locale);
+      return [...resultCodes()].filter(([code]) => !explainResult({ code, scope_display: '', message: '' }).known).map(([c, src]) => `${c} (${src})`);
+    };
+    expect(unknown('zh-CN')).toEqual([]);
+    expect(unknown('en')).toEqual([]);
+    setLocale('zh-CN');
+    expect(resultText('precondition_tree_mismatch')).toBe(resultText('tree_mismatch'));
+    expect(resultText('precondition_tree_mismatch')).not.toContain('未识别');
   });
 });

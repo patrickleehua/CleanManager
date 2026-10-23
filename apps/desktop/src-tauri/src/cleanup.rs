@@ -550,10 +550,17 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
         observed_at: status.finished_at.as_deref().unwrap_or(&status.started_at),
         policy_digest: &pdigest,
     };
-    let plan = build_plan(&view, set, selected, mode, &input).map_err(|e| ipc(ErrorCode::PolicyDenied, "plan_refused", e.to_string()))?;
+    let plan = build_plan(&view, set, selected, mode, &input).map_err(plan_error)?;
     bins_ready(set, selected, mode)?;
     stores.audit.save_plan(&plan)?;
     Ok(CreatedPlanDto::new(plan_id))
+}
+
+/// The core's refusal of a selection: WFA-113 `empty_selection` when nothing selected holds anything to act on (an
+/// emptied folder), otherwise `plan_refused`; never a zero-action plan.
+pub(crate) fn plan_error(e: cm_core::plan::PlanError) -> IpcError {
+    let reason = if e == cm_core::plan::PlanError::Empty { "empty_selection" } else { "plan_refused" };
+    ipc(ErrorCode::PolicyDenied, reason, e.to_string())
 }
 
 /// MTR-03 / WFA-35: trash mode needs a usable bin on every selected target's volume, checked before a cleanup plan is

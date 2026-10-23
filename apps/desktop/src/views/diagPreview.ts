@@ -7,7 +7,7 @@ import { toIpcError } from '../lib/api';
 import { formatBytes } from '../lib/bytes';
 import { h, replace } from '../lib/dom';
 import type { Diagnosis, Disclosure, Preview } from '../lib/diagTypes';
-import { EXCLUDED_LABEL, LAYER_LABEL, PROVIDER_LABEL, REDACTION_LABEL, payloadSize, prettyBody } from '../lib/diagWords';
+import { EXCLUDED_LABEL, LAYER_LABEL, PROVIDER_LABEL, REDACTION_LABEL, payloadSize, payloadView } from '../lib/diagWords';
 import { errorText, metaRow, pill } from './parts';
 import { t } from '../i18n';
 
@@ -25,6 +25,9 @@ export function openPreview(app: App, req: PreviewRequest, initial: Preview): Pr
     let preview = initial;
     let busy = false;
     let done = false;
+    /** The indented reading view of the body (off: the exact bytes that are sent). */
+    let formatted = false;
+    let rawOpen = false;
     const dialog = h('dialog', { class: 'diag-dialog', 'aria-labelledby': 'dp-title', 'aria-describedby': 'dp-lede' }) as HTMLDialogElement;
     const body = h('div', { class: 'dp-body' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
@@ -62,6 +65,30 @@ export function openPreview(app: App, req: PreviewRequest, initial: Preview): Pr
         }
       });
       return h('label', { class: 'dp-scope' }, input, h('span', { class: 'dp-scope-text' }, h('b', {}, label), h('span', {}, note)));
+    };
+
+    /** NEW-17: the exact request — headers, arguments and the body as sent (byte for byte); indenting is a labelled view. */
+    const rawSection = (p: Preview): HTMLElement => {
+      const view = payloadView(p.payload.body, formatted);
+      const toggle = h('input', { type: 'checkbox', id: 'dp-format' }) as HTMLInputElement;
+      toggle.checked = formatted;
+      toggle.addEventListener('change', () => {
+        formatted = toggle.checked;
+        render();
+        document.getElementById('dp-format')?.focus();
+      });
+      const details = h(
+        'details',
+        { class: 'dp-raw', open: rawOpen ? true : null },
+        h('summary', {}, t('diagPreview.viewExactlyWhatSent', { payload_bytes: payloadSize(p.payload_bytes) })),
+        p.payload.headers.length ? h('pre', { class: 'dp-pre selectable' }, p.payload.headers.join('\n')) : null,
+        p.payload.argv.length ? h('pre', { class: 'dp-pre selectable' }, [t('diagPreview.arguments'), ...p.payload.argv.map((a) => (a === '' ? '""' : a))].join('\n')) : null,
+        h('label', { class: 'dp-format', for: 'dp-format' }, toggle, h('span', {}, t('diagPreview.formatToggle'))),
+        h('pre', { class: 'dp-pre selectable', tabindex: '0', 'data-exact': view.exact ? 'yes' : 'no', 'aria-label': view.exact ? t('diagPreview.payloadExact') : t('diagPreview.payloadFormatted') }, view.text),
+        h('p', { class: 'small muted' }, view.exact ? t('diagPreview.exactNote') : t('diagPreview.formattedNote'), h('code', { class: 'selectable' }, p.payload_digest.slice(0, 16)), '…'),
+      ) as HTMLDetailsElement;
+      details.addEventListener('toggle', () => (rawOpen = details.open));
+      return details;
     };
 
     const render = () => {
@@ -121,15 +148,7 @@ export function openPreview(app: App, req: PreviewRequest, initial: Preview): Pr
           h('h3', { id: 'dp-never' }, t('diagPreview.neverSent')),
           h('ul', {}, ...p.evidence.excluded.map((x) => h('li', {}, EXCLUDED_LABEL[x] ?? x))),
         ),
-        h(
-          'details',
-          { class: 'dp-raw' },
-          h('summary', {}, t('diagPreview.viewExactlyWhatSent', { payload_bytes: payloadSize(p.payload_bytes) })),
-          p.payload.headers.length ? h('pre', { class: 'dp-pre selectable' }, p.payload.headers.join('\n')) : null,
-          p.payload.argv.length ? h('pre', { class: 'dp-pre selectable' }, [t('diagPreview.arguments'), ...p.payload.argv.map((a) => (a === '' ? '""' : a))].join('\n')) : null,
-          h('pre', { class: 'dp-pre selectable', tabindex: '0', 'aria-label': t('diagPreview.actualPayloadIndented') }, prettyBody(p.payload.body)),
-          h('p', { class: 'small muted' }, t('diagPreview.indentedReadabilitySameContent'), h('code', { class: 'selectable' }, p.payload_digest.slice(0, 16)), '…'),
-        ),
+        rawSection(p),
       );
       send.disabled = busy;
     };

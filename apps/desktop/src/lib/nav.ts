@@ -213,7 +213,15 @@ export const GATED_PAGES: Partial<Record<Page, GatedSection>> = {
 export function gatedOff(page: Page, gates: GateRow[] | null | undefined): GatedSection | null {
   const g = GATED_PAGES[page];
   if (!g) return null;
-  const row = gates?.find((r) => r.capability === g.capability);
+  return capabilityOff(g.capability, gates, g.gate);
+}
+
+/**
+ * Whether one gated capability is off here (the host's row decides; without rows it is off, as the host would refuse).
+ * `fallbackGate` names the gate when the host sent no row for it.
+ */
+export function capabilityOff(capability: string, gates: GateRow[] | null | undefined, fallbackGate = ''): GatedSection | null {
+  const row = gates?.find((r) => r.capability === capability);
   if (row?.enabled) return null;
-  return row ? { capability: row.capability, gate: row.gate } : g;
+  return row ? { capability: row.capability, gate: row.gate } : { capability, gate: fallbackGate };
 }

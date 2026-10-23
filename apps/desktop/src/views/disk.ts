@@ -8,7 +8,7 @@
 // pane follows both. Hierarchy of the detail pane: what it is → how big → what you can do.
 
 import type { App } from '../main';
-import { words } from '../lib/platform';
+import { platform, words } from '../lib/platform';
 import { reviewTrash } from './trash';
 import { toIpcError } from '../lib/api';
 import { formatExactBytes, parseBytes } from '../lib/bytes';
@@ -18,13 +18,16 @@ import { RequestGate } from '../lib/gate';
 import { MERGED_ID } from '../lib/treemap';
 import { hintLabel, hintAction, hintBasisText, hintOf } from '../lib/cleanable';
 import { categoryOf } from '../lib/category';
-import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, type DiskView } from '../lib/diskModel';
+import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, protectedBy, type DiskView } from '../lib/diskModel';
 import { sizeLabel } from '../lib/display';
-import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, SortKey, Summary, TreemapLayer } from '../lib/types';
+import type { CleanableHint, Entry, EntriesQuery, IpcError, KindFilter, ProtectionList, SortKey, Summary, TreemapLayer } from '../lib/types';
 import { canOpen, EntryGrid } from './grid';
 import { REST_ID, TreemapView } from './treemapView';
 import { refusalText } from '../lib/codes';
+import { errorLine } from './parts';
 import { emptyBlock, pathText, sizeEl, stateLine, statusBanner, techBlock } from './ui';
+import { currentIndexProblem } from '../lib/indexModel';
+import { indexProblemBanner } from './indexRepair';
 import { t } from '../i18n';
 
 const PAGE_SIZE = 200;
@@ -102,6 +105,16 @@ const T = {
   loaded: (n: number) => t('disk.t.loaded', { n }),
   selectedHidden: (n: number, hidden: number) => t('disk.t.selectedHidden', { n, p: hidden ? t('disk.hiddenNotCurrentTable', { hidden }) : '' }),
   revisionTip: (r: number) => t('disk.t.revisionTip', { r }),
+  get protectFolder() { return t('disk.t.protectFolder'); },
+  get protectFile() { return t('disk.t.protectFile'); },
+  get protecting() { return t('disk.t.protecting'); },
+  get protectedNow() { return t('disk.t.protectedNow'); },
+  protectedAlready: (byParent: boolean) => (byParent ? t('disk.t.protectedByParent') : t('disk.t.protectedAlready')),
+  get protectedHow() { return t('disk.t.protectedHow'); },
+  get openProtectionList() { return t('disk.t.openProtectionList'); },
+  get protectListBroken() { return t('disk.t.protectListBroken'); },
+  get protectWhat() { return t('disk.t.protectWhat'); },
+  protectedAnnounce: (name: string) => t('disk.t.protectedAnnounce', { name }),
 } as const;
 
 interface Crumb {
@@ -150,6 +163,12 @@ export class DiskPage {
   private summary: Summary | null = null;
   private summaryError: string | null = null;
   private showSelected = false;
+  /** NEW-06: the protection list (to say "protected" instead of offering it twice) and the last protect result. */
+  private protection: ProtectionList | null = null;
+  private protectionAsked = false;
+  private protecting = false;
+  private protectDone: { entryId: string; name: string } | null = null;
+  private protectError: IpcError | null = null;
 
 
   private listGate = new RequestGate();
@@ -211,6 +230,8 @@ export class DiskPage {
   }
 
   activate(): void {
+    // The protection list may have changed in 设置 › 保护清单 meanwhile.
+    if (this.protectionAsked) void this.loadProtection();
     // Restore keyboard position when returning to the page (filters/path/scroll were kept).
     if (this.grid.active) requestAnimationFrame(() => this.grid.setActive(this.grid.active!, true));
   }
@@ -270,6 +291,12 @@ export class DiskPage {
 
   private bind(scanId: string, revision: number, rootId: string, rootName: string): void {
     const hadSelection = this.selection.size > 0 && this.scanId !== null;
+    this.protectDone = null;
+    this.protectError = null;
+    if (!this.protectionAsked) {
+      this.protectionAsked = true;
+      void this.loadProtection();
+    }
     this.scanId = scanId;
     this.revision = revision;
     this.path = [{ entryId: rootId, name: rootName }];
@@ -475,7 +502,48 @@ export class DiskPage {
 
   // ---- selection and details ---------------------------------------------------------------
 
+  private async loadProtection(): Promise<void> {
+    try {
+      this.protection = await this.app.backend.listProtection();
+    } catch {
+      this.protection = null;
+    }
+    this.renderSide();
+  }
+
+  /**
+   * NEW-06: protect the current entry (a folder with everything in it). Adding protection only narrows what may be
+   * cleaned, so it needs no typed confirmation; removing it later does (设置 › 保护清单). The host reads the path from the
+   * index: only the scan and entry ids cross IPC.
+   */
+  private async protect(e: Entry): Promise<void> {
+    if (!this.scanId || this.protecting) return;
+    this.protecting = true;
+    this.protectError = null;
+    this.protectDone = null;
+    this.renderSide();
+    try {
+      this.protection = await this.app.backend.addProtection({ source: 'entry', scan_id: this.scanId, entry_id: e.entry_id, recursive: e.kind === 'directory' }, null);
+      this.protectDone = { entryId: e.entry_id, name: e.name };
+      // A protected object is never part of a plan: it leaves the selection now rather than at the review step.
+      if (this.selection.delete(e.entry_id)) {
+        this.grid.refreshSelection();
+        void this.loadSummary();
+      }
+      this.app.announce(T.protectedAnnounce(e.name));
+    } catch (err) {
+      this.protectError = toIpcError(err);
+    } finally {
+      this.protecting = false;
+      this.renderSide();
+    }
+  }
+
   private setActive(e: Entry): void {
+    if (this.activeEntry?.entry_id !== e.entry_id) {
+      this.protectDone = null;
+      this.protectError = null;
+    }
     this.activeEntry = e;
     this.treemap.setActive(e.entry_id);
     this.renderSide();
@@ -671,8 +739,20 @@ export class DiskPage {
     const d = entryDetail(e);
     const open = canOpen(e) ? h('button', { type: 'button', id: 'detail-open', class: 'primary' }, T.openFolder) : null;
     open?.addEventListener('click', () => this.drill(e));
-    const sel = h('button', { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false' }, this.selection.has(e.entry_id) ? T.unselect : T.select);
+    // Covered by the list as read, or protected from here just now (the host's display of the entry may differ in form).
+    const covered =
+      (this.protection ? protectedBy(e.path_display, this.protection.items, platform() === 'windows') : null) ??
+      (this.protectDone?.entryId === e.entry_id ? { protection_id: '', display: e.path_display } : null);
+    // A protected object cannot be moved: it is not offered for a selection (one already made can still be undone).
+    const sel = h('button', { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false', disabled: !!covered && !this.selection.has(e.entry_id) }, this.selection.has(e.entry_id) ? T.unselect : T.select);
     sel.addEventListener('click', () => this.toggle(e));
+    // NEW-06: protect this object from here. Links and mount points are never entered, so they are not offered.
+    const listBroken = !!this.protection?.problem;
+    const protect =
+      this.scanId && !covered && !e.boundary && e.kind !== 'symlink' && e.kind !== 'reparse'
+        ? h('button', { type: 'button', id: 'detail-protect', class: 'quiet', disabled: this.protecting || listBroken, title: listBroken ? T.protectListBroken : null }, icon('shield'), this.protecting ? T.protecting : e.kind === 'directory' ? T.protectFolder : T.protectFile)
+        : null;
+    protect?.addEventListener('click', () => void this.protect(e));
     // Optional AI diagnosis of this one object (no rule needed). Sends nothing until previewed.
     const diag = this.scanId ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: T.diagTip }, icon('diag'), T.diag) : null;
     diag?.addEventListener('click', () => this.app.openDiagnosis({ scanId: this.scanId!, entryId: e.entry_id, origin: 'disk', name: e.name }, 'disk'));
@@ -696,6 +776,7 @@ export class DiskPage {
       d.boundaryNote ? h('p', { class: 'notice' }, d.boundaryNote) : null,
       // 3. What you can do.
       h('div', { class: 'card-actions detail-actions' }, open, sel, reveal, diag),
+      this.protectLine(e, covered, protect),
       hint ? this.hintEntry(e, hint) : null,
       techBlock(
         h(
@@ -712,6 +793,32 @@ export class DiskPage {
         ),
       ),
     );
+  }
+
+  /** Whether this object is protected, the result of protecting it, or why it could not be. */
+  private protectLine(e: Entry, covered: { protection_id: string; display: string } | null, protect: HTMLElement | null): HTMLElement | null {
+    const link = h('button', { type: 'button', class: 'link', id: 'detail-protection-list' }, T.openProtectionList);
+    link.addEventListener('click', () => {
+      this.app.navigate('settings');
+      requestAnimationFrame(() => {
+        const target = document.getElementById('set-protection-title');
+        target?.scrollIntoView({ block: 'start' });
+        target?.focus({ preventScroll: true });
+      });
+    });
+    if (this.protectError) return h('div', { class: 'protect-line', 'data-state': 'error' }, errorLine(this.protectError));
+    if (covered) {
+      const done = this.protectDone?.entryId === e.entry_id;
+      return h(
+        'div',
+        { class: 'protect-line', 'data-state': 'protected', role: done ? 'status' : null },
+        h('p', { class: 'pl-head' }, h('span', { class: 'pl-mark', 'aria-hidden': 'true' }, icon('shield')), done ? T.protectedNow : T.protectedAlready(covered.display !== e.path_display)),
+        h('p', { class: 'small muted' }, T.protectedHow, ' ', link),
+      );
+    }
+    if (this.protection?.problem) return h('div', { class: 'protect-line' }, protect, h('p', { class: 'small muted' }, T.protectListBroken, ' ', link));
+    // Protection is its own topic under the actions: the shield button and what it means.
+    return protect ? h('div', { class: 'protect-line', 'data-state': 'open' }, protect, h('p', { class: 'small muted' }, T.protectWhat)) : null;
   }
 
   /** DIN-05: the review flow a cleanable hint leads to. Read-only here: the selection is not touched. */
@@ -781,6 +888,12 @@ export class DiskPage {
       return b;
     };
     let main: HTMLElement;
+    // NEW-04: with a damaged index there is nothing to browse because it cannot be read, not because nothing was scanned.
+    const broken = v.layout === 'none' || v.layout === 'error' ? currentIndexProblem({ caps: s.caps, statusError: s.statusError, repairedAt: s.indexRepairedAt }) : null;
+    if (broken) {
+      replace(this.blocked, indexProblemBanner(this.app, broken, { titleId: 'disk-state-title', level: 2 }));
+      return;
+    }
     if (v.layout === 'loading') main = h('p', { class: 'muted', role: 'status' }, DISK_TEXT.loading);
     else if (v.layout === 'none' || !v.banner) main = emptyBlock({ icon: 'disk', title: DISK_TEXT.noneTitle, body: DISK_TEXT.noneBody, actions: [go('primary')] });
     else

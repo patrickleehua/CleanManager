@@ -29,6 +29,8 @@ export const ISSUE_TEXT: Record<string, string> = {
   get permission_denied() { return t('codes.issueText.permission_denied'); },
   get io_error() { return t('codes.issueText.io_error'); },
   get internal_error() { return t('codes.issueText.internal_error'); },
+  // The bin listing (MTR-03): one volume's bin folder could not be listed; the others are.
+  get bin_unreadable() { return t('codes.issueText.bin_unreadable', { bin: words().bin }); },
   get own_store_skipped() { return t('codes.issueText.own_store_skipped'); },
   get store_error() { return t('codes.issueText.store_error'); },
   get volume_changed() { return t('codes.issueText.volume_changed'); },
@@ -141,6 +143,13 @@ export const EXTRA_REFUSAL_TEXT: Record<string, string> = {
   get hard_links() { return t('codes.extraRefusalText.hard_links'); },
   get weak_identity() { return t('codes.extraRefusalText.weak_identity'); },
   get folder_move_unavailable() { return t('codes.extraRefusalText.folder_move_unavailable'); },
+  // Rebuilding the scan index from the desktop (`repair_index`, NEW-04).
+  get index_busy() { return t('codes.extraRefusalText.index_busy'); },
+  get confirmation_required() { return t('codes.extraRefusalText.confirmation_required'); },
+  // Uninstall signer checks (`policy_denied` with these reasons, WFA-76): never read as a policy quota.
+  get uninstaller_unsigned() { return t('codes.extraRefusalText.uninstaller_unsigned'); },
+  get uninstaller_signer_mismatch() { return t('codes.extraRefusalText.uninstaller_signer_mismatch'); },
+  get uninstaller_not_microsoft_signed() { return t('codes.extraRefusalText.uninstaller_not_microsoft_signed'); },
 };
 
 // macOS readings (a link root is a symbolic link or an alias; read permission is granted in System Settings) are the
@@ -230,7 +239,10 @@ export function groupIssues(issues: Issue[], explain: (i: Issue) => ExplainedIss
  * "未识别的问题（代码 x）" and the host's message stays for the collapsed detail.
  */
 export function explainResult(i: Issue): ExplainedIssue {
-  const known = CODE_EXPLAIN[i.code];
+  // A live check that failed right before acting is reported as `precondition_<check>` (cm-app plans.rs
+  // `crate_precondition`): it means what the check itself means (NEW-13: `precondition_tree_mismatch`).
+  const bare = i.code.startsWith('precondition_') ? i.code.slice('precondition_'.length) : null;
+  const known = CODE_EXPLAIN[i.code] ?? (bare ? CODE_EXPLAIN[bare] : undefined);
   if (known) return { code: i.code, rawCode: i.code, known: true, cause: null, text: known, raw: i.message ?? '', scope: i.scope_display ?? '' };
   return explainIssue(i);
 }

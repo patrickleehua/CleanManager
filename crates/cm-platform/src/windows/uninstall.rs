@@ -27,7 +27,7 @@ use cm_core::plan::v2::Hive;
 use cm_core::startup::{RegValue, RegView};
 use cm_core::uninstall::{
     AI_CLIS, AdapterChoice, AdapterEnv, AdapterKind, AppIdentity, Binding, BrokenReference, DirEntryInfo, Group, InstalledApp, KeyBackup, KeyTree, Leftover,
-    LeftoverKind, RecordSource, Refusal, RegLocation, Rescan, RunningProcess, RunningState, UninstallActions, UninstallRecord, WingetEvidence, ai_child_group, classify_child,
+    LeftoverKind, ProgramRefusal, RecordSource, Refusal, RegLocation, Rescan, RunningProcess, RunningState, UninstallActions, UninstallRecord, WingetEvidence, ai_child_group, classify_child,
     end_refusal, finish_leftover, is_microsoft_signer, match_name, object_id, orphan_leftovers, ownership_marker, path_within, publisher_matches, publisher_variants,
     registry_denied, select_adapter, sensitive_warnings, tool_instance_id,
 };
@@ -586,26 +586,32 @@ pub fn signer_of(path: &str) -> Option<String> {
     super::startup::authenticode_signer(path).or_else(|| catalog_signer(path))
 }
 
-/// UNI-03 plan-time check of the program a choice runs: (SHA-256, signer). Refusals carry the protocol code.
-pub fn verify_program(choice: &AdapterChoice) -> Result<(String, Option<String>), (&'static str, String)> {
+/// UNI-03 plan-time check of the program a choice runs: (SHA-256, signer). Refusals carry the protocol code and, for the
+/// signer checks, the reason word interfaces explain (WFA-76: a signer that is not the publisher is not a policy quota).
+pub fn verify_program(choice: &AdapterChoice) -> Result<(String, Option<String>), ProgramRefusal> {
+    use cm_core::uninstall::{UNINSTALLER_NOT_MICROSOFT_SIGNED, UNINSTALLER_SIGNER_MISMATCH, UNINSTALLER_UNSIGNED};
     let p = Path::new(&choice.program);
-    regular_file(p).map_err(|e| ("unsupported", format!("uninstaller not usable: {e}")))?;
-    let sha = sha256_file(p).map_err(|e| ("io_error", e))?;
+    regular_file(p).map_err(|e| ProgramRefusal::new("unsupported", format!("uninstaller not usable: {e}")))?;
+    let sha = sha256_file(p).map_err(|e| ProgramRefusal::new("io_error", e))?;
     if choice.kind == AdapterKind::Msix {
         return Ok((sha, None));
     }
     let signer = signer_of(&choice.program);
     if let Some(publisher) = &choice.publisher_required {
         match &signer {
-            None => return Err(("policy_denied", format!("{} has no valid signature, so its publisher cannot be verified; {}", choice.program, cm_core::uninstall::SETTINGS_GUIDANCE))),
+            None => {
+                let why = format!("{} has no valid signature, so its publisher cannot be verified; {}", choice.program, cm_core::uninstall::SETTINGS_GUIDANCE);
+                return Err(ProgramRefusal::because("policy_denied", UNINSTALLER_UNSIGNED, why));
+            }
             Some(s) if !publisher_matches(s, publisher) => {
-                return Err(("policy_denied", format!("{} is signed by \"{s}\", not by the recorded publisher \"{publisher}\"; it is not run", choice.program)));
+                let why = format!("{} is signed by \"{s}\", not by the recorded publisher \"{publisher}\"; it is not run", choice.program);
+                return Err(ProgramRefusal::because("policy_denied", UNINSTALLER_SIGNER_MISMATCH, why));
             }
             Some(_) => {}
         }
     }
     if choice.microsoft_signed && !signer.as_deref().is_some_and(is_microsoft_signer) {
-        return Err(("policy_denied", format!("{} is not signed by Microsoft", choice.program)));
+        return Err(ProgramRefusal::because("policy_denied", UNINSTALLER_NOT_MICROSOFT_SIGNED, format!("{} is not signed by Microsoft", choice.program)));
     }
     Ok((sha, signer))
 }
@@ -977,7 +983,7 @@ impl UninstallActions for WindowsUninstall {
         if live.digest() != rec.digest() {
             return Err(("record_changed".into(), "the application's registration changed since planning; create a new plan".into()));
         }
-        let (sha, live_signer) = verify_program(choice).map_err(|(c, m)| (c.to_owned(), m))?;
+        let (sha, live_signer) = verify_program(choice).map_err(|r| (r.code.to_owned(), r.message))?;
         if sha != sha256 {
             return Err(("program_changed".into(), format!("{} changed since planning (SHA-256 differs); nothing was run", choice.program)));
         }

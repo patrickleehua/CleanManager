@@ -126,7 +126,7 @@ fn app_actions(all: &[UninstallRecord], env: &UninstallEnv, instance_id: &str, e
     let Some(rec) = all.iter().find(|r| r.instance_id == instance_id).cloned() else {
         return Err(Refused::new("invalid_argument", format!("no installed application {instance_id}; run `cleanmanager apps uninstall list`")));
     };
-    let choice = route(env, &rec).map_err(|r| Refused { code: r.code.into(), message: r.message, settings_uri: r.settings_uri.map(str::to_owned) })?;
+    let choice = route(env, &rec).map_err(|r| Refused { code: r.code.into(), message: r.message, settings_uri: r.settings_uri.map(str::to_owned), reason: None })?;
     let (sha, signer) = verify_program(&choice).map_err(|(c, m)| Refused::new(c, m))?;
     let identity = AppIdentity::of(&rec);
     let app_meta = UninstallMeta::App { identity: identity.clone(), record: Box::new(rec.clone()), adapter: choice.clone(), signer };
@@ -400,6 +400,7 @@ fn file_actions(
         },
         message: format!("{path}: {e}"),
         settings_uri: None,
+        reason: None,
     })?;
     Ok(built
         .body

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ACTION_BUTTON, ACTION_LABEL, CLAIM_LABEL, REC_EXPLAIN, REC_LABEL, STATE_LABEL, citedLayers, payloadSize, prettyBody } from './diagWords';
+import { ACTION_BUTTON, ACTION_LABEL, CLAIM_LABEL, REC_EXPLAIN, REC_LABEL, STATE_LABEL, citedLayers, payloadSize, payloadView, prettyBody } from './diagWords';
 import { mockDiag } from './mockDiag';
 
 describe('diagnosis words', () => {
@@ -22,6 +22,17 @@ describe('diagnosis words', () => {
     const pretty = prettyBody(body);
     expect(JSON.parse(pretty).messages[0].content.evidence.a).toBe(1);
     expect(prettyBody('not json')).toBe('not json');
+  });
+
+  it('NEW-17: the preview shows the body exactly as sent by default; indenting is a labelled view', () => {
+    const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: JSON.stringify({ name: '视频.mov', n: 1 }) }] });
+    const exact = payloadView(body, false);
+    expect(exact).toEqual({ text: body, exact: true });
+    // Byte for byte: the UTF-8 length of what is shown is the length the host reports and sends.
+    expect(new TextEncoder().encode(exact.text).length).toBe(new TextEncoder().encode(body).length);
+    const view = payloadView(body, true);
+    expect(view.exact).toBe(false);
+    expect(view.text).not.toBe(body);
   });
 
   it('maps citations to layers and drops unknown ids', () => {

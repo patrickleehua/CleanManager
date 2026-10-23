@@ -18,6 +18,8 @@ fn main() {
         "list_entries",
         "treemap_layer",
         "summarize_selection",
+        // `doctor --repair-index` (needs confirm: true): moves only an unusable index.db aside (kept) and starts an empty one.
+        "repair_index",
         // Candidates, plans and authorization (ids only; approval needs a review token + typed digest).
         "candidate_summary",
         "analyze_scan",
@@ -52,6 +54,9 @@ fn main() {
         "create_catalog_plan",
         "trash_inspect",
         "trash_plan",
+        // The bin page (MTR-03): list this user's bin items; freeze permanent deletes into a terminal-reviewed plan.
+        "trash_list",
+        "trash_purge_plan",
         "startup_list",
         "startup_plan",
         "insights_list",

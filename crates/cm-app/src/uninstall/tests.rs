@@ -364,13 +364,91 @@ fn outcomes_are_per_application_and_pending_before_a_report() {
     assert!(planned_apps(&keys).is_empty());
 }
 
+/// History of each stage (WFA-40) for `op`: (action, availability, guidance).
+fn history(stores: &Stores, op: &str) -> (String, &'static str, String) {
+    let (h, _) = crate::recovery::operation_history(stores, 100, None).unwrap();
+    let row = h.into_iter().find(|x| x.row.operation_id == op).unwrap();
+    (row.action.unwrap_or_default(), row.availability, row.guidance)
+}
+
+/// WFA-40: an uninstaller cannot be undone by CleanManager (but its leftovers are reviewed next); a stage 1 in which no
+/// uninstaller ran changed nothing; the macOS bundle route is put back from the Trash; leftover keys are restorable
+/// until restored, and the restore itself is named as a registry restore.
+#[test]
+fn history_says_how_each_uninstall_stage_is_recovered() {
+    let stores = Stores::open(&dir("history")).unwrap();
+    let plan = batch_plan(QuitForce::Never, "up_hist", &[named("app_foo", "Foo"), named("app_bar", "Bar")]);
+    approve(&stores, &plan);
+    let fake = Fake { fail_program: Some(r"C:\Foo\u.exe".into()), ..Fake::new(RunningState::Known { processes: vec![] }) };
+    let r = apply(&stores, &fake, "up_hist");
+    let (action, availability, guidance) = history(&stores, &r.operation_id);
+    assert_eq!((action.as_str(), availability), ("uninstall", "unavailable"), "{guidance}");
+    assert!(guidance.contains("reinstall") && guidance.contains(&format!("apps uninstall leftovers --operation {}", r.operation_id)), "{guidance}");
+    // Nothing quit, nothing ran.
+    let plan = stage_one_plan(QuitForce::Never, "up_hist_running");
+    approve(&stores, &plan);
+    let r = apply(&stores, &Fake::new(RunningState::Known { processes: vec![proc()] }), "up_hist_running");
+    assert_eq!(history(&stores, &r.operation_id).1, "not_applicable");
+    // macOS route: the bundle went to the Trash.
+    let mut bundle = batch_plan(QuitForce::Never, "up_hist_mac", &[named("app_mac", "Mac")]);
+    let rec = named("app_mac", "Mac");
+    let choice = AdapterChoice {
+        kind: AdapterKind::MacTrashAppBundle, program: "/Applications/Mac.app".into(), argv: vec![], raw_args: false, publisher_required: None, microsoft_signed: false,
+        display: "Mac.app".into(), keeps_own_ui: false,
+    };
+    let m = UninstallMeta::App { identity: AppIdentity::of(&rec), record: Box::new(rec.clone()), adapter: choice.clone(), signer: None };
+    let PlanAction::ToolAdapter(t) = &mut bundle.body.items[1] else { panic!() };
+    t.adapter_id = choice.kind.adapter_id().into();
+    t.preview_digest = adapter_digest(&rec, &choice);
+    let bundle = cm_core::plan::v2::build(
+        &HeaderInput { plan_id: "up_hist_mac", plan_kind: PlanKind::Uninstall, created_unix: T0, scope_id: None, scan_id: None, scan_revision: None, rule_set_digest: NO_RULES_DIGEST, policy_digest: NO_RULES_DIGEST },
+        bundle.body.items.clone(),
+        vec![ActionMeta { uninstall: Some(m.clone()), ..Default::default() }, ActionMeta { uninstall: Some(m), ..Default::default() }],
+    )
+    .unwrap();
+    approve(&stores, &bundle);
+    let r = apply(&stores, &Fake::new(RunningState::Known { processes: vec![] }), "up_hist_mac");
+    assert_eq!(r.items[1].status, ActionStatus::Succeeded, "{:?}", r.items[1]);
+    let (_, availability, guidance) = history(&stores, &r.operation_id);
+    assert_eq!(availability, "system_recycle_bin", "{guidance}");
+
+    // Leftovers: the key's backup makes it restorable here; the restore puts it back and is named as such.
+    let tree = KeyTree { values: vec![("Theme".into(), RegValue::new(1, b"d\0\0\0"))], subkeys: vec![] };
+    let (plan, _) = key_plan("lp_hist", &tree);
+    approve(&stores, &plan);
+    let fake = Fake { key: RefCell::new(Some(tree)), ..Fake::new(RunningState::Known { processes: vec![] }) };
+    let r = apply(&stores, &fake, "lp_hist");
+    let (action, availability, guidance) = history(&stores, &r.operation_id);
+    assert_eq!((action.as_str(), availability), ("uninstall_leftovers", "in_app_restore"));
+    assert!(guidance.contains(&format!("apps uninstall restore --operation {}", r.operation_id)), "{guidance}");
+    let rp = create_restore_plan(&stores, &r.operation_id, "rp_hist", T0 + 20, NO_RULES_DIGEST).unwrap();
+    approve(&stores, &rp);
+    let rr = apply(&stores, &fake, "rp_hist");
+    assert_eq!(rr.items[0].code, "done");
+    assert_eq!(history(&stores, &rr.operation_id).0, "uninstall_restore");
+    assert_eq!(history(&stores, &rr.operation_id).1, "not_applicable");
+    assert_eq!(history(&stores, &r.operation_id).1, "not_applicable", "nothing left to restore");
+}
+
 #[test]
 fn a_whole_batch_is_refused_only_when_every_application_is() {
-    let one = Refused { code: "policy_denied".into(), message: "endpoint security agent".into(), settings_uri: None };
+    let one = Refused { code: "policy_denied".into(), message: "endpoint security agent".into(), settings_uri: None, reason: None };
     assert_eq!(batch_refusal(vec![("Agent".into(), one.clone())]), one, "a single refusal is reported as it is");
     let r = batch_refusal(vec![("Agent".into(), one.clone()), ("Runtime".into(), Refused { message: "shared runtime".into(), ..one.clone() })]);
     assert_eq!(r.code, "policy_denied");
     assert!(r.message.contains("Agent: endpoint security agent") && r.message.contains("Runtime: shared runtime"), "{}", r.message);
-    let mixed = batch_refusal(vec![("Agent".into(), one), ("Tool".into(), Refused { code: "unsupported".into(), message: "no route".into(), settings_uri: Some("ms-settings:appsfeatures".into()) })]);
-    assert_eq!((mixed.code.as_str(), mixed.settings_uri.as_deref()), ("invalid_argument", Some("ms-settings:appsfeatures")));
+    let mixed = batch_refusal(vec![
+        ("Agent".into(), one.clone()),
+        ("Tool".into(), Refused { code: "unsupported".into(), message: "no route".into(), settings_uri: Some("ms-settings:appsfeatures".into()), reason: None }),
+    ]);
+    assert_eq!((mixed.code.as_str(), mixed.settings_uri.as_deref(), mixed.reason), ("invalid_argument", Some("ms-settings:appsfeatures"), None));
+    // WFA-76: a signer refusal keeps its own reason word (never read as a policy quota); a mix of reasons names none.
+    let signer = Refused::program(
+        cm_core::uninstall::ProgramRefusal::because("policy_denied", cm_core::uninstall::UNINSTALLER_SIGNER_MISMATCH, "signed by \"Microsoft Windows\", not by \"Contoso Test\""),
+        Some(cm_core::uninstall::SETTINGS_URI),
+    );
+    assert_eq!((signer.code.as_str(), signer.reason, signer.error_code()), ("policy_denied", Some("uninstaller_signer_mismatch"), cm_core::error::ErrorCode::PolicyDenied));
+    assert_eq!(batch_refusal(vec![("Mismatch".into(), signer.clone())]).reason, Some("uninstaller_signer_mismatch"));
+    assert_eq!(batch_refusal(vec![("A".into(), signer.clone()), ("B".into(), signer.clone())]).reason, Some("uninstaller_signer_mismatch"));
+    assert_eq!(batch_refusal(vec![("A".into(), signer), ("Agent".into(), one)]).reason, None);
 }

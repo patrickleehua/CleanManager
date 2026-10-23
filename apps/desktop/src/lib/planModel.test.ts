@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AUTH_TEXT, authView, kindVerb, planStatement, UNDO_LABEL } from './planModel';
+import { AUTH_TEXT, PLAN_KIND_CAPABILITY, authView, kindVerb, planCapability, planStatement, UNDO_LABEL } from './planModel';
+import { capabilityOff } from './nav';
+import featuresRs from '../../../../crates/cm-app/src/features.rs?raw';
 import { setPlatform } from './platform';
 import type { Mode, PlanDetail, PlanItem } from './types';
 import { MODE_EXPLAIN, STALE_LABEL } from './words';
@@ -130,5 +132,45 @@ describe('P05 approval and refusal states', () => {
 
   it('terminal-only plans are approved in the terminal, never here', () => {
     expect(authView(plan({ terminal_only: 'permanent_delete' })).view).toBe('terminal');
+  });
+});
+
+describe('D15 / WFA-02: a stored plan of a capability that is off', () => {
+  const auth = (status: PlanDetail['authorization']['status']) => ({ ...plan().authorization, status });
+  const manual = (over: Partial<PlanDetail> = {}) => plan({ kind: 'manual_trash', contract: 'plan/v2', plan_kind_v2: 'manual_selection', ...over });
+
+  it('names the same capability for every plan/v2 kind as the host (cm_app::features::plan_kind_capability)', () => {
+    const rows = [...featuresRs.slice(featuresRs.indexOf('pub fn plan_kind_capability')).matchAll(/PlanKind::(\w+)(?:\s*\|\s*PlanKind::(\w+))?\s*=>\s*(Some\("([a-z_.]+)"\)|None)/g)];
+    const snake = (s: string) => s.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
+    const host: Record<string, string | null> = {};
+    for (const m of rows) for (const k of [m[1], m[2]].filter(Boolean)) host[snake(k)] = m[4] ?? null;
+    expect(Object.keys(host).sort()).toEqual(['cleanup', 'maintenance', 'manual_selection', 'process', 'recovery', 'startup', 'uninstall', 'update']);
+    expect(PLAN_KIND_CAPABILITY).toEqual(host);
+    expect(planCapability(manual())).toBe('trash.manual');
+    // v1 cleanup and recovery plans carry no plan/v2 kind and are core.
+    expect(planCapability(plan())).toBeNull();
+    expect(planCapability(plan({ plan_kind_v2: 'cleanup' }))).toBeNull();
+  });
+
+  it('off: no seal and no approve or run control, the off line instead', () => {
+    expect(authView(manual(), true)).toEqual({ view: 'gated', line: { kind: 'cancelled', text: AUTH_TEXT.gated } });
+    expect(authView(manual({ authorization: auth('authorized'), review_token: null }), true).view).toBe('gated');
+    expect(AUTH_TEXT.gated).toContain('默认关闭');
+  });
+
+  it('on, or nothing left to decide: the usual states', () => {
+    expect(authView(manual(), false).view).toBe('review');
+    // A plan that already ran keeps its result; a stale one stays stale; revoked and expired stay closed.
+    expect(authView(manual({ operation: { operation_id: 'op1', state: 'completed' } }), true).view).toBe('executed');
+    expect(authView(manual({ stale_reason: 'rule_set_changed' }), true).view).toBe('stale');
+    expect(authView(manual({ authorization: auth('expired'), review_token: null }), true).view).toBe('expired');
+    expect(authView(manual({ authorization: auth('revoked'), review_token: null }), true).view).toBe('revoked');
+  });
+
+  it('the capability is off unless the host row says it is on (no rows: off, as the host would refuse)', () => {
+    const row = (enabled: boolean) => [{ capability: 'trash.manual', gate: 'G1', gate_passed: false, enabled }];
+    expect(capabilityOff('trash.manual', row(false))).toEqual({ capability: 'trash.manual', gate: 'G1' });
+    expect(capabilityOff('trash.manual', row(true))).toBeNull();
+    expect(capabilityOff('trash.manual', null)).not.toBeNull();
   });
 });

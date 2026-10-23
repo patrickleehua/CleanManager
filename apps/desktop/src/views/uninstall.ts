@@ -23,6 +23,7 @@ import { copyField, emptyState, errorLine, exactTitle, pageHead, pill, sizeText 
 import { APP_OUTCOME, MAX_BATCH, batchActionText, batchSelectable, batchSelection, leftoverSections, leftoversTitle, type LeftoverSection } from './uninstallBatch';
 import { issueList, learnMore } from './ui';
 import { t } from '../i18n';
+import { evidenceText, uninstallReason } from '../lib/uninstallWords';
 
 type Filter = 'all' | 'available' | 'settings' | 'protected';
 
@@ -333,7 +334,8 @@ export class UninstallPage {
           can ? h('label', { for: `${id}-check`, class: 'obj-name' }, a.name) : h('span', { class: 'obj-name' }, a.name),
           h('span', { class: 'obj-path' }, facts),
           a.adapter ? h('span', { class: 'obj-reason muted' }, t('uninstall.method'), adapterText(a.adapter)) : null,
-          st.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not' }, st.reason) : null,
+          // NEW-13: the host's sentence in words; an unknown one only as the tooltip.
+          st.reason ? h('span', { class: a.state === 'unsupported' ? 'obj-reason muted' : 'why-not', title: uninstallReason(st.reason)?.raw ?? null }, uninstallReason(st.reason)?.text ?? '') : null,
           st.guidance ? h('span', { class: 'obj-reason' }, st.guidance) : null,
           errorLine(err ?? null),
         ),
@@ -530,9 +532,9 @@ export class UninstallPage {
           { class: 'col-object' },
           h('label', { for: `${id}-check`, class: 'obj-name' }, tail(i.display)),
           h('span', { class: 'obj-path path' }, i.display),
-          h('span', { class: 'obj-reason', id: `${id}-why` }, ...tags, i.evidence.join(t('common.clauseSep'))),
+          h('span', { class: 'obj-reason', id: `${id}-why`, title: i.evidence.map((x) => evidenceText(x).raw).filter(Boolean).join('\n') || null }, ...tags, i.evidence.map((x) => evidenceText(x).text).join(t('common.clauseSep'))),
           ...i.warnings.map((w) => h('span', { class: 'why-not' }, w)),
-          i.note ? h('span', { class: 'obj-reason muted' }, i.note) : null,
+          i.note ? h('span', { class: 'obj-reason muted', title: evidenceText(i.note).raw }, evidenceText(i.note).text) : null,
           i.marker ? h('span', { class: 'obj-reason muted' }, t('uninstall.keptP', { p: MARKER_WORD[i.marker] ?? i.marker })) : null,
           i.guidance ? h('span', { class: 'obj-reason muted' }, i.guidance) : null,
         ),

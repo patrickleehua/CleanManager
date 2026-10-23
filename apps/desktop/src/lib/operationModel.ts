@@ -80,6 +80,20 @@ export function operationBanner(o: OperationFacts): { kind: BannerKind; title: s
   return { kind: 'success', title: T.completed(operationAction(o), c.succeeded), sentence };
 }
 
+/**
+ * NEW-02: `start_apply` answers with the operation id before the worker thread has registered the operation, so the
+ * first reads of a run this window just started can say `not_found`. That is "starting", not an error: the page shows
+ * the loading line and reads again. Any other failure, or `not_found` for a run that is not this window's, is real.
+ */
+export function registrationPending(error: { reason?: string | null } | null, operationId: string, liveRun: { operationId: string; error?: unknown } | null): boolean {
+  // A run that could not start at all (its finish event carries an error) is never registered: that is the error.
+  return !!error && error.reason === 'not_found' && !!liveRun && liveRun.operationId === operationId && !liveRun.error;
+}
+
+/** How many times a read of a run that is still being registered is tried again (every `REGISTRATION_RETRY_MS`). */
+export const REGISTRATION_RETRIES = 40;
+export const REGISTRATION_RETRY_MS = 250;
+
 /** The items that did not succeed, as issues for the shared issue lines (grouped by meaning, path as place). */
 export function resultIssues(items: OperationItem[]): Issue[] {
   return items

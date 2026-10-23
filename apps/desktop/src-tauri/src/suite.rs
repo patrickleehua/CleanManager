@@ -14,8 +14,13 @@
 //!   authorize nothing); `plan_detail` issues the single-use review token, `approve_plan` needs it plus the typed
 //!   digest prefix, and `start_apply` runs the stored plan through the shared executors. There is no direct write.
 //! - `reveal_entry` resolves the path from the published index and starts `explorer.exe /select,` (Windows) or
-//!   `open -R` (macOS) without a shell; it opens a window and changes nothing. `status_snapshot`, `insights_list`, `startup_list` and `readiness` are
-//!   read-only.
+//!   `open -R` (macOS) without a shell; it opens a window and changes nothing. `status_snapshot`, `insights_list`, `startup_list`, `trash_list` and
+//!   `readiness` are read-only.
+//! - Manual trash and its plan-time checks are the CLI's (`cm_app::trash`, `cm_app::selection`): a link into a protected
+//!   system location is refused as protected and named (WFA-47/63), a volume without a usable bin is not movable at
+//!   inspection (WFA-35), a selected discovery folder whose files changed is listed as stale (WFA-50), and a row that
+//!   cannot be planned now is refused for that reason first (WFA-58). `trash_purge_plan` freezes permanent deletes of
+//!   listed bin items into a separate plan whose approval only a terminal asks for (MTR-03, `v2::terminal_only`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -372,8 +377,7 @@ pub(crate) mod imp {
     use cm_core::analysis::{AnalysisProtection, Candidate, CandidateSet, IndexView, UserList};
     use cm_core::error::ErrorCode;
     use cm_core::host::HostProbe;
-    use cm_core::manual_trash::{BIN_NAME, Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_trash_plan, inspect};
-    use cm_core::model::{CloudState, ObjectKind};
+    use cm_core::manual_trash::{BIN_NAME, Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_trash_plan};
     use cm_core::path::RawPath;
     use cm_core::purge::{PurgeInput, PurgeSettings, analyze_purge};
     use cm_core::rules::Mode;
@@ -608,18 +612,6 @@ pub(crate) mod imp {
         Ok(out)
     }
 
-    /// Live, read-only check of one selected row against its discovery observation (the CLI's `stale_reason`).
-    fn stale_reason(c: &Candidate) -> Option<(&'static str, String)> {
-        let path = os(&c.path)?;
-        match std::fs::symlink_metadata(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(("missing", format!("{} no longer exists", c.path.display()))),
-            Ok(m) if m.is_file() && c.logical.unknown_count == 0 && m.len() != c.logical.known.0 => {
-                Some(("changed", format!("{} is {} bytes now, {} when scanned", c.path.display(), m.len(), c.logical.known.0)))
-            }
-            _ => None,
-        }
-    }
-
     /// Freeze chosen rows of a purge or installer set into a stored cleanup plan (authorizes nothing).
     pub fn catalog_plan(stores: &Stores, catalog: Catalog, set_id: &str, selected: &[String], mode: Mode) -> IpcResult<CreatedPlanDto> {
         let value = stores.index.candidate_set(set_id)?;
@@ -631,27 +623,27 @@ pub(crate) mod imp {
         if let Err(e) = cm_platform::protection::load(&stores.dir) {
             return Err(ipc(ErrorCode::ProtectionUnavailable, "protection_unavailable", format!("protection list unavailable: {e}")));
         }
+        // WFA-58: a row that cannot be planned now (an attached image, an installer in use, a protected folder) is refused
+        // for that reason before any live check; an attached image keeps changing, so it would only look changed.
         for id in selected {
             match set.candidates.iter().find(|c| &c.candidate_id == id) {
                 None => return Err(ipc(ErrorCode::InvalidArgument, "unknown_candidate", format!("candidate {id} is not in this candidate set"))),
-                Some(c) if !plannable(c) => return Err(ipc(ErrorCode::PolicyDenied, "not_selectable", format!("candidate {id} cannot be planned ({})", skip_reason(c).unwrap_or("blocked")))),
+                Some(c) if !plannable(c) => {
+                    let why = c.reasons.join("; ");
+                    return Err(ipc(ErrorCode::PolicyDenied, "not_selectable", format!("candidate {id} cannot be planned ({}): {why}", skip_reason(c).unwrap_or("blocked"))));
+                }
                 Some(_) => {}
             }
         }
-        // CLI-11: rows whose observed state changed since discovery are listed as stale, not planned.
-        let mut keep = Vec::new();
-        let mut stale = Vec::new();
-        for id in selected {
-            match set.candidates.iter().find(|c| &c.candidate_id == id).and_then(stale_reason) {
-                Some((reason, detail)) => stale.push(StaleItemDto { candidate_id: id.clone(), reason, detail }),
-                None => keep.push(id.clone()),
-            }
-        }
+        // CLI-11 / WFA-50: rows whose observed state changed since discovery (a folder: any file the discovery saw in it)
+        // are listed as stale, not planned (the CLI's check, `cm_app::selection`).
+        let view = stores.index.view(&set.scan_id)?;
+        let (keep, stale) = cm_app::selection::split_stale(&set.candidates, &view, selected.to_vec());
+        let stale: Vec<StaleItemDto> = stale.into_iter().map(|s| StaleItemDto { candidate_id: s.object_id, reason: s.reason, detail: s.detail }).collect();
         if keep.is_empty() {
             let list: Vec<String> = stale.iter().map(|s| format!("{}: {}", s.candidate_id, s.reason)).collect();
             return Err(ipc(ErrorCode::PlanStale, "selection_stale", format!("every selected item changed since discovery ({}); run the discovery again", list.join(", "))));
         }
-        let view = stores.index.view(&set.scan_id)?;
         let status = stores.index.scan_status(&set.scan_id)?;
         let plan_id = new_id("p");
         let pdigest = crate::cleanup::policy_digest(stores);
@@ -662,7 +654,7 @@ pub(crate) mod imp {
             observed_at: status.finished_at.as_deref().unwrap_or(&status.started_at),
             policy_digest: &pdigest,
         };
-        let plan = cm_core::plan::build_plan(&view, &set, &keep, mode, &input).map_err(|e| ipc(ErrorCode::PolicyDenied, "plan_refused", e.to_string()))?;
+        let plan = cm_core::plan::build_plan(&view, &set, &keep, mode, &input).map_err(crate::cleanup::plan_error)?;
         // MTR-03 / WFA-35: trash mode needs a usable bin on every target's volume.
         crate::cleanup::bins_ready(&set, &keep, mode)?;
         stores.audit.save_plan(&plan)?;
@@ -695,26 +687,10 @@ pub(crate) mod imp {
     /// Processes holding the object (or a folder's files) open and a note on what could not be seen; never for cloud
     /// placeholders.
     fn holders_of(ins: &Inspection, view: &cm_core::analysis::MemView) -> (Option<Vec<String>>, Option<String>) {
-        if ins.cloud == CloudState::Placeholder || ins.refusal.as_ref().is_some_and(|r| r.reason == "cloud_placeholder") {
-            return (None, None);
+        match cm_app::trash::holder_paths(ins, view) {
+            Some(paths) => crate::plat::holders(&paths),
+            None => (None, None),
         }
-        let mut paths = vec![ins.path.clone()];
-        if ins.kind == ObjectKind::Directory {
-            paths.clear();
-            let mut stack = vec![ins.entry_id];
-            while let Some(e) = stack.pop() {
-                let f = view.info(e);
-                if f.boundary {
-                    continue;
-                }
-                match f.kind {
-                    ObjectKind::Directory => stack.extend_from_slice(view.children(e)),
-                    ObjectKind::File if paths.len() < 1000 => paths.push(view.path(e)),
-                    _ => {}
-                }
-            }
-        }
-        crate::plat::holders(&paths)
     }
 
     pub fn trash_inspect(s: &AppState, scan_id: &str, entry: u64) -> IpcResult<TrashInspectionDto> {
@@ -724,12 +700,15 @@ pub(crate) mod imp {
         let user = cm_platform::protection::load(&p.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
-        let mut ins = inspect(&p.view, entry, &guard);
+        // The CLI's inspection: the platform's refusals, and a link into a protected system location refused as
+        // protected, naming where it leads (WFA-47/63).
+        let (mut ins, link) = cm_app::trash::inspect_entry(&p.view, entry, &guard, &hard);
+        let rb = crate::plat::bin_ready(&ins.path);
+        // WFA-35 / NEW-05: a volume without a usable bin is not movable, said here rather than when the plan is made.
         if ins.refusal.is_none() {
-            ins.refusal = crate::plat::trash_refusal(&ins);
+            ins.refusal = cm_app::trash::bin_refusal(&ins.path, "recycle_bin_unavailable");
         }
         let (holders, holders_note) = holders_of(&ins, &p.view);
-        let rb = crate::plat::bin_ready(&ins.path);
         let mut guidance = match &ins.refusal {
             None => format!("Moving it to the {BIN_NAME} creates a plan; a person reviews the plan before anything moves."),
             Some(r) if r.code == "policy_denied" && r.reason == "protected" => VIEW_ONLY_EXPLANATION.to_string(),
@@ -763,6 +742,7 @@ pub(crate) mod imp {
             gap_count: ins.gap_count,
             trashable: ins.refusal.is_none(),
             refusal: ins.refusal.as_ref().map(|r| RefusalDto { code: r.code.into(), reason: r.reason.into(), message: r.message.clone() }),
+            link_target_display: link.map(|l| l.target),
             holders,
             recycle_bin_ready: rb.is_ok(),
             recycle_bin_problem: rb.err(),
@@ -784,26 +764,12 @@ pub(crate) mod imp {
     pub fn trash_plan(s: &AppState, scan_id: &str, entries: &[u64]) -> IpcResult<CreatedPlanDto> {
         let p = published(s, scan_id)?;
         let selected = entries.iter().map(|&e| known_entry(&p.view, e)).collect::<IpcResult<Vec<u64>>>()?;
-        // MTR-03: a volume without a usable recycle bin fails the plan; nothing is ever deleted instead.
-        for &e in &selected {
-            let path = p.view.path(e);
-            if let Err(why) = crate::plat::bin_ready(&path) {
-                return Err(ipc(ErrorCode::Unsupported, "recycle_bin_unavailable", format!("{}: {why}; there is no permanent-delete alternative", path.display())));
-            }
-        }
         let hard = cm_platform::protection::hard_deny_set();
         let user = cm_platform::protection::load(&p.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
         // Objects the platform's trash action cannot take (macOS: folders) are refused before anything is planned.
-        for &e in selected.iter().filter(|&&e| crate::plat::trash_may_refuse(p.view.info(e).kind)) {
-            let ins = inspect(&p.view, e, &guard);
-            if ins.refusal.is_none()
-                && let Some(r) = crate::plat::trash_refusal(&ins)
-            {
-                return Err(manual_error(&ManualError::Refused { entry_id: e.to_string(), path: ins.path.display(), refusal: Box::new(r), protected: vec![], gaps: vec![] }));
-            }
-        }
+        cm_app::trash::platform_plan_check(&p.view, &selected, &guard).map_err(|e| manual_error(&e))?;
         let plan_id = new_id("mp");
         let pdigest = crate::cleanup::policy_digest(&p.stores);
         let observed_at = p.status.finished_at.clone().unwrap_or_else(|| p.status.started_at.clone());
@@ -816,8 +782,106 @@ pub(crate) mod imp {
             observed_at: &observed_at,
             policy_digest: &pdigest,
         };
-        let plan = build_trash_plan(&p.view, &selected, &guard, &input).map_err(|e| manual_error(&e))?;
+        // WFA-47/63: a link into a protected system location is refused as protected, naming the location.
+        let plan = build_trash_plan(&p.view, &selected, &guard, &input).map_err(|e| manual_error(&cm_app::trash::name_protected_link(&p.view, e, &hard)))?;
+        // MTR-03 / WFA-35: a volume without a usable recycle bin fails the plan before it is stored (after the
+        // protection refusals, as in the CLI); nothing is ever deleted instead.
+        for &e in &selected {
+            let path = p.view.path(e);
+            if let Err(why) = crate::plat::bin_ready(&path) {
+                return Err(ipc(ErrorCode::Unsupported, "recycle_bin_unavailable", format!("{}: {why}; there is no permanent-delete alternative", path.display())));
+            }
+        }
         p.stores.audit.save_plan_v2(&plan)?;
+        Ok(CreatedPlanDto::new(plan_id))
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The bin (MTR-03, WFA-65): the current user's items and a separate plan of permanent deletes
+
+    /// Opaque, stable id of a bin folder (one per volume): the first 16 hex digits of SHA-256 over its path.
+    fn bin_id(dir: &Path) -> String {
+        let hex = cm_core::adapter::sha256_hex(dir.to_string_lossy().as_bytes()).unwrap_or_default();
+        hex.get(..16).unwrap_or_default().to_owned()
+    }
+
+    /// The volume (Windows: `X:\`; macOS: the home folder or `/Volumes/X`) a bin folder belongs to, for people.
+    fn bin_volume(dir: &Path) -> String {
+        let up = if dir.file_name().is_some_and(|n| n == ".Trash") { dir.parent() } else { dir.ancestors().nth(2) };
+        up.unwrap_or(dir).display().to_string()
+    }
+
+    /// The listing as the page shows it: newest first (unknown deletion time last), at most [`MAX_BIN_ITEMS`].
+    pub fn bin_list_dto(bins: &[cm_app::trash::Bin], issues: &[cm_app::trash::BinIssue]) -> BinListDto {
+        let mut items: Vec<BinItemDto> = bins
+            .iter()
+            .flat_map(|b| {
+                let id = bin_id(&b.dir);
+                b.items.iter().map(move |i| {
+                    let location = b.location(i);
+                    let name = i.original_path.as_deref().map(last_component).filter(|n| !n.is_empty()).unwrap_or_else(|| last_component(&location)).to_owned();
+                    BinItemDto {
+                        trash_item_id: i.trash_item_id.clone(),
+                        bin_id: id.clone(),
+                        name,
+                        original_path_display: i.original_path.clone(),
+                        bin_location_display: location.clone(),
+                        deleted_at: i.deleted_at.clone(),
+                        object_kind: enum_text(&i.kind),
+                        logical_bytes: i.logical_bytes.map(|b| b.to_string()),
+                        purgeable: i.refusal.is_none(),
+                        refusal: i.refusal.clone(),
+                    }
+                })
+            })
+            .collect();
+        items.sort_by(|a, b| b.deleted_at.is_some().cmp(&a.deleted_at.is_some()).then_with(|| b.deleted_at.cmp(&a.deleted_at)).then_with(|| a.name.cmp(&b.name)));
+        let total = items.len() as u64;
+        items.truncate(MAX_BIN_ITEMS);
+        BinListDto {
+            supported: true,
+            observed_at: bins.iter().map(|b| b.observed_at.clone()).max().unwrap_or_else(now_utc),
+            bins: bins.iter().map(|b| BinDto { bin_id: bin_id(&b.dir), volume_display: bin_volume(&b.dir), item_count: b.items.len() as u64 }).collect(),
+            total,
+            truncated: total > items.len() as u64,
+            items,
+            issues: issues.iter().map(|i| issue(i.code, &i.scope_display, i.message.clone())).collect(),
+        }
+    }
+
+    fn bins() -> IpcResult<(Vec<cm_app::trash::Bin>, Vec<cm_app::trash::BinIssue>)> {
+        cm_app::trash::list_bins().map_err(|e| {
+            let reason = if e.code == ErrorCode::PermissionRequired { "permission_required" } else { "io_error" };
+            let message = match e.required_action {
+                Some(next) => format!("{} {next}", e.message),
+                None => e.message,
+            };
+            IpcError::new(e.code, reason, message)
+        })
+    }
+
+    /// `trash list`: read-only (the bin's own records, no content read).
+    pub fn bin_list() -> IpcResult<BinListDto> {
+        let (bins, issues) = bins()?;
+        Ok(bin_list_dto(&bins, &issues))
+    }
+
+    /// `trash purge --item`: listed items of one bin frozen into a plan of permanent deletes (authorizes nothing).
+    pub fn bin_purge_plan(stores: &Stores, ids: &[String]) -> IpcResult<CreatedPlanDto> {
+        let (bins, _) = bins()?;
+        purge_from(stores, &bins, ids)
+    }
+
+    pub fn purge_from(stores: &Stores, bins: &[cm_app::trash::Bin], ids: &[String]) -> IpcResult<CreatedPlanDto> {
+        use cm_app::trash::PickError;
+        let (bin, chosen) = cm_app::trash::pick(bins, ids).map_err(|e| match e {
+            PickError::NotListed => ipc(ErrorCode::InvalidArgument, "bin_item_gone", format!("none of these items is in your {BIN_NAME} any more; reload the list")),
+            PickError::OtherBin(id) => ipc(ErrorCode::InvalidArgument, "bin_items_mixed", format!("item {id} is in another volume's {BIN_NAME}; plan each volume separately")),
+        })?;
+        let plan_id = new_id("mp");
+        let pdigest = crate::cleanup::policy_digest(stores);
+        let plan = cm_app::trash::purge_plan(bin, &chosen, &plan_id, &pdigest, now_unix()).map_err(|e| manual_error(&e))?;
+        stores.audit.save_plan_v2(&plan)?;
         Ok(CreatedPlanDto::new(plan_id))
     }
 
@@ -990,11 +1054,61 @@ pub struct TrashInspectionDto {
     pub gap_count: u64,
     pub trashable: bool,
     pub refusal: Option<RefusalDto>,
+    /// WFA-47/63: where a link refused as `protected` leads (the protected system location), for people.
+    pub link_target_display: Option<String>,
     /// Processes holding it open; `None` when not determined (or a cloud placeholder, never opened).
     pub holders: Option<Vec<String>>,
     pub recycle_bin_ready: bool,
     pub recycle_bin_problem: Option<String>,
     pub guidance: String,
+}
+
+/// Items per bin listing sent to the page (newest first); `total` counts them all.
+pub const MAX_BIN_ITEMS: usize = 2000;
+
+/// One object in the current user's Recycle Bin / Trash (`trash list`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BinItemDto {
+    pub trash_item_id: String,
+    /// The bin (volume) holding it; a permanent-delete plan takes items of one bin only.
+    pub bin_id: String,
+    /// The original name (from the bin's record), else the recycled object's own name.
+    pub name: String,
+    /// Where it was deleted from (the bin's record; display only); `None` when not recorded (macOS never claims it).
+    pub original_path_display: Option<String>,
+    /// Where the recycled object is now.
+    pub bin_location_display: String,
+    /// UTC (RFC 3339) when recorded.
+    pub deleted_at: Option<String>,
+    /// `file` or `directory`.
+    pub object_kind: String,
+    /// Decimal; `None` when unknown.
+    pub logical_bytes: Option<String>,
+    /// Whether a permanent-delete plan may include it.
+    pub purgeable: bool,
+    /// Why not (English detail; empty it with Explorer / Finder instead); `None` when purgeable.
+    pub refusal: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BinDto {
+    pub bin_id: String,
+    /// The volume (Windows: `C:\`; macOS: the home folder or `/Volumes/X`).
+    pub volume_display: String,
+    pub item_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BinListDto {
+    pub supported: bool,
+    pub observed_at: String,
+    pub bins: Vec<BinDto>,
+    /// Newest first, at most [`MAX_BIN_ITEMS`].
+    pub items: Vec<BinItemDto>,
+    pub total: u64,
+    pub truncated: bool,
+    /// Bin folders that could not be listed (`bin_unreadable`, `permission_required`), next to the others.
+    pub issues: Vec<IssueDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1243,6 +1357,24 @@ pub async fn trash_plan(state: St<'_>, scan_id: String, entry_ids: Vec<String>) 
             }
         }
         imp::trash_plan(&s, &scan, &entries)
+    })
+    .await
+}
+
+/// `trash list` (MTR-03, WFA-65): the current user's bin items; read-only.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn trash_list() -> IpcResult<BinListDto> {
+    blocking(imp::bin_list).await
+}
+
+/// `trash purge --item` (MTR-03): listed items of one bin frozen into a separate plan of permanent deletes. Only a
+/// terminal review approves it (after `DELETE` is typed); this window never does (`v2::terminal_only`).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn trash_purge_plan(state: St<'_>, item_ids: Vec<String>) -> IpcResult<CreatedPlanDto> {
+    let s = state.inner().clone();
+    blocking(move || {
+        let ids = args::record_ids("recycle bin item", &item_ids, MAX_TRASH_SELECTION)?;
+        s.with_stores(|st| imp::bin_purge_plan(st, &ids))
     })
     .await
 }

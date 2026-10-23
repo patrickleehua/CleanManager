@@ -273,6 +273,12 @@ const MOCK_GATES: [string, string][] = [
 ];
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** `?index=corrupt|incompatible`: the scan index cannot be used (NEW-04); history and recovery still work. */
+function indexPreview(): 'index_corrupt' | 'index_incompatible' | null {
+  const v = new URLSearchParams(globalThis.location?.search ?? '').get('index');
+  return v === 'corrupt' ? 'index_corrupt' : v === 'incompatible' ? 'index_incompatible' : null;
+}
+
 export function mockBackend(): Backend {
   const preview = scanPreview();
   const DEFAULT_ROOT = defaultRoot();
@@ -318,7 +324,20 @@ export function mockBackend(): Backend {
     };
   };
 
-  seedScans(preview, ROOT, nodes, scans, summaryOf);
+  // A damaged index has no readable scans until it is rebuilt (then it is empty: scans must be run again).
+  let indexBroken = indexPreview();
+  const indexError = () =>
+    err(
+      'index_unavailable',
+      indexBroken ?? 'index_corrupt',
+      indexBroken === 'index_incompatible'
+        ? 'scan index schema 9 is newer than this program supports (4); run `cleanmanager doctor --repair-index` (the file is kept) and scan again'
+        : 'scan index is damaged (database disk image is malformed); run `cleanmanager doctor --repair-index` (the damaged file is kept) and scan again',
+    );
+  const needIndex = () => {
+    if (indexBroken) throw indexError();
+  };
+  if (!indexBroken) seedScans(preview, ROOT, nodes, scans, summaryOf);
   if (preview === 'running') {
     // The running preview keeps going until it is cancelled.
     const s = scans.get('s_preview_1')!;
@@ -430,7 +449,7 @@ export function mockBackend(): Backend {
     if (!n) return null;
     return { name: n.name, path: pathOf(nodes, n.id), kind: n.kind, logical: n.logical === null ? null : n.logical.toString(), unknownDesc: n.unknownDesc };
   });
-  const ops = mockOps();
+  const ops = mockOps((entryId) => (nodes.has(Number(entryId)) ? pathOf(nodes, Number(entryId)) : null));
   const suite = mockSuite(ops.__plan, (entryId) => {
     const n = nodes.get(Number(entryId));
     if (!n) return null;
@@ -475,7 +494,7 @@ export function mockBackend(): Backend {
           { name: 'execute.trash', state: 'unverified', reason: 'Not verified on a real device in this build' },
         ],
         store_dir_display: mac ? '/Users/lin/Library/Application Support/CleanManager/store' : 'C:\\Users\\Lin\\AppData\\Local\\CleanManager\\store',
-        store_problem: null,
+        store_problem: indexBroken ? indexError() : null,
         bypass_privileges_disabled: true,
         bypass_privileges_note: null,
         interrupted_at_startup: [],
@@ -508,7 +527,19 @@ export function mockBackend(): Backend {
       offers.push(o);
       return o;
     },
+    async repairIndex(_confirmed: true) {
+      await delay(700);
+      if (!indexBroken) return { status: 'not_needed' as const, previous_state: 'healthy', kept_files: [], message: 'The scan index passed the full integrity check; nothing was changed.' };
+      const previous = indexBroken === 'index_incompatible' ? 'incompatible' : 'corrupt';
+      indexBroken = null;
+      scans.clear();
+      const store = mac ? '/Users/lin/Library/Application Support/CleanManager/store' : 'C:\\Users\\Lin\\AppData\\Local\\CleanManager\\store';
+      const sep = mac ? '/' : '\\';
+      const kept = ['', '-wal'].map((x) => `${store}${sep}index.db.damaged-20261023T061500Z${x}`);
+      return { status: 'repaired' as const, previous_state: previous, kept_files: kept, message: `The scan index was unusable. It was moved aside as ${kept.join(', ')} and an empty index was created.` };
+    },
     async recentScans() {
+      needIndex();
       return [...scans.entries()].map(([id, s]) => ({
         scan_id: id,
         root_display: s.root,
@@ -522,6 +553,7 @@ export function mockBackend(): Backend {
       }));
     },
     async startScan(token) {
+      needIndex();
       const o = offers.find((x) => x.token === token);
       if (!o) throw err('invalid_argument', 'unknown_root', 'unknown root');
       if (o.problem) throw o.problem;
@@ -548,6 +580,7 @@ export function mockBackend(): Backend {
     },
     async scanStatus(id) {
       await delay(60);
+      needIndex();
       return status(id);
     },
     async cancelScan(id) {

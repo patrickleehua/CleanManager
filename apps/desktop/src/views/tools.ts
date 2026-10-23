@@ -11,6 +11,7 @@ import { RequestGate } from '../lib/gate';
 import { notOnThisPlatform, platform, words } from '../lib/platform';
 import { isRawHostText, metricReason } from '../lib/suiteWords';
 import { unknownCodeText } from '../lib/codes';
+import { guidanceText, sizeNoteText } from '../lib/insightWords';
 import { DEFAULT_PREFS, PANEL_LABEL, REFRESH_SECONDS, type StatusPanel, type StatusPrefs, layoutRows, loadPrefs, movePanel, sanitize, savePrefs, setShown } from '../lib/statusPrefs';
 import type { CpuAlert, Insight, InsightsList, IpcError, NetworkTotals, StartupItem, StartupList, StatusMetric, StatusSnapshot } from '../lib/types';
 import type { DownloadItem, InsightCard, InsightOverview } from '../lib/suiteTypes';
@@ -381,10 +382,12 @@ export function privacyPending(note: string | null | undefined): boolean {
 export const privacyPendingSize = () => t('tools.privacyPendingSize');
 export const privacyPendingText = () => t('tools.privacyPendingText');
 
-export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; count: number | null; observed: string | null; pending: boolean } {
+export function overviewCard(c: InsightCard): { title: string; size: string; note: string | null; noteRaw: string | null; count: number | null; observed: string | null; pending: boolean } {
   const pending = c.logical_bytes === null && privacyPending(c.size_note);
   const size = pending ? privacyPendingSize() : c.logical_bytes === null ? (c.count !== null ? t('tools.countItems', { count: c.count }) : t('common.sizeUnknown')) : formatBytes(c.logical_bytes);
-  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: pending ? privacyPendingText() : c.logical_bytes === null ? c.size_note : null, count: c.count, observed: c.observed_at, pending };
+  // NEW-13: the host's English note is the tooltip; the card says it in words.
+  const note = !pending && c.logical_bytes === null ? sizeNoteText(c.size_note) : null;
+  return { title: CARD_TITLE[c.kind] ?? c.title, size, note: pending ? privacyPendingText() : (note?.text ?? null), noteRaw: note?.raw ?? null, count: c.count, observed: c.observed_at, pending };
 }
 
 const OLD_DAYS = 90;
@@ -496,7 +499,7 @@ export class InsightsPage implements PageLike {
                       h('span', { class: 'icard-title' }, v.title),
                       h('span', { class: 'icard-size num' }, v.size),
                       h('span', { class: 'icard-meta muted' }, [v.count !== null && c.logical_bytes !== null ? t('tools.countObjects', { count: v.count }) : null, v.observed ? formatTime(v.observed) : null].filter(Boolean).join(' · ')),
-                      v.note ? h('span', { class: 'icard-meta muted' }, v.note) : null,
+                      v.note ? h('span', { class: 'icard-meta muted', title: v.noteRaw }, v.note) : null,
                     );
                   }),
                 )
@@ -594,7 +597,8 @@ export class InsightsPage implements PageLike {
     const [title, explain] = INSIGHT_TITLE[i.kind] ?? [i.title, i.explanation];
     const pending = i.logical_bytes === null && privacyPending(i.size_note);
     const size = pending ? privacyPendingSize() : i.logical_bytes === null ? t('common.sizeUnknown') : formatBytes(i.logical_bytes);
-    const note = pending ? privacyPendingText() : i.size_note;
+    const sized = pending ? null : sizeNoteText(i.size_note);
+    const note = pending ? privacyPendingText() : (sized?.text ?? null);
     return h(
       'section',
       { class: 'panel insight', 'aria-labelledby': `ins-${i.insight_id}` },
@@ -602,15 +606,15 @@ export class InsightsPage implements PageLike {
         'div',
         { class: 'insight-head' },
         h('div', {}, h('h2', { id: `ins-${i.insight_id}` }, title), i.path ? h('p', { class: 'path muted small' }, i.path.display) : null),
-        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, t('tools.countItems', { count: i.count })) : null, note ? h('small', {}, note) : null),
+        h('p', { class: 'insight-size num' }, size, i.count !== null ? h('small', {}, t('tools.countItems', { count: i.count })) : null, note ? h('small', { title: sized?.raw ?? null }, note) : null),
       ),
       h('p', {}, explain),
-      ...i.guidance.map((g) =>
+      ...i.guidance.map((g, n) =>
         h(
           'div',
           { class: 'guidance' },
-          h('p', { class: 'small' }, h('b', {}, g.tool), g.requires_admin ? t('tools.needsAdmin', { admin: words().admin }) : '', t('tools.colon'), g.impact),
-          copyField(t('tools.officialUsageCleanmanagerWont'), g.steps),
+          h('p', { class: 'small', title: guidanceText(i.kind, n, g).raw }, h('b', {}, guidanceText(i.kind, n, g).tool), g.requires_admin ? t('tools.needsAdmin', { admin: words().admin }) : '', t('tools.colon'), guidanceText(i.kind, n, g).impact),
+          copyField(t('tools.officialUsageCleanmanagerWont'), guidanceText(i.kind, n, g).steps),
         ),
       ),
     );
@@ -709,6 +713,16 @@ const DIAGNOSIS_LABEL: Record<string, string> = {
   get high_temperature() { return t('tools.diagnosisLabel.high_temperature'); },
   get heavy_io() { return t('tools.diagnosisLabel.heavy_io'); },
 };
+
+/**
+ * The status page's one diagnosis line (STS-03): `normal` when no metric crosses a threshold (cm-core status.rs), one
+ * of the problem codes, or a code this build does not know (its host message only as the tooltip).
+ */
+export function diagnosisLine(d: { code: string; message: string }): { normal: boolean; text: string; raw: string | null } {
+  if (d.code === 'normal') return { normal: true, text: t('tools.diagnosisNormal'), raw: null };
+  const known = DIAGNOSIS_LABEL[d.code];
+  return { normal: false, text: known ?? unknownCodeText(d.code), raw: known ? null : d.message };
+}
 
 const NET_CLASS_WORD: Record<string, string> = { get physical() { return t('tools.netClassWord.physical'); }, get tunnel() { return t('tools.netClassWord.tunnel'); }, get virtual() { return t('tools.netClassWord.virtual'); }, get unknown() { return t('tools.netClassWord.unknown'); } };
 
@@ -911,12 +925,15 @@ export class StatusPage implements PageLike {
           )
         : null,
       diag
-        ? h(
-            'div',
-            { class: 'notice warn diag-line' },
-            h('span', { title: DIAGNOSIS_LABEL[diag.code] ? null : diag.message }, DIAGNOSIS_LABEL[diag.code] ?? unknownCodeText(diag.code)),
-            diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, t('common.analyzeDisk')) : null,
-          )
+        ? diagnosisLine(diag).normal
+          ? // NEW-13 (WFA-91): the healthy state is a quiet line of its own, never an "unrecognized issue".
+            h('p', { class: 'diag-line diag-normal small' }, h('span', { class: 'state-word', 'data-tone': 'good' }, h('span', { class: 'sw-mark', 'aria-hidden': 'true' }), diagnosisLine(diag).text))
+          : h(
+              'div',
+              { class: 'notice warn diag-line' },
+              h('span', { title: diagnosisLine(diag).raw }, diagnosisLine(diag).text),
+              diag.link === 'analyze' ? h('button', { type: 'button', class: 'quiet', onclick: () => this.app.navigate('overview') }, t('common.analyzeDisk')) : null,
+            )
         : null,
     );
   }
@@ -996,27 +1013,9 @@ export class CapabilityPageView implements PageLike {
   }
 }
 
-export function capabilityPages(app: App): Record<'recyclebin' | 'agent', CapabilityPageView> {
-  const w = () => words();
+/** Pages that describe a capability instead of a tool. 清理 › 回收站 is a tool now (`views/recycleBin.ts`, WFA-65). */
+export function capabilityPages(_app: App): Record<'agent', CapabilityPageView> {
   return {
-    recyclebin: new CapabilityPageView('recyclebin', () =>
-      capabilityPage({
-        id: 'recyclebin',
-        title: w().bin,
-        gate: 'cli_only',
-        spec: 'MTR-01..05',
-        gateName: 'G1',
-        does: [w().binListDoes, t('tools.freezesSelectedItemsDelete'), t('tools.selectObjectsAnalyzeDisk', { moveToBin: w().moveToBin })],
-        why: t('tools.handPickedMovetobinAlready', { moveToBin: w().moveToBin, moveToBin2: w().moveToBin }),
-        whyMore: [t('tools.browsingBinPermanentlyDeleting', { bin: w().bin })],
-        safety: [t('tools.objectsSelectedOnlyEntry'), t('tools.ifTargetVolumeNo', { bin: w().bin }), t('tools.protectedChildrenListedKeep'), ...(w().binPutBack ? [w().binPutBack!] : [])],
-        cli: [
-          { label: t('tools.listBin', { bin: w().bin }), command: 'cleanmanager trash list' },
-          { label: t('tools.createPermanentDeletePlan'), command: 'cleanmanager trash purge --item ID' },
-        ],
-        actions: [h('button', { type: 'button', class: 'primary', onclick: () => app.navigate('disk') }, t('tools.pickObjectsDiskMovetobin', { moveToBin: w().moveToBin }))],
-      }),
-    ),
     agent: new CapabilityPageView('agent', () =>
       capabilityPage({
         id: 'agent',

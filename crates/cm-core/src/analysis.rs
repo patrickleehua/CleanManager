@@ -362,10 +362,12 @@ struct Subtree {
     unread: u64,
     boundaries: u64,
     placeholders: u64,
+    /// Objects other than directories (files, links, special objects) at or under the entry.
+    objects: u64,
 }
 
 fn subtree(view: &dyn IndexView, entry: u64, protected_ids: &BTreeMap<u64, ProtectionClass>) -> Subtree {
-    let mut s = Subtree { logical: KnownTotal::default(), own: None, inner: BTreeSet::new(), unread: 0, boundaries: 0, placeholders: 0 };
+    let mut s = Subtree { logical: KnownTotal::default(), own: None, inner: BTreeSet::new(), unread: 0, boundaries: 0, placeholders: 0, objects: 0 };
     let mut seen = BTreeSet::new();
     let mut stack = vec![entry];
     while let Some(id) = stack.pop() {
@@ -387,6 +389,7 @@ fn subtree(view: &dyn IndexView, entry: u64, protected_ids: &BTreeMap<u64, Prote
         if f.kind == ObjectKind::Directory {
             stack.extend_from_slice(view.children(id));
         } else if seen.insert(f.object_id) {
+            s.objects += 1;
             let _ = s.logical.add(f.logical.map(Bytes));
         }
     }
@@ -609,6 +612,11 @@ pub fn analyze_catalog(
                 if sub.unread > 0 && state != CandidateState::Blocked {
                     reasons.push("unread_descendants".into());
                     state = CandidateState::PendingEvidence;
+                }
+                // WFA-113: a folder the index shows empty (for example emptied by an earlier cleanup) holds nothing to
+                // clean, so it is not a candidate (and never default-selected). Blocked rows stay visible as such.
+                if f.kind == ObjectKind::Directory && sub.objects == 0 && sub.unread == 0 && sub.boundaries == 0 && state != CandidateState::Blocked {
+                    continue;
                 }
                 if let Some(days) = rule.thresholds.min_age_days {
                     match f.modified_unix {

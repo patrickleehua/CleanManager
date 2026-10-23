@@ -362,6 +362,12 @@ fn unrepresentable_directory_total_is_unknown_not_wrapped() {
     assert_eq!(dirs.items[0].size_basis, SizeBasis::Unknown);
     let s = store.summarize("s1", &[1]);
     assert!(s.is_err(), "selection summaries use checked addition and report overflow");
+    assert!(store.summarize_full("s1", &[1]).is_err());
+    // No stored total for a directory whose total does not fit: its folder total reports the overflow too.
+    let stored: i64 = store.conn().query_row("SELECT count(*) FROM subtree_totals WHERE scan_id='s1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(stored, 0);
+    assert!(matches!(store.folder_total("s1", 1), Err(StoreError::Core(_))));
+    assert_eq!(store.scan_status("s1").unwrap().entries_seen, 3, "the counts are still stored");
 }
 
 /// /r{a/{x,z?},b/{y=x},locked/(unread)} with a hard link and an unknown size.
@@ -591,4 +597,195 @@ fn a_held_index_is_not_moved_and_nothing_changes() {
     let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert!(names.iter().all(|n| !n.contains("damaged")), "{names:?}");
     assert!(matches!(IndexStore::open(&path), Err(StoreError::IndexCorrupt(_))), "the damaged file is still in place");
+}
+
+/// A tree with every case a total has to get right: a hard-linked object in two directories (`with_links`),
+/// unknown sizes, unread ranges (one under a directory, one deep in a large directory, one with no parent),
+/// a directory large enough for a stored total, a small one that is walked, and an empty one.
+///
+/// /r (1): a/ (2) {x (4) = obj 5, z (8) unknown}; b/ (3) {y (7) = obj 5 when linked, w (10)}; locked/ (9, unread);
+/// big/ (11) {300 files 100..=399, every 37th unknown; sub/ (12) {400..=409, unread; 410 = obj 5 when linked}};
+/// empty/ (13).
+fn rich_fixture(store: &IndexStore, scan: &str, state: ScanState, with_links: bool) {
+    let rev = begin(store, scan);
+    let mut objects = vec![obj(1, ObjectKind::Directory, None), obj(2, ObjectKind::Directory, None), obj(3, ObjectKind::Directory, None),
+        obj(5, ObjectKind::File, Some(100)), obj(6, ObjectKind::File, None), obj(9, ObjectKind::Directory, None), obj(10, ObjectKind::File, Some(7)),
+        obj(11, ObjectKind::Directory, None), obj(12, ObjectKind::Directory, None), obj(13, ObjectKind::Directory, None)];
+    let mut entries = vec![ent(1, None, "/r", 1, ObjectKind::Directory), ent(2, Some(1), "a", 2, ObjectKind::Directory),
+        ent(3, Some(1), "b", 3, ObjectKind::Directory), ent(4, Some(2), "x", 5, ObjectKind::File), ent(8, Some(2), "z", 6, ObjectKind::File),
+        ent(9, Some(1), "locked", 9, ObjectKind::Directory), ent(10, Some(3), "w", 10, ObjectKind::File),
+        ent(11, Some(1), "big", 11, ObjectKind::Directory), ent(12, Some(11), "sub", 12, ObjectKind::Directory),
+        ent(13, Some(1), "empty", 13, ObjectKind::Directory)];
+    if with_links {
+        entries.push(ent(7, Some(3), "y", 5, ObjectKind::File));
+        entries.push(ent(410, Some(12), "x-again", 5, ObjectKind::File));
+    } else {
+        objects.push(obj(7, ObjectKind::File, Some(100)));
+        entries.push(ent(7, Some(3), "y", 7, ObjectKind::File));
+    }
+    for id in 100..=409u64 {
+        let size = (id % 37 != 0).then_some(id * 1000);
+        objects.push(obj(id, ObjectKind::File, size));
+        entries.push(ent(id, Some(if id < 400 { 11 } else { 12 }), &format!("f{id}"), id, ObjectKind::File));
+    }
+    let skipped = [SkippedRow { parent_entry_id: Some(9), path: unix("/r/locked/deep"), reason: SkipReason::PermissionDenied },
+        SkippedRow { parent_entry_id: Some(12), path: unix("/r/big/sub/private"), reason: SkipReason::PermissionDenied },
+        SkippedRow { parent_entry_id: None, path: unix("/elsewhere"), reason: SkipReason::VolumeChanged }];
+    // Two batches, as a backend writes them.
+    store.write_batch(scan, rev, &objects[..8], &entries[..6], &skipped[..1]).unwrap();
+    store.write_batch(scan, rev, &objects[8..], &entries[6..], &skipped[1..]).unwrap();
+    if state == ScanState::Interrupted {
+        assert_eq!(store.reconcile_hosts(|_| Liveness::Exited, "t").unwrap(), vec![scan.to_string()]);
+    } else {
+        store.publish(scan, rev, state, "t").unwrap();
+    }
+}
+
+const RICH_IDS: [u64; 15] = [1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 100, 111, 405, 409];
+
+fn rich_selections(with_links: bool) -> Vec<Vec<u64>> {
+    let mut s: Vec<Vec<u64>> = RICH_IDS.iter().map(|id| vec![*id]).collect();
+    s.extend([vec![], vec![2, 3], vec![4, 7], vec![2, 4], vec![1, 2, 11], vec![11, 3], vec![12, 2, 9], vec![100, 101, 4, 405], vec![9, 13, 12], vec![3, 12]]);
+    if with_links {
+        s.push(vec![4, 410]);
+        s.push(vec![2, 12, 410]);
+    }
+    s
+}
+
+fn counted(store: &IndexStore, scan: &str) -> (u64, u64) {
+    let count = |table: &str| store.conn().query_row(&format!("SELECT count(*) FROM {table} WHERE scan_id=?1"), [scan], |r| r.get::<_, i64>(0)).unwrap() as u64;
+    (count("entries"), count("skipped"))
+}
+
+/// NEW-01: status and summary reads come from stored totals or a subtree walk, never from the loaded
+/// revision, and give exactly what the full in-memory computation gives: for every entry, for overlapping
+/// and hard-linked selections, in every terminal state, and for a revision an older program published
+/// (no stored rows), which is then recorded so its next status read is a keyed lookup.
+#[test]
+fn stored_and_walked_totals_equal_the_full_tree_computation() {
+    let dir = scratch("stored-totals");
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    let mut n = 0;
+    for state in [ScanState::Completed, ScanState::Partial, ScanState::Cancelled, ScanState::Interrupted, ScanState::Failed] {
+        for with_links in [true, false] {
+            n += 1;
+            let scan = format!("s{n}");
+            rich_fixture(&store, &scan, state, with_links);
+            let check = |label: &str| {
+                for id in RICH_IDS {
+                    let full = store.summarize_full(&scan, &[id]).unwrap();
+                    assert_eq!(store.folder_total(&scan, id).unwrap(), full, "{label} {state:?} links={with_links} folder_total({id})");
+                    assert_eq!(store.summarize(&scan, &[id]).unwrap(), full, "{label} {state:?} links={with_links} summarize([{id}])");
+                }
+                for sel in rich_selections(with_links) {
+                    assert_eq!(store.summarize(&scan, &sel).unwrap(), store.summarize_full(&scan, &sel).unwrap(), "{label} {state:?} links={with_links} {sel:?}");
+                }
+                let status = store.scan_status(&scan).unwrap();
+                assert_eq!((status.entries_seen, status.skipped_ranges), counted(&store, &scan), "{label} {state:?}");
+            };
+            check("stored");
+            let stored: Vec<i64> = {
+                let mut stmt = store.conn().prepare("SELECT entry_id FROM subtree_totals WHERE scan_id=?1 ORDER BY entry_id").unwrap();
+                stmt.query_map([&scan], |r| r.get(0)).unwrap().map(std::result::Result::unwrap).collect()
+            };
+            assert_eq!(stored, [1, 11], "{state:?}: the root and the one directory with at least {STORED_TOTAL_MIN_ENTRIES} entries");
+            let shared: Option<i64> = store.conn().query_row("SELECT shared_objects FROM revision_summaries WHERE scan_id=?1", [&scan], |r| r.get(0)).unwrap();
+            assert_eq!(shared, Some(if with_links { 1 } else { 0 }));
+
+            // A revision published by an older program: nothing stored, same answers.
+            store.conn().execute("DELETE FROM subtree_totals WHERE scan_id=?1", [&scan]).unwrap();
+            store.conn().execute("DELETE FROM revision_summaries WHERE scan_id=?1", [&scan]).unwrap();
+            check("walked");
+            // Reading its root recorded the root's total and the counts (not the hard-link fact, which is unknown).
+            let roots: Vec<i64> = {
+                let mut stmt = store.conn().prepare("SELECT entry_id FROM subtree_totals WHERE scan_id=?1").unwrap();
+                stmt.query_map([&scan], |r| r.get(0)).unwrap().map(std::result::Result::unwrap).collect()
+            };
+            assert_eq!(roots, [1]);
+            let row: (i64, i64, Option<i64>) =
+                store.conn().query_row("SELECT entries, skipped, shared_objects FROM revision_summaries WHERE scan_id=?1", [&scan], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+            let (entries, skipped) = counted(&store, &scan);
+            assert_eq!(row, (entries as i64, skipped as i64, None));
+            check("recorded");
+        }
+    }
+    // Errors stay what they were.
+    assert!(matches!(store.folder_total("s1", 999), Err(StoreError::NotFound(_))));
+    assert!(matches!(store.summarize("s1", &[1, 999]), Err(StoreError::NotFound(_))));
+    let rev = begin(&store, "staging");
+    store.write_batch("staging", rev, &[obj(1, ObjectKind::Directory, None)], &[ent(1, None, "/r", 1, ObjectKind::Directory)], &[]).unwrap();
+    assert!(matches!(store.folder_total("staging", 1), Err(StoreError::InvalidState(_))));
+    assert!(matches!(store.summarize("staging", &[1]), Err(StoreError::InvalidState(_))));
+    // Dropping a scan drops what was stored for it.
+    store.drop_scan("s1").unwrap();
+    for table in ["subtree_totals", "revision_summaries"] {
+        let left: i64 = store.conn().query_row(&format!("SELECT count(*) FROM {table} WHERE scan_id='s1'"), [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+}
+
+/// The counts a running scan's status shows are kept per batch (no row counting while it runs), and a
+/// revision begun by an older program (no counter row) is still counted correctly.
+#[test]
+fn status_counts_are_kept_per_batch_while_staging() {
+    let dir = scratch("staging-counts");
+    let store = IndexStore::open(&dir.join("index.db")).unwrap();
+    let rev = begin(&store, "s1");
+    assert_eq!((store.scan_status("s1").unwrap().entries_seen, store.scan_status("s1").unwrap().skipped_ranges), (0, 0));
+    store.write_batch("s1", rev, &[obj(1, ObjectKind::Directory, None)], &[ent(1, None, "/r", 1, ObjectKind::Directory)],
+        &[SkippedRow { parent_entry_id: Some(1), path: unix("/r/x"), reason: SkipReason::PermissionDenied }]).unwrap();
+    store.write_batch("s1", rev, &[obj(2, ObjectKind::File, Some(3)), obj(3, ObjectKind::File, None)],
+        &[ent(2, Some(1), "a", 2, ObjectKind::File), ent(3, Some(1), "b", 3, ObjectKind::File)], &[]).unwrap();
+    let s = store.scan_status("s1").unwrap();
+    assert_eq!((s.published, s.entries_seen, s.skipped_ranges), (false, 3, 1));
+    let stored: (i64, i64) = store.conn().query_row("SELECT entries, skipped FROM revision_summaries WHERE scan_id='s1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(stored, (3, 1));
+    store.conn().execute("DELETE FROM revision_summaries WHERE scan_id='s1'", []).unwrap();
+    store.write_batch("s1", rev, &[obj(4, ObjectKind::File, Some(1))], &[ent(4, Some(1), "c", 4, ObjectKind::File)], &[]).unwrap();
+    let s = store.scan_status("s1").unwrap();
+    assert_eq!((s.entries_seen, s.skipped_ranges), (4, 1), "no counter row: counted");
+    assert_eq!(store.publish("s1", rev, ScanState::Completed, "t").unwrap(), ScanState::Partial);
+    let s = store.scan_status("s1").unwrap();
+    assert_eq!((s.published, s.entries_seen, s.skipped_ranges), (true, 4, 1), "recounted at publish");
+    let root = store.folder_total("s1", 1).unwrap();
+    assert_eq!((root.covered_entries, root.logical.known, root.logical.unknown_count, root.unread_ranges), (4, Bytes(4), 2, 1));
+}
+/// The treemap's "rest" tile: the other children of a folder, added plainly from one unsorted read.
+#[test]
+fn children_rest_adds_the_other_children_exactly_and_within_its_budget() {
+    let dir = scratch("children-rest");
+    let sizes: Vec<Option<u64>> = (0..137).map(|i| if i % 11 == 0 { None } else { Some(u64::MAX / 2 + i) }).collect();
+    let store = flat(&dir, &sizes);
+    let top: BTreeSet<u64> = [10, 11, 12].into();
+    let rest = store.children_rest("s1", 1, 1, &top, 1000).unwrap();
+    let others: Vec<Option<u64>> = sizes.iter().enumerate().filter(|(i, _)| !top.contains(&(10 + *i as u64))).map(|(_, s)| *s).collect();
+    let known: u128 = others.iter().flatten().map(|v| u128::from(*v)).sum();
+    assert_eq!(rest, ChildrenRest { count: 134, known_logical: known, unknown_count: others.iter().filter(|s| s.is_none()).count() as u64, complete: true });
+    assert!(known > u128::from(u64::MAX), "the sum is exact beyond u64");
+    let bounded = store.children_rest("s1", 1, 1, &top, 50).unwrap();
+    assert_eq!((bounded.count, bounded.complete), (50, false));
+    assert!(store.children_rest("s1", 1, 1, &top, 134).unwrap().complete, "exactly the budget is complete");
+    assert_eq!(store.children_rest("s1", 1, 10, &BTreeSet::new(), 10).unwrap(), ChildrenRest { complete: true, ..ChildrenRest::default() }, "a file has no children");
+    assert!(matches!(store.children_rest("s1", 2, 1, &top, 10), Err(StoreError::CursorStale(_))), "bound to the revision of the first page");
+}
+/// NEW-01 regression: each step of the subtree walk is one lookup by parent, never a pass over the revision
+/// (SQLite's planner picked that for a plain join, which made folder totals quadratic in the scan's size).
+#[test]
+fn the_subtree_walk_looks_children_up_by_parent_and_reads_only_the_subtree() {
+    let dir = scratch("walk-plan");
+    let store = flat(&dir, &vec![Some(1); 3000]);
+    let plan: Vec<String> = {
+        let mut stmt = store.conn().prepare(&format!("EXPLAIN QUERY PLAN {WALK_SQL}")).unwrap();
+        stmt.query_map(params!["s1", 1, 10], |r| r.get::<_, String>(3)).unwrap().map(std::result::Result::unwrap).collect()
+    };
+    let step = plan.iter().position(|l| l == "RECURSIVE STEP").expect("a recursive walk");
+    assert!(plan[step + 1..].iter().any(|l| l.starts_with("SEARCH e USING INDEX entries_parent")), "{plan:?}");
+    assert!(!plan.iter().any(|l| l.starts_with("SCAN e") || l.contains("entries_logical")), "{plan:?}");
+    // Walking one file of a 3,001-entry revision takes a handful of VM steps, not one pass per queued row.
+    let mut stmt = store.conn().prepare(WALK_SQL).unwrap();
+    let rows = stmt.query_map(params!["s1", 1, 10], |r| r.get::<_, i64>(0)).unwrap().count();
+    assert_eq!(rows, 1);
+    let steps = stmt.get_status(rusqlite::StatementStatus::VmStep);
+    assert!(steps < 500, "{steps} VM steps for a one-entry subtree");
 }

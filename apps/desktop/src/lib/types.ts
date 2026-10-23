@@ -43,6 +43,21 @@ export interface Capabilities {
   gates: GateRow[];
 }
 
+/**
+ * NEW-04: what the host's index repair found and did (the desktop counterpart of `doctor --repair-index`). A damaged or
+ * incompatible index is moved aside as `index.db.damaged-<time>` (with its `-wal`/`-shm`), never deleted, and an empty
+ * index is created; a healthy or missing index is left alone (`not_needed`). The audit store is never touched.
+ */
+export interface IndexRepair {
+  status: 'repaired' | 'not_needed';
+  /** `healthy`, `missing`, `corrupt` or `incompatible`. */
+  previous_state: string;
+  /** The files kept next to the store (display paths). */
+  kept_files: string[];
+  /** The host's own sentence (技术详情 only). */
+  message?: string | null;
+}
+
 export interface GateRow {
   capability: string;
   gate: string;
@@ -525,11 +540,31 @@ export interface ApplyFinishedEvent {
 
 export type Availability = 'in_app_restore' | 'system_recycle_bin' | 'unavailable' | 'not_applicable' | 'unknown';
 
+/** Every `operation_summary.action` the protocol names (`activity.test` keeps this list equal to the schema's enum). */
+export const HISTORY_ACTIONS = [
+  'trash',
+  'quarantine',
+  'delete',
+  'restore',
+  'purge',
+  'startup',
+  'maintenance',
+  'process',
+  'update',
+  'uninstall',
+  'uninstall_leftovers',
+  'uninstall_restore',
+  'startup_restore',
+  'maintenance_restore',
+] as const;
+export type HistoryAction = (typeof HISTORY_ACTIONS)[number];
+
 export interface HistoryItem {
   operation_id: string;
   plan_id: string;
   contract: string | null;
-  action: 'trash' | 'quarantine' | 'delete' | 'restore' | 'purge' | null;
+  /** The protocol's `operation_summary.action` (schemas/v1/protocol.schema.json); null when the plan cannot be read. */
+  action: HistoryAction | null;
   state: string;
   started_at: string;
   finished_at: string | null;
@@ -719,10 +754,41 @@ export interface TrashInspection {
   gap_count: number;
   trashable: boolean;
   refusal: { code: string; reason: string; message: string } | null;
+  /** WFA-47/63: where a link refused as `protected` leads (the protected system location). */
+  link_target_display?: string | null;
   holders: string[] | null;
   recycle_bin_ready: boolean;
   recycle_bin_problem: string | null;
   guidance: string;
+}
+
+/** WFA-65 / MTR-03: one item of the current user's bin (`trash_list`, mirrors suite.rs `BinItemDto`). */
+export interface BinItem {
+  trash_item_id: string;
+  /** The bin (volume) holding it; a permanent-delete plan takes items of one bin only. */
+  bin_id: string;
+  name: string;
+  /** Where it was deleted from (the bin's own record); null when not recorded (macOS never claims it). */
+  original_path_display: string | null;
+  bin_location_display: string;
+  deleted_at: string | null;
+  object_kind: string;
+  logical_bytes: string | null;
+  /** Whether a permanent-delete plan may include it. */
+  purgeable: boolean;
+  /** Why not, as the host's English detail (technical details only). */
+  refusal: string | null;
+}
+
+export interface BinList {
+  supported: boolean;
+  observed_at: string;
+  bins: { bin_id: string; volume_display: string; item_count: number }[];
+  /** Newest first, at most the host's page. */
+  items: BinItem[];
+  total: number;
+  truncated: boolean;
+  issues: Issue[];
 }
 
 export interface StartupItem {

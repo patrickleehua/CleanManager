@@ -56,6 +56,45 @@ fn gated<R: tauri::Runtime>(handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Se
     }
 }
 
+/// Test automation hook (debug builds only; see docs/verification-plan.md › 2.2). wry hands WebView2 its own
+/// `AdditionalBrowserArguments`, so `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` never reaches the browser process and an
+/// acceptance run cannot drive the WebView over CDP. With `CM_WEBVIEW_DEBUG_PORT=<1024..=65535>` a *debug* build
+/// starts its windows with `--remote-debugging-port=<port>` (Chromium binds it to the loopback interface). The whole
+/// module is compiled only with `debug_assertions`: a release build has no code that reads the variable or opens the
+/// port, and the call in `main` is under the same `cfg`, so a release build without it would not compile.
+#[cfg(debug_assertions)]
+mod webview_debug {
+    pub const ENV: &str = "CM_WEBVIEW_DEBUG_PORT";
+    /// wry's own arguments (webview2/mod.rs): a window that names its arguments replaces them, so they are repeated.
+    pub const WRY_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+    /// The port to open, or `None` when the variable is unset or not a number in 1024..=65535 (never a system port).
+    pub fn port(value: Option<&str>) -> Option<u16> {
+        let port: u16 = value?.trim().parse().ok()?;
+        (port >= 1024).then_some(port)
+    }
+
+    /// The browser arguments of a window: its own (or wry's defaults) plus the debugging port.
+    pub fn browser_args(own: Option<&str>, port: u16) -> String {
+        format!("{} --remote-debugging-port={port}", own.unwrap_or(WRY_DEFAULT_ARGS))
+    }
+
+    /// Add the debugging port to every window of the configuration when the variable asks for it.
+    pub fn apply(config: &mut tauri::Config) {
+        let raw = std::env::var(ENV).ok();
+        let Some(port) = port(raw.as_deref()) else {
+            if let Some(v) = raw {
+                eprintln!("{ENV}={v:?} ignored: expected a port number in 1024..=65535");
+            }
+            return;
+        };
+        for w in &mut config.app.windows {
+            w.additional_browser_args = Some(browser_args(w.additional_browser_args.as_deref(), port));
+        }
+        eprintln!("debug build: WebView remote debugging on 127.0.0.1:{port} ({ENV}); release builds never open it");
+    }
+}
+
 fn main() {
     // The short-lived elevated maintenance worker (MNT-04): this executable started by Windows after one UAC prompt,
     // with the hidden worker argument. It serves the granted tasks of one plan to its parent and exits; no window.
@@ -63,6 +102,10 @@ fn main() {
     if let Some(code) = system::worker_main() {
         std::process::exit(code);
     }
+    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+    let mut context = tauri::generate_context!();
+    #[cfg(debug_assertions)]
+    webview_debug::apply(context.config_mut());
     tauri::Builder::default()
         // Used from Rust only (choose_folder); the capability grants the WebView no dialog API.
         .plugin(tauri_plugin_dialog::init())
@@ -108,6 +151,7 @@ fn main() {
             commands::list_entries,
             commands::treemap_layer,
             commands::summarize_selection,
+            commands::repair_index,
             cleanup::candidate_summary,
             cleanup::analyze_scan,
             cleanup::list_candidates,
@@ -138,6 +182,8 @@ fn main() {
             suite::create_catalog_plan,
             suite::trash_inspect,
             suite::trash_plan,
+            suite::trash_list,
+            suite::trash_purge_plan,
             suite::startup_list,
             suite::startup_plan,
             suite::insights_list,
@@ -195,7 +241,7 @@ fn main() {
             resident::resident_privacy,
             resident::resident_batteries,
         ]))
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building CleanManager desktop")
         .run(|app, event| {
             // Exit: stop the tray's sampling and release any keep-awake request (RES-02).
@@ -208,4 +254,48 @@ fn main() {
                 resident::show_main(app);
             }
         });
+}
+
+#[cfg(test)]
+mod webview_debug_tests {
+    use super::webview_debug::{ENV, WRY_DEFAULT_ARGS, browser_args, port};
+
+    #[test]
+    fn the_debug_port_is_a_non_system_port_number_or_nothing() {
+        assert_eq!(port(Some("9222")), Some(9222));
+        assert_eq!(port(Some(" 65535 ")), Some(65535));
+        assert_eq!(port(Some("1024")), Some(1024));
+        for bad in ["1023", "0", "65536", "-1", "9222x", "", "port"] {
+            assert_eq!(port(Some(bad)), None, "{bad}");
+        }
+        assert_eq!(port(None), None);
+        assert_eq!(ENV, "CM_WEBVIEW_DEBUG_PORT");
+    }
+
+    #[test]
+    fn wry_defaults_are_kept_and_the_port_is_added() {
+        assert_eq!(browser_args(None, 9222), format!("{WRY_DEFAULT_ARGS} --remote-debugging-port=9222"));
+        assert_eq!(browser_args(Some("--foo"), 9300), "--foo --remote-debugging-port=9300");
+    }
+
+    /// Release builds never contain the hook: every line that names the variable or the switch is inside the
+    /// `#[cfg(debug_assertions)]` module (or this test module), and its one call in `main` is under the same `cfg`.
+    #[test]
+    fn the_hook_exists_only_in_debug_builds() {
+        let src = include_str!("main.rs");
+        // The module with its doc comment: only `///` lines between the comment's start and the cfg-gated `mod`.
+        let module = src.find("#[cfg(debug_assertions)]\nmod webview_debug {").expect("the hook module is cfg(debug_assertions)");
+        let start = src.find("/// Test automation hook").expect("doc comment");
+        assert!(src[start..module].lines().all(|l| l.starts_with("///")), "nothing but its doc comment precedes the module");
+        let end = module + src[module..].find("\n}\n").expect("module end");
+        let tests = src.find("#[cfg(test)]\nmod webview_debug_tests {").expect("tests");
+        for needle in ["CM_WEBVIEW_DEBUG_PORT", "remote-debugging-port", "additional_browser_args"] {
+            for (at, _) in src.match_indices(needle) {
+                assert!((start..end).contains(&at) || at > tests, "{needle} outside the debug-only module at byte {at}");
+            }
+        }
+        assert!(src.contains("    #[cfg(debug_assertions)]\n    webview_debug::apply(context.config_mut());"), "the call is debug-only too");
+        // Tests run with debug assertions, so the module is compiled (and these tests run) here.
+        const { assert!(cfg!(debug_assertions)) };
+    }
 }

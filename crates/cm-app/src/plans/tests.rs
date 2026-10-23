@@ -384,6 +384,11 @@ fn startup_changes_record_prior_state_and_restore_through_a_recovery_plan() {
     assert_eq!(rr.status, "completed", "{rr:?}");
     assert!(st.observe(app.location.as_ref().unwrap()).unwrap().enabled(), "prior state restored");
     assert!(create_startup_restore_plan(&s, &r.operation_id, "rp_2", T0 + 40, NO_RULES_DIGEST).is_err(), "nothing left to restore");
+    // WFA-40: the restore is named as one (never "restore from quarantine") and the change it undid has nothing left.
+    let (h, _) = crate::recovery::operation_history(&s, 10, None).unwrap();
+    let row = |op: &str| h.iter().find(|x| x.row.operation_id == op).map(|x| (x.action.clone().unwrap_or_default(), x.availability)).unwrap();
+    assert_eq!(row(&rr.operation_id), ("startup_restore".into(), "not_applicable"));
+    assert_eq!(row(&r.operation_id), ("startup".into(), "not_applicable"));
 
     // Stale removal and its restore (skipped when the value is recreated).
     let gone = startup_item("Gone", Hive::Hkcu, StartupState::Broken);
@@ -441,7 +446,139 @@ fn interrupted_trash_moves_are_reconciled() {
     let ctx = ApplyContext { principal: PRINCIPAL, host: &h, current_rule_set_digest: "", now: &|| T0 + 10, cancel: &|| false, fault: &|p, _| p == FaultPoint::AfterAction, protect: &|_| Ok(()) };
     assert!(matches!(apply_plan_v2(&s, &b, "mp_crash", &ctx), Err(ApplyError::Crashed(_))));
     let op = format!("op_{}", &plan.digest[..16]);
+    // WFA-40: before it is reconciled, history names the interactive review that authorized it and what is known.
+    assert_eq!(s.audit.reconcile_hosts(|_| cm_core::host::Liveness::Exited).unwrap(), std::slice::from_ref(&op));
+    let (h, _) = crate::recovery::operation_history(&s, 10, None).unwrap();
+    let listed = h[0].report.as_ref().expect("provisional report");
+    assert_eq!((h[0].row.state.as_str(), listed.authorization_source.as_str(), listed.unknown, h[0].availability), ("reconciliation_required", "interactive_review", 1, "unknown"));
     let r = reconcile_operation_v2(&s, &b, &op, &ctx).unwrap();
     assert_eq!((r.items[0].code.as_str(), r.items[0].recovery.as_str()), ("reconciled_performed", "trash"));
     assert_eq!(fake.calls.get(), 1, "reconciliation never acts");
+}
+
+fn header(plan_id: &str, plan_kind: PlanKind) -> cm_core::plan::v2::HeaderInput<'_> {
+    cm_core::plan::v2::HeaderInput {
+        plan_id, plan_kind, created_unix: T0, scope_id: None, scan_id: None, scan_revision: None, rule_set_digest: NO_RULES_DIGEST, policy_digest: NO_RULES_DIGEST,
+    }
+}
+
+/// Store `plan` and a finished operation of it in which exactly the actions `ok` succeeded (the others were skipped),
+/// as the executor records it.
+fn finished_op(s: &Stores, plan: &PlanV2, ok: &[&str]) -> String {
+    s.audit.save_plan_v2(plan).unwrap();
+    let op = format!("op_{}", &plan.digest[..16]);
+    let at = utc_from_unix(T0 + 10);
+    s.audit.begin_operation(&op, &plan.body.plan_id, &plan.digest, &format!("{}#{}", plan.body.plan_id, plan.digest), &host(), &at).unwrap();
+    let items: Vec<ActionResult> = plan
+        .body
+        .items
+        .iter()
+        .map(|a| match ok.contains(&a.action_id()) {
+            true => res(a.action_id(), ActionStatus::Succeeded, "done", "done", "not_applicable"),
+            false => res(a.action_id(), ActionStatus::Skipped, "skipped", "skipped", "not_applicable"),
+        })
+        .collect();
+    let (succeeded, skipped, failed, not_started, unknown) = summarize(&items);
+    let report = OperationReport {
+        operation_id: op.clone(), plan_id: plan.body.plan_id.clone(), plan_digest: plan.digest.clone(), status: final_status(&items, false).into(), started_at: at.clone(),
+        finished_at: at.clone(), succeeded, skipped, failed, not_started, unknown, items, processed_logical_bytes: "0".into(), quarantined_logical_bytes: "0".into(),
+        estimated_freed_bytes: "0".into(), volume_free_before_bytes: None, volume_free_after_bytes: None, observed_free_delta_bytes: None,
+        authorization_source: "interactive_review".into(), reconciled_at: None,
+    };
+    s.audit.finish_operation(&op, &report.status, &serde_json::to_string(&report).unwrap(), &at).unwrap();
+    op
+}
+
+/// WFA-40: every `plan/v2` kind this build executes says how its operation is recovered (never "plan cannot be read"):
+/// an ended process and an update cannot be undone, maintenance tasks are not undone, restores leave nothing to undo,
+/// uninstall leftovers are restorable from their backups and the Recycle Bin. (Manual selection and startup: the flows
+/// above; stage-1 uninstalls: `uninstall::tests`.)
+#[test]
+fn history_describes_the_recovery_of_every_plan_kind() {
+    use cm_core::plan::v2::{ExecutableRef, MaintenanceTaskAction, ProcessEndAction, RegistryBackupDeleteAction, RegistryRestoreAction, ToolAdapterAction};
+    use cm_core::uninstall::{KEY_BACKUP_PREFIX, KeyBackup, KeyTree, RegLocation, UninstallMeta, key_digest};
+    let s = stores("history_kinds");
+    let build = |id: &str, kind: PlanKind, items: Vec<PlanAction>, meta: Vec<ActionMeta>| cm_core::plan::v2::build(&header(id, kind), items, meta).unwrap();
+    let facts = |plan: &PlanV2, op: &str| {
+        let (action, availability, guidance) = history_facts(&s, &plan.body.plan_id, op).expect("every executed kind has facts");
+        let (h, _) = crate::recovery::operation_history(&s, 50, None).unwrap();
+        let row = h.iter().find(|x| x.row.operation_id == op).unwrap();
+        assert_eq!((row.action.as_deref(), row.availability, row.guidance.as_str()), (Some(action), availability, guidance.as_str()), "history uses the facts");
+        (action, availability, guidance)
+    };
+
+    let process = build("hp_process", PlanKind::Process, vec![PlanAction::ProcessEnd(ProcessEndAction {
+        action_id: "e0000000".into(), pid: 4242, started_at: "133000000000000000".into(), started_at_utc: None, name: "foo.exe".into(), image_path: None, image_sha256: None,
+    })], vec![ActionMeta::default()]);
+    let op = finished_op(&s, &process, &["e0000000"]);
+    let (action, availability, guidance) = facts(&process, &op);
+    assert_eq!((action, availability), ("process", "unavailable"));
+    assert!(guidance.contains("cannot be brought back"), "{guidance}");
+
+    let tool = |id: &str| ToolAdapterAction {
+        action_id: id.into(), adapter_id: "winget.upgrade".into(), adapter_version: "1".into(),
+        executable: ExecutableRef { path: RawPath::windows("C:\\winget.exe".encode_utf16().collect()).unwrap(), sha256: "a".repeat(64) }, argv: vec![],
+        preview_digest: "b".repeat(64), timeout_seconds: 60,
+    };
+    let update = build("hp_update", PlanKind::Update, vec![PlanAction::ToolAdapter(tool("u0000000"))], vec![ActionMeta::default()]);
+    let op = finished_op(&s, &update, &["u0000000"]);
+    let (action, availability, guidance) = facts(&update, &op);
+    assert_eq!((action, availability), ("update", "unavailable"));
+    assert!(guidance.contains("does not roll them back"), "{guidance}");
+
+    let task = MaintenanceTaskAction { action_id: "t0000000".into(), task_id: "win.dns_flush".into(), task_version: "1".into(), requires_admin: false, volume: None };
+    let maintenance = build("hp_maint", PlanKind::Maintenance, vec![PlanAction::MaintenanceTask(task)], vec![ActionMeta::default()]);
+    let op = finished_op(&s, &maintenance, &["t0000000"]);
+    assert_eq!(facts(&maintenance, &op).1, "unavailable", "maintenance tasks are not undone");
+
+    // Restores, named by what they put back (the desktop names them the same way).
+    let setting = SettingsChangeAction { action_id: "sb_x_t0000001".into(), setting_id: "s".into(), from_value: "on".into(), to_value: "off".into(), restore_on_exit: false };
+    let settings = build("hp_rset", PlanKind::Recovery, vec![PlanAction::SettingsChange(setting)], vec![ActionMeta::default()]);
+    let op = finished_op(&s, &settings, &["sb_x_t0000001"]);
+    let (action, availability, _) = facts(&settings, &op);
+    assert_eq!((action, availability), ("maintenance_restore", "not_applicable"));
+    let location = RegLocation { root: String::new(), hive: Hive::Hkcu, view: RegView::Default, key_path: "SOFTWARE\\Foo".into() };
+    let key_restore = build("hp_rkey", PlanKind::Recovery, vec![PlanAction::RegistryRestore(RegistryRestoreAction {
+        action_id: "r0000000".into(), backup_id: format!("{KEY_BACKUP_PREFIX}x_k0000000"), hive: Hive::Hkcu, key_path: location.key_path.clone(), value_name: None,
+        backup_sha256: Some("c".repeat(64)), on_existing: "skip".into(),
+    })], vec![ActionMeta { uninstall: Some(UninstallMeta::RegistryKey { location: location.clone() }), ..Default::default() }]);
+    let op = finished_op(&s, &key_restore, &["r0000000"]);
+    let (action, availability, _) = facts(&key_restore, &op);
+    assert_eq!((action, availability), ("uninstall_restore", "not_applicable"), "a registry restore is not a restore from quarantine");
+
+    // Uninstall leftovers: a file moved to the Recycle Bin and a registry key deleted after its backup.
+    let mut v = View::new("C:\\Users\\alice\\AppData\\Local\\Foo");
+    let cache = v.add(Some(v.view.root), "cache.bin", ObjectKind::File, Some(10));
+    let trash = manual_plan(&v, &[cache], "hp_tmp");
+    let tree = KeyTree::default();
+    let delete_key = PlanAction::RegistryBackupDelete(RegistryBackupDeleteAction {
+        action_id: "k0000000".into(), hive: Hive::Hkcu, key_path: location.key_path.clone(), value_name: None, owner_evidence: "product name".into(), backup_required: true,
+        observed_sha256: Some(key_digest(&location, &tree)),
+    });
+    let mut items = trash.body.items.clone();
+    let mut meta = trash.meta.clone();
+    items.push(delete_key);
+    meta.push(ActionMeta { uninstall: Some(UninstallMeta::RegistryKey { location: location.clone() }), ..Default::default() });
+    let leftovers = build("hp_left", PlanKind::Uninstall, items, meta);
+    let file_id = leftovers.body.items[0].action_id().to_owned();
+    let op = finished_op(&s, &leftovers, &[file_id.as_str(), "k0000000"]);
+    let backup = KeyBackup { backup_id: format!("{KEY_BACKUP_PREFIX}{}_k0000000", &op[3..]), location, tree, owner_evidence: "product name".into(), created_at: "t".into() };
+    s.audit.save_key_backup(&op, "k0000000", "hp_left", &backup).unwrap();
+    let (action, availability, guidance) = facts(&leftovers, &op);
+    assert_eq!((action, availability), ("uninstall_leftovers", "in_app_restore"));
+    assert!(guidance.contains(&format!("apps uninstall restore --operation {op}")) && guidance.contains(cm_core::manual_trash::BIN_NAME), "{guidance}");
+    // Once the key is restored only the Recycle Bin is left.
+    s.audit.set_startup_backup_state(&backup.backup_id, "restored").unwrap();
+    assert_eq!(facts(&leftovers, &op).1, "system_recycle_bin");
+    // Only the key was planned and it is restored: nothing is left to recover.
+    let only_key = build("hp_left2", PlanKind::Uninstall, vec![leftovers.body.items[1].clone()], vec![leftovers.meta[1].clone()]);
+    let op = finished_op(&s, &only_key, &["k0000000"]);
+    let only_key_backup = KeyBackup { backup_id: format!("{KEY_BACKUP_PREFIX}{}_k0000000", &op[3..]), ..backup };
+    s.audit.save_key_backup(&op, "k0000000", "hp_left2", &only_key_backup).unwrap();
+    assert_eq!(facts(&only_key, &op).1, "in_app_restore");
+    s.audit.set_startup_backup_state(&only_key_backup.backup_id, "restored").unwrap();
+    let (action, availability, _) = facts(&only_key, &op);
+    assert_eq!((action, availability), ("uninstall_leftovers", "not_applicable"));
+    // A kind this build never executes has no facts (history says it cannot tell).
+    assert!(!executable(PlanKind::Cleanup));
 }

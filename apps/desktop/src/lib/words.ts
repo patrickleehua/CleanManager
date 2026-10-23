@@ -229,6 +229,32 @@ export const CODE_EXPLAIN: Record<string, string> = {
   get ended() { return t('words.codeExplain.ended'); },
   get precondition_gone() { return t('words.codeExplain.precondition_gone'); },
   get end_failed() { return t('words.codeExplain.end_failed'); },
+  // NEW-13: the rest of the per-item results the executors write (cm-app plans.rs / uninstall.rs, cm-platform
+  // actions, startup and recovery); `codes.test.ts` reads those sources so a new code cannot ship without words.
+  get already_prior() { return t('words.codeExplain.already_prior'); },
+  get already_restored() { return t('words.codeExplain.already_restored'); },
+  get backup_changed() { return t('words.codeExplain.backup_changed'); },
+  get backup_missing() { return t('words.codeExplain.backup_missing'); },
+  get backup_unavailable() { return t('words.codeExplain.backup_unavailable'); },
+  get backup_incomplete() { return t('words.codeExplain.backup_incomplete'); },
+  get changed_since() { return t('words.codeExplain.changed_since'); },
+  get ended_on_request() { return t('words.codeExplain.ended_on_request'); },
+  get not_in_trash() { return t('words.codeExplain.not_in_trash', { bin: words().bin }); },
+  get setting_unknown() { return t('words.codeExplain.setting_unknown'); },
+  get state_unknown() { return t('words.codeExplain.state_unknown'); },
+  get write_failed() { return t('words.codeExplain.write_failed'); },
+  get check_failed() { return t('words.codeExplain.check_failed'); },
+  get privilege_state() { return t('words.codeExplain.privilege_state'); },
+  get parent_missing() { return t('words.codeExplain.parent_missing'); },
+  get quarantine_unsafe() { return t('words.codeExplain.quarantine_unsafe'); },
+  get cross_volume() { return t('words.codeExplain.cross_volume'); },
+  get invalid_name() { return t('words.codeExplain.invalid_name'); },
+  get not_stale() { return t('words.codeExplain.not_stale'); },
+  get root_mismatch() { return t('words.codeExplain.root_mismatch'); },
+  get target_unreachable() { return t('words.codeExplain.target_unreachable'); },
+  // Restore checks report the bare live-check codes (cm-platform windows/recovery.rs): same meaning as the precondition.
+  get parent_changed() { return t('words.codeExplain.precondition_parent_changed'); },
+  get metadata_changed() { return t('words.codeExplain.precondition_metadata_changed'); },
 };
 
 export function explainCode(code: string | null, message: string | null): string {
@@ -257,6 +283,9 @@ export const ACTION_LABEL: Record<string, string> = {
   get uninstall_restore() { return t('words.actionLabel.uninstall_restore'); },
   get update() { return t('words.actionLabel.update'); },
   get process() { return t('words.actionLabel.process'); },
+  // Restores of recorded prior states (history `action`, WFA-40); `restore` stays the quarantine recovery.
+  get startup_restore() { return t('words.actionLabel.startup_restore'); },
+  get maintenance_restore() { return t('words.actionLabel.maintenance_restore'); },
 };
 
 export const QUARANTINE_STATE_LABEL: Record<string, string> = {

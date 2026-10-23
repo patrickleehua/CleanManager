@@ -4,7 +4,7 @@
 //! - `resident_save` changes only CleanManager's own `resident.json` and, when "start at login" is on, the one
 //!   startup value CleanManager owns (`HKCU\…\Run\CleanManager.Resident`). Turning the tray off stops and joins its
 //!   sampling thread, removes the tray icon and removes that value ([`cm_core::resident::turn_off`]).
-//! - `resident_keep_awake` holds or releases a per-thread power request (no power plan or timeout is changed; the
+//! - `resident_keep_awake` holds or releases a display + system power request (no power plan or timeout is changed; the
 //!   request ends when released, when its duration passes, when CleanManager exits).
 //! - `resident_clean_screen` shows the clean-screen window until Esc is held 2 s or the timeout (5–300 s) passes.
 //!
@@ -505,7 +505,7 @@ pub struct KeepAwakeDto {
     /// Seconds left; `None` while it lasts until turned off or CleanManager exits.
     pub remaining_seconds: Option<u64>,
     /// The active system request as the system lists it (macOS: the IOPMAssertion type, id and name; `None` on
-    /// Windows, whose per-thread request has no id).
+    /// Windows, whose request has no id: the 64-bit `powercfg /requests` lists it by its reason text).
     pub assertion: Option<String>,
 }
 

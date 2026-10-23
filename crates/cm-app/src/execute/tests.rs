@@ -540,6 +540,13 @@ fn reconciling_keeps_the_authorization_source_and_records_the_reconciliation() {
     let shown = interrupted_report(&e.stores, &moved[0]).unwrap();
     assert_eq!((shown.status.as_str(), shown.succeeded, shown.unknown, shown.not_started), ("reconciliation_required", 1, 1, 1), "{shown:?}");
     assert!(shown.authorization_source.starts_with("policy:pol@"), "{shown:?}");
+    // History lists the same source and counts before anything is reconciled; its recovery waits for the reconciliation.
+    let (history, _) = crate::recovery::operation_history(&e.stores, 10, None).unwrap();
+    let row = history.iter().find(|h| h.row.operation_id == moved[0]).unwrap();
+    let listed = row.report.as_ref().expect("the provisional report");
+    assert_eq!((row.row.state.as_str(), listed.authorization_source.as_str(), listed.unknown), ("reconciliation_required", shown.authorization_source.as_str(), 1));
+    assert_eq!(row.availability, "unknown");
+    assert!(row.guidance.contains("operations reconcile"), "{}", row.guidance);
     let host = HostRef { kind: "cli".into(), pid: 2, started_at: "t".into() };
     let ctx = ApplyContext { principal: PRINCIPAL, host: &host, current_rule_set_digest: "rs", now: &|| T0 + 20, cancel: &|| false, fault: &|_, _| false, protect: &|_| Ok(()) };
     let r = reconcile_operation(&e.stores, &f, &moved[0], &ctx).unwrap();

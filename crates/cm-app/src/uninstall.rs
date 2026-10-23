@@ -200,11 +200,19 @@ pub struct Refused {
     pub code: String,
     pub message: String,
     pub settings_uri: Option<String>,
+    /// The specific reason word an interface explains in its own words (e.g. `uninstaller_signer_mismatch` under
+    /// `policy_denied`, WFA-76); `None` = the code says it.
+    pub reason: Option<&'static str>,
 }
 
 impl Refused {
     fn new(code: &str, message: impl Into<String>) -> Refused {
-        Refused { code: code.into(), message: message.into(), settings_uri: None }
+        Refused { code: code.into(), message: message.into(), settings_uri: None, reason: None }
+    }
+
+    /// A refused uninstaller program (signer checks), with the Settings alternative.
+    pub fn program(r: cm_core::uninstall::ProgramRefusal, settings_uri: Option<&str>) -> Refused {
+        Refused { code: r.code.into(), message: r.message, settings_uri: settings_uri.map(str::to_owned), reason: r.reason }
     }
 
     pub fn error_code(&self) -> cm_core::error::ErrorCode {
@@ -326,8 +334,10 @@ pub fn batch_refusal(refused: Vec<(String, Refused)>) -> Refused {
     let same = refused.windows(2).all(|w| w[0].1.code == w[1].1.code);
     let code = if same { refused.first().map(|(_, r)| r.code.clone()).unwrap_or_else(|| "invalid_argument".into()) } else { "invalid_argument".into() };
     let settings_uri = refused.iter().find_map(|(_, r)| r.settings_uri.clone());
+    // One reason word only when every application was refused for the same one.
+    let reason = refused.first().and_then(|(_, r)| r.reason).filter(|w| refused.iter().all(|(_, r)| r.reason == Some(*w)));
     let reasons: Vec<String> = refused.into_iter().map(|(who, r)| format!("{who}: {}", r.message)).collect();
-    Refused { code, message: format!("none of the selected applications can be uninstalled here: {}", reasons.join("; ")), settings_uri }
+    Refused { code, message: format!("none of the selected applications can be uninstalled here: {}", reasons.join("; ")), settings_uri, reason }
 }
 
 /// The stage-1 applications of a finished (or running) uninstall operation.
@@ -509,8 +519,10 @@ mod win {
             code: r.code.into(),
             message: r.message,
             settings_uri: r.settings_uri.map(str::to_owned),
+            reason: None,
         })?;
-        let (sha, signer) = verify_program(&choice).map_err(|(c, m)| Refused { code: c.into(), message: m, settings_uri: Some(cm_core::uninstall::SETTINGS_URI.into()) })?;
+        // WFA-76: a signer refusal keeps its reason word (unsigned, signed by someone else, not Microsoft-signed).
+        let (sha, signer) = verify_program(&choice).map_err(|r| Refused::program(r, Some(cm_core::uninstall::SETTINGS_URI)))?;
         let mut identity = AppIdentity::of(&rec);
         // No recorded location: a vendor uninstaller's own folder (never a Windows folder) identifies the app's processes.
         if identity.install_location.is_none() && choice.kind == cm_core::uninstall::AdapterKind::RegisteredCommand {
@@ -732,7 +744,7 @@ mod win {
             cm_core::error::ErrorCode::Unsupported => "unsupported".into(),
             cm_core::error::ErrorCode::PermissionRequired => "permission_required".into(),
             _ => "invalid_argument".into(),
-        }, message: format!("{path}: {e}"), settings_uri: None })?;
+        }, message: format!("{path}: {e}"), settings_uri: None, reason: None })?;
         Ok(built
             .body
             .items

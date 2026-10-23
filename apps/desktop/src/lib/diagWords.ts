@@ -134,6 +134,15 @@ export function payloadSize(bytes: number): string {
   return t('diagWords.pKbTolocalestringBytes', { p: kb < 10 ? kb.toFixed(1) : Math.round(kb), toLocaleString: formatNumber(bytes) });
 }
 
+/**
+ * NEW-17 (AID-07): what the preview shows of the request body. By default the body exactly as it is sent — the same
+ * characters, so the same bytes and the same length as the size line says; `formatted` is an indented reading view,
+ * labelled as one, never the default.
+ */
+export function payloadView(body: string, formatted: boolean): { text: string; exact: boolean } {
+  return formatted ? { text: prettyBody(body), exact: false } : { text: body, exact: true };
+}
+
 /** Readable form of the exact JSON body: the same bytes, indented (display only). */
 export function prettyBody(body: string): string {
   try {

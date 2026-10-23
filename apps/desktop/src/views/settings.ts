@@ -16,7 +16,7 @@ import { LAYER_LABEL, MATCH_LABEL, MODE_LABEL, POLICY_STATE_LABEL } from '../lib
 import { DiagSettings } from './diagSettings';
 import { confirmInline, copyField, errorLine, errorText, pageHead, pill } from './parts';
 import { protectionText, refusalText, unknownCodeText } from '../lib/codes';
-import { learnMore, techBlock } from './ui';
+import { learnMore, pathText, stateLine, techBlock } from './ui';
 import { storedLanguage, systemLocale, t, type LanguagePref, type Locale } from '../i18n';
 
 /** Words of the settings page that are not data (one table for the language switch). */
@@ -44,6 +44,11 @@ const CAPABILITY_LABEL: Record<string, () => string> = {
   'lifecycle.self_update': () => t('settings.capabilityLabel.lifecycle.self_update'),
   'diag.ai': () => t('settings.capabilityLabel.diag.ai'),
 };
+
+/** A gated capability as people meet it (the machine name when the table has no entry). */
+export function capabilityLabel(capability: string): string {
+  return CAPABILITY_LABEL[capability]?.() ?? capability;
+}
 
 const SECTIONS = [
   { id: 'set-language', get label() { return t('settings.sections.set-language.label'); } },
@@ -315,9 +320,7 @@ export class SettingsPage {
       t('common.protectionList'),
       h('p', { class: 'muted' }, t('settings.protectedObjectsNeverBecome')),
       learnMore(h('p', {}, t('settings.protectionOnlyNarrowsWhat'))),
-      p.problem
-        ? h('div', { class: 'notice warn', role: 'alert' }, h('span', {}, t('settings.protectionListCantRead', { problem: p.problem, p: p.file_display ?? '' })))
-        : null,
+      p.problem ? this.protectionProblem(p) : null,
       h('div', { class: 'card-actions' }, add),
       h('h3', {}, t('settings.protectedItemsLength', { length: user.length })),
       user.length ? h('ul', { class: 'prot-list' }, ...user.map((i) => this.protectionRow(i))) : h('p', { class: 'muted small' }, t('settings.haventProtectedAnythingYet')),
@@ -327,6 +330,34 @@ export class SettingsPage {
         h('summary', {}, t('settings.builtProtectionLengthCant', { length: builtIn.length })),
         h('ul', { class: 'prot-list' }, ...builtIn.map((i) => this.protectionRow(i))),
       ),
+    );
+  }
+
+  /**
+   * NEW-07 (WFA-48): the person's protection list cannot be read. Every write is stopped until it can (PRT-02). Say so
+   * in words, name the file (kept as it is: CleanManager never rewrites or deletes it), say how to recover, and offer to
+   * read it again; the host's own message stays in 技术详情. Fixing or moving the file is the person's step — the host
+   * has no command that moves it aside, and nothing here invents one.
+   */
+  private protectionProblem(p: ProtectionList): HTMLElement {
+    const reread = h('button', { type: 'button', id: 'protection-reread', class: 'primary', disabled: this.busy }, t('common.reload'));
+    reread.addEventListener('click', async () => {
+      reread.disabled = true;
+      await this.reload();
+      this.app.announce(this.protection?.problem ? t('settings.protectionStillBroken') : t('settings.protectionReadAgain'));
+      requestAnimationFrame(() => document.getElementById(this.protection?.problem ? 'protection-reread' : 'set-protection-title')?.focus());
+    });
+    return h(
+      'div',
+      { class: 'protection-problem', role: 'alert' },
+      stateLine({ kind: 'failed', text: t('settings.protectionBroken') }),
+      h('p', {}, t('settings.protectionBrokenKept')),
+      p.file_display ? h('div', { class: 'pp-file' }, h('span', { class: 'muted small' }, t('settings.protectionFile')), pathText(p.file_display, { max: 64, copy: true })) : null,
+      // Two ways back (either one), then reading it again.
+      h('ul', { class: 'pp-steps' }, h('li', {}, t('settings.protectionFixStep')), h('li', {}, t('settings.protectionMoveStep'))),
+      h('p', {}, t('settings.protectionRereadStep')),
+      h('div', { class: 'card-actions' }, reread),
+      techBlock(h('p', { class: 'selectable small' }, p.problem)),
     );
   }
 

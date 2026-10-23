@@ -3,10 +3,13 @@
 //!
 //! - Startup value: [`RunValue`] reads, writes and removes only `CleanManager.Resident` under a per-user key
 //!   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` for real; tests pass a throwaway key).
-//! - Keep the screen on: [`KeepAwake`] holds `SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED |
-//!   ES_SYSTEM_REQUIRED)` on its own thread and clears it (`ES_CONTINUOUS`) when released, when the duration ends
-//!   or when it is dropped; the request is per thread, so it also ends if the process exits. No power plan or
-//!   timeout setting is changed (`powercfg /requests` lists it while active).
+//! - Keep the screen on: [`KeepAwake`] holds one power request object (`PowerCreateRequest` with the reason
+//!   [`KEEP_AWAKE_REASON`], `PowerSetRequest` for `PowerRequestDisplayRequired` and `PowerRequestSystemRequired`) on its
+//!   own thread, and clears and closes it when released, when the duration ends or when it is dropped; the kernel closes
+//!   the handle if the process exits. No power plan or timeout setting is changed. While active the 64-bit
+//!   `%SystemRoot%\System32\powercfg.exe /requests` lists this process with the reason under DISPLAY and SYSTEM; the
+//!   32-bit `SysWOW64\powercfg.exe` (what a 32-bit shell such as x86 PowerShell runs) misreads every request as
+//!   "Legacy Kernel Caller" under SYSTEM, EXECUTION and ACTIVELOCKSCREEN with DISPLAY empty (WFA-98).
 //! - Privacy indicator: [`privacy_snapshot`] reads the capability-access records under
 //!   `HKCU\…\CapabilityAccessManager\ConsentStore\{webcam,microphone}` (read-only; an app is in use while its
 //!   `LastUsedTimeStop` is 0 after a start). Nothing is stored or sent.
@@ -169,6 +172,54 @@ pub fn delete_test_key(subkey: &str) {
 // ---------------------------------------------------------------------------------------------
 // Keep the screen on (RES-02)
 
+/// The reason `powercfg /requests` shows under DISPLAY and SYSTEM while the screen is kept on.
+pub const KEEP_AWAKE_REASON: &str = "CleanManager: keep the screen on (RES-02)";
+
+/// One power request object (`PowerCreateRequest`) holding DISPLAY and SYSTEM; cleared and closed on drop. The kernel
+/// closes the handle, and with it the request, if the process ends first.
+struct PowerRequest(windows_sys::Win32::Foundation::HANDLE);
+
+impl PowerRequest {
+    fn display_and_system(reason: &str) -> Result<PowerRequest, String> {
+        use windows_sys::Win32::Foundation::{GetLastError, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Power::{PowerCreateRequest, PowerRequestDisplayRequired, PowerRequestSystemRequired, PowerSetRequest};
+        use windows_sys::Win32::System::Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0};
+        /// `POWER_REQUEST_CONTEXT_VERSION` (`DIAGNOSTIC_REASON_VERSION`).
+        const VERSION: u32 = 0;
+        let mut text = wide(reason);
+        let context = REASON_CONTEXT { Version: VERSION, Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING, Reason: REASON_CONTEXT_0 { SimpleReasonString: text.as_mut_ptr() } };
+        // SAFETY: a valid context whose NUL-terminated reason outlives the call (the system copies it).
+        let handle = unsafe { PowerCreateRequest(&context) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            // SAFETY: plain thread-local error read.
+            return Err(format!("PowerCreateRequest failed (error {})", unsafe { GetLastError() }));
+        }
+        let request = PowerRequest(handle);
+        for (kind, name) in [(PowerRequestDisplayRequired, "display"), (PowerRequestSystemRequired, "system")] {
+            // SAFETY: a live request handle owned by `request`.
+            if unsafe { PowerSetRequest(request.0, kind) } == 0 {
+                // SAFETY: plain thread-local error read.
+                return Err(format!("PowerSetRequest({name}) failed (error {})", unsafe { GetLastError() }));
+            }
+        }
+        Ok(request)
+    }
+}
+
+impl Drop for PowerRequest {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Power::{PowerClearRequest, PowerRequestDisplayRequired, PowerRequestSystemRequired};
+        // SAFETY: the handle from PowerCreateRequest, cleared (clearing a type that was never set fails harmlessly) and
+        // closed once.
+        unsafe {
+            PowerClearRequest(self.0, PowerRequestDisplayRequired);
+            PowerClearRequest(self.0, PowerRequestSystemRequired);
+            CloseHandle(self.0);
+        }
+    }
+}
+
 /// An active "keep the screen on" request. Released by [`KeepAwake::release`], when its duration ends, on drop,
 /// or with the process.
 pub struct KeepAwake {
@@ -179,31 +230,43 @@ pub struct KeepAwake {
 
 impl KeepAwake {
     pub fn start(duration: Option<Duration>) -> Result<KeepAwake, String> {
-        use windows_sys::Win32::System::Power::{ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState};
+        Self::start_named(KEEP_AWAKE_REASON, duration)
+    }
+
+    /// [`KeepAwake::start`] with another reason text (tests use a unique one to find their own request).
+    pub fn start_named(reason: &str, duration: Option<Duration>) -> Result<KeepAwake, String> {
+        let reason = reason.to_owned();
         let (stop_tx, stop_rx) = channel::<()>();
-        let (ready_tx, ready_rx) = channel::<bool>();
+        let (ready_tx, ready_rx) = channel::<Result<(), String>>();
+        // The request lives on its own thread, which also ends it when the duration runs out.
         let thread = std::thread::Builder::new()
             .name("cm-keep-awake".into())
             .spawn(move || {
-                // SAFETY: plain flag call; the state belongs to this thread.
-                let ok = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) } != 0;
-                let _ = ready_tx.send(ok);
-                if !ok {
-                    return;
-                }
+                let request = match PowerRequest::display_and_system(&reason) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(e));
+                        return;
+                    }
+                };
+                let _ = ready_tx.send(Ok(()));
                 let _ = match duration {
                     Some(d) => stop_rx.recv_timeout(d).map_err(|_| ()),
                     None => stop_rx.recv().map_err(|_| ()),
                 };
-                // SAFETY: clears this thread's request (back to the system's own idle timers).
-                unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
+                // Cleared and closed: back to the system's own idle timers.
+                drop(request);
             })
             .map_err(|e| e.to_string())?;
         match ready_rx.recv() {
-            Ok(true) => Ok(KeepAwake { stop: Some(stop_tx), thread: Some(thread), until: duration.map(|d| Instant::now() + d) }),
-            _ => {
+            Ok(Ok(())) => Ok(KeepAwake { stop: Some(stop_tx), thread: Some(thread), until: duration.map(|d| Instant::now() + d) }),
+            Ok(Err(e)) => {
                 let _ = thread.join();
-                Err("SetThreadExecutionState refused the request".into())
+                Err(e)
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err("the keep-awake thread ended before its request was made".into())
             }
         }
     }
@@ -478,38 +541,83 @@ mod tests {
         assert!(privacy.supported, "{:?}", privacy.unavailable_reason);
     }
 
-    /// Real-device check: the keep-awake request appears in `powercfg /requests` (needs an elevated shell) and is
-    /// gone after release. `cargo test -p cm-platform keep_awake_shows_in_powercfg -- --ignored --nocapture`
+    /// Real-device check (WFA-98): while held, the request is listed under DISPLAY and SYSTEM by the 64-bit
+    /// `powercfg /requests` (needs an elevated shell), with this process and its reason; it is gone after release, after
+    /// its duration and after a drop. The 32-bit `SysWOW64\powercfg.exe` misreads requests, so the native one is used.
+    /// `cargo test -p cm-platform keep_awake_shows_in_powercfg -- --ignored --nocapture`
     #[test]
     #[ignore = "real device; needs an elevated shell for powercfg /requests"]
     fn keep_awake_shows_in_powercfg() {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        // A 32-bit test binary would be redirected to SysWOW64; `Sysnative` reaches the native copy.
+        let powercfg = format!(r"{root}\{}\powercfg.exe", if cfg!(target_pointer_width = "32") { "Sysnative" } else { "System32" });
         let requests = || {
-            let out = std::process::Command::new("powercfg").arg("/requests").output().unwrap();
+            let out = std::process::Command::new(&powercfg).arg("/requests").output().unwrap();
+            assert!(out.status.success(), "powercfg /requests needs an elevated shell: {}", String::from_utf8_lossy(&out.stdout));
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         let me = std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().to_lowercase();
-        // Sections are a header line ("DISPLAY:") followed by "[PROCESS] …" lines.
-        let has_me = |text: &str| -> (bool, bool) {
+        // Sections are a header line ("DISPLAY:", never translated) followed by "[PROCESS] <path>" and reason lines.
+        // (in DISPLAY, in SYSTEM) for lines naming `needle`.
+        let listed = |text: &str, needle: &str| -> (bool, bool) {
             let mut current = String::new();
             let (mut display, mut system) = (false, false);
             for line in text.lines().map(str::trim) {
                 if !line.starts_with('[') && line.ends_with(':') {
                     current = line.trim_end_matches(':').to_owned();
-                } else if line.to_lowercase().contains(&me) {
+                } else if line.to_lowercase().contains(&needle.to_lowercase()) {
                     display |= current == "DISPLAY";
                     system |= current == "SYSTEM";
                 }
             }
             (display, system)
         };
-        assert_eq!(has_me(&requests()), (false, false));
-        let mut k = KeepAwake::start(None).unwrap();
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let reason = format!("CleanManager keep-awake test {}-{nanos}", std::process::id());
+        assert_eq!(listed(&requests(), &reason), (false, false));
+        let mut k = KeepAwake::start_named(&reason, None).unwrap();
         let during = requests();
         println!("during:\n{during}");
-        assert_eq!(has_me(&during), (true, true));
+        assert_eq!(listed(&during, &reason), (true, true), "the reason is listed under DISPLAY and SYSTEM");
+        assert_eq!(listed(&during, &me), (true, true), "so is this process");
         k.release();
         let after = requests();
-        println!("after:\n{after}");
-        assert_eq!(has_me(&after), (false, false));
+        println!("after release:\n{after}");
+        assert_eq!(listed(&after, &reason), (false, false));
+        // The duration ends the request on its own; a drop ends it too.
+        let timed = format!("{reason}-timed");
+        let t = KeepAwake::start_named(&timed, Some(Duration::from_millis(500))).unwrap();
+        assert_eq!(listed(&requests(), &timed), (true, true));
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(!t.is_active());
+        assert_eq!(listed(&requests(), &timed), (false, false), "released when the duration ended");
+        let dropped = format!("{reason}-dropped");
+        let d = KeepAwake::start_named(&dropped, None).unwrap();
+        assert_eq!(listed(&requests(), &dropped), (true, true));
+        drop(d);
+        assert_eq!(listed(&requests(), &dropped), (false, false), "released on drop");
+        // A process that exits while holding it (nothing released) leaves no request behind.
+        let exiting = format!("{reason}-exit");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "windows::resident::tests::keep_awake_child_holds_then_exits", "--ignored", "--nocapture"])
+            .env("CM_KEEP_AWAKE_CHILD", &exiting)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(listed(&requests(), &exiting), (true, true), "the child holds it");
+        assert!(child.wait().unwrap().success());
+        assert_eq!(listed(&requests(), &exiting), (false, false), "released with the process");
+        assert!(KEEP_AWAKE_REASON.starts_with("CleanManager"));
+    }
+
+    /// Helper of [`keep_awake_shows_in_powercfg`]: holds a request and exits without releasing it.
+    #[test]
+    #[ignore = "helper process of keep_awake_shows_in_powercfg"]
+    fn keep_awake_child_holds_then_exits() {
+        let Ok(reason) = std::env::var("CM_KEEP_AWAKE_CHILD") else { return };
+        std::mem::forget(KeepAwake::start_named(&reason, None).unwrap());
+        std::thread::sleep(Duration::from_secs(3));
+        std::process::exit(0);
     }
 }

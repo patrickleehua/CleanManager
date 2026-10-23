@@ -264,3 +264,280 @@ fn manual_trash_plan_is_reviewed_like_any_plan() {
     drop(s);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Scan `root` into `store` as `scan_id` and return the published view.
+fn scan_into(stores: &Stores, root: &std::path::Path, scan_id: &str) -> cm_core::analysis::MemView {
+    let request = ScanRequest {
+        scan_id: scan_id.into(),
+        scope_id: format!("scope_{scan_id}"),
+        root: cm_platform::paths::raw_path(root.as_os_str()).unwrap(),
+        host: cm_platform::host::OsHostProbe.current("desktop"),
+    };
+    cm_core_scan(stores, &request);
+    stores.index.view(scan_id).unwrap()
+}
+
+/// Entry id of the object named `name` (case-insensitive) whose parent is named `parent`.
+fn entry_named(view: &cm_core::analysis::MemView, parent: &str, name: &str) -> u64 {
+    use cm_core::analysis::IndexView;
+    let low = |e: u64| view.name(e).lossy().to_lowercase();
+    view.facts
+        .keys()
+        .copied()
+        .find(|&e| low(e) == name.to_lowercase() && view.parent(e).is_some_and(|p| low(p).ends_with(&parent.to_lowercase())))
+        .unwrap_or_else(|| panic!("{parent}/{name} indexed"))
+}
+
+fn catalog_candidate(id: &str, view: &cm_core::analysis::MemView, entry: u64, state: &str, reasons: &[&str], rule: &str, logical: u64) -> serde_json::Value {
+    use cm_core::analysis::IndexView;
+    let kind = if view.info(entry).kind == cm_core::model::ObjectKind::Directory { "directory" } else { "file" };
+    serde_json::json!({
+        "candidate_id": id, "entry_id": entry, "path": view.path(entry), "kind": kind, "rules": [{"rule_id": rule, "version": "1.0.0"}],
+        "category": "build_output", "state": state, "tier": if state == "allowed" { "default_selected" } else { "review_only" }, "reasons": reasons,
+        "protection": null, "logical": {"known": logical.to_string(), "unknown_count": 0}, "allowed_modes": ["trash", "quarantine"], "probes": [],
+        "impact": "rebuilt", "owner_id": null,
+    })
+}
+
+/// NEW-09 / WFA-50, WFA-58, WFA-113 for discovery plans in the desktop: a folder whose inner file changed since
+/// discovery is listed as stale (the CLI's folder-aware check) while the unchanged folder is planned; a mounted image is
+/// refused as not plannable (never "changed"); a selection whose folders hold no files is an empty selection.
+#[test]
+fn catalog_plans_check_selections_like_the_cli() {
+    use crate::suite::{Catalog, imp::catalog_plan};
+    let base = temp_base("catalog-checks");
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, store) = (base.join("root"), base.join("store"));
+    for (dir, len) in [("rustold", 2000usize), ("rustnew", 300)] {
+        std::fs::create_dir_all(root.join(dir).join("target").join("debug")).unwrap();
+        std::fs::write(root.join(dir).join("target").join("debug").join("x.o"), vec![1u8; len]).unwrap();
+    }
+    std::fs::create_dir_all(root.join("emptied").join("target").join("debug")).unwrap();
+    std::fs::write(root.join("disk.iso"), vec![0u8; 64]).unwrap();
+    let stores = Stores::open(&store).unwrap();
+    let view = scan_into(&stores, &root, "s_cat");
+    let (old, new) = (entry_named(&view, "rustold", "target"), entry_named(&view, "rustnew", "target"));
+    let emptied = entry_named(&view, "emptied", "target");
+    let purge: cm_core::analysis::CandidateSet = serde_json::from_value(serde_json::json!({
+        "candidate_set_id": "cs_purge", "scan_id": "s_cat", "revision": 1, "rule_set_digest": cm_core::purge::rule_set_digest(7, 5), "protection_version": "v",
+        "candidates": [
+            catalog_candidate("c_old", &view, old, "allowed", &[], "purge.cargo-target", 2000),
+            catalog_candidate("c_new", &view, new, "allowed", &[], "purge.cargo-target", 300),
+            catalog_candidate("c_empty", &view, emptied, "allowed", &[], "purge.cargo-target", 0),
+        ],
+        "inapplicable": [],
+    }))
+    .unwrap();
+    stores.index.save_candidates(&purge).unwrap();
+    // Discovered at 10 bytes; a mounted image keeps changing, so a live check alone would only call it changed.
+    let image = entry_named(&view, "root", "disk.iso");
+    let installers: cm_core::analysis::CandidateSet = serde_json::from_value(serde_json::json!({
+        "candidate_set_id": "cs_inst", "scan_id": "s_cat", "revision": 1, "rule_set_digest": cm_core::installer::rule_set_digest(2), "protection_version": "v",
+        "candidates": [catalog_candidate("c_img", &view, image, "pending_evidence", &["mounted_image: eject it first (File Explorer > Eject)"], "installer.iso", 10)],
+        "inapplicable": [],
+    }))
+    .unwrap();
+    stores.index.save_candidates(&installers).unwrap();
+
+    // The inner file of one folder grows after discovery: that folder is stale, the other one is planned.
+    std::fs::write(root.join("rustold").join("target").join("debug").join("x.o"), vec![1u8; 3000]).unwrap();
+    let created = catalog_plan(&stores, Catalog::Purge, "cs_purge", &["c_old".into(), "c_new".into()], cm_core::rules::Mode::Quarantine).unwrap();
+    assert_eq!(created.stale_items.len(), 1, "{:?}", created.stale_items);
+    let st = &created.stale_items[0];
+    assert_eq!((st.candidate_id.as_str(), st.reason), ("c_old", "changed"));
+    assert!(st.detail.contains("x.o") && st.detail.contains("3000 bytes now, 2000 when scanned"), "{}", st.detail);
+    let plan = stores.audit.load_plan(&created.plan_id).unwrap();
+    assert!(plan.body.items.iter().all(|i| i.candidate_id == "c_new"), "only the unchanged folder is frozen");
+    let only_old = catalog_plan(&stores, Catalog::Purge, "cs_purge", &["c_old".into()], cm_core::rules::Mode::Quarantine).unwrap_err();
+    assert_eq!((only_old.code, only_old.reason), (cm_core::error::ErrorCode::PlanStale, "selection_stale"));
+
+    // WFA-58: refused as not plannable, naming the mount, before any live check.
+    let mounted = catalog_plan(&stores, Catalog::Installer, "cs_inst", &["c_img".into()], cm_core::rules::Mode::Trash).unwrap_err();
+    assert_eq!((mounted.code, mounted.reason), (cm_core::error::ErrorCode::PolicyDenied, "not_selectable"));
+    assert!(mounted.message.contains("(mounted)") && mounted.message.contains("eject it first"), "{}", mounted.message);
+
+    // WFA-113: a folder that holds no files gives no action in quarantine mode, so nothing is planned.
+    let empty = catalog_plan(&stores, Catalog::Purge, "cs_purge", &["c_empty".into()], cm_core::rules::Mode::Quarantine).unwrap_err();
+    assert_eq!((empty.code, empty.reason), (cm_core::error::ErrorCode::PolicyDenied, "empty_selection"));
+    assert_eq!(crate::cleanup::plan_error(cm_core::plan::PlanError::UnknownSize("c".into())).reason, "plan_refused");
+    drop(stores);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// `mklink /J` (no administrator needed); removed with `rmdir` semantics (the link only, never its target).
+#[cfg(windows)]
+fn junction(link: &std::path::Path, target: &std::path::Path) -> bool {
+    std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(link).arg(target).output().is_ok_and(|o| o.status.success())
+}
+
+/// NEW-08 / WFA-47/63: the desktop refuses a junction into System32 as the CLI does: protected, naming the location,
+/// both when inspecting and when planning; a link to an ordinary folder stays the plain link refusal.
+#[cfg(windows)]
+#[test]
+fn a_link_into_system32_is_refused_as_protected_and_named() {
+    let base = temp_base("link-sys");
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, store) = (base.join("root"), base.join("store"));
+    std::fs::create_dir_all(root.join("links")).unwrap();
+    std::fs::create_dir_all(root.join("target")).unwrap();
+    std::fs::write(root.join("target").join("x.bin"), b"x").unwrap();
+    let system32 = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32");
+    let (sys, plain) = (root.join("links").join("link-sys"), root.join("links").join("link-plain"));
+    if !junction(&sys, &system32) || !junction(&plain, &root.join("target")) {
+        eprintln!("skipped: junctions cannot be created here");
+        return;
+    }
+    let stores = Stores::open(&store).unwrap();
+    let view = scan_into(&stores, &root, "s_links");
+    let (sys_e, plain_e) = (entry_named(&view, "links", "link-sys"), entry_named(&view, "links", "link-plain"));
+    let s = AppState::with_store(Some(store.clone()), None, None);
+    let ins = crate::suite::imp::trash_inspect(&s, "s_links", sys_e).unwrap();
+    let r = ins.refusal.as_ref().expect("refused");
+    assert_eq!((ins.trashable, r.code.as_str(), r.reason.as_str()), (false, "policy_denied", "protected"), "{r:?}");
+    assert!(r.message.contains("resolves into a protected system location"), "{}", r.message);
+    let target = ins.link_target_display.as_deref().unwrap_or_default().to_lowercase();
+    assert!(target.ends_with("system32"), "names where the link leads: {target}");
+    let err = crate::suite::imp::trash_plan(&s, "s_links", &[sys_e]).unwrap_err();
+    assert_eq!((err.code, err.reason), (cm_core::error::ErrorCode::PolicyDenied, "protected"));
+    assert!(err.message.to_lowercase().contains("system32"), "{}", err.message);
+    let ins = crate::suite::imp::trash_inspect(&s, "s_links", plain_e).unwrap();
+    assert_eq!((ins.refusal.as_ref().map(|r| r.reason.as_str()), ins.link_target_display.as_deref()), (Some("link_or_reparse"), None));
+    assert_eq!(crate::suite::imp::trash_plan(&s, "s_links", &[plain_e]).unwrap_err().reason, "link_or_reparse");
+    drop(s);
+    drop(stores);
+    std::fs::remove_dir(&sys).unwrap();
+    std::fs::remove_dir(&plain).unwrap();
+    assert!(system32.join("kernel32.dll").exists() && root.join("target").join("x.bin").exists());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// NEW-05 / WFA-35: on a volume whose Recycle Bin is off, the inspection already says the object cannot be moved
+/// (`recycle_bin_unavailable`, which the page words in its language), and the plan is refused the same way. The
+/// turned-off setting is the test-only BitBucket redirect (`CM_TEST_BITBUCKET_ROOT`, a key under
+/// `HKCU\Software\CleanManagerTest\`), set for a child run of this test only.
+#[cfg(windows)]
+#[test]
+fn a_volume_without_a_usable_bin_is_not_movable_at_inspection() {
+    const CHILD: &str = "CM_G2_BIN_OFF_BASE";
+    let reg = |args: &[&str]| std::process::Command::new("reg").args(args).output().is_ok_and(|o| o.status.success());
+    let Some(base) = std::env::var_os(CHILD).map(std::path::PathBuf::from) else {
+        let base = temp_base("bin-off");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("root")).unwrap();
+        std::fs::write(base.join("root").join("x.bin"), vec![7u8; 100]).unwrap();
+        let raw = cm_platform::paths::raw_path(base.as_os_str()).unwrap();
+        let guid = cm_platform::windows::actions::recycle_bin_volume_key(&raw).expect("the scratch volume has a GUID name");
+        let key = format!(r"Software\CleanManagerTest\desk{}_bin", std::process::id());
+        assert!(reg(&["add", &format!(r"HKCU\{key}\Volume\{guid}"), "/v", "NukeOnDelete", "/t", "REG_DWORD", "/d", "1", "/f"]));
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "flow_tests::a_volume_without_a_usable_bin_is_not_movable_at_inspection", "--nocapture", "--test-threads=1"])
+            .env(CHILD, &base)
+            .env("CM_TEST_BITBUCKET_ROOT", &key)
+            .output()
+            .unwrap();
+        let _ = reg(&["delete", &format!(r"HKCU\{key}"), "/f"]);
+        let rest = std::process::Command::new("reg").args(["query", r"HKCU\Software\CleanManagerTest"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        if !rest.lines().any(|l| l.to_ascii_lowercase().contains(r"cleanmanagertest\")) {
+            let _ = reg(&["delete", r"HKCU\Software\CleanManagerTest", "/f"]);
+        }
+        let _ = std::fs::remove_dir_all(&base);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && text.contains("1 passed"), "child run: {text}{}", String::from_utf8_lossy(&out.stderr));
+        return;
+    };
+    let store = base.join("store");
+    let stores = Stores::open(&store).unwrap();
+    let view = scan_into(&stores, &base.join("root"), "s_binoff");
+    let e = entry_named(&view, "root", "x.bin");
+    let s = AppState::with_store(Some(store.clone()), None, None);
+    let ins = crate::suite::imp::trash_inspect(&s, "s_binoff", e).unwrap();
+    let r = ins.refusal.as_ref().expect("not movable");
+    assert_eq!((ins.trashable, ins.recycle_bin_ready, r.code.as_str(), r.reason.as_str()), (false, false, "unsupported", "recycle_bin_unavailable"), "{r:?}");
+    assert!(r.message.contains("no permanent-delete alternative"), "{}", r.message);
+    let err = crate::suite::imp::trash_plan(&s, "s_binoff", &[e]).unwrap_err();
+    assert_eq!((err.code, err.reason), (cm_core::error::ErrorCode::Unsupported, "recycle_bin_unavailable"));
+    assert!(base.join("root").join("x.bin").exists());
+}
+
+/// A folder laid out like this platform's bin (synthetic names; the real bin is never read or changed here).
+fn synthetic_bin(dir: &std::path::Path) -> cm_app::trash::Bin {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).unwrap();
+    #[cfg(windows)]
+    {
+        let info = |path: &str, size: u64, ft: u64| {
+            let units: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut d = Vec::new();
+            d.extend_from_slice(&2u64.to_le_bytes());
+            d.extend_from_slice(&size.to_le_bytes());
+            d.extend_from_slice(&ft.to_le_bytes());
+            d.extend_from_slice(&(units.len() as u32).to_le_bytes());
+            d.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+            d
+        };
+        std::fs::write(dir.join("$RAAA111.txt"), vec![1u8; 10]).unwrap();
+        std::fs::write(dir.join("$IAAA111.txt"), info("D:\\work\\old.txt", 10, 133_000_000_000_000_000)).unwrap();
+        std::fs::write(dir.join("$RBBB222.txt"), vec![2u8; 20]).unwrap();
+        std::fs::write(dir.join("$IBBB222.txt"), info("D:\\work\\new.txt", 20, 133_100_000_000_000_000)).unwrap();
+        let l = cm_platform::windows::actions::recycle_bin::list_dir(dir).unwrap();
+        cm_app::trash::Bin { dir: l.bin_dir, view: l.view, items: l.items, observed_at: l.observed_at }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::fs::write(dir.join("old.txt"), vec![1u8; 10]).unwrap();
+        std::fs::write(dir.join("new.txt"), vec![2u8; 20]).unwrap();
+        let l = cm_platform::macos::actions::trash::list_trash_dir(dir).unwrap();
+        cm_app::trash::Bin { dir: l.trash_dir, view: l.view, items: l.items, observed_at: l.observed_at }
+    }
+}
+
+/// NEW-15 / WFA-65, MTR-03: the bin page lists this user's items (newest first, grouped by bin) and freezes chosen items
+/// of one bin into a separate permanent-delete plan, which this window shows but never approves (a terminal asks for
+/// DELETE first). Items of two bins, or items no longer listed, make no plan.
+#[test]
+fn the_bin_page_lists_items_and_freezes_a_terminal_reviewed_purge_plan() {
+    let base = temp_base("bin-page");
+    let _ = std::fs::remove_dir_all(&base);
+    let store = base.join("store");
+    let bins = [synthetic_bin(&base.join("bin-a")), synthetic_bin(&base.join("bin-b"))];
+    let issues = [cm_app::trash::BinIssue { code: "bin_unreadable", scope_display: "E:\\$Recycle.Bin".into(), message: "denied".into() }];
+    let dto = crate::suite::imp::bin_list_dto(&bins, &issues);
+    assert_eq!((dto.total, dto.items.len(), dto.truncated, dto.bins.len()), (4, 4, false, 2));
+    assert_ne!(dto.bins[0].bin_id, dto.bins[1].bin_id);
+    assert!(dto.bins.iter().all(|b| b.item_count == 2));
+    assert_eq!((dto.issues[0].code.as_str(), dto.issues.len()), ("bin_unreadable", 1));
+    assert!(dto.items.iter().all(|i| i.purgeable && i.refusal.is_none() && i.object_kind == "file"));
+    let names: Vec<&str> = dto.items.iter().map(|i| i.name.as_str()).collect();
+    assert!(names.iter().all(|n| *n == "old.txt" || *n == "new.txt"), "{names:?}");
+    if cfg!(windows) {
+        assert_eq!(names[..2], ["new.txt", "new.txt"], "newest first by deletion time");
+        assert_eq!(dto.items[0].original_path_display.as_deref(), Some("D:\\work\\new.txt"));
+        assert!(dto.items[0].deleted_at.is_some() && dto.items[0].bin_location_display.contains("$RBBB222"));
+    }
+    let a: Vec<String> = dto.items.iter().filter(|i| i.bin_id == dto.bins[0].bin_id).map(|i| i.trash_item_id.clone()).collect();
+    let other = dto.items.iter().find(|i| i.bin_id == dto.bins[1].bin_id).unwrap().trash_item_id.clone();
+
+    let s = AppState::with_store(Some(store.clone()), None, None);
+    s.with_stores(|st| {
+        let mixed = crate::suite::imp::purge_from(st, &bins, &[a[0].clone(), other.clone()]).unwrap_err();
+        assert_eq!((mixed.code, mixed.reason), (cm_core::error::ErrorCode::InvalidArgument, "bin_items_mixed"));
+        assert_eq!(crate::suite::imp::purge_from(st, &bins, &["tb_gone".into()]).unwrap_err().reason, "bin_item_gone");
+        let plan_id = crate::suite::imp::purge_from(st, &bins, &a)?.plan_id;
+        let d = cleanup::detail(&s, st, &plan_id)?;
+        assert_eq!((d.kind, d.plan_kind_v2.as_deref(), d.terminal_only.as_deref(), d.mode), ("manual_purge", Some("manual_selection"), Some("permanent_delete"), None));
+        assert_eq!(d.authorization.status, "required");
+        let items = cleanup::items(st, &plan_id, 50, None)?;
+        assert!(items.items.iter().all(|i| i.action_type.as_deref() == Some("fs_delete")));
+        // MTR-03: the irreversibility confirmation is asked in a terminal review only; this window never approves it.
+        cm_app::features::set_experimental(&store, true).unwrap();
+        let token = d.review_token.clone().unwrap_or_default();
+        let refused = cleanup::approve(&s, st, &plan_id, &token, &d.digest_prefix).unwrap_err();
+        assert_eq!(refused.reason, "needs_cli_confirmation");
+        assert_eq!(cleanup::detail(&s, st, &plan_id)?.authorization.status, "required");
+        Ok(())
+    })
+    .unwrap();
+    assert!(base.join("bin-a").read_dir().unwrap().count() > 0, "planning deletes nothing");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&base);
+}

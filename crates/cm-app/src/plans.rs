@@ -744,8 +744,22 @@ pub fn create_settings_restore_plan(stores: &Stores, operation_id: &str, plan_id
 }
 
 /// History facts of a `plan/v2` operation: (`action`, availability, guidance) for protocol `operation_summary`.
+///
+/// Every kind this build executes describes its own recovery (WFA-40): a Recycle Bin move is put back from the bin, a
+/// recorded prior state (startup entry, setting, registry key or startup value of uninstall leftovers) is restorable
+/// here while its backup is unused, an ended process, a vendor uninstaller and a package-manager update cannot be undone
+/// by CleanManager, and a restore has nothing left to undo. `None` only when the plan cannot be read (or is of a kind
+/// this build never executes).
 pub fn history_facts(stores: &Stores, plan_id: &str, operation_id: &str) -> Option<(&'static str, &'static str, String)> {
     let plan = stores.audit.load_plan_v2(plan_id).ok()?;
+    let report: Option<OperationReport> = stores.audit.operation_report(operation_id).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
+    // Whether an action of this operation that `pick` selects took effect (a missing or unreadable report counts none).
+    let succeeded = |pick: &dyn Fn(&PlanAction) -> bool| {
+        report.as_ref().is_some_and(|r| {
+            r.items.iter().any(|i| i.status == ActionStatus::Succeeded && plan.body.items.iter().any(|a| a.action_id() == i.action_id && pick(a)))
+        })
+    };
+    let succeeded_id = |action_id: &str| report.as_ref().is_some_and(|r| r.items.iter().any(|i| i.action_id == action_id && i.status == ActionStatus::Succeeded));
     Some(match (plan.body.plan_kind, plan.body.items.first()?) {
         (PlanKind::ManualSelection, PlanAction::FsTrash(_)) => ("trash", "system_recycle_bin", format!("Moved to the {BIN_NAME}. {PUT_BACK_GUIDANCE} CleanManager cannot restore it.")),
         (PlanKind::ManualSelection, _) => ("delete", "unavailable", format!("Permanently deleted from the {BIN_NAME}; there is no undo.")),
@@ -757,7 +771,16 @@ pub fn history_facts(stores: &Stores, plan_id: &str, operation_id: &str) -> Opti
                 ("startup", "not_applicable", "Its prior state was restored since, or nothing was changed.".into())
             }
         }
-        (PlanKind::Recovery, _) => ("restore", "not_applicable", "Prior states (startup items or settings) were put back where nothing had changed since.".into()),
+        // A restore puts recorded prior states back; there is nothing left to undo. Named like the desktop names the kind.
+        (PlanKind::Recovery, _) if plan.body.items.iter().any(|a| matches!(a, PlanAction::SettingsChange(_))) => {
+            ("maintenance_restore", "not_applicable", "Prior setting values were put back where the setting had not changed since; nothing is left to undo.".into())
+        }
+        (PlanKind::Recovery, _) if plan.meta.iter().any(|m| m.uninstall.is_some()) => (
+            "uninstall_restore",
+            "not_applicable",
+            "Registry keys and startup values were recreated from their backups where nothing had been recreated since; nothing is left to undo.".into(),
+        ),
+        (PlanKind::Recovery, _) => ("startup_restore", "not_applicable", "Prior startup states were put back where nothing had changed since; nothing is left to undo.".into()),
         // MNT-07: maintenance runs are recorded per task (`optimize history`) and never undone; only a recorded setting
         // change (14.5) has a restore entry.
         (PlanKind::Maintenance, _) => {
@@ -768,7 +791,59 @@ pub fn history_facts(stores: &Stores, plan_id: &str, operation_id: &str) -> Opti
                 ("maintenance", "unavailable", "Maintenance tasks are not undone; `cleanmanager optimize history` lists each task's outcome and reason.".into())
             }
         }
-        _ => return None,
+        // STS-04: an ended process cannot be brought back.
+        (PlanKind::Process, _) => ("process", "unavailable", "An ended process cannot be brought back; start the program again if you need it. Nothing else was changed.".into()),
+        // UPD-02/03: the package manager installed the update; CleanManager keeps no copy of the previous version.
+        (PlanKind::Update, _) => (
+            "update",
+            "unavailable",
+            "Updates are installed by the package manager that manages the app (winget, Scoop, Homebrew); CleanManager does not roll them back. Install an earlier version with that package manager if you need it.".into(),
+        ),
+        // UNI-03: stage 1 runs each application's own route. A vendor uninstaller or package manager cannot be undone by
+        // CleanManager (only a reinstall brings the application back); the macOS bundle route moved the bundle to the
+        // Trash, where it can be put back. Leftovers are a separately reviewed stage-2 plan.
+        (PlanKind::Uninstall, _) if !crate::uninstall::planned_apps(&plan).is_empty() => {
+            let to_bin = |a: &PlanAction| matches!(a, PlanAction::ToolAdapter(t) if t.adapter_id == cm_core::uninstall::AdapterKind::MacTrashAppBundle.adapter_id());
+            let bundle = succeeded(&to_bin);
+            let vendor = succeeded(&|a| matches!(a, PlanAction::ToolAdapter(_)) && !to_bin(a));
+            let leftovers = format!("Review what it left with `cleanmanager apps uninstall leftovers --operation {operation_id}`.");
+            match (bundle, vendor) {
+                (true, others) => (
+                    "uninstall",
+                    "system_recycle_bin",
+                    format!(
+                        "The application bundle was moved to the {BIN_NAME}. {PUT_BACK_GUIDANCE}{} {leftovers}",
+                        if others { " Applications removed by their own uninstaller or package manager cannot be undone by CleanManager; reinstall them if you need them." } else { "" }
+                    ),
+                ),
+                (false, true) => (
+                    "uninstall",
+                    "unavailable",
+                    format!("Uninstalled by the application's own uninstaller or package manager; CleanManager cannot undo it (reinstall the application from its vendor if you need it). {leftovers}"),
+                ),
+                (false, false) => ("uninstall", "not_applicable", "No uninstaller completed; the applications stay installed and nothing was removed.".into()),
+            }
+        }
+        // UNI-06: leftovers — files in the Recycle Bin, registry keys and startup values restorable from their backups.
+        (PlanKind::Uninstall, _) => {
+            let backups = stores.audit.backup_ids_for_operation(operation_id).ok()?;
+            let restorable = backups.iter().any(|(action_id, _, state)| state == "recorded" && succeeded_id(action_id));
+            let trashed = succeeded(&|a| matches!(a, PlanAction::FsTrash(_)));
+            let bin = if trashed { format!(" Files and folders were moved to the {BIN_NAME}: {PUT_BACK_GUIDANCE}") } else { String::new() };
+            if restorable {
+                (
+                    "uninstall_leftovers",
+                    "in_app_restore",
+                    format!("Registry keys and startup values are restorable here from their backups: `cleanmanager apps uninstall restore --operation {operation_id}` (skipped where something was recreated since; never overwrites).{bin}"),
+                )
+            } else if trashed {
+                ("uninstall_leftovers", "system_recycle_bin", format!("Moved to the {BIN_NAME}. {PUT_BACK_GUIDANCE} CleanManager cannot restore files from it."))
+            } else {
+                ("uninstall_leftovers", "not_applicable", "Its registry keys and startup values were restored since, or nothing was removed.".into())
+            }
+        }
+        // Never executed by this build (`executable`): no operation of this kind exists.
+        (PlanKind::Cleanup, _) => return None,
     })
 }
 

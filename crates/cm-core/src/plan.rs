@@ -119,7 +119,8 @@ pub struct ItemMeta {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
-    #[error("empty selection")]
+    /// Nothing selected, or nothing selected holds anything to act on (WFA-113).
+    #[error("empty selection: nothing selected is left to plan (a folder that holds no files is left out)")]
     Empty,
     #[error("candidate {0} is not in this candidate set")]
     UnknownCandidate(String),
@@ -292,9 +293,10 @@ fn not_plannable_reason(state: CandidateState) -> &'static str {
     }
 }
 
-/// Freeze a selection into a plan. Only allowed (or explicitly reviewed review-only) candidates
-/// with the chosen mode permitted are accepted; blocked and pending candidates are refused.
-pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String], mode: Mode, input: &PlanInput<'_>) -> Result<Plan, PlanError> {
+/// The selection checks of [`build_plan`] that need no index view: every id is in the set, allowed, not blocked and
+/// permits `mode`. Entries call this before any live re-check, so a candidate that can never be planned (attached,
+/// in use, protected) is refused for that reason rather than reported as changed (WFA-58). Duplicates are removed.
+pub fn check_selection<'a>(set: &'a CandidateSet, selected: &[String], mode: Mode) -> Result<Vec<&'a Candidate>, PlanError> {
     if selected.is_empty() {
         return Err(PlanError::Empty);
     }
@@ -315,6 +317,15 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
             chosen.push(c);
         }
     }
+    Ok(chosen)
+}
+
+/// Freeze a selection into a plan. Only allowed (or explicitly reviewed review-only) candidates
+/// with the chosen mode permitted are accepted; blocked and pending candidates are refused.
+/// A selected candidate that contributes no action (an emptied folder, or objects already planned through another
+/// candidate) is left out; a plan is never made with zero actions ([`PlanError::Empty`], WFA-113).
+pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String], mode: Mode, input: &PlanInput<'_>) -> Result<Plan, PlanError> {
+    let chosen = check_selection(set, selected, mode)?;
     let mut items = Vec::new();
     let mut observations = Vec::new();
     let mut tiers = Vec::new();
@@ -324,9 +335,6 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
     // Directory items come after every file item, deepest first (bottom-up removal).
     let mut dirs: Vec<(usize, u64, &Candidate)> = Vec::new();
     for c in &chosen {
-        for r in &c.rules {
-            rule_refs.push(format!("{}@{}", r.rule_id, r.version));
-        }
         for file in files_under(view, c.entry_id) {
             let f = view.info(file);
             if !seen_objects.insert(f.object_id) {
@@ -345,6 +353,14 @@ pub fn build_plan(view: &dyn IndexView, set: &CandidateSet, selected: &[String],
         if seen_objects.insert(view.info(dir).object_id) {
             push_item(view, c, dir, ItemKind::Directory, Bytes(0), None, input, &mut items, &mut observations, &mut tiers, &mut item_meta)?;
         }
+    }
+    // WFA-113: nothing to act on (every selected folder is empty) is an empty selection, never a zero-action plan.
+    if items.is_empty() {
+        return Err(PlanError::Empty);
+    }
+    // Only the rules of candidates that contribute an action are the plan's rules (policy coverage, review).
+    for c in chosen.iter().filter(|c| items.iter().any(|i| i.candidate_id == c.candidate_id)) {
+        rule_refs.extend(c.rules.iter().map(|r| format!("{}@{}", r.rule_id, r.version)));
     }
     for (i, item) in items.iter_mut().enumerate() {
         item.action_id = format!("a{i:07}");

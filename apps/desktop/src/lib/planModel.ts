@@ -253,9 +253,31 @@ export function planStatement(d: PlanDetail, items: PlanItem[]): PlanStatement {
 // ---------------------------------------------------------------------------------------------
 // Authorization state
 
-export type AuthView = 'executed' | 'terminal' | 'review' | 'authorized' | 'stale' | 'revoked' | 'expired' | 'closed';
+export type AuthView = 'executed' | 'gated' | 'terminal' | 'review' | 'authorized' | 'stale' | 'revoked' | 'expired' | 'closed';
+
+/**
+ * D15 / WFA-02: the gated capability a stored plan/v2 belongs to. Mirrors `cm_app::features::plan_kind_capability`
+ * (the host's `gate::require_plan` refuses approving and running such a plan while the capability is off); cleanup and
+ * recovery plans are core. `planModel.test.ts` reads the Rust table, so the two cannot drift apart.
+ */
+export const PLAN_KIND_CAPABILITY: Readonly<Record<string, string | null>> = {
+  manual_selection: 'trash.manual',
+  uninstall: 'apps.uninstall',
+  maintenance: 'maintenance.run',
+  startup: 'startup.toggle',
+  update: 'apps.updates',
+  process: 'process.end',
+  cleanup: null,
+  recovery: null,
+};
+
+/** The capability a plan needs, or null for a core plan (v1 cleanup/recovery plans have no plan/v2 kind). */
+export function planCapability(d: Pick<PlanDetail, 'plan_kind_v2'>): string | null {
+  return d.plan_kind_v2 ? (PLAN_KIND_CAPABILITY[d.plan_kind_v2] ?? null) : null;
+}
 
 export const AUTH_TEXT = {
+  get gated() { return t('planModel.authText.gated'); },
   get executed() { return t('planModel.authText.executed'); },
   get terminal() { return t('planModel.authText.terminal'); },
   get authorized() { return t('planModel.authText.authorized'); },
@@ -264,10 +286,16 @@ export const AUTH_TEXT = {
   get closed() { return t('planModel.authText.closed'); },
 } as const;
 
-export function authView(d: Pick<PlanDetail, 'operation' | 'authorization' | 'terminal_only' | 'review_token' | 'stale_reason'>): { view: AuthView; line: { kind: BannerKind; text: string } | null } {
+/**
+ * The authorization panel's state. `gateOff`: the plan's capability is off here (D15), so it can be neither approved
+ * nor run — the panel says so and links to the setting instead of offering controls the host would refuse. A plan that
+ * already ran keeps its result, and a stale plan stays stale (turning the feature on would not make it usable).
+ */
+export function authView(d: Pick<PlanDetail, 'operation' | 'authorization' | 'terminal_only' | 'review_token' | 'stale_reason'>, gateOff = false): { view: AuthView; line: { kind: BannerKind; text: string } | null } {
   const a = d.authorization.status;
   if (d.operation) return { view: 'executed', line: { kind: 'success', text: AUTH_TEXT.executed } };
   if (d.stale_reason) return { view: 'stale', line: { kind: 'failed', text: STALE_LABEL[d.stale_reason] ?? AUTH_TEXT.closed } };
+  if (gateOff && (a === 'required' || a === 'authorized')) return { view: 'gated', line: { kind: 'cancelled', text: AUTH_TEXT.gated } };
   if (a === 'required' && d.terminal_only) return { view: 'terminal', line: { kind: 'pending-permission', text: AUTH_TEXT.terminal } };
   if (a === 'required' && d.review_token) return { view: 'review', line: null };
   if (a === 'authorized') return { view: 'authorized', line: { kind: 'success', text: AUTH_TEXT.authorized } };

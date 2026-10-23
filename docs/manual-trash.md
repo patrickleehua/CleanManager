@@ -1,6 +1,6 @@
 # 手选移入回收站 / 废纸篓
 
-状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现；macOS 一侧（废纸篓移动、列出、废纸篓内永久删除、占用进程）已实现但只在托管 CI runner 上运行过，没有参考设备证据，见下文“macOS”一节，6.2 仍未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、`macos/actions/trash.rs`，命令 `trash`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
+状态：变更 `add-mole-parity-suite` 任务 6.1–6.5 的 Windows 部分已实现；macOS 一侧（废纸篓移动、列出、废纸篓内永久删除、占用进程）已实现但只在托管 CI runner 上运行过，没有参考设备证据，见下文“macOS”一节，6.2 仍未勾选；整体未通过 G1 门禁（任务 18.1），没有发布。实现位置：核心 `cm_core::manual_trash`、CLI 与桌面共用的检查与回收站列出 `cm_app::trash`、执行 `cm_app::plans`、平台 `windows/actions.rs` 与 `windows/restart_manager.rs`、`macos/actions/trash.rs`，命令 `trash`。命令形状以 [CLI 协议](cli-protocol.md) 为准。
 
 默认关闭（设计 D15）：手选移入回收站尚未通过门禁 G1，所以它的 CLI 命令组、对应种类计划的审阅与执行、桌面页面和宿主命令都拒绝使用并说明原因。只为在这台电脑上评估时，用 `cleanmanager experimental --state on` 或桌面“设置 › 实验功能”开启（两者共用一个设置，见 [CLI 协议](cli-protocol.md) 的“实验功能”）；开启后能力仍报告为 `unverified`，不算已发布。
 
@@ -11,6 +11,13 @@
 - 回收站内对象的**永久删除**是另一份单独的计划（`trash purge`，`fs_delete` 且目标限于回收站内），审阅时先要输入 `DELETE` 确认不可恢复，再输入摘要前 8 位（MTR-03）。
 - 卷没有可用回收站（网络卷、该卷在回收站属性中设为“不将文件移到回收站”、组策略“不将删除的文件移到回收站”、系统查询失败）时，**创建计划就失败**：`code: "unsupported"`（退出 7），`message` 以 `trash_unavailable:` 开头并列出受影响的卷与原因，`required_action` 说明先为该卷打开回收站；`trash inspect` 对这样的对象给出 `trashable: false`、`refusal.reason: "trash_unavailable"`。不会降级为永久删除，也没有“直接删除”的替代命令。对象过大等只有执行时才知道的情况，执行时仍以 `trash_unavailable` 失败并保留原文件。规则清理（`clean`/`plan create`/`purge`/`installer`）的 trash 模式同样在建计划时检查，并提示可改用 `--mode quarantine`。
 - 指向受保护系统位置的链接（例如指向 `C:\Windows\System32` 的目录联接）以 `policy_denied`（退出 3）拒绝，`message` 写明链接解析到的受保护位置；解析只读进行，从不经链接写入。指向普通位置的链接仍为 `unsupported`（链接从不移动、也不跟随）。
+
+## 桌面
+
+桌面与 CLI 走同一套检查（`cm_app::trash`）：
+
+- 检查对话框对指向受保护系统位置的链接显示“受保护”并写明链接指向的位置（宿主字段 `link_target_display`），生成计划时同样以 `policy_denied` 拒绝；卷没有可用回收站时，检查阶段就标为不可移动（`refusal.reason: "recycle_bin_unavailable"`），不会先显示“可以移到回收站”。
+- “清理 › 回收站”页面通过宿主命令 `trash_list`（只读，对应 `trash list`）列出当前用户回收站中的项目，最新的在前；选中同一个卷的项目后，`trash_purge_plan`（对应 `trash purge --item`）把它们冻结成单独的永久删除计划。这份计划在桌面只能查看，批准仍须在终端 `plan review` 中先输入 `DELETE` 再输入摘要前 8 位（WFA-64），桌面不提供批准。
 
 ## 系统目录为什么只读（MTR-02）
 

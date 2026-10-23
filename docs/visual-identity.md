@@ -211,6 +211,9 @@ CleanManager 是一个“先看后删”的磁盘与系统整理工具，主要�
 | `?scan=running` | 正在运行的扫描（可以点“取消扫描”） |
 | `?scan=none` | 还没有任何扫描 |
 | `?choose=file` / `?choose=link` | 扫描范围页第一次“选择其他文件夹…”返回文件 / 链接，显示提交前的校验错误 |
+| `?index=corrupt` / `?index=incompatible` | 扫描索引损坏 / 不兼容：概览、磁盘与扫描范围说明需要重建，并提供“重建扫描索引…”（确认后模拟重建） |
+| `?protection=broken` | 保护清单无法读取：设置 › 保护清单显示原因、文件与恢复方法；磁盘页不能添加保护 |
+| `?status=normal` | 系统状态的诊断为正常（没有读数超过阈值） |
 
 参数可以和页面锚点组合，例如 `?platform=macos&scan=partial-pending#overview`、`?choose=file#scope`、`?lang=en&platform=macos#cleanup`。
 

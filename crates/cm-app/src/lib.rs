@@ -4,11 +4,14 @@
 pub mod diag;
 pub mod execute;
 pub mod features;
+pub mod index_repair;
 pub mod insights;
 pub mod maintenance;
 pub mod plans;
 pub mod processes;
 pub mod recovery;
 pub mod scan;
+pub mod selection;
+pub mod trash;
 pub mod uninstall;
 pub mod updates;

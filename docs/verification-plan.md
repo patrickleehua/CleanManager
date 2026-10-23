@@ -71,6 +71,24 @@ python -I tools/win_verify.py --strict       # 修复全部落地后使用：kno
 - 结果写到 `target/win-verify/<时间>/`。`summary.md`、`results.json` 和符合 run-record Schema 的 `run-record.json`（test_id SCN-07）按上面的规则脱敏；`raw/` 保留未脱敏的原始输出，只供本地排查，不提交。登记时把 `run-record.json` 复制到 `docs/evidence/runs/` 并运行文档验证器；单条记录不会自动改变设备矩阵声明。
 - 不覆盖：桌面窗口与读屏、实际回收站/隔离/恢复、卸载/启动项/维护、签名安装、其他文件系统与设备。2026-10-22 已在本机端到端运行：对复验时的旧二进制（2d654d9 加 BUG-WIN-01 补丁）为 11 通过、4 known pending；对含并行修复的工作树构建为 15 项通过。被测工作树有未提交改动，所以这两次都没有登记为运行记录。
 
+### 2.2 桌面驱动：WebView 调试端口（仅调试构建）
+
+2026-10-23 复测时 WebView 无法通过 CDP 驱动：wry 总是通过 WebView2 的环境选项传入自己的 AdditionalBrowserArguments，`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 因此不会到达浏览器进程，只能改用 UI Automation 加系统级输入。桌面宿主为此提供一个测试钩子：
+
+```text
+cd apps/desktop
+npm run tauri -- build --debug --no-bundle         # 只有调试构建带这个钩子
+$env:CM_WEBVIEW_DEBUG_PORT = '9222'                 # 1024–65535；其他值被忽略并在 stderr 说明
+$env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\cm-acc-webview"   # 独立的 WebView2 配置目录（见下）
+.\src-tauri\target\debug\cleanmanager-desktop.exe    # 或 CARGO_TARGET_DIR 下的同名程序
+# 然后：http://127.0.0.1:9222/json 列出页面，用其 webSocketDebuggerUrl 驱动（Runtime.evaluate、Input.*、Page.captureScreenshot）
+```
+
+- 实现：`apps/desktop/src-tauri/src/main.rs` 的 `webview_debug` 模块在构建 Tauri 上下文之后、窗口创建之前，给配置中的每个窗口加上 `--remote-debugging-port=<端口>`（并保留 wry 默认的 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`，因为窗口一旦指定参数就会替换默认值）。Chromium 只在回环地址上监听这个端口。启动时 stderr 打印一行说明端口已打开。
+- 只在调试构建中存在：模块与调用都在 `#[cfg(debug_assertions)]` 下，发行构建没有任何读取该变量或打开端口的代码（`main.rs` 中的 `webview_debug_tests` 检查所有相关字符串都在这个模块内，调用也带同样的 `cfg`）。验收报告必须写明桌面部分使用的是调试构建。
+- WebView2 要求参数不同的实例使用不同的数据目录：带调试端口启动时用独立的 `WEBVIEW2_USER_DATA_FOLDER`，不要和平时运行的配置目录混用；否则 WebView2 会拒绝创建或沿用已在运行的浏览器进程的参数。结束后删除该目录（含主题、语言等本机偏好）。
+- 调试端口让本机任何进程都能读取和操作页面内容（包括扫描到的路径），只在验收机器上、验收期间打开；页面仍然只能调用宿主列出的命令，批准仍需要审阅令牌加摘要前 8 位，调试端口不会绕过这些检查。
+
 ## 3. 核心与 v1 协议共同判据
 
 平台内部属性通过核心 Observation/适配层映射到 v1，不增加 Schema 未定义键。特别约束如下：

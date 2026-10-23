@@ -91,10 +91,18 @@ fn signatures_are_verified_embedded_or_by_catalog() {
         kind: AdapterKind::RegisteredCommand, program: program.to_string_lossy().into_owned(), argv: vec![], raw_args: true, publisher_required: Some(publisher.into()),
         microsoft_signed: false, display: String::new(), keeps_own_ui: true,
     };
-    assert_eq!(verify_program(&choice(&unsigned, "Contoso")).unwrap_err().0, "policy_denied", "unsigned uninstallers are refused");
+    let err = verify_program(&choice(&unsigned, "Contoso")).unwrap_err();
+    assert_eq!((err.code, err.reason), ("policy_denied", Some(cm_core::uninstall::UNINSTALLER_UNSIGNED)), "unsigned uninstallers are refused");
     let copy = cmd_copy(&d, "uninst.exe");
     let err = verify_program(&choice(&copy, "Contoso Ltd.")).unwrap_err();
-    assert_eq!(err.0, "policy_denied", "signer and publisher differ: {}", err.1);
+    // WFA-76: the reason is the signer, never a policy quota.
+    assert_eq!((err.code, err.reason), ("policy_denied", Some(cm_core::uninstall::UNINSTALLER_SIGNER_MISMATCH)), "signer and publisher differ: {}", err.message);
+    assert!(err.message.contains("not by the recorded publisher \"Contoso Ltd.\""), "{}", err.message);
+    // (`uninst.exe` is the signed copy now.)
+    let plain = d.join("plain.exe");
+    std::fs::write(&plain, b"MZ not really a program").unwrap();
+    let ms = AdapterChoice { publisher_required: None, microsoft_signed: true, ..choice(&plain, "x") };
+    assert_eq!(verify_program(&ms).unwrap_err().reason, Some(cm_core::uninstall::UNINSTALLER_NOT_MICROSOFT_SIGNED));
     let (sha, signer) = verify_program(&choice(&copy, "Microsoft Corporation")).unwrap();
     assert_eq!(sha.len(), 64);
     assert!(signer.is_some_and(|s| is_microsoft_signer(&s)));

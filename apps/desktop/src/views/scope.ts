@@ -8,7 +8,9 @@ import { refusalText } from '../lib/codes';
 import { h, icon, keepFocus, live, liveChildren, replace } from '../lib/dom';
 import { formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import type { IpcError, RecentScan, RootOffer } from '../lib/types';
-import { learnMore, pathText } from './ui';
+import { learnMore, pathText, stateLine } from './ui';
+import { currentIndexProblem } from '../lib/indexModel';
+import { confirmIndexRepair } from './indexRepair';
 import { t } from '../i18n';
 
 const GROUPS: { kinds: RootOffer['kind'][]; label: string }[] = [
@@ -44,6 +46,8 @@ export class ScopePage {
   private feedback: HTMLElement;
   private actions: HTMLElement;
   private aside: HTMLElement;
+  /** NEW-04: the damaged-index line above the folder choice. */
+  private indexNote: HTMLElement;
   private offers: RootOffer[] = [];
   private selected: string | null = null;
   private loading = false;
@@ -59,6 +63,7 @@ export class ScopePage {
     this.feedback = h('div', { class: 'scope-feedback' });
     this.actions = h('div', { class: 'scope-actions' });
     this.aside = h('aside', { class: 'scope-aside', 'aria-labelledby': 'scope-recent-title' });
+    this.indexNote = h('div', { class: 'scope-index' });
     this.el = h(
       'section',
       { class: 'page page-scope', 'aria-labelledby': 'scope-title' },
@@ -78,6 +83,7 @@ export class ScopePage {
             ),
           ),
         ]),
+        this.indexNote,
         h('fieldset', { class: 'scope-panel panel' }, live(h('legend', { class: 'sr-only' }), () => t('common.scanScope')), this.list, this.feedback, this.actions),
       ),
       this.aside,
@@ -231,8 +237,15 @@ export class ScopePage {
           : null,
     );
 
+    // NEW-04: a new scan cannot be recorded in a damaged index; the rebuild comes first (and is one click away).
+    const broken = currentIndexProblem({ caps: s.caps, statusError: s.statusError, repairedAt: s.indexRepairedAt });
+    if (broken) {
+      const repair = h('button', { type: 'button', class: 'quiet', id: 'scope-repair-index' }, t('indexRepair.repair'));
+      repair.addEventListener('click', () => void confirmIndexRepair(this.app, repair));
+      replace(this.indexNote, stateLine({ kind: 'failed', text: t('scope.indexBroken'), actions: [repair] }));
+    } else replace(this.indexNote);
     const running = s.task && !isTerminal(s.task.state);
-    const startBtn = h('button', { type: 'button', id: 'scope-start', class: 'primary', disabled: !this.selected || !!offer?.problem || this.starting || !!running }, this.starting ? t('scope.starting') : match ? t('common.scanAgain') : t('scope.startReadOnlyScan'));
+    const startBtn = h('button', { type: 'button', id: 'scope-start', class: 'primary', disabled: !this.selected || !!offer?.problem || this.starting || !!running || !!broken }, this.starting ? t('scope.starting') : match ? t('common.scanAgain') : t('scope.startReadOnlyScan'));
     startBtn.addEventListener('click', () => void this.start());
     const chooseBtn = h('button', { type: 'button', id: 'scope-choose' }, this.refused ? t('scope.chooseFolderAgain') : t('scope.chooseAnotherFolder'));
     chooseBtn.addEventListener('click', () => void this.choose());

@@ -212,6 +212,11 @@ pub(crate) fn plan_from_sets(req: &str, p: &Parsed, last_run: &str, is_group_set
         }
         _ => return fail(req, ErrorCode::InvalidArgument, "pass exactly one of --candidates ID,ID or --all-default-selected (installer: or --source LABEL)", p.format),
     };
+    // WFA-58: a row that cannot be planned now (an attached image, an installer in use, a protected folder) is refused
+    // for that reason first; an attached image keeps changing, so a live check alone would only call it changed.
+    if let Err(why) = cm_app::selection::refuse_unplannable(set, &selected, mode) {
+        return fail(req, ErrorCode::PolicyDenied, &why, p.format);
+    }
     let view = match stores.index.view(&set.scan_id) {
         Ok(v) => v,
         Err(e) => return store_error(req, &e, p.format),

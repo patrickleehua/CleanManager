@@ -367,9 +367,14 @@ pub struct HistoryItem {
     pub row: OperationRow,
     /// Authoritative plan type (`plan/v1`, `plan/v2`, `recovery/v1`), if the plan is still readable.
     pub contract: Option<String>,
-    /// `trash`, `quarantine`, `delete`, `restore`, `purge` or `startup`.
+    /// `trash`, `quarantine`, `delete`, `restore`, `purge` (cleanup and quarantine recovery), or a `plan/v2` kind's word
+    /// ([`crate::plans::history_facts`]): `startup`, `maintenance`, `process`, `update`, `uninstall`,
+    /// `uninstall_leftovers`, `uninstall_restore`, `startup_restore`, `maintenance_restore`.
     pub action: Option<String>,
     pub rule_refs: Vec<String>,
+    /// The recorded report. An operation whose host stopped before its report (`reconciliation_required`) carries the
+    /// provisional report `operations show` prints ([`crate::execute::interrupted_report`]): who authorized it and
+    /// what the journal knows so far, nothing resolved (WFA-40).
     pub report: Option<OperationReport>,
     /// `in_app_restore`, `system_recycle_bin`, `unavailable`, `not_applicable` or `unknown`.
     pub availability: &'static str,
@@ -390,7 +395,8 @@ fn availability(item: &HistoryItem, stores: &Stores) -> Result<(&'static str, St
     if report.succeeded == 0 {
         return Ok(("not_applicable", "Nothing was changed by this operation.".into()));
     }
-    // plan/v2 kinds describe their own recovery (manual trash → Recycle Bin, startup → recorded prior state).
+    // plan/v2 kinds describe their own recovery (manual trash → Recycle Bin, startup → recorded prior state, process end
+    // and uninstallers → no undo, leftovers → their backups and the Recycle Bin…).
     if item.contract.as_deref() == Some(cm_core::plan::v2::PLAN_V2_CONTRACT) {
         return Ok(match crate::plans::history_facts(stores, &item.row.plan_id, op) {
             Some((_, availability, guidance)) => (availability, guidance),
@@ -441,6 +447,11 @@ pub fn operation_history(stores: &Stores, page_size: u32, cursor: Option<&str>) 
         let report = stores.audit.operation_report(&row.operation_id)?.and_then(|j| serde_json::from_str::<OperationReport>(&j).ok());
         let mut item = HistoryItem { row, contract, action, rule_refs, report, availability: "unknown", guidance: String::new() };
         (item.availability, item.guidance) = availability(&item, stores)?;
+        // WFA-40: an interrupted operation still lists its authorization source and the counts known so far (its
+        // recovery stays `unknown` until it is reconciled, decided above from the missing report).
+        if item.report.is_none() && item.row.state == "reconciliation_required" {
+            item.report = crate::execute::interrupted_report(stores, &item.row.operation_id).ok();
+        }
         out.push(item);
     }
     Ok((out, next))

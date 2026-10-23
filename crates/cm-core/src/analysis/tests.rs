@@ -166,6 +166,26 @@ fn age_thresholds_use_modified_time_and_unknown_time_is_not_a_candidate() {
     assert!(!set.candidates.iter().any(|c| c.path.lossy().ends_with("unknown.tmp")), "no timestamp never satisfies an age condition (CAT-07)");
 }
 
+/// WFA-113: a cache folder emptied by an earlier cleanup (only empty folders left inside) is not a candidate, so it is
+/// never default-selected; a folder with a file is, and a blocked empty folder stays visible as blocked.
+#[test]
+fn an_emptied_folder_is_not_a_candidate() {
+    let mut b = Builder::new();
+    let app = b.dir(b.view.root, "App");
+    let emptied = b.dir(app, "Code Cache");
+    let js = b.dir(emptied, "js");
+    b.dir(js, "index-dir");
+    let gpu = b.dir(app, "GPUCache");
+    b.file(gpu, "data_0", 9216, Some(OLD));
+    let set = run(&b, vec![rule("app.code", &["Code Cache"], None, 0, None), rule("app.gpu", &["GPUCache"], None, 0, None)], app);
+    assert!(!set.candidates.iter().any(|c| c.path.lossy().ends_with("Code Cache")), "{:#?}", set.candidates);
+    assert_eq!(by_name(&set, "GPUCache").tier, Tier::DefaultSelected);
+    // Protected and empty: still listed, blocked with its reason.
+    b.dir(app, "Login Data");
+    let set = run(&b, vec![rule("app.login", &["Login Data"], None, 0, None)], app);
+    assert_eq!(by_name(&set, "Login Data").state, CandidateState::Blocked);
+}
+
 #[test]
 fn unreadable_subtree_leaves_parent_pending_but_independent_candidates_allowed() {
     let mut b = Builder::new();
@@ -215,6 +235,7 @@ fn weak_identity_and_placeholders_lower_or_block() {
     let app = b.dir(b.view.root, "App");
     let weak = b.dir(app, "Weak");
     b.view.facts.get_mut(&weak).unwrap().quality = IdentityQuality::Weak;
+    b.file(weak, "w.bin", 1, Some(OLD));
     let cloud = b.dir(app, "Cloud");
     let ph = b.file(cloud, "remote.bin", 100, Some(OLD));
     b.view.facts.get_mut(&ph).unwrap().cloud = CloudState::Placeholder;
@@ -255,7 +276,8 @@ fn identity_protected_roots_cover_their_subtree() {
 fn candidate_ids_are_stable_for_the_same_inputs() {
     let mut b = Builder::new();
     let app = b.dir(b.view.root, "App");
-    b.dir(app, "Cache");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "x.bin", 1, Some(OLD));
     let a = run(&b, vec![rule("r", &["Cache"], None, 0, None)], app);
     let c = run(&b, vec![rule("r", &["Cache"], None, 0, None)], app);
     assert_eq!(a.candidate_set_id, c.candidate_set_id);
@@ -350,7 +372,8 @@ fn protected_rule_blocks_all_its_candidates() {
 fn unavailable_user_list_keeps_analysis_read_only_and_unplannable() {
     let mut b = Builder::new();
     let app = b.dir(b.view.root, "App");
-    b.dir(app, "Cache");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "x.bin", 1, Some(OLD));
     let prot = AnalysisProtection { user: UserList::Unavailable("garbage"), ..Default::default() };
     let set = run_with(&b, vec![rule("app.cache", &["Cache"], None, 0, None)], app, &prot);
     let c = by_name(&set, "Cache");
@@ -477,7 +500,8 @@ fn hard_deny_outranks_a_reviewable_class() {
 fn protection_inputs_are_part_of_the_set_identity() {
     let mut b = Builder::new();
     let app = b.dir(b.view.root, "App");
-    b.dir(app, "Cache");
+    let cache = b.dir(app, "Cache");
+    b.file(cache, "x.bin", 1, Some(OLD));
     let empty = UserProtection::empty(Platform::Windows);
     let mut one = UserProtection::empty(Platform::Windows);
     one.add(UserEntry::rule("u_1", "other", T)).unwrap();

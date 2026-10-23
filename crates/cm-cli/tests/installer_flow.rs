@@ -182,3 +182,31 @@ fn installers_held_without_read_sharing_are_listed_in_use_with_their_holder() {
     assert_eq!((item["skip_reason"].as_str(), item["rule_id"].as_str()), (None, Some("installer.msi")), "{preview}");
     std::fs::remove_dir_all(&base).ok();
 }
+
+/// WFA-58 / NEW-10: a row that cannot be planned now is refused for that reason before the live re-check. An installer
+/// held open by another process (here: with write sharing, so it can still change) that grew after discovery is
+/// refused as not plannable (`policy_denied`, its in-use reason named), never as `plan_stale`; the attached-image case
+/// follows the same order (an attached image keeps changing while mounted).
+#[test]
+fn an_unplannable_installer_is_refused_before_the_live_check() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let base = scratch("busy-changed");
+    let (store, dl) = (base.join("store"), base.join("Downloads"));
+    std::fs::create_dir_all(&dl).unwrap();
+    std::fs::write(dl.join("busy.msi"), msi()).unwrap();
+    let locations = format!("downloads={}", dl.display());
+    // Read and write sharing: the file stays changeable while it is held.
+    let holder = std::fs::OpenOptions::new().read(true).share_mode(3).open(dl.join("busy.msi")).unwrap();
+    let (_, preview) = cli(&["installer", "scan"], &store, &locations);
+    let item = &preview["items"][0];
+    assert_eq!(item["skip_reason"].as_str(), Some("in_use"), "{preview}");
+    let mut grown = msi();
+    grown.extend_from_slice(&[0u8; 4096]);
+    std::fs::write(dl.join("busy.msi"), grown).unwrap();
+    let (code, err) = cli(&["installer", "plan", "create", "--candidates", item["object_id"].as_str().unwrap()], &store, &locations);
+    assert_eq!((code, err["code"].as_str()), (3, Some("policy_denied")), "refused as not plannable, not as changed: {err}");
+    let message = err["message"].as_str().unwrap();
+    assert!(message.contains("cannot be planned: pending_evidence:") && message.contains("in_use"), "{message}");
+    drop(holder);
+    std::fs::remove_dir_all(&base).ok();
+}

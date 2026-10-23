@@ -50,7 +50,9 @@ fn completion_scripts_for_every_shell() {
     }
     // Syntax checks where the shell exists on this machine.
     if available("bash", &["--version"]) {
-        let o = Command::new("bash").arg("-n").arg(base.join("cm.bash")).output().unwrap();
+        // The script goes in on stdin: on Windows `bash` may resolve to the WSL launcher, which cannot read a Windows path.
+        let script = std::fs::File::open(base.join("cm.bash")).unwrap();
+        let o = Command::new("bash").args(["-n", "-s"]).stdin(script).output().unwrap();
         assert!(o.status.success(), "bash -n: {}", String::from_utf8_lossy(&o.stderr));
     }
     for ps in ["pwsh", "powershell"] {

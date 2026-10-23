@@ -10,18 +10,22 @@ import { formatBytes, formatExactBytes, parseBytes } from '../lib/bytes';
 import { refusalText, unknownCodeText } from '../lib/codes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
 import { formatTime } from '../lib/format';
-import { authView, kindVerb, NO_SPACE, planExplain, planStatement } from '../lib/planModel';
+import { authView, kindVerb, NO_SPACE, planCapability, planExplain, planStatement } from '../lib/planModel';
 import type { IpcError, PlanDetail, PlanItem } from '../lib/types';
 import { AUTH_LABEL, OPERATION_STATE_LABEL, PLAN_KIND_LABEL, POLICY_MISMATCH_LABEL, POLICY_STATE_LABEL, digestGroups, formatCountdown, normalizeCode } from '../lib/words';
 import { copyField, errorLine, pageHead, pill, type Tone } from './parts';
-import { EXTENSIONS, TOOLS } from '../lib/nav';
+import { EXTENSIONS, TOOLS, capabilityOff, type GatedSection } from '../lib/nav';
 import { words } from '../lib/platform';
 import type { Page } from '../lib/store';
 import { LEFTOVER_GROUP, ROUTE_WORD, TASK_WORDS } from '../lib/suiteWords';
 import { noticeLine, stageSteps, undoBadge } from './kit';
 import { UNINSTALL_STEPS } from './uninstall';
 import { rowsByApp } from './uninstallBatch';
-import { emptyBlock, pathText, stateLine, statusBanner } from './ui';
+import { emptyBlock, gateBadge, pathText, stateLine, statusBanner } from './ui';
+import { openExperimentalSettings } from './gateOff';
+import { capabilityLabel } from './settings';
+import { processPurpose, unidentifiedReason } from '../lib/processWords';
+import { adapterDisplay } from '../lib/uninstallWords';
 import { t } from '../i18n';
 
 /** Words of the plan page that are not data (one table for the language switch). */
@@ -167,10 +171,17 @@ export class PlanPage {
     } catch (e) {
       this.actionError = toIpcError(e);
       if (this.actionError.reason === 'review_expired' || this.actionError.reason === 'plan_changed') await this.load(d.plan_id, false);
+      // Turned off elsewhere (the CLI) since the page was drawn: re-read the switch so the panel shows the off state.
+      if (this.actionError.reason === 'experimental_off') await this.refreshGates();
     } finally {
       this.busy = false;
       this.update();
     }
+  }
+
+  private async refreshGates(): Promise<void> {
+    const caps = await this.app.backend.capabilities().catch(() => null);
+    if (caps) this.app.store.set({ caps });
   }
 
   private async revoke(): Promise<void> {
@@ -199,6 +210,7 @@ export class PlanPage {
       await this.app.applyPlan(d.plan_id, d.kind === 'maintenance' ? 'maintenance' : 'apply');
     } catch (e) {
       this.actionError = toIpcError(e);
+      if (this.actionError.reason === 'experimental_off') await this.refreshGates();
     } finally {
       this.busy = false;
       this.update();
@@ -217,6 +229,12 @@ export class PlanPage {
       this.actionError = toIpcError(e);
     }
     this.update();
+  }
+
+  /** D15 / WFA-02: the plan's capability, when it is off here (the host refuses approving and running it). */
+  private gateOff(d: PlanDetail): GatedSection | null {
+    const cap = planCapability(d);
+    return cap ? capabilityOff(cap, this.app.store.state.caps?.gates) : null;
   }
 
   // ---- rendering ---------------------------------------------------------------------------
@@ -244,6 +262,7 @@ export class PlanPage {
       return;
     }
     const tone: Tone = d.authorization.status === 'authorized' ? 'good' : d.authorization.status === 'required' ? 'busy' : 'muted';
+    const off = !d.operation && !d.stale_reason && (d.authorization.status === 'required' || d.authorization.status === 'authorized') ? this.gateOff(d) : null;
     const left = this.secondsLeft();
     replace(
       this.body,
@@ -252,7 +271,8 @@ export class PlanPage {
         title: t('plan.reviewP', { p: d.catalog === 'purge' ? t('plan.buildArtifactCleanupPlan') : d.catalog === 'installer' ? t('plan.installerCleanupPlan') : PLAN_KIND_LABEL[d.kind] }),
         back: this.back(),
         meta: [
-          pill(d.operation ? t('plan.runP', { p: OPERATION_STATE_LABEL[d.operation.state] ?? d.operation.state }) : AUTH_LABEL[d.authorization.status], d.operation ? 'muted' : tone),
+          // Off by default (D15): the plain badge, not "waiting for your approval" — there is nothing to approve here now.
+          off ? gateBadge('off') : pill(d.operation ? t('plan.runP', { p: OPERATION_STATE_LABEL[d.operation.state] ?? d.operation.state }) : AUTH_LABEL[d.authorization.status], d.operation ? 'muted' : tone),
           t('plan.frozenCreated', { created_at: formatTime(d.created_at) }),
           h('span', { 'data-countdown': '' }, left > 0 ? t('plan.leftLeft', { left: formatCountdown(left) }) : t('plan.expired')),
         ],
@@ -313,14 +333,14 @@ export class PlanPage {
         fact(t('plan.mayLeaveBehind'), Object.entries(est).map(([g, n]) => `${LEFTOVER_GROUP[g]?.title ?? g} ${n}`).join(t('common.commaSep')), h('small', {}, t('plan.estimateAllAppsTogether')));
     } else if (d.kind === 'uninstall' && kd?.app) {
       fact(t('common.app'), kd.app.name, h('small', {}, [kd.app.publisher, kd.app.version ? t('common.versionVersion', { version: kd.app.version }) : null].filter(Boolean).join(' · ')));
-      fact(t('plan.uninstallMethod'), kd.app.adapter, h('small', {}, kd.app.signer ? t('plan.signerSignerProgramFiles', { signer: kd.app.signer }) : t('plan.programFilesDigestChecked')));
+      fact(t('plan.uninstallMethod'), adapterDisplay(kd.app.adapter), h('small', {}, kd.app.signer ? t('plan.signerSignerProgramFiles', { signer: kd.app.signer }) : t('plan.programFilesDigestChecked')));
       const est = kd.noted?.leftover_estimate;
       if (est && Object.keys(est).length)
         fact(t('plan.mayLeaveBehind'), Object.entries(est).map(([g, n]) => `${LEFTOVER_GROUP[g]?.title ?? g} ${n}`).join(t('common.commaSep')), h('small', {}, t('plan.estimateIsntPlanIsnt')));
     }
     if (d.kind === 'uninstall_leftovers' && kd?.registry_keys) fact(t('plan.registry'), t('plan.registryKeys', { registry_keys: kd.registry_keys }), h('small', {}, t('plan.eachWholeKeyBacked')));
     if (d.kind === 'process' && kd?.noted) {
-      fact(t('common.process'), t('plan.pPidP2', { p: kd.noted.name ?? '', p2: kd.noted.pid ?? '—' }), h('small', {}, kd.noted.purpose ?? (kd.noted.unidentified_reason ? t('plan.unidentifiedUnidentifiedReason', { unidentified_reason: kd.noted.unidentified_reason }) : '')));
+      fact(t('common.process'), t('plan.pPidP2', { p: kd.noted.name ?? '', p2: kd.noted.pid ?? '—' }), h('small', {}, processPurpose({ name: kd.noted.name ?? '', identified: !!kd.noted.purpose, purpose: kd.noted.purpose ?? null })?.text ?? (kd.noted.unidentified_reason ? t('plan.unidentifiedUnidentifiedReason', { unidentified_reason: unidentifiedReason(kd.noted.unidentified_reason).text }) : '')));
     }
     if (d.kind === 'cleanup') {
       fact(t('plan.sourceScan'), pathText(d.scan_root_display ?? t('plan.scopeUnavailable'), { max: 56 }), h('small', {}, t('plan.scanPRevisionP22', { p: d.scan_id ?? '—', p2: d.scan_revision ?? '—' })));
@@ -354,7 +374,8 @@ export class PlanPage {
       }
       lines.push(t('plan.eachItemCheckedAgain'));
     } else if (d.kind === 'manual_trash' || d.kind === 'manual_purge') {
-      lines.push(t('plan.containsOnlyObjectsPicked'));
+      // WFA-65: a permanent-delete plan holds items picked on the bin page, never scanned objects.
+      lines.push(d.kind === 'manual_purge' ? t('plan.containsOnlyBinItemsPicked', { bin: words().bin }) : t('plan.containsOnlyObjectsPicked'));
       lines.push(t('plan.eachObjectsIdentityChecked'));
     } else if (d.kind === 'startup' || d.kind === 'startup_restore') {
       lines.push(t('plan.doesntIncludeProgramFiles'));
@@ -466,13 +487,23 @@ export class PlanPage {
   private authPanel(d: PlanDetail): HTMLElement {
     const a = d.authorization;
     const { run, permanent: danger } = kindVerb(d, this.items);
-    const v = authView(d);
+    const off = this.gateOff(d);
+    const v = authView(d, !!off);
     const blocks: (HTMLElement | null)[] = [];
     if (v.line) blocks.push(stateLine({ kind: v.line.kind, text: v.line.text, className: 'auth-line' }));
     if (a.status === 'authorized' && !d.operation)
       blocks.push(h('p', { class: 'small muted auth-source' }, a.source === 'policy' ? t('plan.sourcePolicyPolicyId', { policy_id: a.policy_id, policy_version: a.policy_version }) : t('plan.sourceManualReviewP', { p: a.principal ?? '', authorized_at: formatTime(a.authorized_at) })));
     if (v.view === 'executed') {
       blocks.push(h('button', { type: 'button', class: 'primary wide', id: 'plan-view-result', onclick: () => this.app.openOperation(d.operation!.operation_id, 'plan') }, t('plan.viewResult')));
+    } else if (v.view === 'gated' && off) {
+      // The capability is off: no seal, no approve or run button (the host would refuse them); the way to turn it on.
+      const open = h('button', { type: 'button', class: 'primary wide', id: 'plan-open-experimental', 'data-open-experimental': '' }, t('kit.openExperimentalFeaturesSettings'));
+      open.addEventListener('click', () => openExperimentalSettings(this.app));
+      blocks.push(
+        h('p', { class: 'small' }, t('plan.gatedFeature', { feature: capabilityLabel(off.capability) })),
+        h('p', { class: 'small muted' }, t('plan.gatedKeepsPlan')),
+        open,
+      );
     } else if (v.view === 'terminal') {
       blocks.push(
         noticeLine(
@@ -499,7 +530,8 @@ export class PlanPage {
     } else {
       blocks.push(h('button', { type: 'button', class: 'wide', onclick: () => this.back().onClick() }, this.back().label));
     }
-    blocks.push(errorLine(this.actionError));
+    // The off state already says why nothing can be approved; the host's refusal of an earlier click would repeat it.
+    blocks.push(v.view === 'gated' && this.actionError?.reason === 'experimental_off' ? null : errorLine(this.actionError));
     return h(
       'aside',
       { class: 'panel work-aside auth-panel', 'aria-labelledby': 'auth-title' },

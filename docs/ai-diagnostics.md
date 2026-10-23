@@ -19,7 +19,7 @@
 
 | 记录 | 内容 |
 | --- | --- |
-| `diagnosis_preview` | 准备（`preparing`）：请求、脱敏证据包、目的地、实际载荷（HTTP 头/正文或 CLI 参数/stdin）、`payload_digest = SHA-256(c14n{destination, payload})`、字节数、是否含用户补充、10 分钟有效期 |
+| `diagnosis_preview` | 准备（`preparing`）：请求、脱敏证据包、目的地、实际载荷（HTTP 头/正文或 CLI 参数/stdin）、`payload_digest = SHA-256(c14n{destination, payload})`、字节数（`payload_bytes`：发送的正文本身的 UTF-8 字节数，即 HTTP `Content-Length` 或 CLI 的 stdin 长度，不是字符数；中文内容的字符数明显更少）、是否含用户补充、10 分钟有效期 |
 | `diagnosis_record` | `running → completed / cancelled / failed`，`completed → expired`；结果只在 completed/expired 存在，失败原因只在 failed 存在；新鲜度、交接、保留策略 |
 | `diagnosis_list` | 摘要分页（每页最多 100） |
 | `diagnosis_config` | 已配置提供方、凭据是否存在（从不含密钥）、支持状态 |

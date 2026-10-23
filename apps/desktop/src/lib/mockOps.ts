@@ -253,7 +253,10 @@ function expand(c: Candidate, start: number): PlanItem[] {
   });
 }
 
-export function mockOps(): OpsBackend {
+const protectionBroken = () => new URLSearchParams(globalThis.location?.search ?? '').get('protection') === 'broken';
+
+/** `entryPath`: the preview tree's path of a scanned entry (what the host reads from the index for `source: entry`). */
+export function mockOps(entryPath?: (entryId: string) => string | null): OpsBackend {
   const progress = new Set<(e: ApplyProgressEvent) => void>();
   const finished = new Set<(e: ApplyFinishedEvent) => void>();
   const plans = new Map<string, MockPlan>();
@@ -516,7 +519,8 @@ export function mockOps(): OpsBackend {
   apps[4].shared_with = ['Python Launcher'];
 
   const emitProgress = (opId: string) => {
-    const m = ops.get(opId)!;
+    const m = ops.get(opId);
+    if (!m) return;
     const c = counts(m.items);
     progress.forEach((cb) => cb({ plan_id: m.op.plan_id, operation_id: opId, total: m.op.total, counts: c, cancel_requested: active?.cancel ?? false }));
   };
@@ -722,7 +726,9 @@ export function mockOps(): OpsBackend {
         observed_free_delta_bytes: null,
         needs_reconcile: false,
       };
-      ops.set(opId, { op, items });
+      // Like the host (ops.rs `start`): the id is answered before the worker registers the operation, so the
+      // first reads of the result page can say not_found for a moment (NEW-02).
+      setTimeout(() => ops.set(opId, { op, items }), 300);
       p.detail.operation = { operation_id: opId, state: 'running' };
       active = { plan_id: planId, operation_id: opId, total: items.length, running: true, cancel: false };
       let i = 0;
@@ -912,12 +918,15 @@ export function mockOps(): OpsBackend {
     },
     async listProtection() {
       await delay(90);
+      // `?protection=broken`: the person's list cannot be read (NEW-07); only the built-in layers are listed.
+      if (protectionBroken()) return { items: protection.filter((p) => p.layer !== 'user').map((p) => ({ ...p })), problem: 'protection file is not valid: key must be a string at line 1 column 3', file_display: `${LOCAL}\\CleanManager\\store\\protection.json` };
       return { items: protection.map((p) => ({ ...p })), problem: null, file_display: `${LOCAL}\\CleanManager\\store\\protection.json` };
     },
     async addProtection(target, note) {
       await delay(200);
+      if (protectionBroken()) throw err('internal_error', 'protection_unavailable', 'Not saved: the protection list cannot be read (protection file is not valid); it was left unchanged for repair');
       userCounter += 1;
-      const display = target.source === 'rule' ? target.rule_id : target.source === 'entry' ? `${HOME}\\entry-${target.entry_id}` : 'D:\\Work\\Archives';
+      const display = target.source === 'rule' ? target.rule_id : target.source === 'entry' ? (entryPath?.(target.entry_id) ?? `${HOME}\\entry-${target.entry_id}`) : 'D:\\Work\\Archives';
       protection.push({
         protection_id: `u_${userCounter}`,
         layer: 'user',

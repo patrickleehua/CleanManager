@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
 use cm_app::scan::{ScanRequest, run_scan};
@@ -58,18 +58,33 @@ impl RootRegistry {
 
 pub struct StartupInfo {
     pub bypass_privileges: Option<Result<(), String>>,
-    pub store_problem: Option<IpcError>,
+    /// The store problem found at startup; cleared by a successful index repair (see `AppState::store_problem`).
+    store_problem: Mutex<Option<IpcError>>,
     pub interrupted: Vec<String>,
     /// Operations found without a live host at startup (now `reconciliation_required`).
     pub operations_to_reconcile: Vec<String>,
 }
 
+/// Connections for IPC queries and short writes (index + audit). Each call borrows one for its duration
+/// and returns it, so a long read (a large analysis view, a big folder) never blocks the other pages: they
+/// get another connection (NEW-01: one shared connection behind a mutex made every page wait for the slowest
+/// read). SQLite (WAL) lets them read concurrently and serializes writes itself. Long-running work (scans,
+/// plan application) opens its own connections.
+#[derive(Default)]
+struct StorePool {
+    idle: Mutex<Vec<Stores>>,
+    /// Held shared while a connection is borrowed; the index repair holds it exclusively so that no
+    /// connection of this process is open while the index files are moved (Windows cannot move an open file).
+    borrowed: RwLock<()>,
+}
+
+/// Idle connections kept for reuse; more are opened when more calls run at once, and closed afterwards.
+const POOL_IDLE_MAX: usize = 4;
+
 pub struct AppState {
     pub store_dir: Option<PathBuf>,
     pub startup: StartupInfo,
-    /// Shared connections for queries and short writes (index + audit). Long-running work
-    /// (scans, plan application) opens its own connections.
-    stores: Mutex<Option<Stores>>,
+    stores: StorePool,
     pub roots: Mutex<RootRegistry>,
     pub active: Mutex<Option<ActiveScan>>,
     summaries: Mutex<HashMap<(String, u32, u64), SummaryDto>>,
@@ -134,8 +149,8 @@ impl AppState {
         let diag = store_dir.as_deref().map(|d| Arc::new(cm_app::diag::Service::new(d, cm_platform::credentials::os_store())));
         AppState {
             store_dir,
-            startup: StartupInfo { bypass_privileges, store_problem, interrupted, operations_to_reconcile },
-            stores: Mutex::new(opened),
+            startup: StartupInfo { bypass_privileges, store_problem: Mutex::new(store_problem), interrupted, operations_to_reconcile },
+            stores: StorePool { idle: Mutex::new(opened.into_iter().collect()), borrowed: RwLock::new(()) },
             roots: Mutex::new(RootRegistry::default()),
             active: Mutex::new(None),
             summaries: Mutex::new(HashMap::new()),
@@ -148,14 +163,63 @@ impl AppState {
         }
     }
 
-    /// Run `f` with the shared connections, opening them on first use.
+    /// Run `f` with a connection of the pool (an idle one, or a new one when every connection is in use).
+    /// No lock is held while `f` runs, so calls never wait for each other here. `f` must not call
+    /// `with_stores` again (it has the connection it needs).
     pub fn with_stores<T>(&self, f: impl FnOnce(&Stores) -> IpcResult<T>) -> IpcResult<T> {
-        let mut guard = lock(&self.stores);
-        if guard.is_none() {
-            let dir = self.store_dir.as_ref().ok_or_else(no_store)?;
-            *guard = Some(Stores::open(dir).map_err(IpcError::from)?);
+        let _borrowed = self.stores.borrowed.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let idle = lock(&self.stores.idle).pop();
+        let stores = match idle {
+            Some(s) => s,
+            None => Stores::open(self.store_dir.as_ref().ok_or_else(no_store)?).map_err(IpcError::from)?,
+        };
+        let out = f(&stores);
+        let mut idle = lock(&self.stores.idle);
+        if idle.len() < POOL_IDLE_MAX {
+            idle.push(stores);
         }
-        f(guard.as_ref().expect("opened above"))
+        out
+    }
+
+    /// The store problem to show: the one found at startup, unless an index repair has resolved it since.
+    pub fn store_problem(&self) -> Option<IpcError> {
+        lock(&self.startup.store_problem).clone()
+    }
+
+    /// `repair_index` (BUG-WFA-01 / NEW-04): `cleanmanager doctor --repair-index` from the desktop. Refused while
+    /// this process hosts a scan or a plan application (they hold their own connections); otherwise every
+    /// pooled connection is closed (waiting for calls that are using one) and the same `cm_app` repair runs.
+    pub fn repair_index(&self) -> IpcResult<cm_app::index_repair::IndexRepairReport> {
+        let dir = self.store_dir()?.to_path_buf();
+        if let Some((scan_id, _)) = self.active_running() {
+            return Err(IpcError::new(ErrorCode::Conflict, "scan_running", format!("Scan {scan_id} is still running; wait for it or cancel it before repairing the index")));
+        }
+        let running_operation = lock(&self.apply).as_ref().filter(|a| !a.done.load(Ordering::Acquire)).map(|a| a.operation_id.clone());
+        if let Some(operation_id) = running_operation {
+            return Err(IpcError::new(ErrorCode::Conflict, "operation_running", format!("Operation {operation_id} is still running; wait for it before repairing the index")));
+        }
+        let report = {
+            let _exclusive = self.stores.borrowed.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            lock(&self.stores.idle).clear();
+            cm_app::index_repair::repair(&dir).map_err(|e| match e {
+                cm_app::index_repair::RepairError::Busy(e) => IpcError::new(
+                    ErrorCode::Conflict,
+                    "index_busy",
+                    format!("{e}. Another CleanManager process (a running scan or the cleanmanager command line) may hold the index open; close it and repair again. Nothing was changed."),
+                ),
+                cm_app::index_repair::RepairError::Store(e) => e.into(),
+            })?
+        };
+        // The index is usable now (repaired, or it passed the full check): its startup problem no longer applies.
+        // Results read from the old index are dropped with it.
+        let mut problem = lock(&self.startup.store_problem);
+        if problem.as_ref().is_some_and(|p| p.code == ErrorCode::IndexUnavailable) {
+            *problem = None;
+        }
+        drop(problem);
+        lock(&self.summaries).clear();
+        *lock(&self.candidates) = None;
+        Ok(report)
     }
 
     /// Run `f` with the shared index connection.
@@ -408,7 +472,7 @@ mod tests {
         }
         std::fs::write(store.join(INDEX_FILE), [0x42u8; 8192]).unwrap();
         let s = AppState::with_store(Some(store.clone()), None, None);
-        let problem = s.startup.store_problem.clone().expect("the index problem is reported");
+        let problem = s.store_problem().expect("the index problem is reported");
         assert_eq!((problem.code, problem.reason), (ErrorCode::IndexUnavailable, "index_corrupt"), "{problem:?}");
         assert!(problem.message.contains("doctor --repair-index"), "{}", problem.message);
         // The audit side of startup still ran: the operation whose host exited awaits reconciliation (GUI-06).
@@ -417,6 +481,78 @@ mod tests {
         assert_eq!(state, "reconciliation_required", "history is readable while the index is damaged");
         let e = s.with_index(|idx| idx.list_scans(5, None).map_err(IpcError::from)).unwrap_err();
         assert_eq!(e.reason, "index_corrupt");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// NEW-01: a call that is still using its connection (a long read) never blocks another page's read.
+    #[test]
+    fn a_long_store_call_does_not_block_other_calls() {
+        let base = std::env::temp_dir().join(format!("cm-desktop-pool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let s = Arc::new(AppState::with_store(Some(base.join("store")), None, None));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let long = {
+            let s = s.clone();
+            std::thread::spawn(move || {
+                s.with_index(|idx| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(idx.list_scans(1, None)?.0.len())
+                })
+            })
+        };
+        entered_rx.recv().unwrap();
+        // While the first call holds its connection, others get their own and finish.
+        for _ in 0..3 {
+            assert_eq!(s.with_index(|idx| Ok(idx.list_scans(5, None)?.0.len())).unwrap(), 0);
+            assert_eq!(s.with_stores(|st| Ok(st.audit.operations_page(5, None)?.0.len())).unwrap(), 0);
+        }
+        release_tx.send(()).unwrap();
+        assert_eq!(long.join().unwrap().unwrap(), 0);
+        assert!(lock(&s.stores.idle).len() <= POOL_IDLE_MAX);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// BUG-WFA-01 / NEW-04 from the desktop: the repair needs confirmation, waits for no connection of its own
+    /// (the pool is closed first, so Windows can move the file), keeps history, and clears the startup problem.
+    #[test]
+    fn repair_index_moves_a_damaged_index_aside_and_clears_the_startup_problem() {
+        let base = std::env::temp_dir().join(format!("cm-desktop-repair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = base.join("store");
+        {
+            let stores = Stores::open(&store).unwrap();
+            let host = cm_core::host::HostRef { kind: "cli".into(), pid: 0x7FFF_FFF0, started_at: "2026-10-22T00:00:00Z".into() };
+            stores.audit.begin_operation("op1", "p1", "d", "k", &host, "2026-10-22T00:00:00Z").unwrap();
+        }
+        let healthy = AppState::with_store(Some(store.clone()), None, None);
+        // The startup connection is pooled and open: the repair closes it before checking.
+        healthy.with_index(|idx| Ok(idx.list_scans(1, None)?.0.len())).unwrap();
+        let r = healthy.repair_index().unwrap();
+        assert_eq!((r.status, r.previous_state), ("not_needed", "healthy"));
+        drop(healthy);
+
+        std::fs::write(store.join(INDEX_FILE), [0x42u8; 8192]).unwrap();
+        let s = AppState::with_store(Some(store.clone()), None, None);
+        assert_eq!(s.store_problem().map(|p| p.reason), Some("index_corrupt"));
+        // A scan hosted here holds its own connection: refused, nothing changes.
+        *lock(&s.active) = Some(ActiveScan { scan_id: "s_busy".into(), done: Arc::new(AtomicBool::new(false)) });
+        let e = s.repair_index().unwrap_err();
+        assert_eq!((e.code, e.reason), (ErrorCode::Conflict, "scan_running"));
+        assert!(s.store_problem().is_some());
+        *lock(&s.active) = None;
+
+        let r = s.repair_index().unwrap();
+        assert_eq!((r.status, r.previous_state, r.kept_files.len()), ("repaired", "corrupt", 1), "{r:?}");
+        assert!(r.kept_files[0].contains("index.db.damaged-"), "{r:?}");
+        assert_eq!(std::fs::read(&r.kept_files[0]).unwrap(), [0x42u8; 8192], "kept byte for byte");
+        assert!(s.store_problem().is_none(), "the startup problem no longer applies");
+        assert_eq!(s.with_index(|idx| Ok(idx.list_scans(5, None)?.0.len())).unwrap(), 0, "an empty index replaced it");
+        let state = s.with_stores(|st| st.audit.operation_state("op1").map_err(IpcError::from)).unwrap();
+        assert_eq!(state, "reconciliation_required", "history is untouched");
         drop(s);
         let _ = std::fs::remove_dir_all(&base);
     }

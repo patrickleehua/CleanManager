@@ -428,3 +428,37 @@ fn a_real_volume_with_its_recycle_bin_turned_off_refuses_trash_plans() {
     assert_eq!(code, 0, "{plan}");
     assert!(data.exists() && vol.join("Temp").join("old.log").exists());
 }
+
+/// WFA-113 / NEW-11: a cache folder emptied by an earlier cleanup (only an empty folder left inside) is not a candidate,
+/// so it is never default-selected; a selection that is left with nothing to act on is refused as an empty selection
+/// (`policy_denied`, exit 3) and no zero-action plan is stored.
+#[test]
+fn an_emptied_folder_is_not_planned_and_an_empty_selection_makes_no_plan() {
+    let fx = Fx::new("emptied");
+    let d3d = fx.local.join("D3DSCache");
+    std::fs::create_dir_all(d3d.join("emptied").join("sub")).unwrap();
+    write(&d3d.join("full").join("blob.bin"), 4096);
+    let sid = fx.scan(&fx.local);
+    let (code, analysis) = fx.cli(&["analyze", "--scan", &sid]);
+    assert_eq!(code, 0, "{analysis}");
+    let set = analysis["candidate_set_id"].as_str().unwrap().to_owned();
+    let (_, page) = fx.cli(&["candidates", "list", "--set", &set]);
+    let paths: Vec<&str> = page["items"].as_array().unwrap().iter().map(|i| i["path"]["display"].as_str().unwrap()).collect();
+    assert!(paths.iter().any(|p| p.ends_with(r"\full")) && !paths.iter().any(|p| p.ends_with(r"\emptied")), "{paths:?}");
+    let (code, plan) = fx.cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--all-default-selected"]);
+    assert_eq!(code, 0, "{plan}");
+    assert!(!plan["body"]["items"].as_array().unwrap().is_empty() && planned(&plan).len() == 1, "{plan}");
+
+    // Only emptied folders left: nothing to plan, and nothing is stored.
+    std::fs::remove_dir_all(d3d.join("full")).unwrap();
+    let sid = fx.scan(&fx.local);
+    let (_, analysis) = fx.cli(&["analyze", "--scan", &sid]);
+    let set = analysis["candidate_set_id"].as_str().unwrap().to_owned();
+    let before = fx.plans();
+    let (code, err) = fx.cli(&["plan", "create", "--set", &set, "--mode", "quarantine", "--all-default-selected"]);
+    assert_eq!((code, err["code"].as_str()), (3, Some("policy_denied")), "{err}");
+    assert!(err["message"].as_str().unwrap().starts_with("empty selection"), "{err}");
+    let (code, err) = fx.cli(&["clean", "--scan", &sid, "--mode", "quarantine", "--non-interactive"]);
+    assert_eq!((code, err["code"].as_str()), (3, Some("policy_denied")), "{err}");
+    assert_eq!(fx.plans(), before, "no zero-action plan was stored");
+}

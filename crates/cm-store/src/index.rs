@@ -9,9 +9,16 @@
 //! program cannot use) is reported as `IndexCorrupt`/`IndexIncompatible` (protocol code
 //! `index_unavailable`) by every call that needs it, until `Stores::repair_index` moves it aside.
 //! Integrity checks run when due, not on every open (see [`crate::integrity`]).
+//!
+//! Status and summary reads never load a revision (NEW-01): `revision_summaries` keeps the entry and
+//! unread-range counts (maintained per batch while staging, recounted at publish) and `subtree_totals` the
+//! overlap-free total of every scan root and every large directory, both written in the publish
+//! transaction from the same in-memory tree the directory aggregates come from. They are derived data in
+//! additive tables (no schema version change): a revision published by an older program has no rows and is
+//! counted or walked through the parent index instead, with the same result.
 
 use std::cell::{OnceCell, RefCell};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -87,7 +94,24 @@ CREATE TABLE IF NOT EXISTS skipped (
     scan_id TEXT NOT NULL, revision INTEGER NOT NULL, parent_entry_id INTEGER,
     path_raw BLOB NOT NULL, reason TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS revision_summaries (
+    scan_id TEXT NOT NULL, revision INTEGER NOT NULL,
+    entries INTEGER NOT NULL, skipped INTEGER NOT NULL, shared_objects INTEGER,
+    PRIMARY KEY (scan_id, revision)
+) STRICT;
+CREATE TABLE IF NOT EXISTS subtree_totals (
+    scan_id TEXT NOT NULL, revision INTEGER NOT NULL, entry_id INTEGER NOT NULL,
+    covered_entries INTEGER NOT NULL, unread_ranges INTEGER NOT NULL,
+    logical_known_be BLOB NOT NULL, logical_unknown INTEGER NOT NULL,
+    allocated_known_be BLOB NOT NULL, allocated_unknown INTEGER NOT NULL,
+    PRIMARY KEY (scan_id, revision, entry_id)
+) STRICT;
 ";
+
+/// Directories whose subtree holds at least this many entries, and every scan root, get a stored subtree
+/// total when their revision is published (`subtree_totals`); a smaller subtree is walked on demand, so no
+/// folder total ever reads more than this many entries of a revision this program published.
+pub const STORED_TOTAL_MIN_ENTRIES: u64 = 256;
 
 fn be(v: Option<u64>) -> Option<Vec<u8>> {
     v.map(|n| n.to_be_bytes().to_vec())
@@ -550,6 +574,12 @@ impl IndexStore {
         self.with(|i| i.summarize(scan_id, entry_ids))
     }
 
+    /// The full in-memory computation `summarize` used to be (the reference for its tests).
+    #[cfg(test)]
+    pub(crate) fn summarize_full(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
+        self.with(|i| i.summarize_full(scan_id, entry_ids))
+    }
+
     /// One entry of the published revision by id, with its full raw path.
     pub fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
         self.with(|i| i.get_entry(scan_id, entry_id))
@@ -565,6 +595,23 @@ impl IndexStore {
     pub fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
         self.with(|i| i.folder_total(scan_id, entry_id))
     }
+
+    /// The direct children of `parent` in `revision` other than `except`, added up plainly (the treemap's
+    /// "rest" tile): one unsorted read of their sizes, at most `budget` children.
+    pub fn children_rest(&self, scan_id: &str, revision: u32, parent: u64, except: &BTreeSet<u64>, budget: u64) -> Result<ChildrenRest> {
+        self.with(|i| i.children_rest(scan_id, revision, parent, except, budget))
+    }
+}
+
+/// Plain totals of a set of sibling entries (no overlap folding: each child's own logical size).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub struct ChildrenRest {
+    pub count: u64,
+    /// Sum of the known sizes; u128 cannot overflow for any count of u64 values.
+    pub known_logical: u128,
+    pub unknown_count: u64,
+    /// False when more than the budget of children exist (the totals cover the first `budget` read).
+    pub complete: bool,
 }
 
 impl Index {
@@ -627,6 +674,8 @@ impl Index {
             ],
         )?;
         tx.execute("INSERT INTO revisions(scan_id,revision,status) VALUES(?1,?2,'staging')", params![init.scan_id, revision])?;
+        // Counted per batch from here on, so a status read while the scan runs never counts rows.
+        tx.execute("INSERT OR REPLACE INTO revision_summaries(scan_id,revision,entries,skipped) VALUES(?1,?2,0,0)", params![init.scan_id, revision])?;
         tx.commit()?;
         Ok(revision)
     }
@@ -672,6 +721,9 @@ impl Index {
             for x in skipped {
                 s.execute(params![scan_id, revision, x.parent_entry_id.map(|p| p as i64), raw_of(&x.path), enum_text(&x.reason)])?;
             }
+            // A revision begun by an older program has no counter row; its status reads count instead.
+            tx.prepare_cached("UPDATE revision_summaries SET entries=entries+?3, skipped=skipped+?4 WHERE scan_id=?1 AND revision=?2")?
+                .execute(params![scan_id, revision, entries.len() as i64, skipped.len() as i64])?;
         }
         tx.commit()?;
         Ok(())
@@ -736,7 +788,7 @@ impl Index {
             other => other,
         };
         let completeness = if state == ScanState::Completed { "verified_scope" } else { "partial_scope" };
-        compute_aggregates(tx, scan_id, revision)?;
+        compute_aggregates(tx, scan_id, revision, skipped)?;
         tx.execute("UPDATE revisions SET status='published' WHERE scan_id=?1 AND revision=?2", params![scan_id, revision])?;
         tx.execute(
             "UPDATE scans SET state=?2, completeness=?3, finished_at=?4 WHERE scan_id=?1",
@@ -782,14 +834,18 @@ impl Index {
         Ok(interrupted)
     }
 
+    /// O(1) for revisions this program began or published (stored counts); others are counted (`coalesce`
+    /// evaluates the count only when no stored row exists).
     fn scan_status(&self, scan_id: &str) -> Result<ScanStatusView> {
         let row = self
             .conn
             .query_row(
                 "SELECT s.scope_id, s.state, s.revision, r.status, s.completeness, s.cancel_requested, s.host_kind, s.host_pid,
                         s.host_started_at, s.heartbeat_at,
-                        (SELECT count(*) FROM entries e WHERE e.scan_id=s.scan_id AND e.revision=s.revision),
-                        (SELECT count(*) FROM skipped k WHERE k.scan_id=s.scan_id AND k.revision=s.revision),
+                        coalesce((SELECT c.entries FROM revision_summaries c WHERE c.scan_id=s.scan_id AND c.revision=s.revision),
+                                 (SELECT count(*) FROM entries e WHERE e.scan_id=s.scan_id AND e.revision=s.revision)),
+                        coalesce((SELECT c.skipped FROM revision_summaries c WHERE c.scan_id=s.scan_id AND c.revision=s.revision),
+                                 (SELECT count(*) FROM skipped k WHERE k.scan_id=s.scan_id AND k.revision=s.revision)),
                         s.started_at, s.finished_at, s.platform, s.root_raw
                  FROM scans s JOIN revisions r ON r.scan_id=s.scan_id AND r.revision=s.revision WHERE s.scan_id=?1",
                 [scan_id],
@@ -1012,7 +1068,7 @@ impl Index {
     /// Remove an old revision (retention). Cursors bound to it become stale.
     fn drop_scan(&self, scan_id: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        for table in ["entries", "objects", "skipped", "revisions", "scans"] {
+        for table in ["entries", "objects", "skipped", "subtree_totals", "revision_summaries", "revisions", "scans"] {
             tx.execute(&format!("DELETE FROM {table} WHERE scan_id=?1"), [scan_id])?;
         }
         tx.commit()?;
@@ -1164,14 +1220,203 @@ impl Index {
         })
     }
 
-    /// Overlap-free summary of selected entries in the published revision (IDX-04).
+    /// Overlap-free summary of selected entries in the published revision (IDX-04), without loading the
+    /// revision: selected entries under another selected entry are folded in (parent links, by key), and the
+    /// remaining subtrees are added from their stored totals or walked. Subtrees can only be added when no
+    /// object of the revision has two names (`shared_objects` = 0); otherwise they are walked together so
+    /// an object reached from two of them still counts once.
     fn summarize(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
+        let (revision, _, _) = self.published(scan_id)?;
+        let selected: BTreeSet<u64> = entry_ids.iter().copied().collect();
+        let mut parents: HashMap<u64, Option<u64>> = HashMap::new();
+        for id in &selected {
+            match self.parent_of(scan_id, revision, *id)? {
+                Some(p) => {
+                    parents.insert(*id, p);
+                }
+                None => return Err(StoreError::NotFound(format!("entry {id}"))),
+            }
+        }
+        let mut roots = Vec::new();
+        for id in &selected {
+            if !self.has_selected_ancestor(scan_id, revision, *id, &selected, &mut parents)? {
+                roots.push((*id, parents[id].is_none()));
+            }
+        }
+        let overlapping_selected = (selected.len() - roots.len()) as u64;
+        let additive = roots.len() <= 1 || self.shared_objects(scan_id, revision)? == Some(0);
+        let mut summary = if additive {
+            let mut sum = SelectionSummary::default();
+            for (id, is_root) in &roots {
+                let t = self.subtree_total(scan_id, revision, *id, *is_root)?;
+                sum.logical.known = sum.logical.known.checked_add(t.logical.known)?;
+                sum.logical.unknown_count += t.logical.unknown_count;
+                sum.allocated.known = sum.allocated.known.checked_add(t.allocated.known)?;
+                sum.allocated.unknown_count += t.allocated.unknown_count;
+                sum.covered_entries += t.covered_entries;
+                sum.unread_ranges += t.unread_ranges;
+            }
+            sum
+        } else {
+            self.walk_totals(scan_id, revision, &roots.iter().map(|(id, _)| *id).collect::<Vec<_>>())?
+        };
+        summary.overlapping_selected = overlapping_selected;
+        Ok(summary)
+    }
+
+    /// `Some(parent)` of an entry of the revision, `None` when there is no such entry.
+    fn parent_of(&self, scan_id: &str, revision: u32, entry_id: u64) -> Result<Option<Option<u64>>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT parent_entry_id FROM entries WHERE scan_id=?1 AND revision=?2 AND entry_id=?3")?
+            .query_row(params![scan_id, revision, entry_id as i64], |r| r.get::<_, Option<i64>>(0))
+            .optional()?
+            .map(|p| p.map(|p| p as u64)))
+    }
+
+    /// Whether an ancestor of `id` is selected, following parent links by key (memoized in `parents`).
+    /// A missing parent ends the chain; a cycle (a damaged index) ends it too, never loops.
+    fn has_selected_ancestor(&self, scan_id: &str, revision: u32, id: u64, selected: &BTreeSet<u64>, parents: &mut HashMap<u64, Option<u64>>) -> Result<bool> {
+        let mut seen = BTreeSet::from([id]);
+        let mut cur = parents.get(&id).copied().flatten();
+        while let Some(here) = cur {
+            if selected.contains(&here) {
+                return Ok(true);
+            }
+            if !seen.insert(here) {
+                return Ok(false);
+            }
+            let next = match parents.get(&here) {
+                Some(p) => *p,
+                None => {
+                    let p = self.parent_of(scan_id, revision, here)?.flatten();
+                    parents.insert(here, p);
+                    p
+                }
+            };
+            cur = next;
+        }
+        Ok(false)
+    }
+
+    /// Non-directory objects with more than one name in the revision, as recorded at publish (`None`: not recorded).
+    fn shared_objects(&self, scan_id: &str, revision: u32) -> Result<Option<u64>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT shared_objects FROM revision_summaries WHERE scan_id=?1 AND revision=?2")?
+            .query_row(params![scan_id, revision], |r| r.get::<_, Option<i64>>(0))
+            .optional()?
+            .flatten()
+            .map(|n| n as u64))
+    }
+
+    /// The stored total of one subtree, if its revision's publish (or an earlier read) recorded one.
+    fn stored_total(&self, scan_id: &str, revision: u32, entry_id: u64) -> Result<Option<SelectionSummary>> {
+        type Row = (i64, i64, Vec<u8>, i64, Vec<u8>, i64);
+        let row: Option<Row> = self
+            .conn
+            .prepare_cached(
+                "SELECT covered_entries, unread_ranges, logical_known_be, logical_unknown, allocated_known_be, allocated_unknown
+                 FROM subtree_totals WHERE scan_id=?1 AND revision=?2 AND entry_id=?3",
+            )?
+            .query_row(params![scan_id, revision, entry_id as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            .optional()?;
+        let Some((covered, unread, lk, lu, ak, au)) = row else { return Ok(None) };
+        let known = |b: Vec<u8>| from_be(Some(b)).map(|v| Bytes(v.unwrap_or(0)));
+        Ok(Some(SelectionSummary {
+            logical: KnownTotal { known: known(lk)?, unknown_count: lu as u64 },
+            allocated: KnownTotal { known: known(ak)?, unknown_count: au as u64 },
+            covered_entries: covered as u64,
+            overlapping_selected: 0,
+            unread_ranges: unread as u64,
+        }))
+    }
+
+    /// One existing entry's subtree total: stored, or walked. A scan root walked here belongs to a revision an
+    /// older program published; its total and counts are then recorded (best effort) so the next read is O(1).
+    fn subtree_total(&self, scan_id: &str, revision: u32, entry_id: u64, is_root: bool) -> Result<SelectionSummary> {
+        if let Some(s) = self.stored_total(scan_id, revision, entry_id)? {
+            return Ok(s);
+        }
+        let s = self.walk_totals(scan_id, revision, &[entry_id])?;
+        if is_root {
+            self.record_root_total(scan_id, revision, entry_id, &s);
+        }
+        Ok(s)
+    }
+
+    /// Best effort, like `integrity::record_ok`: a store that cannot take the write now (read-only media, a
+    /// publishing scan holding the write lock) is simply walked again next time.
+    fn record_root_total(&self, scan_id: &str, revision: u32, entry_id: u64, s: &SelectionSummary) {
+        let _ = self.conn.busy_timeout(std::time::Duration::from_millis(250));
+        let _ = self.conn.execute(
+            "INSERT OR IGNORE INTO subtree_totals(scan_id,revision,entry_id,covered_entries,unread_ranges,logical_known_be,logical_unknown,allocated_known_be,allocated_unknown)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![scan_id, revision, entry_id as i64, s.covered_entries as i64, s.unread_ranges as i64, be(Some(s.logical.known.0)),
+                s.logical.unknown_count as i64, be(Some(s.allocated.known.0)), s.allocated.unknown_count as i64],
+        );
+        let _ = self.conn.execute(
+            "INSERT OR IGNORE INTO revision_summaries(scan_id,revision,entries,skipped,shared_objects)
+             SELECT ?1, ?2, (SELECT count(*) FROM entries WHERE scan_id=?1 AND revision=?2), (SELECT count(*) FROM skipped WHERE scan_id=?1 AND revision=?2), NULL",
+            params![scan_id, revision],
+        );
+        let _ = self.conn.busy_timeout(std::time::Duration::from_secs(5));
+    }
+
+    /// Unread ranges per entry of one revision.
+    fn skipped_under(&self, scan_id: &str, revision: u32) -> Result<HashMap<u64, u64>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT parent_entry_id, count(*) FROM skipped WHERE scan_id=?1 AND revision=?2 AND parent_entry_id IS NOT NULL GROUP BY parent_entry_id",
+        )?;
+        let rows = stmt.query_map(params![scan_id, revision], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Overlap-free total of disjoint subtrees, walked through the parent index: one recursive query per root,
+    /// each object counted once across all of them, unread ranges counted as unknown. Reads the subtrees only.
+    fn walk_totals(&self, scan_id: &str, revision: u32, roots: &[u64]) -> Result<SelectionSummary> {
+        let skipped = self.skipped_under(scan_id, revision)?;
+        let mut summary = SelectionSummary::default();
+        let mut objects = HashSet::new();
+        let _cache = CacheBoost::new(&self.conn);
+        let mut stmt = self.conn.prepare_cached(WALK_SQL)?;
+        for root in roots {
+            let mut rows = stmt.query(params![scan_id, revision, *root as i64])?;
+            while let Some(r) = rows.next()? {
+                let id = r.get::<_, i64>(0)? as u64;
+                let obj = r.get::<_, i64>(2)? as u64;
+                if !r.get::<_, bool>(3)? {
+                    return Err(StoreError::IndexCorrupt(format!("entry references missing object {obj}")));
+                }
+                summary.covered_entries += 1;
+                summary.unread_ranges += skipped.get(&id).copied().unwrap_or(0);
+                if !r.get::<_, bool>(1)? && objects.insert(obj) {
+                    summary.logical.add(from_be(r.get(4)?)?.map(Bytes))?;
+                    summary.allocated.add(from_be(r.get(5)?)?.map(Bytes))?;
+                }
+            }
+        }
+        summary.logical.unknown_count += summary.unread_ranges;
+        summary.allocated.unknown_count += summary.unread_ranges;
+        Ok(summary)
+    }
+
+    /// The previous `summarize`, kept as the reference the stored and walked totals are compared with: it
+    /// loads the whole revision into memory.
+    #[cfg(test)]
+    fn summarize_full(&self, scan_id: &str, entry_ids: &[u64]) -> Result<SelectionSummary> {
         let (revision, _, _) = self.published(scan_id)?;
         let tree = Tree::load(&self.conn, scan_id, revision)?;
         let selected: BTreeSet<u64> = entry_ids.iter().copied().collect();
         for id in &selected {
             if !tree.parent.contains_key(id) {
                 return Err(StoreError::NotFound(format!("entry {id}")));
+            }
+        }
+        let mut children: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (id, parent) in &tree.parent {
+            if let Some(p) = parent {
+                children.entry(*p).or_default().push(*id);
             }
         }
         let mut summary = SelectionSummary::default();
@@ -1189,7 +1434,7 @@ impl Index {
                 summary.allocated.add(tree.allocated[&obj].map(Bytes))?;
             }
             summary.unread_ranges += tree.skipped_under.get(&id).copied().unwrap_or(0);
-            if let Some(children) = tree.children.get(&id) {
+            if let Some(children) = children.get(&id) {
                 stack.extend(children.iter().copied());
             }
         }
@@ -1256,50 +1501,90 @@ impl Index {
         Ok(out)
     }
 
-    /// Overlap-free total of one entry's subtree: the same result as `summarize(&[id])`,
-    /// computed by walking only that subtree through the parent index instead of loading the
-    /// whole revision into memory. Objects count once; unread ranges count as unknown.
+    /// Overlap-free total of one entry's subtree: the same result as `summarize(&[id])`. A scan root or a
+    /// large directory of a revision this program published is one keyed read of its stored total; anything
+    /// else walks only that subtree through the parent index (NEW-01: SQLite planned the previous walk as one
+    /// pass over the whole revision per subtree entry — quadratic in the scan's size — and the desktop
+    /// overview read the root this way). Objects count once; unread ranges count as unknown.
     fn folder_total(&self, scan_id: &str, entry_id: u64) -> Result<SelectionSummary> {
         let (revision, _, _) = self.published(scan_id)?;
-        let id = entry_id as i64;
-        let exists: Option<i64> = self
-            .conn
-            .query_row("SELECT 1 FROM entries WHERE scan_id=?1 AND revision=?2 AND entry_id=?3", params![scan_id, revision, id], |r| r.get(0))
-            .optional()?;
-        if exists.is_none() {
-            return Err(StoreError::NotFound(format!("entry {entry_id}")));
+        if let Some(s) = self.stored_total(scan_id, revision, entry_id)? {
+            return Ok(s);
         }
-        const SUBTREE: &str = "WITH RECURSIVE sub(id) AS (
-                SELECT ?3
-                UNION ALL
-                SELECT e.entry_id FROM entries e JOIN sub ON e.scan_id=?1 AND e.revision=?2 AND e.parent_entry_id=sub.id
-            )";
-        let covered = self.conn.query_row(&format!("{SUBTREE} SELECT count(*) FROM sub"), params![scan_id, revision, id], |r| r.get::<_, i64>(0))? as u64;
-        let mut summary = SelectionSummary { covered_entries: covered, ..SelectionSummary::default() };
-        {
-            let mut stmt = self.conn.prepare(&format!(
-                "{SUBTREE} SELECT o.logical_be, o.allocated_be FROM objects o
-                 WHERE o.scan_id=?1 AND o.revision=?2 AND o.object_id IN (
-                     SELECT e.object_id FROM entries e JOIN sub ON e.scan_id=?1 AND e.revision=?2 AND e.entry_id=sub.id WHERE e.kind != 'directory')"
-            ))?;
-            let mut rows = stmt.query(params![scan_id, revision, id])?;
-            while let Some(r) = rows.next()? {
-                summary.logical.add(from_be(r.get(0)?)?.map(Bytes))?;
-                summary.allocated.add(from_be(r.get(1)?)?.map(Bytes))?;
+        let parent = self.parent_of(scan_id, revision, entry_id)?.ok_or_else(|| StoreError::NotFound(format!("entry {entry_id}")))?;
+        self.subtree_total(scan_id, revision, entry_id, parent.is_none())
+    }
+
+    fn children_rest(&self, scan_id: &str, revision: u32, parent: u64, except: &BTreeSet<u64>, budget: u64) -> Result<ChildrenRest> {
+        let (published, _, _) = self.published(scan_id)?;
+        if published != revision {
+            return Err(StoreError::CursorStale("the scan revision changed while reading this layer".into()));
+        }
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT entry_id, sort_logical_be FROM entries WHERE scan_id=?1 AND revision=?2 AND parent_entry_id=?3 LIMIT ?4",
+        )?;
+        let limit = i64::try_from(budget.saturating_add(except.len() as u64).saturating_add(1)).unwrap_or(i64::MAX);
+        let mut rows = stmt.query(params![scan_id, revision, parent as i64, limit])?;
+        let mut rest = ChildrenRest { complete: true, ..ChildrenRest::default() };
+        while let Some(r) = rows.next()? {
+            if except.contains(&(r.get::<_, i64>(0)? as u64)) {
+                continue;
+            }
+            if rest.count == budget {
+                rest.complete = false;
+                break;
+            }
+            rest.count += 1;
+            match from_be(r.get(1)?)? {
+                Some(v) => rest.known_logical += u128::from(v),
+                None => rest.unknown_count += 1,
             }
         }
-        summary.unread_ranges = self.conn.query_row(
-            &format!("{SUBTREE} SELECT count(*) FROM skipped k WHERE k.scan_id=?1 AND k.revision=?2 AND k.parent_entry_id IN (SELECT id FROM sub)"),
-            params![scan_id, revision, id],
-            |r| r.get::<_, i64>(0),
-        )? as u64;
-        for _ in 0..summary.unread_ranges {
-            summary.logical.add(None)?;
-            summary.allocated.add(None)?;
-        }
-        Ok(summary)
+        Ok(rest)
     }
 }
+
+/// Page cache (KiB) a whole-subtree read may use while it runs (`CacheBoost`).
+const LARGE_READ_CACHE_KIB: i64 = 256 * 1024;
+
+/// A larger SQLite page cache for one large read or write pass, restored when dropped. Walking a subtree
+/// and computing a revision's aggregates touch index and table pages at random; with the default 2 MB cache
+/// most of them are read again and again (about 3x slower at 1.5 M rows). The cache only grows as pages are
+/// read and shrinks back afterwards.
+struct CacheBoost<'a> {
+    conn: &'a Connection,
+    previous: Option<i64>,
+}
+
+impl<'a> CacheBoost<'a> {
+    fn new(conn: &'a Connection) -> Self {
+        let previous = conn.query_row("PRAGMA cache_size", [], |r| r.get::<_, i64>(0)).ok();
+        if previous.is_some() {
+            let _ = conn.pragma_update(None, "cache_size", -LARGE_READ_CACHE_KIB);
+        }
+        CacheBoost { conn, previous }
+    }
+}
+
+impl Drop for CacheBoost<'_> {
+    fn drop(&mut self) {
+        if let Some(p) = self.previous {
+            let _ = self.conn.pragma_update(None, "cache_size", p);
+        }
+    }
+}
+
+/// One subtree with each entry's object sizes (`?3` = its root). `CROSS JOIN` keeps the queued row as the
+/// outer loop of every recursive step, so each step is one `entries_parent` lookup. With a plain join SQLite's
+/// planner (no statistics) chose to scan the revision's entries for every queued row instead, which made
+/// folder totals quadratic in the size of the scan (NEW-01). The outer join keeps the subtree outer as well.
+const WALK_SQL: &str = "WITH RECURSIVE sub(id, kind, obj) AS (
+         SELECT entry_id, kind, object_id FROM entries WHERE scan_id=?1 AND revision=?2 AND entry_id=?3
+         UNION ALL
+         SELECT e.entry_id, e.kind, e.object_id FROM sub CROSS JOIN entries e ON e.scan_id=?1 AND e.revision=?2 AND e.parent_entry_id=sub.id
+     )
+     SELECT s.id, s.kind = 'directory', s.obj, o.object_id IS NOT NULL, o.logical_be, o.allocated_be
+     FROM sub s LEFT JOIN objects o ON o.scan_id=?1 AND o.revision=?2 AND o.object_id=s.obj";
 
 /// The stored report of a scan whose host exited: the host's own report when it recorded one (its
 /// backend facts and issues are kept), marked `interrupted` and carrying `host_exited` exactly once.
@@ -1365,10 +1650,9 @@ fn to_item(row: &ItemRow, paths: &mut PathCache<'_>) -> Result<EntryItem> {
     })
 }
 
-/// In-memory view of one revision used for aggregation and selection summaries.
+/// In-memory view of one revision, loaded once when it is published (aggregates and stored totals).
 struct Tree {
     parent: HashMap<u64, Option<u64>>,
-    children: HashMap<u64, Vec<u64>>,
     object: HashMap<u64, u64>,
     kind: HashMap<u64, ObjectKind>,
     logical: HashMap<u64, Option<u64>>,
@@ -1380,7 +1664,6 @@ impl Tree {
     fn load(conn: &Connection, scan_id: &str, revision: u32) -> Result<Self> {
         let mut t = Tree {
             parent: HashMap::new(),
-            children: HashMap::new(),
             object: HashMap::new(),
             kind: HashMap::new(),
             logical: HashMap::new(),
@@ -1391,11 +1674,7 @@ impl Tree {
         let mut rows = stmt.query(params![scan_id, revision])?;
         while let Some(r) = rows.next()? {
             let id = r.get::<_, i64>(0)? as u64;
-            let parent = r.get::<_, Option<i64>>(1)?.map(|p| p as u64);
-            t.parent.insert(id, parent);
-            if let Some(p) = parent {
-                t.children.entry(p).or_default().push(id);
-            }
+            t.parent.insert(id, r.get::<_, Option<i64>>(1)?.map(|p| p as u64));
             t.object.insert(id, r.get::<_, i64>(2)? as u64);
             t.kind.insert(id, enum_parse(&r.get::<_, String>(3)?)?);
         }
@@ -1434,7 +1713,14 @@ impl Tree {
 /// Directory subtree totals: each object is counted once per directory subtree (hard links
 /// inside one subtree do not double count); unknown sizes and unread ranges are counted as
 /// unknown descendants, never as zero.
-fn compute_aggregates(conn: &Connection, scan_id: &str, revision: u32) -> Result<()> {
+///
+/// From the same tree it records what status and summary reads need without loading the revision again:
+/// the revision's counts (`revision_summaries`, with `skipped` = all its unread-range rows) and, for every
+/// scan root and every directory whose subtree has at least [`STORED_TOTAL_MIN_ENTRIES`] entries, the
+/// overlap-free total `summarize(&[dir])` returns (`subtree_totals`). A directory whose total does not fit
+/// in u64 gets no row: reading it walks the subtree and reports the overflow, as `summarize` does.
+fn compute_aggregates(conn: &Connection, scan_id: &str, revision: u32, skipped_rows: i64) -> Result<()> {
+    let _cache = CacheBoost::new(conn);
     let tree = Tree::load(conn, scan_id, revision)?;
     let mut entries_of_object: HashMap<u64, Vec<u64>> = HashMap::new();
     for (entry, obj) in &tree.object {
@@ -1481,12 +1767,45 @@ fn compute_aggregates(conn: &Connection, scan_id: &str, revision: u32) -> Result
             }
         }
     }
+    let mut unread: HashMap<u64, u64> = HashMap::new();
     for (dir, count) in &tree.skipped_under {
         for d in std::iter::once(*dir).chain(tree.ancestors(*dir)) {
             *unknown.entry(d).or_default() += count;
             *alloc_unknown.entry(d).or_default() += count;
+            *unread.entry(d).or_default() += count;
         }
     }
+    // Entries per directory subtree, the directory itself included (`covered_entries`).
+    let mut covered: HashMap<u64, u64> = HashMap::new();
+    for (entry, kind) in &tree.kind {
+        let own = (*kind == ObjectKind::Directory).then_some(*entry);
+        for d in own.into_iter().chain(tree.ancestors(*entry)) {
+            *covered.entry(d).or_default() += 1;
+        }
+    }
+    {
+        let mut ins = conn.prepare_cached(
+            "INSERT OR REPLACE INTO subtree_totals(scan_id,revision,entry_id,covered_entries,unread_ranges,logical_known_be,logical_unknown,allocated_known_be,allocated_unknown)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        )?;
+        for (entry, kind) in &tree.kind {
+            let n = covered.get(entry).copied().unwrap_or(0);
+            let is_root = tree.parent.get(entry).copied().flatten().is_none();
+            if *kind != ObjectKind::Directory || overflowed.contains(entry) || (n < STORED_TOTAL_MIN_ENTRIES && !is_root) {
+                continue;
+            }
+            let get = |m: &HashMap<u64, u64>| m.get(entry).copied().unwrap_or(0);
+            ins.execute(params![
+                scan_id, revision, *entry as i64, n as i64, get(&unread) as i64, be(Some(get(&logical))), get(&unknown) as i64,
+                be(Some(get(&allocated))), get(&alloc_unknown) as i64
+            ])?;
+        }
+    }
+    let shared = entries_of_object.values().filter(|e| e.len() > 1).count();
+    conn.execute(
+        "INSERT OR REPLACE INTO revision_summaries(scan_id,revision,entries,skipped,shared_objects) VALUES(?1,?2,?3,?4,?5)",
+        params![scan_id, revision, tree.kind.len() as i64, skipped_rows, shared as i64],
+    )?;
     let mut upd = conn.prepare_cached(
         "UPDATE entries SET sort_logical_be=?3, sort_allocated_be=?4, unknown_descendants=?5 WHERE scan_id=?1 AND revision=?2 AND entry_id=?6",
     )?;

@@ -225,6 +225,7 @@ fn preview_is_exactly_what_is_sent_and_ids_are_shared_across_entries() {
     assert_eq!(header(&seen[0], "x-api-key"), Some(KEY));
     assert_eq!(header(&seen[0], "anthropic-version"), Some("2023-06-01"));
     assert_eq!(seen[0].body, p.payload.body, "the body sent is byte-for-byte the previewed body");
+    assert_eq!((p.payload_bytes, header(&seen[0], "content-length")), (seen[0].body.len() as u64, Some(p.payload_bytes.to_string().as_str())), "WFA-104");
     let r = done.result.as_ref().unwrap();
     // No rule matched this video: reviewable is not available from the model alone.
     assert_eq!(r.effective_recommendation, Recommendation::NeedsContext);
@@ -379,6 +380,12 @@ fn local_openai_compatible_endpoint_without_a_key() {
     let post = seen.iter().find(|x| x.method == "POST").unwrap();
     assert_eq!(post.path, "/v1/chat/completions");
     assert!(header(post, "authorization").is_none(), "no key configured, none sent");
+    // WFA-104: the size the preview shows is the request body's size on the wire, byte for byte (UTF-8 bytes, not
+    // characters: the question and the evidence text are Chinese, so the two differ).
+    assert_eq!(post.body, p.payload.body, "the body sent is the previewed body");
+    assert_eq!(p.payload_bytes, post.body.len() as u64, "preview size = bytes received");
+    assert_eq!(header(post, "content-length"), Some(p.payload_bytes.to_string().as_str()), "preview size = Content-Length");
+    assert!(p.payload.body.chars().count() < post.body.len(), "multi-byte text: characters are not bytes");
     // Plain http to a non-loopback host is refused at configuration time.
     let bad = ProviderConfig { base_url: Some("http://example.com/v1".into()), provider_id: "remote".into(), ..ProviderConfig::anthropic_default() };
     assert!(matches!(s.save_provider(bad, false), Err(DiagAppError::InvalidArgument(_))));

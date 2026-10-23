@@ -267,6 +267,31 @@ fn refuse(code: &'static str, message: impl Into<String>, settings: bool) -> Ref
     Refusal { code, message: message.into(), settings_uri: settings.then_some(SETTINGS_URI) }
 }
 
+/// Why the program a route runs was refused (UNI-03 signer checks, at plan time and again before it runs): the protocol
+/// code, the specific reason word interfaces explain in their own words (`None` = the code says it) and the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramRefusal {
+    pub code: &'static str,
+    pub reason: Option<&'static str>,
+    pub message: String,
+}
+
+impl ProgramRefusal {
+    pub fn new(code: &'static str, message: impl Into<String>) -> ProgramRefusal {
+        ProgramRefusal { code, reason: None, message: message.into() }
+    }
+
+    pub fn because(code: &'static str, reason: &'static str, message: impl Into<String>) -> ProgramRefusal {
+        ProgramRefusal { code, reason: Some(reason), message: message.into() }
+    }
+}
+
+/// Reason words of signer refusals (`policy_denied`; WFA-76): the uninstaller has no valid signature, is signed by
+/// someone other than the recorded publisher, or is not signed by Microsoft where it must be (msiexec, PowerShell).
+pub const UNINSTALLER_UNSIGNED: &str = "uninstaller_unsigned";
+pub const UNINSTALLER_SIGNER_MISMATCH: &str = "uninstaller_signer_mismatch";
+pub const UNINSTALLER_NOT_MICROSOFT_SIGNED: &str = "uninstaller_not_microsoft_signed";
+
 /// UNI-10: classes that never get an uninstall entry, with the official route.
 pub fn protected_refusal(rec: &UninstallRecord) -> Option<Refusal> {
     if rec.mac.is_some() {

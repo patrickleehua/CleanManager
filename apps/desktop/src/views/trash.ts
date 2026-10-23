@@ -11,7 +11,7 @@ import { words } from '../lib/platform';
 import type { Entry, TrashInspection } from '../lib/types';
 import { atLeast, ensureReady, sumSizes, toIpcError } from './kit';
 import { errorText } from './parts';
-import { refusalText as codeRefusalText } from '../lib/codes';
+import { protectionText, refusalText as codeRefusalText } from '../lib/codes';
 import { t } from '../i18n';
 
 const MAX_ENTRIES = 50;
@@ -30,8 +30,23 @@ const REFUSAL: Record<string, string> = {
 function refusalText(i: TrashInspection): string {
   const r = i.refusal;
   if (!r) return '';
+  // WFA-47/63: a link into a protected system location names where it leads.
+  if (r.reason === 'protected' && i.link_target_display) return t('trash.refusal.linkProtected', { target: i.link_target_display });
   // A reason without words here reads through the shared code table (never the host's raw message).
   return REFUSAL[r.reason] ?? codeRefusalText({ reason: r.reason });
+}
+
+/**
+ * NEW-13: why one protected object inside the selection is protected, in words (cm-core manual_trash.rs writes it in
+ * English: a default category, a hard-deny location or check, or one of the person's own entries).
+ */
+export function protectedWhy(reason: string): string {
+  const cls = /^default protection class ([a-z_]+)/.exec(reason);
+  if (cls) return protectionText(cls[1]);
+  if (/^hard-deny/.test(reason)) return t('trash.why.hardDeny');
+  const user = /protected by user entry (\S+)/.exec(reason);
+  if (user) return t('trash.why.userEntry', { id: user[1] });
+  return t('trash.why.other');
 }
 
 /** Opens the review dialog for the selected entries; resolves when it closes. */
@@ -90,14 +105,15 @@ export async function reviewTrash(app: App, scanId: string, entries: Entry[]): P
                   t('trash.protectedCount', { protected_count: ins.protected_count }),
                   ins.protected
                     .slice(0, 3)
-                    .map((p) => t('trash.pathDisplayReason', { path_display: p.path_display, reason: p.reason }))
+                    .map((p) => t('trash.pathDisplayReason', { path_display: p.path_display, reason: protectedWhy(p.reason) }))
                     .join(t('common.clauseSep')),
                   ins.protected_count > 3 ? t('trash.more') : '',
                 )
               : null,
             ins && ins.gap_count ? h('span', { class: 'tr-sub small' }, t('trash.gapCountJoin', { gap_count: ins.gap_count, join: ins.coverage_gaps.slice(0, 2).map((g) => g.path_display).join(t('common.clauseSep')) })) : null,
             ins && ins.holders && ins.holders.length ? h('span', { class: 'tr-sub small' }, t('trash.useJoinSkippedWhen', { join: ins.holders.join(t('common.listSep')) })) : null,
-            ins && !ins.recycle_bin_ready ? h('span', { class: 'why-not' }, ins.recycle_bin_problem ?? t('trash.volumeNoUsableBin', { bin: w.bin })) : null,
+            // WFA-35: the host refuses such an object (`recycle_bin_unavailable`); its own wording stays in the details.
+            ins && !ins.recycle_bin_ready && ins.refusal?.reason !== 'recycle_bin_unavailable' ? h('span', { class: 'why-not' }, t('trash.volumeNoUsableBin', { bin: w.bin })) : null,
           ),
           h('span', { class: 'tr-size num' }, ins ? (ins.logical_bytes === null ? t('common.sizeUnknown') : formatBytes(ins.logical_bytes)) : formatBytes(e.logical_bytes)),
         );

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { explainResult, groupIssues } from './codes';
-import { OPERATION_TEXT, operationBanner, resultIssues, type OperationFacts } from './operationModel';
+import { OPERATION_TEXT, operationBanner, registrationPending, resultIssues, type OperationFacts } from './operationModel';
 import { setPlatform } from './platform';
 import type { Counts, OperationItem } from './types';
 
@@ -66,5 +66,21 @@ describe('P06 per-item issues through the shared issue lines', () => {
     expect(g[1].issue.text).not.toMatch(/Access is denied/);
     expect(g[1].raws[0].message).toBe('Access is denied.');
     expect(g[2].issue).toMatchObject({ known: false, text: '未识别的问题（代码 brand_new_code）' });
+  });
+});
+
+describe('NEW-02: a run this window just started is "starting", not an error', () => {
+  const nf = { code: 'invalid_argument', reason: 'not_found', message: 'not found: op_1' };
+  it('not_found for the run this window started reads as registration still pending', () => {
+    expect(registrationPending(nf, 'op_1', { operationId: 'op_1' })).toBe(true);
+    // After the run ended the id is still this window's run (the late read of a just-finished run).
+    expect(registrationPending(nf, 'op_1', { operationId: 'op_1', error: null })).toBe(true);
+  });
+  it('anything else is a real error: another run, a run that never started, another reason, no run here', () => {
+    expect(registrationPending(nf, 'op_1', { operationId: 'op_2' })).toBe(false);
+    expect(registrationPending(nf, 'op_1', { operationId: 'op_1', error: { code: 'conflict', reason: 'operation_running', message: 'x' } })).toBe(false);
+    expect(registrationPending({ ...nf, reason: 'audit_unavailable' }, 'op_1', { operationId: 'op_1' })).toBe(false);
+    expect(registrationPending(nf, 'op_1', null)).toBe(false);
+    expect(registrationPending(null, 'op_1', { operationId: 'op_1' })).toBe(false);
   });
 });

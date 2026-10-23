@@ -17,6 +17,7 @@ import { LongProgress, ensureReady, noticeLine, toIpcError } from './kit';
 import { emptyState, errorLine, pageHead, pill } from './parts';
 import { notOnThisPlatform, words } from '../lib/platform';
 import { t } from '../i18n';
+import { processPurpose, unidentifiedReason } from '../lib/processWords';
 
 const SORTS: readonly ProcessSort[] = PROCESS_SORTS;
 
@@ -195,7 +196,9 @@ export class ProcessesPage {
         // One column: the detail sits below the list; bring it into view.
         if (window.matchMedia('(max-width: 1180px)').matches) requestAnimationFrame(() => document.getElementById('proc-detail-title')?.scrollIntoView({ block: 'start' }));
       });
-      const sub = p.identified ? (p.purpose ?? p.owner_app ?? '') : '';
+      // NEW-13: the purpose in the interface language; the host's English text only as the tooltip.
+      const purpose = processPurpose(p);
+      const sub = p.identified ? (purpose?.text ?? p.owner_app ?? '') : '';
       return h(
         'tr',
         { class: this.focus === p.pid ? 'selected' : '' },
@@ -204,7 +207,7 @@ export class ProcessesPage {
           'td',
           { class: 'col-object' },
           h('span', { class: 'obj-name proc-name' }, name, h('span', { class: 'muted small num' }, `PID ${p.pid}`)),
-          sub ? h('span', { class: 'obj-path' }, sub) : null,
+          sub ? h('span', { class: 'obj-path', title: purpose?.raw ?? null }, sub) : null,
           !p.identified ? h('span', { class: 'unid-tag' }, h('span', { class: 'unid-mark', 'aria-hidden': 'true' }), t('processes.unidentified')) : null,
         ),
         h('td', { class: 'col-num-s num' }, cpu(p.cpu_percent)),
@@ -260,12 +263,12 @@ export class ProcessesPage {
       'section',
       { class: 'panel', 'aria-labelledby': 'proc-detail-title' },
       h('h2', { id: 'proc-detail-title' }, p.name),
-      p.identified ? h('p', { class: 'small' }, p.purpose ?? t('processes.purposeComesLocalKnowledge')) : null,
+      p.identified ? h('p', { class: 'small', title: processPurpose(p)?.raw ?? null }, processPurpose(p)?.text ?? t('processes.purposeComesLocalKnowledge')) : null,
       !p.identified
         ? h(
             'div',
             { class: 'unid-box' },
-            h('p', { class: 'small' }, h('b', {}, t('processes.unidentified2')), p.unidentified_reason ?? t('processes.notLocalKnowledgeTable')),
+            h('p', { class: 'small', title: p.unidentified_reason ? unidentifiedReason(p.unidentified_reason).raw : null }, h('b', {}, t('processes.unidentified2')), p.unidentified_reason ? unidentifiedReason(p.unidentified_reason).text : t('processes.notLocalKnowledgeTable')),
             h('p', { class: 'muted small' }, t('processes.askOptionalAiDiagnosis')),
             h('button', { type: 'button', class: 'quiet', id: 'proc-diag', onclick: () => (this.app.store.set({ diagTarget: null, diagId: null, returnTo: 'processes' }), this.app.navigate('diag')) }, icon('diag'), t('processes.openAiDiagnosis')),
           )

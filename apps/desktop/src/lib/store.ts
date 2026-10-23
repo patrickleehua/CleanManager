@@ -84,6 +84,8 @@ export interface AppState {
   leftoversOp: string | null;
   /** Process the process page should select when it is shown next (an alert's link). */
   processFocus: number | null;
+  /** NEW-04: when the scan index was rebuilt from this window (the startup store problem no longer applies). */
+  indexRepairedAt?: number | null;
 }
 
 type Listener = (s: AppState, prev: AppState) => void;

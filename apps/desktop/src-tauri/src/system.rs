@@ -272,8 +272,7 @@ mod imp {
     }
 
     pub fn downloads_plan(s: &AppState, ids: &[String]) -> IpcResult<CreatedPlanDto> {
-        use cm_core::analysis::IndexView;
-        use cm_core::manual_trash::{ManualError, ManualInput, SelectionGuard, build_trash_plan, inspect};
+        use cm_core::manual_trash::{ManualInput, SelectionGuard, build_trash_plan};
         let _busy = crate::suite::claim(s)?;
         let cache = lock(&s.suite).downloads.clone().ok_or_else(|| ipc(ErrorCode::InvalidArgument, "not_reviewed", "Review old downloads again; the list is no longer available"))?;
         let root = cache.root.clone().ok_or_else(|| ipc(ErrorCode::InvalidArgument, "no_downloads", "No Downloads folder was found"))?;
@@ -313,15 +312,7 @@ mod imp {
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
         // Objects the platform's trash action cannot take (macOS: folders) are refused before anything is planned.
-        for &e in entries.iter().filter(|&&e| crate::plat::trash_may_refuse(view.info(e).kind)) {
-            let ins = inspect(&view, e, &guard);
-            if ins.refusal.is_none()
-                && let Some(r) = crate::plat::trash_refusal(&ins)
-            {
-                let err = ManualError::Refused { entry_id: e.to_string(), path: ins.path.display(), refusal: Box::new(r), protected: vec![], gaps: vec![] };
-                return Err(IpcError::new(err.code(), "plan_refused", err.to_string()));
-            }
-        }
+        cm_app::trash::platform_plan_check(&view, &entries, &guard).map_err(|err| IpcError::new(err.code(), "plan_refused", err.to_string()))?;
         let plan_id = new_id("mp");
         let pdigest = crate::cleanup::policy_digest(&stores);
         let observed_at = status.finished_at.clone().unwrap_or_else(|| status.started_at.clone());

@@ -90,7 +90,9 @@ describe('LIF-05 resources', () => {
   it('every key is used somewhere', () => {
     const all = Object.values(ALL_SOURCES).join('\n');
     // Keys built from a fixed list in platform.ts.
-    const dynamic = ['platform.kindExplain.', 'platform.offDoes.'];
+    // Keys built from the host's own tables (process knowledge, insight guidance), each checked against the Rust source
+    // by its own test (processWords / insightWords in hostWords.test.ts).
+    const dynamic = ['platform.kindExplain.', 'platform.offDoes.', 'processWords.purpose.', 'insightWords.impact.', 'insightWords.steps.', 'insightWords.tool.'];
     const unused = zhKeys.filter((k) => !k.endsWith('@macos') && !dynamic.some((p) => k.startsWith(p)) && !all.includes(`'${k}'`));
     expect(unused).toEqual([]);
   });

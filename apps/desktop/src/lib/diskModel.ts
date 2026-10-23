@@ -7,7 +7,7 @@ import { refusalText } from './codes';
 import { sizeLabel, type BannerKind } from './display';
 import { basisLabel, isTerminal, kindLabel } from './format';
 import { overviewPlan } from './overviewModel';
-import type { Entry, IpcError, ScanStatus } from './types';
+import type { Entry, IpcError, ProtectionItem, ScanStatus } from './types';
 import { t } from '../i18n';
 
 /** Words of the disk page that are not data. One table, so the language switch can replace it whole. */
@@ -201,4 +201,23 @@ export function entryDetail(e: Entry): EntryDetail {
     boundaryNote: e.boundary ? t('diskModel.linkCloudBoundaryScan') : null,
     weakIdentity: e.identity_quality === 'weak',
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// NEW-06 (WFA-44): the detail pane's "protect" action. Which of the person's own protection entries already covers an
+// entry (an exact entry on it, or a folder entry above it), so the pane says "protected" instead of offering it again.
+
+export function protectedBy(path: string, items: Pick<ProtectionItem, 'protection_id' | 'layer' | 'match' | 'display'>[], caseInsensitive: boolean): Pick<ProtectionItem, 'protection_id' | 'display'> | null {
+  const norm = (p: string) => {
+    const trimmed = p.length > 1 ? p.replace(/[\\/]+$/, '') : p;
+    return caseInsensitive ? trimmed.toLowerCase() : trimmed;
+  };
+  const target = norm(path);
+  for (const i of items) {
+    if (i.layer !== 'user' || !i.display) continue;
+    const base = norm(i.display);
+    if (i.match === 'exact' && target === base) return i;
+    if (i.match === 'descendants' && (target === base || target.startsWith(`${base}\\`) || target.startsWith(`${base}/`))) return i;
+  }
+  return null;
 }

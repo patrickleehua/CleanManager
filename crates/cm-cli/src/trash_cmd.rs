@@ -50,54 +50,10 @@ pub(crate) fn plan_bins_ready(
     bins_ready(req, p, &paths, true)
 }
 
-/// WFA-47/63: a link is never moved or followed, and when it resolves into a hard-deny location the refusal is the
-/// protection refusal (`policy_denied`) naming that target. The target is resolved read-only, by identity, the way
-/// `protect check` does; nothing is opened for writing through the link.
-fn link_protection(path: &cm_core::path::RawPath, hard: &cm_core::protect::HardDenySet) -> Option<cm_core::manual_trash::TrashRefusal> {
-    let chain = cm_platform::protection::identity_chain(path);
-    let (target, why) = chain.links.iter().filter(|l| l.on_object).filter_map(|l| l.target.as_ref().ok()).find_map(|t| {
-        let why = hard
-            .root_at(&t.object)
-            .map(|r| format!("is the hard-deny location {} ({})", r.display, r.class.as_str()))
-            .or_else(|| t.ancestors.iter().find_map(|a| hard.covering(a)).map(|r| format!("is inside the hard-deny location {} ({})", r.display, r.class.as_str())))
-            .or_else(|| cm_core::protect::prefilter(&t.path).err().map(|e| format!("is refused by the path check ({e})")))?;
-        Some((t.path.display(), why))
-    })?;
-    Some(cm_core::manual_trash::TrashRefusal {
-        code: "policy_denied",
-        reason: "protected",
-        message: format!(
-            "this link resolves into a protected system location: {target} {why}; links are never moved or followed. {}",
-            cm_core::manual_trash::VIEW_ONLY_EXPLANATION
-        ),
-    })
-}
-
-/// Windows: Shell recycle bin readiness, Restart Manager holders, `$Recycle.Bin\<SID>` listing.
+/// Windows: Restart Manager holders (the bin listing and readiness are shared, `cm_app::trash`).
 #[cfg(windows)]
 mod plat {
-    use std::process::ExitCode;
-
-    use cm_core::manual_trash::{Inspection, TrashRefusal};
     use cm_core::path::RawPath;
-    use serde_json::{Value, json};
-
-    use crate::args::Parsed;
-
-    pub type Listing = cm_platform::windows::actions::recycle_bin::BinListing;
-
-    /// What the platform calls its bin, in messages.
-    pub const BIN: &str = "Recycle Bin";
-
-    /// Whether objects of this kind may meet a platform refusal (none on Windows).
-    pub fn may_refuse(_kind: cm_core::model::ObjectKind) -> bool {
-        false
-    }
-
-    /// Objects this platform's trash action cannot take, beyond the core refusals (none on Windows).
-    pub fn refusal(_ins: &Inspection) -> Option<TrashRefusal> {
-        None
-    }
 
     /// Holder descriptions and a note on what could not be seen.
     pub fn holders(paths: &[RawPath]) -> (Option<Vec<String>>, Option<String>) {
@@ -108,53 +64,16 @@ mod plat {
     pub fn put_back_hint() -> Option<&'static str> {
         None
     }
-
-    pub fn list_bins(_req: &str, _p: &Parsed) -> Result<(Vec<Listing>, Vec<Value>), ExitCode> {
-        let (listings, failed) = cm_platform::windows::actions::recycle_bin::list_user_bins();
-        let issues = failed.iter().map(|(d, e)| json!({"code": "bin_unreadable", "scope_display": d.display().to_string(), "message": e})).collect();
-        Ok((listings, issues))
-    }
 }
 
-/// macOS: NSFileManager Trash readiness, open-descriptor holders, `~/.Trash` and `/Volumes/*/.Trashes/<uid>` listing.
+/// macOS: open-descriptor holders (the Trash listing and readiness are shared, `cm_app::trash`).
 #[cfg(target_os = "macos")]
 mod plat {
-    use std::path::PathBuf;
-    use std::process::ExitCode;
-
-    use cm_core::error::ErrorCode;
-    use cm_core::manual_trash::{Inspection, TrashRefusal};
-    use cm_core::model::ObjectKind;
     use cm_core::path::RawPath;
-    use cm_core::protocol::{ErrorDetails, error_record};
-    use cm_platform::macos::actions::trash::{ListError, TrashListing, folder_refusal, list_trash_dir, open_holders, volume_trash_dirs};
-    use serde_json::{Value, json};
-
-    use crate::args::Parsed;
-    use crate::emit;
-
-    pub type Listing = TrashListing;
-
-    pub const BIN: &str = "Trash";
+    use cm_platform::macos::actions::trash::open_holders;
 
     /// Where to find what was moved, and how to return it: Finder keeps the original location privately.
     pub const PUT_BACK: &str = "To put it back: open the Trash in Finder, select the item and choose File › Put Back (or drag it out).";
-
-    /// Next step when privacy protection (TCC) or permissions block the Trash listing.
-    const GRANT_ACCESS: &str = "Give the program that runs cleanmanager (for example Terminal) Full Disk Access in System Settings › Privacy & Security › Full Disk Access, then retry; or open the Trash in Finder";
-    /// Next step while macOS is still asking whether the program may open the Trash.
-    const ANSWER_PROMPT: &str = "Answer the macOS privacy prompt (\"would like to access…\") for the program that runs cleanmanager, then list the Trash again; or open the Trash in Finder";
-    /// Next step when the folder's own permissions block it.
-    const FIX_PERMISSIONS: &str = "The Trash folder should belong to you and be readable by you; check its permissions, or open the Trash in Finder";
-
-    pub fn may_refuse(kind: ObjectKind) -> bool {
-        kind == ObjectKind::Directory
-    }
-
-    /// The macOS trash action moves single verified files; a folder cannot be verified as one object in this build.
-    pub fn refusal(ins: &Inspection) -> Option<TrashRefusal> {
-        folder_refusal(ins)
-    }
 
     fn limit_note(uninspected: usize) -> Option<String> {
         (uninspected > 0).then(|| format!("{uninspected} process(es) of other users could not be inspected; a holder among them would not be listed"))
@@ -173,82 +92,23 @@ mod plat {
     pub fn put_back_hint() -> Option<&'static str> {
         Some(PUT_BACK)
     }
-
-    /// The home Trash: `$CM_RESOLVE_HOME/.Trash` when that test redirect is set (then no volume is listed), otherwise
-    /// `$HOME/.Trash`.
-    fn home_trash() -> (Option<PathBuf>, bool) {
-        if let Some(h) = std::env::var_os("CM_RESOLVE_HOME").filter(|v| !v.is_empty()) {
-            return (Some(PathBuf::from(h).join(".Trash")), true);
-        }
-        (std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| PathBuf::from(h).join(".Trash")), false)
-    }
-
-    fn issue(dir: &std::path::Path, e: &ListError) -> Value {
-        let code = match e {
-            ListError::PermissionRequired { .. } | ListError::PromptPending(_) => "permission_required",
-            ListError::Unreadable(_) => "bin_unreadable",
-        };
-        let message = match e {
-            ListError::PermissionRequired { .. } if e.privacy_blocked() => format!("{} (blocked by privacy protection or another policy layer; permission_cause=undetermined). {GRANT_ACCESS}", e.message()),
-            ListError::PermissionRequired { .. } => format!("{} (its permissions do not allow listing it). {FIX_PERMISSIONS}", e.message()),
-            ListError::PromptPending(_) => format!("{} {ANSWER_PROMPT}", e.message()),
-            ListError::Unreadable(_) => e.message().to_owned(),
-        };
-        json!({"code": code, "scope_display": dir.display().to_string(), "message": message})
-    }
-
-    /// Every Trash of this user. The home Trash failing to list is an error (`permission_required` when blocked), never
-    /// an empty list; a volume's Trash failing is an issue next to the others.
-    pub fn list_bins(req: &str, p: &Parsed) -> Result<(Vec<Listing>, Vec<Value>), ExitCode> {
-        let (home, redirected) = home_trash();
-        let mut listings = Vec::new();
-        let mut issues = Vec::new();
-        if let Some(dir) = home {
-            match list_trash_dir(&dir) {
-                Ok(l) => listings.push(l),
-                // No Trash folder yet: truly nothing in it.
-                Err(ListError::Unreadable(_)) if std::fs::symlink_metadata(&dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {}
-                Err(e) => {
-                    let (code, action) = match &e {
-                        ListError::PermissionRequired { .. } if e.privacy_blocked() => (ErrorCode::PermissionRequired, Some(GRANT_ACCESS)),
-                        ListError::PermissionRequired { .. } => (ErrorCode::PermissionRequired, Some(FIX_PERMISSIONS)),
-                        ListError::PromptPending(_) => (ErrorCode::PermissionRequired, Some(ANSWER_PROMPT)),
-                        ListError::Unreadable(_) => (ErrorCode::IoError, None),
-                    };
-                    let message = issue(&dir, &e)["message"].as_str().unwrap_or_default().to_owned();
-                    emit(&error_record(req, code, &message, action, ErrorDetails::default()), p.format);
-                    return Err(ExitCode::from(cm_core::error::ExitClass::Error(code).code() as u8));
-                }
-            }
-        }
-        if !redirected {
-            let (dirs, failed) = volume_trash_dirs();
-            issues.extend(failed.iter().map(|(d, e)| issue(d, e)));
-            for d in dirs {
-                match list_trash_dir(&d) {
-                    Ok(l) => listings.push(l),
-                    Err(e) => issues.push(issue(&d, &e)),
-                }
-            }
-        }
-        Ok((listings, issues))
-    }
 }
 
 #[cfg(any(windows, target_os = "macos"))]
 mod imp {
     use std::process::ExitCode;
 
+    use cm_app::trash::{BIN, Bin, PickError};
     use cm_core::analysis::IndexView;
     use cm_core::error::ErrorCode;
-    use cm_core::manual_trash::{BinItem, Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_purge_plan, build_trash_plan, inspect};
-    use cm_core::model::{CloudState, ObjectKind};
-    use cm_core::protocol::record;
+    use cm_core::manual_trash::{BinItem, Inspection, ManualError, ManualInput, SelectionGuard, VIEW_ONLY_EXPLANATION, build_trash_plan};
+    use cm_core::model::ObjectKind;
+    use cm_core::protocol::{ErrorDetails, error_record, record};
     use cm_store::Stores;
     use cm_store::index::ScanStatusView;
     use serde_json::{Value, json};
 
-    use super::{bins_ready, ids, link_protection, plat};
+    use super::{bins_ready, ids, plat};
     use crate::args::Parsed;
     use crate::commands::{fields, open_stores, store_error};
     use crate::plan_cmd::{current_policy_digest, now_unix, v2_plan_record};
@@ -285,29 +145,13 @@ mod imp {
         Ok(out)
     }
 
-    /// Holders of the object (folders: its files) and a note on what could not be seen; `None` when not queried.
+    /// Holders of the object (folders: its files) and a note on what could not be seen; `None` when not queried
+    /// (never for cloud placeholders: no open, no download).
     fn holders_of(ins: &Inspection, view: &cm_core::analysis::MemView) -> (Option<Vec<String>>, Option<String>) {
-        // Never for cloud placeholders (no open, no download); folders query their files.
-        if ins.cloud == CloudState::Placeholder || ins.refusal.as_ref().is_some_and(|r| r.reason == "cloud_placeholder") {
-            return (None, None);
+        match cm_app::trash::holder_paths(ins, view) {
+            Some(paths) => plat::holders(&paths),
+            None => (None, None),
         }
-        let mut paths = vec![ins.path.clone()];
-        if ins.kind == ObjectKind::Directory {
-            paths.clear();
-            let mut stack = vec![ins.entry_id];
-            while let Some(e) = stack.pop() {
-                let f = view.info(e);
-                if f.boundary {
-                    continue;
-                }
-                match f.kind {
-                    ObjectKind::Directory => stack.extend_from_slice(view.children(e)),
-                    ObjectKind::File if paths.len() < 1000 => paths.push(view.path(e)),
-                    _ => {}
-                }
-            }
-        }
-        plat::holders(&paths)
     }
 
     fn refusal_error(req: &str, p: &Parsed, e: &ManualError) -> ExitCode {
@@ -328,14 +172,8 @@ mod imp {
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
         // Objects the platform's trash action cannot take are refused before anything is planned.
-        for &e in selected.iter().filter(|&&e| plat::may_refuse(scan.view.info(e).kind)) {
-            let ins = inspect(&scan.view, e, &guard);
-            if ins.refusal.is_none()
-                && let Some(r) = plat::refusal(&ins)
-            {
-                let err = ManualError::Refused { entry_id: e.to_string(), path: ins.path.display(), refusal: Box::new(r), protected: vec![], gaps: vec![] };
-                return refusal_error(req, p, &err);
-            }
+        if let Err(e) = cm_app::trash::platform_plan_check(&scan.view, &selected, &guard) {
+            return refusal_error(req, p, &e);
         }
         let plan_id = format!("mp_{}", &req[4..]);
         let pdigest = current_policy_digest(&scan.stores);
@@ -347,12 +185,7 @@ mod imp {
         let plan = match build_trash_plan(&scan.view, &selected, &guard, &input) {
             Ok(pl) => pl,
             // WFA-47/63: a link into a protected system location is refused as protected, naming the location.
-            Err(ManualError::Refused { entry_id, path, refusal, .. }) if refusal.reason == "link_or_reparse" => {
-                let link = entry_id.parse::<u64>().ok().filter(|e| scan.view.facts.contains_key(e)).map(|e| scan.view.path(e));
-                let refusal = link.and_then(|l| link_protection(&l, &hard)).map(Box::new).unwrap_or(refusal);
-                return refusal_error(req, p, &ManualError::Refused { entry_id, path, refusal, protected: vec![], gaps: vec![] });
-            }
-            Err(e) => return refusal_error(req, p, &e),
+            Err(e) => return refusal_error(req, p, &cm_app::trash::name_protected_link(&scan.view, e, &hard)),
         };
         // MTR-03 / WFA-35: a volume without a usable recycle bin fails the plan before it is stored; nothing is ever
         // deleted instead.
@@ -385,23 +218,12 @@ mod imp {
         let user = cm_platform::protection::load(&scan.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);
         let guard = SelectionGuard { hard: Some(&hard), user: user.as_ref().map_err(|_| problem.as_deref().unwrap_or("unavailable")) };
-        let mut ins = inspect(&scan.view, entry, &guard);
-        if ins.refusal.is_none() {
-            ins.refusal = plat::refusal(&ins);
-        }
-        // WFA-47/63: a link into a protected system location is view-only as protected, naming the location.
-        if ins.refusal.as_ref().is_some_and(|r| r.reason == "link_or_reparse")
-            && let Some(r) = link_protection(&ins.path, &hard)
-        {
-            ins.refusal = Some(r);
-        }
+        // The platform's refusals, and a link into a protected system location view-only as protected, naming the
+        // location (WFA-47/63).
+        let (mut ins, _) = cm_app::trash::inspect_entry(&scan.view, entry, &guard, &hard);
         // WFA-35: a volume without a usable bin offers no move (the plan would be refused).
-        if ins.refusal.is_none()
-            && let Some(u) = cm_platform::trash_readiness::unready(std::slice::from_ref(&ins.path)).first()
-        {
-            let one = std::slice::from_ref(u);
-            let message = format!("{} {}", cm_platform::trash_readiness::message(one), cm_platform::trash_readiness::next_step(one, None));
-            ins.refusal = Some(cm_core::manual_trash::TrashRefusal { code: "unsupported", reason: "trash_unavailable", message });
+        if ins.refusal.is_none() {
+            ins.refusal = cm_app::trash::bin_refusal(&ins.path, "trash_unavailable");
         }
         let (holders, holders_note) = holders_of(&ins, &scan.view);
         let trashable = ins.refusal.is_none();
@@ -446,10 +268,10 @@ mod imp {
         ExitCode::SUCCESS
     }
 
-    fn bin_item(view: &cm_core::analysis::MemView, i: &BinItem) -> Value {
+    fn bin_item(bin: &Bin, i: &BinItem) -> Value {
         json!({
             "trash_item_id": i.trash_item_id,
-            "bin_location": view.path(i.data_entry).display(),
+            "bin_location": bin.location(i),
             "original_path": i.original_path,
             "deleted_at": i.deleted_at,
             "object_kind": kind_name(i.kind),
@@ -459,12 +281,21 @@ mod imp {
         })
     }
 
+    /// Every bin of this user, or the error record when the bin cannot be listed at all (never an empty list).
+    fn list_bins(req: &str, p: &Parsed) -> Result<(Vec<Bin>, Vec<cm_app::trash::BinIssue>), ExitCode> {
+        cm_app::trash::list_bins().map_err(|e| {
+            emit(&error_record(req, e.code, &e.message, e.required_action, ErrorDetails::default()), p.format);
+            ExitCode::from(cm_core::error::ExitClass::Error(e.code).code() as u8)
+        })
+    }
+
     pub fn trash_list(req: &str, p: &Parsed) -> ExitCode {
-        let (listings, issues) = match plat::list_bins(req, p) {
+        let (bins, issues) = match list_bins(req, p) {
             Ok(l) => l,
             Err(c) => return c,
         };
-        let items: Vec<Value> = listings.iter().flat_map(|l| l.items.iter().map(|i| bin_item(&l.view, i))).collect();
+        let items: Vec<Value> = bins.iter().flat_map(|b| b.items.iter().map(|i| bin_item(b, i))).collect();
+        let issues: Vec<Value> = issues.iter().map(|i| json!({"code": i.code, "scope_display": i.scope_display, "message": i.message})).collect();
         let partial = !issues.is_empty();
         emit(&record("trash_list", req, fields(json!({"items": items, "issues": issues}))), p.format);
         ExitCode::from(if partial { cm_core::error::ExitClass::Partial } else { cm_core::error::ExitClass::Success }.code() as u8)
@@ -477,27 +308,19 @@ mod imp {
             Ok(s) => s,
             Err(c) => return c,
         };
-        let (listings, _) = match plat::list_bins(req, p) {
+        let (bins, _) = match list_bins(req, p) {
             Ok(l) => l,
             Err(c) => return c,
         };
         // One plan per recycle bin (volume): every selected item must come from the same listing.
-        let Some(listing) = listings.iter().find(|l| l.items.iter().any(|i| wanted.contains(&i.trash_item_id))) else {
-            return fail(req, ErrorCode::InvalidArgument, &format!("no such item in your {}; run `cleanmanager trash list`", plat::BIN), p.format);
+        let (bin, chosen) = match cm_app::trash::pick(&bins, &wanted) {
+            Ok(v) => v,
+            Err(PickError::NotListed) => return fail(req, ErrorCode::InvalidArgument, &format!("no such item in your {BIN}; run `cleanmanager trash list`"), p.format),
+            Err(PickError::OtherBin(id)) => return fail(req, ErrorCode::InvalidArgument, &format!("item {id} is not in the same {BIN}; plan each volume separately"), p.format),
         };
-        let mut chosen = Vec::new();
-        for id in &wanted {
-            match listing.items.iter().find(|i| &i.trash_item_id == id) {
-                Some(i) => chosen.push(i),
-                None => return fail(req, ErrorCode::InvalidArgument, &format!("item {id} is not in the same {}; plan each volume separately", plat::BIN), p.format),
-            }
-        }
         let plan_id = format!("mp_{}", &req[4..]);
         let pdigest = current_policy_digest(&stores);
-        let input = ManualInput {
-            plan_id: &plan_id, scope_id: None, scan_id: None, scan_revision: None, created_unix: now_unix(), observed_at: &listing.observed_at, policy_digest: &pdigest,
-        };
-        let plan = match build_purge_plan(&listing.view, &chosen, &input) {
+        let plan = match cm_app::trash::purge_plan(bin, &chosen, &plan_id, &pdigest, now_unix()) {
             Ok(pl) => pl,
             Err(e) => return refusal_error(req, p, &e),
         };

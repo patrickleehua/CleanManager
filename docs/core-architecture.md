@@ -65,6 +65,10 @@
 | 扫描、revision、实体、目录项、跳过范围、子树汇总 | `index.db` | 首次需要时才打开（`Stores::open` 只打开审计库，新存储才立即建空索引），因此索引不可用时历史、隔离与恢复照常可用；需要索引的调用报告 `IndexCorrupt` / `IndexIncompatible`（协议码 `index_unavailable`，`required_action` 为 `cleanmanager doctor --repair-index`），运行中 SQLite 报告的损坏同样归为 `IndexCorrupt`；不自动重置。`repair_index`/`rebuild_index` 把 `index.db` 及其 WAL/SHM 改名为 `index.db.damaged-<时间>` 保留（从不删除）并新建空索引，然后需重新扫描。完整性检查按需运行（从未检查、超过 7 天、非正常结束标记、迁移前、`doctor`），见 `cm-store/src/integrity.rs` |
 | 操作、去重键、逐项意图/结果日志（后续扩展授权与隔离清单） | `audit.db` | 随存储立即打开，每次打开都做 SQLite quick_check；报告 `AuditUnavailable` 并阻止写操作，**从不**删除或重建；保留原文件供修复 |
 
+扫描汇总按存储读取，不在查询时重建（NEW-01）。索引除目录项上的排序聚合外还有两张派生表，均在发布的同一写事务中、由计算聚合时已载入的那棵树写入：`revision_summaries`（每个 revision 的条目数、跳过范围数，以及有多个名字的非目录对象数 `shared_objects`；条目数与跳过数在 staging 期间随每批写入累加，发布时按树重新核定）和 `subtree_totals`（每个扫描根以及子树条目数不少于 `STORED_TOTAL_MIN_ENTRIES` = 256 的目录：覆盖条目数、跳过范围数、逻辑/占用大小的已知部分与未知个数，即 `summarize(&[目录])` 的结果；合计超出 u64 的目录不存，读取时按原规则报告溢出）。由此 `scan_status` 的计数、`scan show` 的 `scan_result`、桌面概览与空间分布图的文件夹合计都是按键读取（O(1)）；更小的子树沿 `entries_parent` 索引只遍历该子树（至多 255 个条目）；多项选择先按父链折叠重叠项，`shared_objects` 为 0 时逐项相加，否则一起遍历所选子树以保证硬链接对象只计一次；分布图的“其余”是对其余子项大小的一次无序读取。两张表是附加的派生数据，不改变结构版本：旧版本程序发布的 revision 没有这些行，查询时计数或遍历（结果相同），读到旧扫描的根时尽力补记根汇总与计数，下次即为按键读取；删除扫描时一并删除。发布时的聚合计算与子树遍历随机读取索引页，期间临时把该连接的 SQLite 页缓存提到 256 MB（按需增长、结束后恢复），150 万行的发布由约 86–105 秒降到约 21–24 秒。等价性由 `cm-store` 测试以旧的整树计算为基准逐项比对（含未知大小、跳过范围、硬链接，以及 completed/partial/cancelled/interrupted/failed）。
+
+桌面宿主为 IPC 查询保留一个连接池：每次调用借用一个连接（空闲的或新开的），调用期间不持有任何进程内锁，因此一次慢读取不会阻塞其他页面；SQLite 的 WAL 允许并发读取并自行串行化写入。索引修复（`repair_index`）独占该池，先关闭所有连接再移动文件。
+
 宿主进程以 PID + 进程创建时间标识。宿主确认退出后：运行中的扫描以 `interrupted` 发布已提交批次（`partial_scope`），未结束的操作进入 `reconciliation_required`；无法判断存活（如权限不足）时保持原状态，不推断结束。存储目录不得位于任何扫描根内。操作日志与恢复记录需要独立的可靠保存策略。存储路径按系统用户数据目录解析，数据库限制为当前用户访问；日志默认不包含文件内容或凭据。
 
 ## 生命周期与取消

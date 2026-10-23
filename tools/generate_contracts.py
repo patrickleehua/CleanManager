@@ -130,10 +130,13 @@ def main():
         "restore_capability": enum("available", "unsupported", "unknown"),
         "available_actions": {**arr(enum("restore", "purge")), "uniqueItems": True},
         "metadata_restored": arr(enum("timestamps", "attributes", "acl", "xattrs", "alternate_streams"))})
-    # REC-04 history: one row per operation with truthful recovery availability.
+    # REC-04 history: one row per operation with truthful recovery availability. WFA-40: every plan/v2 kind names
+    # itself (process end, uninstall and its leftovers, updates, and the restores of startup, uninstall and maintenance
+    # backups); `restore`/`purge` stay the quarantine recovery of recovery/v1.
     defs["operation_summary"] = obj({"operation_id": STR, "plan_id": STR,
         "plan_contract": nullable(enum("plan/v1", "plan/v2", "recovery/v1")),
-        "action": nullable(enum("trash", "quarantine", "delete", "restore", "purge", "startup", "maintenance")),
+        "action": nullable(enum("trash", "quarantine", "delete", "restore", "purge", "startup", "maintenance", "process", "update",
+            "uninstall", "uninstall_leftovers", "uninstall_restore", "startup_restore", "maintenance_restore")),
         "state": enum("created", "validating", "running", "stopping", "completed", "partial", "cancelled", "failed", "reconciliation_required"),
         "started_at": TIME, "finished_at": nullable(TIME), "authorization_source": nullable(STR), "rule_refs": arr(STR),
         "counts": nullable(obj({"succeeded": COUNT, "skipped": COUNT, "failed": COUNT, "not_started": COUNT, "unknown": COUNT})),

@@ -5,6 +5,7 @@ import { platform, words } from './platform';
 import type { Applicability, LeftoverTier, TaskOutcome, UpdateChannel, UpdateRoute, UpdateState } from './suiteTypes';
 import type { Tier } from './types';
 import { isResourceText, locale, t, type TextKey } from '../i18n';
+import { adapterDisplay } from './uninstallWords';
 
 // ---------------------------------------------------------------------------------------------
 // Uninstall
@@ -370,7 +371,8 @@ export function adapterText(a: { adapter_id: string; display: string }): string 
     case 'homebrew.uninstall-formula':
       return t('suiteWords.homebrewCmd', { cmd });
     default:
-      return a.display;
+      // Windows: the command exactly as it will run, its kind in words (NEW-13).
+      return adapterDisplay(a.display);
   }
 }
 

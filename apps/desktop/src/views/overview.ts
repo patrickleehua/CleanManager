@@ -14,6 +14,8 @@ import { sizeLabel } from '../lib/display';
 import { h, keepFocus, replace } from '../lib/dom';
 import { COMPLETENESS_LABEL, formatElapsed, formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import { overviewPlan, type OverviewPlan } from '../lib/overviewModel';
+import { currentIndexProblem } from '../lib/indexModel';
+import { indexProblemBanner } from './indexRepair';
 import { emptyBlock, issueList, learnMore, pathText, sizeEl, statusBanner, techBlock } from './ui';
 import { t } from '../i18n';
 
@@ -68,6 +70,12 @@ export class OverviewPage {
 
   private render(): void {
     const st = this.app.store.state;
+    // NEW-04: a damaged index is not an empty history. Say what is wrong and offer the rebuild.
+    const broken = currentIndexProblem({ caps: st.caps, statusError: st.statusError, repairedAt: st.indexRepairedAt });
+    if (broken && (!st.scanId || !st.status)) {
+      replace(this.body, h('div', { class: 'ov-single' }, indexProblemBanner(this.app, broken, { titleId: 'overview-title', srPrefix: t('overview.overviewPrefix') })));
+      return;
+    }
     if (!st.scanId) {
       replace(
         this.body,

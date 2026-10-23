@@ -22,6 +22,7 @@ import { SettingsPage } from './views/settings';
 import { ApplyChip, TaskChip } from './views/task';
 import { CatalogPage } from './views/catalog';
 import { InsightsPage, StartupPage, StatusPage, capabilityPages } from './views/tools';
+import { RecycleBinPage } from './views/recycleBin';
 import { UninstallPage } from './views/uninstall';
 import { UpdatesPage } from './views/updates';
 import { DiagnosisPage, MaintenancePage } from './views/maintenance';
@@ -31,6 +32,7 @@ import { ensureReady } from './views/kit';
 import { GateOffView } from './views/gateOff';
 import { gateBadge } from './views/ui';
 import { refusalText } from './lib/codes';
+import { indexProblemOf } from './lib/indexModel';
 import { locale, onLocale, resolveLocale, setLocale, storedLanguage, storeLanguage, t, type LanguagePref } from './i18n';
 
 export interface App {
@@ -171,7 +173,12 @@ async function boot(): Promise<void> {
         syncTaskFromStatus(status);
       } catch (e) {
         if (ticket !== statusTicket) return;
-        store.set({ statusError: toIpcError(e) });
+        const err = toIpcError(e);
+        store.set({ statusError: err });
+        // NEW-04: a scan started here cannot be followed while the index is damaged; its task ends instead of
+        // reading "preparing" forever.
+        const task = store.state.task;
+        if (task && task.scanId === id && !isTerminal(task.state) && indexProblemOf(err)) store.set({ task: { ...task, state: 'failed', error: err, dismissed: false } });
       }
     },
     async startScan(rootToken) {
@@ -306,7 +313,7 @@ async function boot(): Promise<void> {
     cleanup: new CleanupPage(app),
     purge: new CatalogPage(app, 'purge'),
     installer: new CatalogPage(app, 'installer'),
-    recyclebin: caps.recyclebin,
+    recyclebin: new RecycleBinPage(app),
     plan: new PlanPage(app),
     operation: new OperationPage(app),
     apps: new AppsPage(app),

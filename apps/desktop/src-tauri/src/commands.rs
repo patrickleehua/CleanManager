@@ -22,8 +22,8 @@ pub(crate) type St<'a> = State<'a, Arc<AppState>>;
 
 /// The scope root is the first entry the backend writes.
 const ROOT_ENTRY_ID: u64 = 1;
-/// Pages read (of `MAX_PAGE`) to total the children beyond the treemap tiles.
-const REST_PAGE_BUDGET: u32 = 40;
+/// Children beyond the treemap tiles added into the "rest" tile at most (one unsorted read of their sizes).
+const REST_BUDGET: u64 = 1_000_000;
 const MAX_ISSUES: usize = 50;
 const RECENT_SCANS: u32 = 30;
 
@@ -52,7 +52,7 @@ pub async fn capabilities(state: St<'_>) -> IpcResult<CapabilitiesDto> {
         schema_version: cm_core::SCHEMA_VERSION,
         capabilities,
         store_dir_display: s.store_dir.as_deref().map(display_of),
-        store_problem: s.startup.store_problem.clone(),
+        store_problem: s.store_problem(),
         bypass_privileges_disabled: disabled,
         bypass_privileges_note: note,
         interrupted_at_startup: s.startup.interrupted.clone(),
@@ -320,27 +320,9 @@ pub fn page_hints(s: &AppState, items: &[cm_store::index::EntryItem]) -> Vec<Opt
     cm_platform::cleanable::page_hints(&dirs, s.store_dir.as_deref(), &caches)
 }
 
-/// Running total of the children not drawn as tiles. u128 cannot overflow for any realistic
-/// count of u64 values; the result is still checked.
-#[derive(Default)]
-struct RestAcc {
-    count: u64,
-    known: u128,
-    unknown: u64,
-}
-
-impl RestAcc {
-    fn add(&mut self, logical: Option<cm_core::bytes::Bytes>) {
-        self.count += 1;
-        match logical {
-            Some(b) => self.known += u128::from(b.0),
-            None => self.unknown += 1,
-        }
-    }
-
-    fn finish(self, complete: bool) -> RestDto {
-        RestDto { count: self.count, known_logical_bytes: self.known.to_string(), unknown_count: self.unknown, complete }
-    }
+/// The children not drawn as tiles (u128 sum: no overflow for any count of u64 sizes).
+fn rest_dto(r: cm_store::index::ChildrenRest) -> RestDto {
+    RestDto { count: r.count, known_logical_bytes: r.known_logical.to_string(), unknown_count: r.unknown_count, complete: r.complete }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -355,43 +337,50 @@ pub async fn treemap_layer(state: St<'_>, scan_id: String, parent_entry_id: Opti
     .await
 }
 
-/// One treemap layer: the largest `limit` children plus an exact (or budget-bounded) total of
-/// the rest, all from one revision-bound query shape.
+/// One treemap layer: the largest `limit` children (one sorted page) plus an exact (or budget-bounded)
+/// total of the rest from one unsorted read of the other children's sizes, both bound to the revision of
+/// the first page. The parent's own total is its stored subtree total (or a walk of a small subtree).
 pub fn layer_of(s: &AppState, idx: &cm_store::IndexStore, id: &str, parent: u64, limit: usize) -> IpcResult<TreemapLayerDto> {
-    let mut q = EntryQuery {
+    let q = EntryQuery {
         scan_id: id.to_owned(),
         sort: Sort::LogicalDesc,
         filter: Filter { kind: KindFilter::Any, name_contains: None, parent_entry_id: Some(parent) },
-        page_size: MAX_PAGE,
+        page_size: (limit as u32).clamp(1, MAX_PAGE),
         cursor: None,
     };
     let first = idx.list_entries(&q)?;
     let revision = first.revision;
     let parent_summary = root_summary(s, idx, id, revision, parent)?;
-    let mut rest = RestAcc::default();
     let items: Vec<EntryDto> = first.items.iter().take(limit).map(EntryDto::from_item).collect();
-    for item in first.items.iter().skip(limit) {
-        rest.add(item.logical_bytes);
-    }
-    let mut cursor = first.next_cursor;
-    let mut pages = 1;
-    while let Some(c) = cursor.take() {
-        if pages >= REST_PAGE_BUDGET {
-            cursor = Some(c);
-            break;
+    let shown: std::collections::BTreeSet<u64> = first.items.iter().take(limit).filter_map(|i| i.entry_id.parse().ok()).collect();
+    let rest = match first.next_cursor {
+        None => cm_store::index::ChildrenRest { complete: true, ..Default::default() },
+        Some(_) => idx.children_rest(id, revision, parent, &shown, REST_BUDGET)?,
+    };
+    let rest = rest_dto(rest);
+    Ok(TreemapLayerDto { scan_id: id.to_owned(), revision, parent_entry_id: parent.to_string(), parent_summary, items, rest })
+}
+
+/// `cleanmanager doctor --repair-index` from the desktop (BUG-WFA-01, NEW-04). It changes only CleanManager's own
+/// index files: an unusable `index.db` (damaged, or a schema this program cannot use) is moved aside with its
+/// WAL/SHM — kept as `index.db.damaged-<time>`, never deleted — and an empty index is created; a healthy index is
+/// left alone; history, quarantine and recovery are never touched. The WebView passes `confirm: true` only after
+/// the person confirmed; the result is the CLI's `index_repair` object (`status`, `previous_state`, `kept_files`,
+/// `message`). Refused while this app runs a scan or an operation, and when another process holds the index.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn repair_index(state: St<'_>, confirm: bool) -> IpcResult<cm_app::index_repair::IndexRepairReport> {
+    let s = state.inner().clone();
+    blocking(move || {
+        if !confirm {
+            return Err(IpcError::new(
+                ErrorCode::InvalidArgument,
+                "confirmation_required",
+                "Repairing the scan index needs the person's confirmation: an unusable index is moved aside and scans must be run again",
+            ));
         }
-        q.cursor = Some(c);
-        let page = idx.list_entries(&q)?;
-        if page.revision != revision {
-            return Err(IpcError::new(ErrorCode::CursorStale, "cursor_stale", "the scan revision changed while reading this layer"));
-        }
-        for item in &page.items {
-            rest.add(item.logical_bytes);
-        }
-        cursor = page.next_cursor;
-        pages += 1;
-    }
-    Ok(TreemapLayerDto { scan_id: id.to_owned(), revision, parent_entry_id: parent.to_string(), parent_summary, items, rest: rest.finish(cursor.is_none()) })
+        s.repair_index()
+    })
+    .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -531,14 +520,9 @@ mod tests {
 
     #[test]
     fn rest_totals_keep_unknown_apart() {
-        let mut r = RestAcc::default();
-        r.add(Some(cm_core::bytes::Bytes(u64::MAX)));
-        r.add(Some(cm_core::bytes::Bytes(u64::MAX)));
-        r.add(None);
-        let d = r.finish(true);
-        assert_eq!(d.count, 3);
-        assert_eq!(d.unknown_count, 1);
-        assert_eq!(d.known_logical_bytes, (2 * u128::from(u64::MAX)).to_string());
+        let d = rest_dto(cm_store::index::ChildrenRest { count: 3, known_logical: 2 * u128::from(u64::MAX), unknown_count: 1, complete: true });
+        assert_eq!((d.count, d.unknown_count, d.complete), (3, 1, true));
+        assert_eq!(d.known_logical_bytes, (2 * u128::from(u64::MAX)).to_string(), "beyond u64, exact");
     }
 
     /// End to end over the real platform backend and index: what the WebView receives for a

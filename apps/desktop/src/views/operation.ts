@@ -9,7 +9,7 @@ import { toIpcError } from '../lib/api';
 import { formatBytes, parseBytes } from '../lib/bytes';
 import { explainResult, refusalText, resultText } from '../lib/codes';
 import { h, icon, keepFocus, replace } from '../lib/dom';
-import { OPERATION_TEXT, operationAction, operationBanner, resultIssues } from '../lib/operationModel';
+import { OPERATION_TEXT, REGISTRATION_RETRIES, REGISTRATION_RETRY_MS, operationAction, operationBanner, registrationPending, resultIssues } from '../lib/operationModel';
 import { formatElapsed, formatTime } from '../lib/format';
 import type { IpcError, ItemFilter, Operation, OperationItem } from '../lib/types';
 import { AVAILABILITY_LABEL } from '../lib/words';
@@ -45,9 +45,16 @@ export class OperationPage {
   private itemsNext: string | null = null;
   private itemsTotal = 0;
   private itemsLoading = false;
+  /** A reload asked for while a page of items was still loading (the newest read must win). */
+  private itemsReload: boolean | null = null;
+  /** The last items read failed; cleared by the next read that succeeds (NEW-02: never a stale error). */
+  private itemsError: IpcError | null = null;
   private busy = false;
+  /** The last action the person started here (reconcile) failed. */
   private actionError: IpcError | null = null;
   private refreshTimer: number | null = null;
+  private retryTimer: number | null = null;
+  private retries = 0;
   private lastApplyKey = '';
   private userFiltered = false;
   /** MNT-07: the recorded maintenance report of this operation (six outcomes, elevation). */
@@ -61,7 +68,11 @@ export class OperationPage {
 
   activate(): void {
     const id = this.app.store.state.operationId;
-    if (id) void this.load(id);
+    // Reopening a result reads it afresh; a failure of an earlier read does not follow it (NEW-02).
+    if (id) {
+      this.actionError = null;
+      void this.load(id);
+    }
   }
 
   update(): void {
@@ -100,14 +111,18 @@ export class OperationPage {
       this.restoreError = null;
       this.userFiltered = false;
       this.items = [];
+      this.itemsError = null;
       this.actionError = null;
       this.filter = 'problems';
+      this.retries = 0;
     }
+    let pending = false;
     try {
       const op = await this.app.backend.operationDetail(id);
       if (this.opId !== id) return;
       this.op = op;
       this.error = null;
+      this.retries = 0;
       if (op.plan_kind === 'maintenance' && op.report_available && this.maint?.operation_id !== id) {
         const hist = await this.app.backend.maintenanceHistory(50).catch(() => null);
         if (this.opId === id) this.maint = hist?.items.find((r) => r.operation_id === id) ?? null;
@@ -115,14 +130,37 @@ export class OperationPage {
       // Everything succeeded: show all rows (an empty "not succeeded" list says nothing about what happened).
       if ((switching || !this.userFiltered) && op.counts.succeeded === op.total && op.total > 0 && !op.running_here) this.filter = 'all';
     } catch (e) {
-      if (this.opId === id) this.error = toIpcError(e);
+      if (this.opId !== id) return;
+      const err = toIpcError(e);
+      // NEW-02: the run this window just started is not registered yet; keep "loading" and read again shortly.
+      pending = registrationPending(err, id, this.app.store.state.apply) && this.retries < REGISTRATION_RETRIES;
+      this.error = pending ? null : err;
+    }
+    if (pending) {
+      this.retryRegistration(id, keepItems);
+      this.update();
+      return;
     }
     await this.loadItems(false, keepItems);
   }
 
+  private retryRegistration(id: string, keepItems: boolean): void {
+    if (this.retryTimer !== null) return;
+    this.retries += 1;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      if (this.opId === id) void this.load(id, keepItems);
+    }, REGISTRATION_RETRY_MS);
+  }
+
   private async loadItems(more: boolean, quiet = false): Promise<void> {
     const id = this.opId;
-    if (!id || this.itemsLoading) return;
+    if (!id) return;
+    if (this.itemsLoading) {
+      // A refresh while a page is in flight: run it once that page is in, so the last read reflects the end of the run.
+      if (!more) this.itemsReload = (this.itemsReload ?? true) && quiet;
+      return;
+    }
     this.itemsLoading = true;
     if (!quiet) this.update();
     try {
@@ -132,11 +170,18 @@ export class OperationPage {
       this.items = more ? [...this.items, ...page.items] : page.items;
       this.itemsNext = page.next_cursor;
       this.itemsTotal = page.total;
+      this.itemsError = null;
     } catch (e) {
-      this.actionError = toIpcError(e);
+      if (this.opId !== id) return;
+      const err = toIpcError(e);
+      // Still registering (see `load`): not an error; the next refresh reads the items.
+      this.itemsError = registrationPending(err, id, this.app.store.state.apply) ? null : err;
     } finally {
       this.itemsLoading = false;
-      this.update();
+      const again = this.itemsReload;
+      this.itemsReload = null;
+      if (again !== null && this.opId === id) void this.loadItems(false, again);
+      else this.update();
     }
   }
 
@@ -458,7 +503,18 @@ export class OperationPage {
               h('tbody', {}, ...rows),
             ),
           )
-        : h('p', { class: 'muted small', role: 'status' }, this.itemsLoading ? t('common.loading') : this.filter === 'problems' ? t('operation.noUnsuccessfulItems') : t('operation.noMatchingItems')),
+        : this.itemsError
+          ? null
+          : h('p', { class: 'muted small', role: 'status' }, this.itemsLoading ? t('common.loading') : this.filter === 'problems' ? t('operation.noUnsuccessfulItems') : t('operation.noMatchingItems')),
+      // The list could not be read: said here, beside the list it is about, with a way to read it again.
+      this.itemsError
+        ? h(
+            'div',
+            { class: 'items-error' },
+            errorLine(this.itemsError),
+            h('button', { type: 'button', class: 'quiet', id: 'op-items-retry', disabled: this.itemsLoading, onclick: () => void this.loadItems(false) }, t('common.reload')),
+          )
+        : null,
       this.itemsNext
         ? h('button', { type: 'button', class: 'quiet more', disabled: this.itemsLoading, onclick: () => void this.loadItems(true) }, t('common.showMoreLengthItemstotal', { length: this.items.length, itemsTotal: this.itemsTotal }))
         : null,

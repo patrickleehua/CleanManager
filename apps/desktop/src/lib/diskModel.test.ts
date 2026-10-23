@@ -1,5 +1,27 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, neighborTile, tileForEntry, type TileRef } from './diskModel';
+import { crumbTrail, DISK_TEXT, diskView, entryDetail, entryForTile, neighborTile, protectedBy, tileForEntry, type TileRef } from './diskModel';
+import type { ProtectionItem } from './types';
+
+describe('NEW-06: the detail pane knows what the protection list already covers', () => {
+  const item = (display: string, match: string, layer: ProtectionItem['layer'] = 'user'): ProtectionItem => ({ protection_id: `u_${display.length}`, layer, match, display, removable: layer === 'user', note: null, added_at: null });
+  const items = [item('D:\\Work\\Keep', 'descendants'), item('D:\\Work\\one.txt', 'exact'), item('C:\\Windows', 'descendants', 'hard_deny')];
+
+  it('a folder entry covers itself and everything below it; an exact entry only itself', () => {
+    expect(protectedBy('D:\\Work\\Keep', items, true)?.display).toBe('D:\\Work\\Keep');
+    expect(protectedBy('D:\\Work\\Keep\\a\\b.bin', items, true)?.display).toBe('D:\\Work\\Keep');
+    expect(protectedBy('d:\\work\\keep\\', items, true)?.display).toBe('D:\\Work\\Keep');
+    expect(protectedBy('D:\\Work\\one.txt', items, true)?.display).toBe('D:\\Work\\one.txt');
+    expect(protectedBy('D:\\Work\\one.txt.bak', items, true)).toBeNull();
+    // A sibling that only shares the prefix is not inside the folder.
+    expect(protectedBy('D:\\Work\\Keeper', items, true)).toBeNull();
+  });
+
+  it('only the person\'s own entries count (built-in layers are not offered as removable protection); case per platform', () => {
+    expect(protectedBy('C:\\Windows\\System32', items, true)).toBeNull();
+    expect(protectedBy('/Users/lin/Keep/x', [item('/Users/lin/Keep', 'descendants')], false)?.display).toBe('/Users/lin/Keep');
+    expect(protectedBy('/Users/lin/keep/x', [item('/Users/lin/Keep', 'descendants')], false)).toBeNull();
+  });
+});
 import { setPlatform } from './platform';
 import type { Entry, ScanStatus, Summary } from './types';
 

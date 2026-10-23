@@ -1509,7 +1509,14 @@
                 "restore",
                 "purge",
                 "startup",
-                "maintenance"
+                "maintenance",
+                "process",
+                "update",
+                "uninstall",
+                "uninstall_leftovers",
+                "uninstall_restore",
+                "startup_restore",
+                "maintenance_restore"
               ]
             },
             {

@@ -205,43 +205,28 @@ fn report(req: &str, store: Option<PathBuf>) -> Value {
 /// `doctor --repair-index` (BUG-WFA-01): a full check of the scan index; only an unusable one is moved aside
 /// (kept as `index.db.damaged-<time>`, never deleted) and replaced by an empty index. The audit store, and with it
 /// history, quarantine and recovery, is never touched. Runs before the report, so the report shows the result.
+/// The desktop host's `repair_index` command runs the same `cm_app::index_repair::repair`.
 fn repair_index(req: &str, p: &Parsed) -> Result<Value, ExitCode> {
     let Some(dir) = store_dir(p) else {
         return Err(fail(req, ErrorCode::InvalidArgument, "no store directory; pass --store or set CM_STORE_DIR", p.format));
     };
-    let unchanged = |state: &str, message: &str| json!({"status": "not_needed", "previous_state": state, "kept_files": [], "message": message});
-    if !dir.is_dir() {
-        return Ok(unchanged("missing", "There is no store yet; nothing was changed."));
-    }
-    // CleanManager's own files change: no update may replace the program meanwhile (LIF-01).
+    // CleanManager's own files change: no update may replace the program meanwhile (LIF-01). A missing store
+    // takes no lock (and is not created).
     let _lifecycle = match crate::instance_lock::shared(&dir) {
         Ok(g) => g,
         Err(e @ crate::instance_lock::LockError::Busy(_)) => return Err(fail(req, ErrorCode::Conflict, &e.to_string(), p.format)),
         Err(crate::instance_lock::LockError::Io(..)) => None,
     };
-    match Stores::repair_index(&dir) {
-        Ok(r) if r.repaired => {
-            let kept: Vec<String> = r.kept.iter().map(|k| k.display().to_string()).collect();
-            Ok(json!({
-                "status": "repaired",
-                "previous_state": r.previous_state,
-                "kept_files": kept,
-                "message": format!(
-                    "The scan index was unusable ({}). It was moved aside as {} and an empty index was created. Operation history, quarantine and recovery were not touched. Earlier scans and candidate sets are no longer available: run scan again.",
-                    r.problem.unwrap_or_default(), kept.join(", ")
-                ),
-            }))
-        }
-        Ok(r) if r.previous_state == "missing" => Ok(unchanged("missing", "There is no scan index yet; nothing was changed (the next scan creates it).")),
-        Ok(r) => Ok(unchanged(r.previous_state, "The scan index passed the full integrity check; nothing was changed.")),
+    match cm_app::index_repair::repair(&dir) {
+        Ok(r) => Ok(r.to_wire()),
         // The file could not be moved: on Windows another process holds it open. Everything moved was put back.
-        Err(cm_store::StoreError::Io(e)) => Err(fail(
+        Err(cm_app::index_repair::RepairError::Busy(e)) => Err(fail(
             req,
             ErrorCode::Conflict,
             &format!("{e}. Another CleanManager process (a running scan or the desktop app) may hold the index open; close it and run doctor --repair-index again. Nothing was changed."),
             p.format,
         )),
-        Err(e) => Err(crate::commands::store_error(req, &e, p.format)),
+        Err(cm_app::index_repair::RepairError::Store(e)) => Err(crate::commands::store_error(req, &e, p.format)),
     }
 }
 

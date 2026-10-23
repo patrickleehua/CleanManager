@@ -14,8 +14,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use cm_core::adapter::{ADAPTERS, AdapterPreview, adapter};
-use cm_core::analysis::{Candidate, CandidateState, CatalogFacts, IndexView, apply_probes, default_selected, plannable};
-use cm_core::model::ObjectKind;
+use cm_core::analysis::{Candidate, CandidateState, CatalogFacts, apply_probes, default_selected, plannable};
 use cm_core::capability::Platform;
 use cm_core::catalog::{CATALOG_VERSION, CATEGORIES, CatalogContext, RegistryStatus, SkipReason, category_status};
 use cm_core::error::ErrorCode;
@@ -363,104 +362,7 @@ pub fn clean(req: &str, p: &Parsed) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// A selected object whose live state no longer matches the scan observation (CLI-11).
-pub(crate) struct Stale {
-    pub object_id: String,
-    pub reason: &'static str,
-    pub detail: String,
-}
-
-/// The local path of a recorded path on this platform.
-fn live_path(p: &cm_core::path::RawPath) -> Option<PathBuf> {
-    #[cfg(windows)]
-    let os = cm_platform::windows::purge::os(p);
-    #[cfg(unix)]
-    let os = match p {
-        cm_core::path::RawPath::Unix(b) => Some(PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b))),
-        _ => None,
-    };
-    os
-}
-
-/// How a file's live metadata differs from its scan observation (size, then whole-second modification time, as the
-/// executor compares them), if it does.
-fn file_drift(m: &std::fs::Metadata, logical: Option<u64>, modified_unix: Option<i64>) -> Option<String> {
-    if !m.is_file() {
-        return Some("is no longer a regular file".into());
-    }
-    if let Some(b) = logical
-        && m.len() != b
-    {
-        return Some(format!("is {} bytes now, {b} when scanned", m.len()));
-    }
-    let now = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
-    match (modified_unix, now) {
-        (Some(then), Some(now)) if then != now => Some("was modified after the scan".into()),
-        _ => None,
-    }
-}
-
-/// Live, read-only check of one candidate against its scan observation (metadata only; the object is not followed):
-/// gone (`missing`), a file whose size or modification time changed, or — for a folder — any file observed under it
-/// that is gone or changed (`changed`, WFA-50): the plan would freeze those files with their scanned sizes. Links and
-/// mount points inside were never traversed and are not followed here. Everything is re-verified per item by the
-/// executor before any action.
-pub(crate) fn stale_reason(c: &Candidate, view: &dyn IndexView) -> Option<(&'static str, String)> {
-    let top = match std::fs::symlink_metadata(live_path(&c.path)?) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(("missing", format!("{} no longer exists", c.path.display()))),
-        Err(_) => return None,
-        Ok(m) => m,
-    };
-    let f = view.info(c.entry_id);
-    if c.kind != ObjectKind::Directory {
-        let logical = if c.logical.unknown_count == 0 { Some(c.logical.known.0) } else { f.logical };
-        return file_drift(&top, logical, f.modified_unix).map(|why| ("changed", format!("{} {why}", c.path.display())));
-    }
-    if !top.is_dir() || top.file_type().is_symlink() {
-        return Some(("changed", format!("{} is no longer a folder", c.path.display())));
-    }
-    let mut stack = vec![c.entry_id];
-    while let Some(e) = stack.pop() {
-        let ef = view.info(e);
-        if ef.boundary {
-            continue;
-        }
-        match ef.kind {
-            ObjectKind::Directory => stack.extend_from_slice(view.children(e)),
-            ObjectKind::File => {
-                let path = view.path(e);
-                let Some(os) = live_path(&path) else { continue };
-                let why = match std::fs::symlink_metadata(&os) {
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some("no longer exists".to_string()),
-                    Err(_) => None,
-                    Ok(m) => file_drift(&m, ef.logical, ef.modified_unix),
-                };
-                if let Some(why) = why {
-                    return Some(("changed", format!("{} changed since the scan: {} {why}", c.path.display(), path.display())));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Split a selection into plannable ids and stale rows, keeping order. `view`: the scan the candidates come from.
-pub(crate) fn split_stale(candidates: &[Candidate], view: &dyn IndexView, selected: Vec<String>) -> (Vec<String>, Vec<Stale>) {
-    let mut keep = Vec::new();
-    let mut stale = Vec::new();
-    for id in selected {
-        match candidates.iter().find(|c| c.candidate_id == id).and_then(|c| stale_reason(c, view)) {
-            Some((reason, detail)) => stale.push(Stale { object_id: id, reason, detail }),
-            None => keep.push(id),
-        }
-    }
-    (keep, stale)
-}
-
-pub(crate) fn stale_summary(stale: &[Stale]) -> String {
-    stale.iter().map(|s| format!("{}: {}", s.object_id, s.reason)).collect::<Vec<_>>().join(", ")
-}
+pub(crate) use cm_app::selection::{Stale, split_stale, stale_summary};
 
 /// The plan record plus `stale_items` (outside the signed body, so the digest is unaffected).
 pub(crate) fn with_stale(mut plan: Value, stale: &[Stale]) -> Value {

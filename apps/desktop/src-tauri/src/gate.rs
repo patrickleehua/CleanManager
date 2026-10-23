@@ -28,7 +28,7 @@ pub fn capability_of(command: &str, catalog: Option<&str>) -> Option<&'static st
         "installer_locations" | "installer_scan" => "installer.cleanup",
         "create_catalog_plan" if catalog == Some("installer") => "installer.cleanup",
         "create_catalog_plan" => "purge.artifacts",
-        "trash_inspect" | "trash_plan" => "trash.manual",
+        "trash_inspect" | "trash_plan" | "trash_list" | "trash_purge_plan" => "trash.manual",
         "insights_list" | "insights_overview" | "downloads_trash_plan" => "insights.overview",
         "startup_list" | "startup_plan" => "startup.toggle",
         "status_snapshot" | "alerts_settings" | "alerts_save" => "status.metrics",
@@ -98,7 +98,7 @@ mod tests {
     fn every_registered_command_is_gated_or_core() {
         const CORE: &[&str] = &[
             "capabilities", "list_scan_roots", "choose_folder", "recent_scans", "start_scan", "scan_status", "cancel_scan", "list_entries", "treemap_layer",
-            "summarize_selection", "candidate_summary", "analyze_scan", "list_candidates", "create_plan", "plan_detail", "plan_items", "approve_plan",
+            "summarize_selection", "repair_index", "candidate_summary", "analyze_scan", "list_candidates", "create_plan", "plan_detail", "plan_items", "approve_plan",
             "revoke_plan", "list_policies", "set_policy_state_cmd", "create_policy_from_plan", "start_apply", "cancel_apply", "active_apply",
             "operation_detail", "list_operation_items", "reconcile_operation", "list_operations", "list_plans", "list_quarantine",
             "create_recovery_plan", "readiness", "reveal_entry", "open_system_page", "list_protection", "add_protection", "remove_protection",

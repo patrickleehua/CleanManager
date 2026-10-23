@@ -24,9 +24,9 @@
 
 ## 保持亮屏（RES-02）
 
-- 实现：专用线程调用 `SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)`，结束时调用 `SetThreadExecutionState(ES_CONTINUOUS)`。这是每线程的临时请求（与视频播放器相同），不修改电源计划、息屏或睡眠超时。
-- 时长：30 分钟、1 小时、2 小时或“直到结束”（命令接受 1–1440 分钟）。到时、点“结束保持亮屏”、托盘“退出”或程序退出（`RunEvent::Exit`）时撤销；进程意外结束时系统随线程一并撤销。
-- 实机：`powercfg /requests`（需要管理员）在保持期间的 DISPLAY 与 SYSTEM 下列出本进程，撤销后消失。
+- 实现：专用线程用 `PowerCreateRequest` 建一个电源请求对象（原因文字 `CleanManager: keep the screen on (RES-02)`），对它 `PowerSetRequest(PowerRequestDisplayRequired)` 与 `PowerSetRequest(PowerRequestSystemRequired)`；结束时 `PowerClearRequest` 两者并关闭句柄。这是临时请求（与视频播放器相同），不修改电源计划、息屏或睡眠超时。
+- 时长：30 分钟、1 小时、2 小时或“直到结束”（命令接受 1–1440 分钟）。到时、点“结束保持亮屏”、托盘“退出”或程序退出（`RunEvent::Exit`）时撤销；进程意外结束时系统关闭句柄，请求随之撤销。
+- 实机：64 位的 `%SystemRoot%\System32\powercfg.exe /requests`（需要管理员）在保持期间的 DISPLAY 与 SYSTEM 下列出本进程及上述原因，撤销后消失。注意 32 位的 `SysWOW64\powercfg.exe`（32 位外壳如 x86 版 PowerShell 7 直接输入 `powercfg` 时运行的就是它）会误读请求列表：所有请求都显示为 SYSTEM、执行与 ACTIVELOCKSCREEN 下的“旧的内核调用程序”（Legacy Kernel Caller），DISPLAY 为“无”（WFA-98 的现象即由此而来）；从 32 位外壳核对时请运行 `%SystemRoot%\Sysnative\powercfg.exe /requests`。可选实机测试 `cargo test -p cm-platform keep_awake_shows_in_powercfg -- --ignored` 用唯一原因文字核对 DISPLAY 与 SYSTEM，以及结束、到时、丢弃与进程退出后的撤销。
 
 ## 清洁屏幕（RES-02）
 
