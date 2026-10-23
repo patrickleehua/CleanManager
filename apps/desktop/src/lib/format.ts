@@ -156,6 +156,7 @@ export const ERROR_HINT: Record<string, string> = {
   get wrong_catalog() { return t('format.errorHint.wrong_catalog'); },
   get unknown_candidate() { return t('format.errorHint.unknown_candidate'); },
   get selection_stale() { return t('format.errorHint.selection_stale'); },
+  get already_removed() { return t('format.errorHint.already_removed'); },
   get recycle_bin_unavailable() { return t('format.volumeNoBinAvailable', { bin: words().bin }); },
   get empty_selection() { return t('format.errorHint.empty_selection'); },
   get bin_item_gone() { return t('format.errorHint.bin_item_gone', { bin: words().bin }); },

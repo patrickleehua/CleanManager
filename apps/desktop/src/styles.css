@@ -303,6 +303,9 @@ main { width: 100%; max-width: 1480px; margin: 0 auto; padding: 28px 28px 64px; 
 .sb-figure { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
 .figure-big { font-size: var(--fs-figure); font-weight: var(--fw-regular); letter-spacing: -0.03em; line-height: 1.1; margin: 0; font-variant-numeric: tabular-nums; }
 .figure-cap { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted); display: flex; align-items: center; flex-wrap: wrap; }
+.figure-removed { gap: 6px; }
+.figure-removed .figure-sep { margin: 0 6px; }
+.cf-removed { display: inline-flex; align-items: center; gap: 6px; }
 .figure-sep { width: 1px; height: 12px; background: var(--line-strong); margin: 0 var(--sp-3); }
 
 /* Issue lines: the Chinese explanation is the text; codes and raw messages are collapsed. */
@@ -617,6 +620,32 @@ input[type='search'] { flex: 1 1 160px; }
 /* DIN-05 "可手动清理": a quiet word with a dotted ring — advice, never a selection or a risk badge. */
 .hint-tag { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; font-weight: var(--fw-medium); color: var(--muted); white-space: nowrap; }
 .hint-mark { width: 8px; height: 8px; border-radius: 50%; border: 1.5px dotted var(--accent); flex: none; }
+
+/* Removed after the scan (audit store, not re-read): the snapshot keeps the row and the tile in place, dimmed and struck
+   through, with a word for how it left. Shape + word, never colour alone: a hatched square for every removal. */
+.grid-row.removed .name { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--muted); flex: 0 1 auto; min-width: min(9em, 45%); }
+.grid-row.removed .swatch, .grid-row.removed .chev { opacity: 0.45; }
+.grid-row.removed .col-num, .grid-row.removed .col-kind { color: var(--muted); }
+.grid-row.removed .check { border-style: dashed; cursor: not-allowed; }
+.removed-tag { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-weight: var(--fw-medium); color: var(--muted); white-space: nowrap; }
+.removed-tag[data-tone='gone'] { color: var(--danger); }
+.removed-mark { width: 9px; height: 9px; border-radius: 2px; flex: none; border: 1px solid currentColor; background: repeating-linear-gradient(-45deg, currentColor 0 1px, transparent 1px 3px); }
+.tile[data-removed] {
+  background: repeating-linear-gradient(45deg, var(--soft) 0 6px, color-mix(in srgb, var(--line-strong) 80%, var(--soft)) 6px 8px);
+  color: var(--muted); filter: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.tile[data-removed] .tile-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+.swatch-removed { background: repeating-linear-gradient(45deg, var(--soft) 0 2px, var(--line-strong) 2px 3px); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.disk-toolbar-extra { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+.disk-toolbar-extra input { margin: 0; }
+.removed-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted); }
+.removed-line .removed-mark { color: var(--muted); }
+.ds-removed { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--muted); }
+.removed-detail { margin: var(--sp-3) 0 0; padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); background: var(--soft); }
+.removed-detail .rd-head { display: flex; align-items: center; gap: var(--sp-2); margin: 0; font-weight: var(--fw-medium); }
+.removed-detail[data-tone='gone'] .rd-head { color: var(--danger); }
+.removed-detail .rd-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
 
 .detail-empty-title { margin-bottom: var(--sp-1); }
 .detail-kind { display: flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }

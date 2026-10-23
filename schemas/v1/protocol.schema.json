@@ -1973,6 +1973,61 @@
             "flow"
           ],
           "additionalProperties": false
+        },
+        "removed": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "trash",
+                "quarantine",
+                "permanent"
+              ]
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "recoverable": {
+              "type": "boolean"
+            },
+            "inherited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "mode",
+            "operation_id",
+            "at",
+            "recoverable",
+            "inherited"
+          ],
+          "additionalProperties": false
+        },
+        "removed_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "removed_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removed_unknown_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

@@ -7,6 +7,7 @@ import { refusalText } from './codes';
 import { sizeLabel, type BannerKind } from './display';
 import { basisLabel, isTerminal, kindLabel } from './format';
 import { overviewPlan } from './overviewModel';
+import { removedBlock } from './removedModel';
 import type { Entry, IpcError, ProtectionItem, ScanStatus } from './types';
 import { t } from '../i18n';
 
@@ -216,7 +217,10 @@ export function plainPath(p: string): string {
 }
 
 /** Why this entry cannot be selected for the bin, or `null` when it can be offered. */
-export function selectionBlock(e: Pick<Entry, 'kind' | 'boundary' | 'protected_link'>): string | null {
+export function selectionBlock(e: Pick<Entry, 'kind' | 'boundary' | 'protected_link' | 'removed' | 'removed_count'>): string | null {
+  // Removed after the scan (by an operation recorded in the audit store): nothing is there to move any more.
+  const removed = removedBlock(e);
+  if (removed) return removed;
   if (e.protected_link) return t('trash.refusal.linkProtected', { target: plainPath(e.protected_link) });
   const link = e.kind === 'symlink' || e.kind === 'reparse' || e.boundary === 'symlink' || e.boundary === 'junction' || e.boundary === 'mount_point';
   if (link) return refusalText({ reason: 'link_or_reparse' });

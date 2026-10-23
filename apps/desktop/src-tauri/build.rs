@@ -20,6 +20,8 @@ fn main() {
         "summarize_selection",
         // `doctor --repair-index` (needs confirm: true): moves only an unusable index.db aside (kept) and starts an empty one.
         "repair_index",
+        // What operations applied after a scan removed from it (audit store + the scan's own rows; ids only, read-only).
+        "removed_entries",
         // Candidates, plans and authorization (ids only; approval needs a review token + typed digest).
         "candidate_summary",
         "analyze_scan",

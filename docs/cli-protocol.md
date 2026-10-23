@@ -14,7 +14,7 @@
 | `scan show ID` | 查询扫描状态与覆盖率；宿主已退出的扫描先标为中断 | 运行中 `scan_status`，结束后 `scan_result` | 无目标写入 |
 | `scan wait ID [--timeout S]` | 等待终态（默认 60 s，最长 86400 s） | `scan_result`；预算用尽为运行态 `scan_status`（退出 8） | 无目标写入 |
 | `scan cancel ID` | 请求停止扫描（回执不是终态） | `scan_cancel_receipt` | 无目标写入 |
-| `entries list --scan ID [--sort S] [--kind K] [--parent E] [--name T]` | 分页查询目录或大文件（`--limit` 默认 50、上限 500，`--cursor` 续页）；本页目录可带只读的 `cleanable_hint`（依据 `build_artifact`/`catalog_rule`/`cachedir_tag`、`rule_id`、`detail`、入口 `flow`，无依据或受保护时省略，见[磁盘视图线索](system-status.md#磁盘视图的可手动清理线索din-05)） | `entries_page` | 无目标写入 |
+| `entries list --scan ID [--sort S] [--kind K] [--parent E] [--name T]` | 分页查询目录或大文件（`--limit` 默认 50、上限 500，`--cursor` 续页）；本页目录可带只读的 `cleanable_hint`（依据 `build_artifact`/`catalog_rule`/`cachedir_tag`、`rule_id`、`detail`、入口 `flow`，无依据或受保护时省略，见[磁盘视图线索](system-status.md#磁盘视图的可手动清理线索din-05)）；扫描之后执行的操作已移走的条目带 `removed`（`mode` 为 `trash`/`quarantine`/`permanent`、`operation_id`、`at`、`recoverable`、`inherited` 表示随上级文件夹一起移走），目录另带其下已移走的 `removed_count`、`removed_bytes`（已知部分，全部未知时为 null）、`removed_unknown_count`；都来自审计记录，不重新读取磁盘，较新的同根扫描不带这些字段（见[扫描之后的操作](#扫描之后的操作)，样例 [entries-page-removed](../examples/contracts/entries-page-removed.json)） | `entries_page` | 无目标写入 |
 | `analyze --scan ID` | 规则分析、生成 candidate_set | `analysis_result` | 只写本工具结果 |
 | `candidates list --set ID [--limit N] [--cursor C]` | 分页查询理由与影响：档位与理由、再生成与离线影响、年龄阈值口径、恢复限制（见“dry-run 即计划预览”） | `candidates_page` | 无目标写入 |
 | `plan create --set ID --mode MODE --candidates ID,ID` | 生成固定计划；或以 `--all-default-selected` 取全部默认选中项；保护名单不可用时为 protection_unavailable（`purge`/`installer plan create` 同样）；trash 模式下目标所在卷没有可用回收站时为 unsupported（`trash_unavailable`，见“dry-run 即计划预览”） | `plan` | 只写本工具计划 |
@@ -192,6 +192,16 @@ JSON 模式只输出一个终态记录。JSONL 模式输出零个或多个 progr
 | `timeout` | `scan --timeout` 的预算用尽，宿主为自己请求取消 | cancelled，退出 8 |
 
 根判断基于已打开的根句柄（Windows 以 `FILE_FLAG_OPEN_REPARSE_POINT` 打开、macOS 以 `O_NOFOLLOW`），不是先查路径再打开，因此检查与扫描之间替换路径也不会被跟随。Windows 上云同步根目录本身带云 reparse 标记，是唯一按目录接受的 reparse point：只按元数据列出，其中的占位子目录仍记为 `cloud_provider` 边界。桌面端在提供和开始扫描前用同样的 code（`not_a_directory`、`root_is_link`）预先拒绝。
+
+### 扫描之后的操作
+
+扫描是一份快照：之后执行的计划移走的条目仍在扫描结果里。`entries list`（以及桌面端的磁盘表格、空间分布图与搜索，同一实现 `cm_app::removed`）给这些条目加上可选的 `removed` 事实，不重新读取磁盘：
+
+- 来源只是审计库：扫描结束（`finished_at`；中断的扫描用最后一次心跳）之后**逐项成功**的动作——`plan/v1` 的每一项（规则清理、构建产物、安装包），以及 `plan/v2` 的文件动作 `fs_trash` / `fs_quarantine` / `fs_delete`（手动移到回收站、旧下载、卸载残留、清空回收站项）。`mode` 取动作结果的 `recovery`（`trash`、`quarantine`、`unavailable` → `permanent`），没有时按计划的处理方式；随内容一起移走的空文件夹按计划的处理方式。
+- 隔离项被恢复计划放回（`restored`）后不再标记；被永久清空（`purged`）后为 `permanent`、`recoverable: false`。回收站中的项 CleanManager 看不到后来的状态，始终按 `recoverable: true` 报告；在系统回收站里还原后重新扫描即可。
+- 路径按扫描根之下的各级名称落到这份快照的条目（Windows 不区分大小写），不在快照里的路径忽略；所以同一根的较新扫描（在这些操作之后结束）不带任何 `removed`。被移走的文件夹之下的条目带 `inherited: true`。
+- 目录的 `removed_count` / `removed_bytes` / `removed_unknown_count` 只计其下最上层的已移走条目（文件夹里随它一起移走的不重复计），大小用快照里存下的大小：大小未知或部分未知的条目计入 `removed_unknown_count`，`removed_bytes` 是已知部分，全部未知时为 null，从不把未知写成 0。
+- 计算只读审计库与少量目录的子项名称，按“扫描 + 审计修订”缓存（桌面端）；创建计划仍在执行前逐项核对对象是否还在（`precondition_missing`）。
 
 ### 扫描索引不可用与修复
 

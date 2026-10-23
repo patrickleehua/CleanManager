@@ -99,7 +99,7 @@ mod tests {
     fn every_registered_command_is_gated_or_core() {
         const CORE: &[&str] = &[
             "capabilities", "list_scan_roots", "choose_folder", "recent_scans", "start_scan", "scan_status", "cancel_scan", "list_entries", "treemap_layer",
-            "summarize_selection", "repair_index", "candidate_summary", "analyze_scan", "list_candidates", "create_plan", "plan_detail", "plan_items", "approve_plan",
+            "summarize_selection", "repair_index", "removed_entries", "candidate_summary", "analyze_scan", "list_candidates", "create_plan", "plan_detail", "plan_items", "approve_plan",
             "revoke_plan", "list_policies", "set_policy_state_cmd", "create_policy_from_plan", "start_apply", "cancel_apply", "active_apply",
             "operation_detail", "list_operation_items", "reconcile_operation", "list_operations", "list_plans", "list_quarantine",
             "create_recovery_plan", "readiness", "reveal_entry", "open_system_page", "list_protection", "add_protection", "remove_protection",

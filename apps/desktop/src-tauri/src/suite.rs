@@ -625,6 +625,8 @@ pub(crate) mod imp {
         }
         // WFA-58: a row that cannot be planned now (an attached image, an installer in use, a protected folder) is refused
         // for that reason before any live check; an attached image keeps changing, so it would only look changed.
+        // A row a later operation already removed is refused too (the page leaves it out).
+        let overlay = cm_app::removed::removed_overlay(stores, &set.scan_id)?;
         for id in selected {
             match set.candidates.iter().find(|c| &c.candidate_id == id) {
                 None => return Err(ipc(ErrorCode::InvalidArgument, "unknown_candidate", format!("candidate {id} is not in this candidate set"))),
@@ -632,7 +634,7 @@ pub(crate) mod imp {
                     let why = c.reasons.join("; ");
                     return Err(ipc(ErrorCode::PolicyDenied, "not_selectable", format!("candidate {id} cannot be planned ({}): {why}", skip_reason(c).unwrap_or("blocked"))));
                 }
-                Some(_) => {}
+                Some(c) => crate::cleanup::already_removed(&overlay, c.entry_id, &c.path, id)?,
             }
         }
         // CLI-11 / WFA-50: rows whose observed state changed since discovery (a folder: any file the discovery saw in it)
@@ -767,6 +769,11 @@ pub(crate) mod imp {
     pub fn trash_plan(s: &AppState, scan_id: &str, entries: &[u64]) -> IpcResult<CreatedPlanDto> {
         let p = published(s, scan_id)?;
         let selected = entries.iter().map(|&e| known_entry(&p.view, e)).collect::<IpcResult<Vec<u64>>>()?;
+        // An entry a later operation already removed is never planned again (the disk page does not offer it).
+        let overlay = crate::removed::overlay(s, &p.stores, scan_id)?;
+        for &e in &selected {
+            crate::cleanup::already_removed(&overlay, e, &p.view.path(e), &format!("entry {e}"))?;
+        }
         let hard = cm_platform::protection::hard_deny_set();
         let user = cm_platform::protection::load(&p.stores.dir);
         let problem = user.as_ref().err().map(ToString::to_string);

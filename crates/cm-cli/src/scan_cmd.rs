@@ -481,14 +481,22 @@ pub fn entries_list(req: &str, p: &Parsed) -> ExitCode {
         Ok(page) => {
             // DIN-05: read-only "cleanable by hand" hints for this page's directories (absent = none).
             let hints = crate::analysis_cmd::entry_hints(&page.items, &stores.dir);
+            // What operations applied after this scan removed (from the audit store; the disk is not read again).
+            let overlay = match cm_app::removed::removed_overlay(&stores, scan_id) {
+                Ok(o) => o,
+                Err(e) => return store_error(req, &e, p.format),
+            };
             let items: Vec<serde_json::Value> = page
                 .items
                 .iter()
                 .zip(hints)
                 .map(|(item, hint)| {
                     let mut v = json!(item);
-                    if let (Some(h), Some(obj)) = (hint, v.as_object_mut()) {
-                        obj.insert("cleanable_hint".into(), json!(h));
+                    if let Some(obj) = v.as_object_mut() {
+                        if let Some(h) = hint {
+                            obj.insert("cleanable_hint".into(), json!(h));
+                        }
+                        removed_fields(obj, &overlay, item);
                     }
                     v
                 })
@@ -514,6 +522,24 @@ pub fn entries_list(req: &str, p: &Parsed) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => store_error(req, &e, p.format),
+    }
+}
+
+/// The additive `removed` facts of one listed entry (absent when nothing applies): the entry's own removal or that of a
+/// removed folder above it (`inherited`), and for a directory what was removed beneath it — counts of the top-most
+/// removed objects and the known part of their stored sizes (`removed_bytes` null when none of it is known; never 0 for
+/// unknown).
+pub fn removed_fields(obj: &mut serde_json::Map<String, Value>, overlay: &cm_app::removed::RemovedOverlay, item: &cm_store::index::EntryItem) {
+    if let Some(r) = overlay.of_entry(item) {
+        obj.insert(
+            "removed".into(),
+            json!({"mode": r.mark.mode, "operation_id": r.mark.operation_id, "at": r.mark.at, "recoverable": r.mark.recoverable, "inherited": r.inherited}),
+        );
+    }
+    if let Some(b) = item.entry_id.parse::<u64>().ok().and_then(|id| overlay.beneath(id)) {
+        obj.insert("removed_count".into(), json!(b.count));
+        obj.insert("removed_bytes".into(), json!(b.known_text()));
+        obj.insert("removed_unknown_count".into(), json!(b.unknown_count));
     }
 }
 

@@ -8,7 +8,7 @@ import { mockMac } from './mockMac';
 import { previewPlatform } from './platform';
 import type { Backend } from './api';
 import { mockDiag } from './mockDiag';
-import { mockOps } from './mockOps';
+import { mockOps, PREVIEW_REMOVALS } from './mockOps';
 import { mockSoftware } from './mockSoftware';
 import { mockSuite } from './mockSuite';
 import type {
@@ -20,6 +20,8 @@ import type {
   IpcError,
   Issue,
   ProgressEvent,
+  RemovedFact,
+  RemovedTotal,
   RootOffer,
   ScanStatus,
   Summary,
@@ -391,7 +393,70 @@ export function mockBackend(): Backend {
       elevated_read: [],
       issues,
       issues_total: issues.length,
+      removed_since_scan: published && terminal && s.state !== 'failed' && s.seen > 0 ? removedTotal(id, null) : null,
     };
+  };
+
+  // "Removed since scan" (PREVIEW_REMOVALS in mockOps): the preview disk scan's entries that the fixture operations
+  // removed after it finished, by node id; computed once. Only finished scans with results carry an overlay.
+  let removedNodes: Map<number, RemovedFact> | null = null;
+  const nodeAt = (below: string[]): number | null => {
+    let cur = 1;
+    for (const name of below) {
+      const next = nodes.get(cur)?.children.find((c) => nodes.get(c)!.name === name);
+      if (next === undefined) return null;
+      cur = next;
+    }
+    return cur;
+  };
+  const removals = (scanId: string): Map<number, RemovedFact> => {
+    const st = scans.get(scanId);
+    if (scanId !== 's_preview_1' || !st || ['created', 'running', 'stopping', 'failed'].includes(st.state)) return new Map();
+    if (removedNodes) return removedNodes;
+    const found = PREVIEW_REMOVALS.map((r) => ({ r, id: nodeAt(r.below) })).filter((x): x is { r: (typeof PREVIEW_REMOVALS)[number]; id: number } => x.id !== null);
+    const facts = ops.__removals(
+      found.map(({ r, id }) => {
+        const n = nodes.get(id)!;
+        return { mode: r.mode, minutesAgo: r.minutesAgo, name: n.name, path_display: pathOf(nodes, id), logical_bytes: n.logical === null ? null : n.logical.toString(), directory: n.kind === 'directory' };
+      }),
+    );
+    removedNodes = new Map(found.map(({ id }, i) => [id, facts[i]]));
+    return removedNodes;
+  };
+  const above = (id: number): number[] => {
+    const out: number[] = [];
+    for (let p = nodes.get(id)!.parent; p !== null; p = nodes.get(p)!.parent) out.push(p);
+    return out;
+  };
+  /** Top-most removed entries (beneath `under`, or the whole scan), counted like the host: stored sizes, unknown kept. */
+  const removedTotal = (scanId: string, under: number | null): RemovedTotal => {
+    const marks = removals(scanId);
+    let count = 0;
+    let known = 0n;
+    let unknown = 0;
+    for (const id of marks.keys()) {
+      const ups = above(id);
+      if (ups.some((a) => marks.has(a))) continue;
+      if (under !== null && !ups.includes(under)) continue;
+      const n = nodes.get(id)!;
+      count += 1;
+      if (n.logical === null) unknown += 1;
+      else {
+        known += n.logical;
+        if (n.unknownDesc > 0) unknown += 1;
+      }
+    }
+    const latest = [...marks.values()].map((m) => m.at).sort().pop() ?? null;
+    return { count, known_bytes: count && (known > 0n || unknown < count) ? known.toString() : null, unknown_count: unknown, latest_at: latest, signature: `preview.${marks.size}` };
+  };
+  const withRemoved = (scanId: string, n: Node, e: Entry): Entry => {
+    const marks = removals(scanId);
+    if (!marks.size) return { ...e, removed: null, removed_count: 0, removed_bytes: null, removed_unknown_count: 0 };
+    const own = marks.get(n.id);
+    const up = own ? undefined : above(n.id).find((a) => marks.has(a));
+    const fact = own ? { ...own, inherited: false } : up !== undefined ? { ...marks.get(up)!, inherited: true } : null;
+    const beneath = n.kind === 'directory' && !fact ? removedTotal(scanId, n.id) : null;
+    return { ...e, removed: fact, removed_count: beneath?.count ?? 0, removed_bytes: beneath?.known_bytes ?? null, removed_unknown_count: beneath?.unknown_count ?? 0 };
   };
 
   const list = (q: EntriesQuery): EntriesPage => {
@@ -424,7 +489,7 @@ export function mockBackend(): Backend {
       name_contains: q.name_contains,
       parent_entry_id: q.parent_entry_id,
       page_size: q.page_size,
-      items: page.map((n) => toEntry(nodes, n)),
+      items: page.map((n) => withRemoved(q.scan_id, n, toEntry(nodes, n))),
       next_cursor: nextOffset < items.length ? `o${nextOffset}` : null,
       unknown_size_items: page.filter((n) => n.logical === null).length,
     };
@@ -610,6 +675,7 @@ export function mockBackend(): Backend {
         parent_entry_id: parent ?? '1',
         parent_summary: summaryOf([Number(parent ?? '1')]),
         items: all.slice(0, limit),
+        parent_removed: ((r) => (r.count ? r : null))(removedTotal(scanId, Number(parent ?? '1'))),
         rest: {
           count: rest.length,
           known_logical_bytes: rest.reduce((a, e) => a + (e.logical_bytes ? BigInt(e.logical_bytes) : 0n), 0n).toString(),
@@ -617,6 +683,17 @@ export function mockBackend(): Backend {
           complete: true,
         },
       };
+    },
+    async removedEntries(scanId, ids) {
+      await delay(60);
+      const marks = removals(scanId);
+      const entries = ids.flatMap((id) => {
+        const n = nodes.get(Number(id));
+        if (!n || !marks.size) return [];
+        const e = withRemoved(scanId, n, toEntry(nodes, n));
+        return e.removed || e.removed_count ? [{ entry_id: id, removed: e.removed ?? null, removed_count: e.removed_count ?? 0 }] : [];
+      });
+      return { scan_id: scanId, total: removedTotal(scanId, null), entries };
     },
     async summarizeSelection(scanId, ids) {
       if (!scans.has(scanId)) throw err('invalid_argument', 'not_found', 'not found');

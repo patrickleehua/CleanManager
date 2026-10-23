@@ -8,6 +8,7 @@ import { categoryOf } from '../lib/category';
 import { hintLabel, hintBasisText, hintOf, hintTitle } from '../lib/cleanable';
 import { h, live, replace } from '../lib/dom';
 import { kindLabel } from '../lib/format';
+import { folderSizeText, removedBadge, removedBeneath, REMOVED_TEXT } from '../lib/removedModel';
 import type { Entry, SortKey } from '../lib/types';
 import { t } from '../i18n';
 
@@ -205,6 +206,9 @@ export class EntryGrid {
     if (e.size_basis === 'unknown') note.push(t('common.sizeUnknown'));
     else if (e.unknown_descendants) note.push(t('grid.unknownDescendants', { unknown_descendants: e.unknown_descendants }));
     if (e.identity_quality === 'weak') note.push(t('grid.weakIdentity'));
+    // A folder the scan saw whole: what later operations removed beneath it (its own size stays the snapshot's).
+    const beneath = removedBeneath(e);
+    if (beneath !== null) note.unshift(REMOVED_TEXT.removedShort(beneath));
     const bar = h('span', { class: 'share', 'aria-hidden': 'true' });
     bar.style.setProperty('--share', String(share));
     // DIN-05: read-only marker; the basis is in the tooltip and for screen readers. It never selects.
@@ -212,14 +216,20 @@ export class EntryGrid {
     const hintTag = hint
       ? h('span', { class: 'hint-tag', title: hintTitle(hint) }, h('span', { class: 'hint-mark', 'aria-hidden': 'true' }), hintLabel(), h('span', { class: 'sr-only' }, t('grid.basisHint', { hint: hintBasisText(hint) })))
       : null;
+    // Removed after the scan: dimmed, struck through, with how it left; never selectable (the page says why).
+    const badge = e.removed ? removedBadge(e.removed) : null;
+    const removedTag = badge
+      ? h('span', { class: 'removed-tag', 'data-tone': badge.tone, title: badge.note ? `${badge.text}${t('common.commaSep')}${badge.note}` : badge.text }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), badge.text)
+      : null;
     const row = h(
       'div',
       {
-        class: `grid-row${active ? ' active' : ''}${selected ? ' selected' : ''}`,
+        class: `grid-row${active ? ' active' : ''}${selected ? ' selected' : ''}${e.removed ? ' removed' : ''}`,
         role: 'row',
         id: this.rowId(e.entry_id),
         'aria-rowindex': String(i + 2),
         'aria-selected': selected ? 'true' : 'false',
+        'aria-disabled': e.removed && !selected ? 'true' : null,
         'data-id': e.entry_id,
       },
       h(
@@ -228,10 +238,11 @@ export class EntryGrid {
         h('span', { class: 'check', 'aria-hidden': 'true' }),
         h('span', { class: 'swatch', 'data-cat': categoryOf(e), 'aria-hidden': 'true' }),
         h('span', { class: 'name', title: e.path_display }, e.name),
-        hintTag,
+        removedTag,
+        removedTag ? null : hintTag,
         canOpen(e) ? h('span', { class: 'chev', 'aria-hidden': 'true' }, '›') : null,
       ),
-      h('div', { role: 'gridcell', class: 'col col-num', title: formatExactBytes(logical) }, h('span', {}, formatBytes(logical))),
+      h('div', { role: 'gridcell', class: 'col col-num', title: beneath !== null ? `${folderSizeText(e)}\n${formatExactBytes(logical)}` : formatExactBytes(logical) }, h('span', {}, formatBytes(logical))),
       h('div', { role: 'gridcell', class: 'col col-num col-alloc', title: formatExactBytes(e.allocated_bytes) }, formatBytes(e.allocated_bytes)),
       h('div', { role: 'gridcell', class: 'col col-kind', title: kindLabel(e) }, kindLabel(e)),
       h('div', { role: 'gridcell', class: 'col col-note', title: note.join(t('common.commaSep')) || null }, note.join(t('common.commaSep'))),

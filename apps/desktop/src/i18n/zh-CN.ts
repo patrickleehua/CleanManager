@@ -1839,6 +1839,7 @@ export const zhCN = {
   // ---- treemapView (src/views/treemapView.ts) ----
   'treemapView.label': '空间分布图',
   'treemapView.legend': '颜色表示文件类别（不表示是否可以删除）',
+  'treemapView.removedLegend': '扫描之后已移走（图块位置不变）',
   'treemapView.merged': '其他 {n, number} 项',
   'treemapView.rest': '其余 {n, number} 项',
   'treemapView.share': '占此层已知合计 {s}',
@@ -3638,6 +3639,28 @@ export const zhCN = {
 
   // ---- plan review: a permanent-delete plan of bin items (WFA-65) ----
   'plan.containsOnlyBinItemsPicked': '只包含你在{bin}页选中的项目，而且都在同一个卷上；没有规则会扩大这份清单，也没有策略会匹配它。',
+  // ---- removed since scan: marks on the disk page, candidate views and the overview ----
+  'removed.badge.trash': '已移到回收站 · 可恢复',
+  'removed.badge.trash@macos': '已移到废纸篓 · 可恢复',
+  'removed.badge.quarantine': '已移入隔离区 · 可恢复',
+  'removed.badge.quarantinePurged': '已移入隔离区 · 已永久清空',
+  'removed.badge.permanent': '已永久删除',
+  'removed.inherited': '随上级文件夹一起移走',
+  'removed.notSelectable': '扫描之后它已被移走，不能再选择；重新扫描可得到最新结果。',
+  'removed.insideNotSelectable': '扫描之后这个文件夹里已有内容被移走，扫描结果不再准确，不能整体选择；重新扫描后再选。',
+  'removed.viewOperation': '查看执行结果',
+  'removed.openRecovery': '去恢复',
+  'removed.when': '移走于 {when}',
+  'removed.folderSize': '扫描时 {scanned} · 已移走 {removed}',
+  'removed.removedShort': '已移走 {size}',
+  'removed.hideToggle': '隐藏已删除的项（{n, number}）',
+  'removed.sinceLine': '这次扫描之后已移走 {n, number} 项（{size}）；重新扫描可得到最新结果',
+  'removed.tileSuffix': '，已移走',
+  'removed.hiddenRows': '，已隐藏 {n, number} 个已移走的项',
+  'removed.handled': '{n, number} 个候选在这次扫描之后已被处理（{size}），不再列出；重新扫描可得到最新结果',
+  'removed.overviewLabel': '扫描之后已移走',
+  'removed.overviewValue': '{n, number} 项 · {size}',
+  'format.errorHint.already_removed': '所选对象在扫描之后已经被移走，不能再放进计划；重新扫描可得到最新结果。',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

@@ -27,6 +27,7 @@ import { refusalText } from '../lib/codes';
 import { errorLine } from './parts';
 import { emptyBlock, pathText, sizeEl, stateLine, statusBanner, techBlock } from './ui';
 import { currentIndexProblem } from '../lib/indexModel';
+import { folderSizeText, loadHideRemoved, removedBadge, removedBlock, REMOVED_TEXT, saveHideRemoved, sinceScanLine, totalSize, visibleRows } from '../lib/removedModel';
 import { indexProblemBanner } from './indexRepair';
 import { t } from '../i18n';
 
@@ -128,6 +129,8 @@ export class DiskPage {
   private crumbs: HTMLElement;
   private upBtn: HTMLButtonElement;
   private metaRow: HTMLElement;
+  /** "这次扫描之后已移走 N 项（Y）" with a rescan action; empty when nothing left since the scan. */
+  private removedLine: HTMLElement;
   private stateNote: HTMLElement;
   private notice: HTMLElement;
   private controls: HTMLElement;
@@ -163,6 +166,11 @@ export class DiskPage {
   private summary: Summary | null = null;
   private summaryError: string | null = null;
   private showSelected = false;
+  /** Hide entries later operations removed (per viewer; default: show them marked). */
+  private hideRemoved = loadHideRemoved();
+  /** The removal marks the loaded rows and tiles carry (`removed_since_scan.signature`); a change reloads them. */
+  private removedSig: string | null = null;
+  private rescanning = false;
   /** NEW-06: the protection list (to say "protected" instead of offering it twice) and the last protect result. */
   private protection: ProtectionList | null = null;
   private protectionAsked = false;
@@ -180,12 +188,13 @@ export class DiskPage {
     this.upBtn = live(h('button', { type: 'button', id: 'disk-up', class: 'icon-btn crumb-up', 'aria-keyshortcuts': 'Backspace' }, icon('back')), null, { 'aria-label': () => T.up, title: () => t('disk.upUpkey', { up: T.up, upKey: T.upKey }) });
     this.upBtn.addEventListener('click', () => this.up());
     this.metaRow = h('p', { class: 'meta-row disk-meta' });
+    this.removedLine = h('div', { class: 'disk-removed' });
     this.stateNote = h('div', { class: 'disk-state' });
     this.notice = h('div', { class: 'notice', role: 'status', hidden: true });
     this.header = h(
       'div',
       { class: 'page-head disk-head' },
-      h('div', { class: 'page-head-text' }, live(h('h1', { id: 'disk-title' }), () => DISK_TEXT.title), live(h('nav', { class: 'crumb-bar' }, this.upBtn, this.crumbs), null, { 'aria-label': () => T.crumbsLabel }), this.metaRow),
+      h('div', { class: 'page-head-text' }, live(h('h1', { id: 'disk-title' }), () => DISK_TEXT.title), live(h('nav', { class: 'crumb-bar' }, this.upBtn, this.crumbs), null, { 'aria-label': () => T.crumbsLabel }), this.metaRow, this.removedLine),
     );
     this.treemap = new TreemapView({
       onSelect: (id, members, how) => this.fromTile(id, members, how),
@@ -232,6 +241,8 @@ export class DiskPage {
   activate(): void {
     // The protection list may have changed in 设置 › 保护清单 meanwhile.
     if (this.protectionAsked) void this.loadProtection();
+    // Operations applied meanwhile (here or from the command line) change what the snapshot marks as removed.
+    if (this.scanId) void this.app.refreshStatus();
     // Restore keyboard position when returning to the page (filters/path/scroll were kept).
     if (this.grid.active) requestAnimationFrame(() => this.grid.setActive(this.grid.active!, true));
   }
@@ -239,6 +250,7 @@ export class DiskPage {
   /** LIF-05: the parts drawn only when their data changes are drawn again in the new language. */
   relocalize(): void {
     this.renderHeader();
+    this.renderRemovedLine();
     this.renderChartHead();
     this.renderControls();
     this.renderSide();
@@ -263,11 +275,20 @@ export class DiskPage {
     this.header.classList.remove('bare');
     this.blocked.hidden = true;
     this.content.hidden = false;
+    const sig = status.removed_since_scan?.signature ?? null;
     if (status.scan_id !== this.scanId || status.revision !== this.revision) {
+      this.removedSig = sig;
       this.bind(status.scan_id, status.revision!, status.root_entry_id!, status.root_display ?? t('disk.scanRoot'));
+    } else if (sig !== this.removedSig) {
+      // An operation removed (or a restore put back) something of this snapshot: the same folder, read again.
+      this.removedSig = sig;
+      this.renderControls();
+      void this.loadLayer();
+      void this.loadFirstPage();
     }
     this.renderStateNote(v);
     this.renderMeta();
+    this.renderRemovedLine();
     if (s.revealEntry) {
       const id = s.revealEntry;
       queueMicrotask(() => this.app.store.set({ revealEntry: null }));
@@ -385,8 +406,17 @@ export class DiskPage {
       this.cursor = page.next_cursor;
       this.complete = page.next_cursor === null;
       this.loading = false;
-      // Keep selected entries' details fresh when they come back into view.
-      for (const it of page.items) if (this.selection.has(it.entry_id)) this.selection.set(it.entry_id, it);
+      // Keep selected entries' details fresh when they come back into view; one removed since then leaves the selection.
+      let dropped = false;
+      for (const it of page.items) {
+        if (!this.selection.has(it.entry_id)) continue;
+        if (it.removed) dropped = this.selection.delete(it.entry_id) || dropped;
+        else this.selection.set(it.entry_id, it);
+      }
+      if (dropped) {
+        this.grid.refreshSelection();
+        void this.loadSummary();
+      }
       this.pushGrid();
       return true;
     } catch (e) {
@@ -599,11 +629,13 @@ export class DiskPage {
     const filtered = this.kind !== 'any' || this.name.trim() !== '';
     const emptyText = this.listError ? T.loadFailed(refusalText(this.listError)) : filtered ? T.emptyFiltered : T.emptyFolder;
     const base = this.scope === 'layer' && this.layer ? parseBytes(this.layer.parent_summary.logical_known_bytes) : null;
-    this.grid.setData({ rows: this.rows, complete: this.complete, loading: this.loading, shareBase: base, sort: this.sort, emptyText });
-    const visibleSelected = this.rows.filter((r) => this.selection.has(r.entry_id)).length;
+    // "Hide removed items": the table leaves them out; the chart keeps the snapshot's layout (hatched tiles).
+    const shown = visibleRows(this.rows, this.hideRemoved);
+    this.grid.setData({ rows: shown.rows, complete: this.complete, loading: this.loading, shareBase: base, sort: this.sort, emptyText });
+    const visibleSelected = shown.rows.filter((r) => this.selection.has(r.entry_id)).length;
     this.gridStatus.textContent = this.listError
       ? ''
-      : `${this.complete ? T.count(this.rows.length) : T.loaded(this.rows.length)}${this.selection.size ? T.selectedHidden(this.selection.size, this.selection.size - visibleSelected) : ''}`;
+      : `${this.complete ? T.count(shown.rows.length) : T.loaded(shown.rows.length)}${shown.hidden ? REMOVED_TEXT.hiddenRows(shown.hidden) : ''}${this.selection.size ? T.selectedHidden(this.selection.size, this.selection.size - visibleSelected) : ''}`;
     this.moreBtn.hidden = this.complete;
     this.moreBtn.disabled = this.loading;
   }
@@ -652,6 +684,29 @@ export class DiskPage {
     );
   }
 
+  /** One quiet line under the header: what operations removed since this scan, and a rescan for the current state. */
+  private renderRemovedLine(): void {
+    const total = this.app.store.state.status?.removed_since_scan;
+    const text = sinceScanLine(total);
+    if (!text) return replace(this.removedLine);
+    const rescan = h('button', { type: 'button', class: 'link', id: 'disk-rescan', disabled: this.rescanning }, t('common.scanAgain'));
+    rescan.addEventListener('click', () => void this.rescan());
+    replace(this.removedLine, h('p', { class: 'removed-line', role: 'note' }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), h('span', {}, text), rescan));
+  }
+
+  private async rescan(): Promise<void> {
+    this.rescanning = true;
+    this.renderRemovedLine();
+    try {
+      await this.app.rescan(this.app.store.state.status?.root_display ?? null);
+    } catch (e) {
+      this.showNotice(refusalText(toIpcError(e)));
+    } finally {
+      this.rescanning = false;
+      this.renderRemovedLine();
+    }
+  }
+
   private renderStateNote(v: DiskView): void {
     if (!v.note) return replace(this.stateNote);
     const go = h('button', { type: 'button', class: 'link', id: 'disk-reason' }, DISK_TEXT.goReason);
@@ -672,6 +727,8 @@ export class DiskPage {
         sizeEl(sum.logical_known_bytes, { className: 'cf-num' }),
         h('span', { class: 'cf-cap' }, T.known),
         unknown ? h('span', { class: 'cf-unknown' }, T.unknownIn(unknown)) : null,
+        // Kept apart from the snapshot's figure: what later operations removed beneath this folder.
+        this.layer?.parent_removed?.count ? h('span', { class: 'cf-cap cf-removed' }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), REMOVED_TEXT.removedShort(totalSize(this.layer.parent_removed))) : null,
       ),
     );
   }
@@ -723,8 +780,23 @@ export class DiskPage {
         }),
         search,
         sortSel,
+        this.hideToggle(),
       ),
     );
+  }
+
+  /** "隐藏已删除的项（N）": only while something of this snapshot was removed; remembered per viewer. */
+  private hideToggle(): HTMLElement | null {
+    const n = this.app.store.state.status?.removed_since_scan?.count ?? 0;
+    if (!n) return null;
+    const box = h('input', { type: 'checkbox', id: 'disk-hide-removed' });
+    box.checked = this.hideRemoved;
+    box.addEventListener('change', () => {
+      this.hideRemoved = box.checked;
+      saveHideRemoved(this.hideRemoved);
+      this.pushGrid();
+    });
+    return h('label', { class: 'disk-toolbar-extra', for: 'disk-hide-removed' }, box, h('span', {}, REMOVED_TEXT.hideToggle(n)));
   }
 
   private renderSide(): void {
@@ -742,7 +814,8 @@ export class DiskPage {
       return;
     }
     const d = entryDetail(e);
-    const open = canOpen(e) ? h('button', { type: 'button', id: 'detail-open', class: 'primary' }, T.openFolder) : null;
+    const removed = e.removed ?? null;
+    const open = canOpen(e) ? h('button', { type: 'button', id: 'detail-open', class: removed ? '' : 'primary' }, T.openFolder) : null;
     open?.addEventListener('click', () => this.drill(e));
     // Covered by the list as read, or protected from here just now (the host's display of the entry may differ in form).
     const covered =
@@ -750,7 +823,8 @@ export class DiskPage {
       (this.protectDone?.entryId === e.entry_id ? { protection_id: '', display: e.path_display } : null);
     // A protected object cannot be moved: it is not offered for a selection (one already made can still be undone).
     // R3-03: nor is a link: one into a protected system location says where it leads (the host's check), here already.
-    const blocked = covered ? null : selectionBlock(e);
+    // Removed since the scan (or emptied in part) comes first: there is nothing left to protect or move as scanned.
+    const blocked = removedBlock(e) ?? (covered ? null : selectionBlock(e));
     const sel = h(
       'button',
       { type: 'button', id: 'detail-select', 'aria-pressed': this.selection.has(e.entry_id) ? 'true' : 'false', disabled: (!!covered || !!blocked) && !this.selection.has(e.entry_id), 'aria-describedby': blocked ? 'detail-not-selectable' : null },
@@ -760,15 +834,15 @@ export class DiskPage {
     // NEW-06: protect this object from here. Links and mount points are never entered, so they are not offered.
     const listBroken = !!this.protection?.problem;
     const protect =
-      this.scanId && !covered && !e.boundary && e.kind !== 'symlink' && e.kind !== 'reparse'
+      this.scanId && !covered && !removed && !e.boundary && e.kind !== 'symlink' && e.kind !== 'reparse'
         ? h('button', { type: 'button', id: 'detail-protect', class: 'quiet', disabled: this.protecting || listBroken, title: listBroken ? T.protectListBroken : null }, icon('shield'), this.protecting ? T.protecting : e.kind === 'directory' ? T.protectFolder : T.protectFile)
         : null;
     protect?.addEventListener('click', () => void this.protect(e));
     // Optional AI diagnosis of this one object (no rule needed). Sends nothing until previewed.
-    const diag = this.scanId ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: T.diagTip }, icon('diag'), T.diag) : null;
+    const diag = this.scanId && !removed ? h('button', { type: 'button', id: 'detail-diag', class: 'quiet', title: T.diagTip }, icon('diag'), T.diag) : null;
     diag?.addEventListener('click', () => this.app.openDiagnosis({ scanId: this.scanId!, entryId: e.entry_id, origin: 'disk', name: e.name }, 'disk'));
     // Platform idiom (GUI-12): show the object in the file manager; the host resolves the path from the index.
-    const reveal = this.scanId ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
+    const reveal = this.scanId && !removed ? h('button', { type: 'button', id: 'detail-reveal', class: 'quiet' }, icon('reveal'), words().reveal) : null;
     reveal?.addEventListener('click', () => void this.app.backend.revealEntry(this.scanId!, e.entry_id).catch(() => this.app.announce(t('disk.revealFailed'))));
     const hint = hintOf(e);
     replace(
@@ -783,13 +857,15 @@ export class DiskPage {
         { class: 'detail-size' },
         h('p', { class: 'ds-figure num', title: formatExactBytes(d.sizeBytes) }, d.size),
         h('p', { class: 'ds-cap' }, h('span', {}, T.logical), h('span', { class: 'num' }, T.allocated(d.allocated)), d.unknownNote ? h('span', { class: 'ds-unknown' }, d.unknownNote) : null),
+        e.removed_count ? h('p', { class: 'ds-removed num' }, folderSizeText(e)) : null,
       ),
+      removed ? this.removedDetail(removed) : null,
       d.boundaryNote ? h('p', { class: 'notice' }, d.boundaryNote) : null,
       // 3. What you can do.
       h('div', { class: 'card-actions detail-actions' }, open, sel, reveal, diag),
-      blocked ? h('p', { class: 'small muted', id: 'detail-not-selectable', 'data-state': e.protected_link ? 'protected' : 'link' }, blocked) : null,
-      this.protectLine(e, covered, protect),
-      hint ? this.hintEntry(e, hint) : null,
+      blocked ? h('p', { class: 'small muted', id: 'detail-not-selectable', 'data-state': removed || e.removed_count ? 'removed' : e.protected_link ? 'protected' : 'link' }, blocked) : null,
+      removed ? null : this.protectLine(e, covered, protect),
+      hint && !removed ? this.hintEntry(e, hint) : null,
       techBlock(
         h(
           'dl',
@@ -804,6 +880,23 @@ export class DiskPage {
           h('dd', {}, h('code', { class: 'selectable' }, e.entry_id)),
         ),
       ),
+    );
+  }
+
+  /** How a removed entry left (badge, when, whether with a folder above) and where to look: the operation's result,
+   *  and Recovery for an item still held in the quarantine. */
+  private removedDetail(r: NonNullable<Entry['removed']>): HTMLElement {
+    const b = removedBadge(r);
+    const result = h('button', { type: 'button', class: 'link', id: 'detail-removed-op' }, REMOVED_TEXT.viewOperation);
+    result.addEventListener('click', () => this.app.openOperation(r.operation_id, 'disk'));
+    const recovery = r.mode === 'quarantine' && r.recoverable ? h('button', { type: 'button', class: 'link', id: 'detail-removed-recovery' }, REMOVED_TEXT.openRecovery) : null;
+    recovery?.addEventListener('click', () => this.app.openActivity('quarantine'));
+    return h(
+      'div',
+      { class: 'removed-detail', 'data-tone': b.tone },
+      h('p', { class: 'rd-head' }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), b.text),
+      h('p', { class: 'small muted' }, REMOVED_TEXT.when(formatTime(r.at)), b.note ? `${t('common.commaSep')}${b.note}` : ''),
+      h('div', { class: 'rd-actions' }, result, recovery),
     );
   }
 

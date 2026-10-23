@@ -17,7 +17,7 @@ import { Draft } from '../lib/draft';
 import { COMPLETENESS_LABEL, formatTime } from '../lib/format';
 import type { Candidate, CandidateSetInfo, Group, IpcError, Mode } from '../lib/types';
 import { GROUP_EXPLAIN, GROUP_LABEL, MODE_LABEL, NOT_SELECTABLE_LABEL, PROBE_LABEL, PROBE_STATE_LABEL, REGISTRY_LABEL } from '../lib/words';
-import { errorLine, errorText, exactTitle, groupMark, pageHead } from './parts';
+import { errorLine, errorText, exactTitle, groupMark, handledLine, pageHead } from './parts';
 import { atLeast, modeOptions, selectionBar, sumSizes, summaryStrip, tierBadge } from './kit';
 import { emptyBlock, issueList, learnMore, pathText, stateLine, statusBanner } from './ui';
 import { t } from '../i18n';
@@ -112,6 +112,8 @@ export class CleanupPage {
   private notice: string | null = null;
   /** Rule the groups are limited to (opened from the cleanup catalog page); null = every rule. */
   private rule: string | null = null;
+  /** The plan runs seen when the candidates were read: a run since then may have handled some of them. */
+  private opsSeen = 0;
 
   constructor(private app: App) {
     this.body = h('div', { class: 'cleanup-body' });
@@ -121,7 +123,9 @@ export class CleanupPage {
   activate(): void {
     this.syncRule();
     const id = this.app.store.state.scanId;
-    if (id !== this.scanId || (!this.info && !this.loadingInfo)) void this.bind(id);
+    const ops = this.app.store.state.opsRevision ?? 0;
+    // Back after a plan ran: the host leaves out what that run removed, so the groups are read again.
+    if (id !== this.scanId || (!this.info && !this.loadingInfo) || (ops !== this.opsSeen && !this.creating)) void this.bind(id);
   }
 
   update(): void {
@@ -159,6 +163,7 @@ export class CleanupPage {
 
   private async bind(scanId: string | null): Promise<void> {
     this.scanId = scanId;
+    this.opsSeen = this.app.store.state.opsRevision ?? 0;
     this.info = null;
     this.infoError = null;
     this.groups.clear();
@@ -439,6 +444,8 @@ export class CleanupPage {
     }
     if (info.rules_current === false) parts.push(stateLine({ kind: 'failed', text: T.rulesChanged }));
     if (info.scan_completeness === 'partial_scope') parts.push(stateLine({ kind: 'partial', text: T.partialScope }));
+    // Candidates a later operation already removed are in no group: said once, quietly, with the way to current results.
+    if (info.handled?.count) parts.push(handledLine(this.app, info.handled, info.scan_root_display));
     if (this.infoError) parts.push(errorLine(this.infoError));
     if (info.issues.length) parts.push(h('details', { class: 'issues-details' }, h('summary', {}, T.issues(info.issues.length)), issueList(info.issues, { label: T.issuesLabel })));
     return h('div', { class: 'notices' }, ...parts);

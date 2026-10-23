@@ -1839,6 +1839,7 @@ export const en: Record<MessageKey, string> = {
   // ---- treemapView (src/views/treemapView.ts) ----
   'treemapView.label': 'Space map',
   'treemapView.legend': 'Colors show file categories (not whether something can be deleted)',
+  'treemapView.removedLegend': 'Removed after the scan (tiles keep their place)',
   'treemapView.merged': '{n, plural, one {# other item} other {# other items}}',
   'treemapView.rest': '{n, plural, one {# more item} other {# more items}}',
   'treemapView.share': '{s} of this level\'s known total',
@@ -3638,4 +3639,26 @@ export const en: Record<MessageKey, string> = {
 
   // ---- plan review: a permanent-delete plan of bin items (WFA-65) ----
   'plan.containsOnlyBinItemsPicked': 'Holds only the items you picked on the {bin} page, all on one volume; no rule widens this list and no policy matches it.',
+  // ---- removed since scan: marks on the disk page, candidate views and the overview ----
+  'removed.badge.trash': 'Moved to the Recycle Bin · recoverable',
+  'removed.badge.trash@macos': 'Moved to the Trash · recoverable',
+  'removed.badge.quarantine': 'Moved to quarantine · recoverable',
+  'removed.badge.quarantinePurged': 'Moved to quarantine · since purged',
+  'removed.badge.permanent': 'Permanently deleted',
+  'removed.inherited': 'Removed with a folder above it',
+  'removed.notSelectable': 'This was removed after the scan and can’t be selected. Scan again for the current state.',
+  'removed.insideNotSelectable': 'Something inside this folder was removed after the scan, so the scan no longer describes it and it can’t be selected as a whole. Scan again, then select.',
+  'removed.viewOperation': 'View the result',
+  'removed.openRecovery': 'Open Recovery',
+  'removed.when': 'Removed {when}',
+  'removed.folderSize': 'At scan {scanned} · removed {removed}',
+  'removed.removedShort': 'Removed {size}',
+  'removed.hideToggle': 'Hide removed items ({n, number})',
+  'removed.sinceLine': '{n, plural, one {# item was} other {# items were}} removed after this scan ({size}). Scan again for the current state',
+  'removed.tileSuffix': ', removed',
+  'removed.hiddenRows': ', {n, number} removed hidden',
+  'removed.handled': '{n, plural, one {# candidate was} other {# candidates were}} handled after this scan ({size}) and {n, plural, one {is} other {are}} no longer listed. Scan again for the current state',
+  'removed.overviewLabel': 'Removed since the scan',
+  'removed.overviewValue': '{n, plural, one {# item} other {# items}} · {size}',
+  'format.errorHint.already_removed': 'A selected object was removed after the scan and can’t go into a plan. Scan again for the current state.',
 };

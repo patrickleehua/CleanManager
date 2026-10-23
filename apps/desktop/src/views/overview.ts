@@ -14,6 +14,7 @@ import { sizeLabel } from '../lib/display';
 import { h, keepFocus, replace } from '../lib/dom';
 import { COMPLETENESS_LABEL, formatElapsed, formatTime, isTerminal, STATE_LABEL, stateTone } from '../lib/format';
 import { overviewPlan, type OverviewPlan } from '../lib/overviewModel';
+import { REMOVED_TEXT, totalSize } from '../lib/removedModel';
 import { currentIndexProblem } from '../lib/indexModel';
 import { indexProblemBanner } from './indexRepair';
 import { emptyBlock, issueList, learnMore, pathText, sizeEl, statusBanner, techBlock } from './ui';
@@ -144,11 +145,16 @@ export class OverviewPage {
 
   private figure(s: ScanStatus, plan: OverviewPlan): HTMLElement {
     const sp = plan.space!;
+    // The scanned total stays the snapshot's; what operations removed since the scan is said apart.
+    const removed = s.removed_since_scan?.count ? s.removed_since_scan : null;
     return h(
       'div',
       { class: 'sb-figure' },
       h('p', { class: 'figure-big num', title: formatExactBytes(sp.bytes) }, sp.text),
       h('p', { class: 'figure-cap' }, sp.label, h('span', { class: 'figure-sep', 'aria-hidden': 'true' }), t('overview.entriesSeen', { entries_seen: s.entries_seen })),
+      removed
+        ? h('p', { class: 'figure-cap figure-removed', id: 'ov-removed' }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), REMOVED_TEXT.overviewLabel, h('span', { class: 'figure-sep', 'aria-hidden': 'true' }), h('span', { class: 'num' }, REMOVED_TEXT.overviewValue(removed.count, totalSize(removed))))
+        : null,
     );
   }
 
@@ -206,10 +212,7 @@ export class OverviewPage {
     this.actionError = null;
     this.update();
     try {
-      const offers = await this.app.backend.listScanRoots();
-      const o = offers.find((x) => x.path_display === s.root_display && !x.problem);
-      if (o) await this.app.startScan(o.token);
-      else this.app.navigate('scope');
+      await this.app.rescan(s.root_display);
     } catch (e) {
       this.actionError = toIpcError(e);
     } finally {

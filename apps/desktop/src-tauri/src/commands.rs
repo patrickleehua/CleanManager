@@ -178,6 +178,7 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
                 elevated_read: vec![],
                 issues: vec![],
                 issues_total: 0,
+                removed_since_scan: None,
             });
         }
         Err(e) => return Err(e.into()),
@@ -217,6 +218,7 @@ pub fn status_of(s: &AppState, idx: &cm_store::IndexStore, id: &str) -> IpcResul
         elevated_read: report["elevated_read"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
         issues,
         issues_total: all_issues.len() as u64,
+        removed_since_scan: None,
     })
 }
 
@@ -225,9 +227,18 @@ pub async fn scan_status(state: St<'_>, scan_id: String) -> IpcResult<ScanStatus
     let s = state.inner().clone();
     blocking(move || {
         let id = args::scan_id(&scan_id)?;
-        s.with_index(|idx| status_of(&s, idx, &id))
+        status_with_removed(&s, &id)
     })
     .await
+}
+
+/// `scan_status`: the status and, kept apart from the scanned total, what operations applied after the scan removed.
+pub fn status_with_removed(s: &AppState, id: &str) -> IpcResult<ScanStatusDto> {
+    s.with_stores(|stores| {
+        let mut v = status_of(s, &stores.index, id)?;
+        v.removed_since_scan = crate::removed::since_scan(s, stores, &v)?;
+        Ok(v)
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -288,25 +299,41 @@ pub async fn list_entries(state: St<'_>, query: ListEntriesArgs) -> IpcResult<En
     let s = state.inner().clone();
     blocking(move || {
         let q = entry_query(&query)?;
-        let page = s.with_index(|idx| Ok(idx.list_entries(&q)?))?;
-        // Probed after the index is released: the page's directories only, never the whole scan.
-        let hints = page_hints(&s, &page.items);
-        let links = page_links(&page.items);
-        Ok(EntriesPageDto {
-            scan_id: page.scan_id,
-            scope_id: page.scope_id,
-            revision: page.revision,
-            sort: page.sort,
-            kind: page.filter.kind,
-            name_contains: page.filter.name_contains,
-            parent_entry_id: page.filter.parent_entry_id.map(|p| p.to_string()),
-            page_size: page.page_size,
-            items: page.items.iter().zip(hints).zip(links).map(|((i, cleanable_hint), protected_link)| EntryDto { cleanable_hint, protected_link, ..EntryDto::from_item(i) }).collect(),
-            next_cursor: page.next_cursor,
-            unknown_size_items: page.unknown_size_items,
-        })
+        entries_page(&s, &q)
     })
     .await
+}
+
+/// `list_entries`: one page of the snapshot with hints, link targets and what later operations removed.
+pub fn entries_page(s: &AppState, q: &EntryQuery) -> IpcResult<EntriesPageDto> {
+    let (page, overlay) = s.with_stores(|stores| {
+        let page = stores.index.list_entries(q)?;
+        // The snapshot's rows with what later operations removed (audit store; cached per audit revision).
+        let overlay = crate::removed::overlay(s, stores, &q.scan_id)?;
+        Ok((page, overlay))
+    })?;
+    // Probed after the index is released: the page's directories only, never the whole scan.
+    let hints = page_hints(s, &page.items);
+    let links = page_links(&page.items);
+    Ok(EntriesPageDto {
+        scan_id: page.scan_id,
+        scope_id: page.scope_id,
+        revision: page.revision,
+        sort: page.sort,
+        kind: page.filter.kind,
+        name_contains: page.filter.name_contains,
+        parent_entry_id: page.filter.parent_entry_id.map(|p| p.to_string()),
+        page_size: page.page_size,
+        items: page
+            .items
+            .iter()
+            .zip(hints)
+            .zip(links)
+            .map(|((i, cleanable_hint), protected_link)| EntryDto { cleanable_hint, protected_link, ..EntryDto::from_item(i) }.with_removed(i, Some(&overlay)))
+            .collect(),
+        next_cursor: page.next_cursor,
+        unknown_size_items: page.unknown_size_items,
+    })
 }
 
 /// DIN-05 read-only "cleanable by hand" hints for one page: real directories only (links and
@@ -350,15 +377,24 @@ pub async fn treemap_layer(state: St<'_>, scan_id: String, parent_entry_id: Opti
         let id = args::scan_id(&scan_id)?;
         let parent = parent_entry_id.as_deref().map(args::entry_id).transpose()?.unwrap_or(ROOT_ENTRY_ID);
         let limit = args::treemap_limit(limit)? as usize;
-        s.with_index(|idx| layer_of(&s, idx, &id, parent, limit))
+        layer_with_removed(&s, &id, parent, limit)
     })
     .await
+}
+
+/// `treemap_layer`: one layer with the tiles of removed entries marked (the snapshot's layout is kept).
+pub fn layer_with_removed(s: &AppState, id: &str, parent: u64, limit: usize) -> IpcResult<TreemapLayerDto> {
+    s.with_stores(|stores| {
+        let overlay = crate::removed::overlay(s, stores, id)?;
+        layer_of(s, &stores.index, id, parent, limit, Some(&overlay))
+    })
 }
 
 /// One treemap layer: the largest `limit` children (one sorted page) plus an exact (or budget-bounded)
 /// total of the rest from one unsorted read of the other children's sizes, both bound to the revision of
 /// the first page. The parent's own total is its stored subtree total (or a walk of a small subtree).
-pub fn layer_of(s: &AppState, idx: &cm_store::IndexStore, id: &str, parent: u64, limit: usize) -> IpcResult<TreemapLayerDto> {
+/// `overlay` marks tiles of entries that later operations removed; the layout stays the snapshot's.
+pub fn layer_of(s: &AppState, idx: &cm_store::IndexStore, id: &str, parent: u64, limit: usize, overlay: Option<&cm_app::removed::RemovedOverlay>) -> IpcResult<TreemapLayerDto> {
     let q = EntryQuery {
         scan_id: id.to_owned(),
         sort: Sort::LogicalDesc,
@@ -370,14 +406,15 @@ pub fn layer_of(s: &AppState, idx: &cm_store::IndexStore, id: &str, parent: u64,
     let revision = first.revision;
     let parent_summary = root_summary(s, idx, id, revision, parent)?;
     let shown = &first.items[..first.items.len().min(limit)];
-    let items: Vec<EntryDto> = shown.iter().zip(page_links(shown)).map(|(i, protected_link)| EntryDto { protected_link, ..EntryDto::from_item(i) }).collect();
+    let items: Vec<EntryDto> = shown.iter().zip(page_links(shown)).map(|(i, protected_link)| EntryDto { protected_link, ..EntryDto::from_item(i) }.with_removed(i, overlay)).collect();
     let shown: std::collections::BTreeSet<u64> = first.items.iter().take(limit).filter_map(|i| i.entry_id.parse().ok()).collect();
     let rest = match first.next_cursor {
         None => cm_store::index::ChildrenRest { complete: true, ..Default::default() },
         Some(_) => idx.children_rest(id, revision, parent, &shown, REST_BUDGET)?,
     };
     let rest = rest_dto(rest);
-    Ok(TreemapLayerDto { scan_id: id.to_owned(), revision, parent_entry_id: parent.to_string(), parent_summary, items, rest })
+    let parent_removed = overlay.and_then(|o| o.beneath(parent).map(|t| RemovedTotalDto::of(o, t)));
+    Ok(TreemapLayerDto { scan_id: id.to_owned(), revision, parent_entry_id: parent.to_string(), parent_summary, items, rest, parent_removed })
 }
 
 /// `cleanmanager doctor --repair-index` from the desktop (BUG-WFA-01, NEW-04). It changes only CleanManager's own
@@ -583,7 +620,7 @@ mod tests {
             assert_eq!(sum.logical_known_bytes, "4600");
             assert_eq!(sum.logical_unknown_count, 0);
 
-            let layer = layer_of(&s, idx, "s_it_1", 1, 2)?;
+            let layer = layer_of(&s, idx, "s_it_1", 1, 2, None)?;
             let names: Vec<&str> = layer.items.iter().map(|e| e.name.as_str()).collect();
             assert_eq!(names, ["big.bin", "sub"]);
             assert_eq!(layer.items[1].logical_bytes.as_deref(), Some("1500"));

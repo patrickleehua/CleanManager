@@ -128,6 +128,20 @@ fn approved_plan_quarantines_planned_files_once() {
     assert_eq!(report["items"][0]["recovery"], "quarantine", "{report}");
     assert!(!stale.exists() && temp.join("fresh.tmp").exists());
 
+    // The scan is a snapshot: `entries list` still lists the quarantined file, now with the `removed` fact of the
+    // operation (the same overlay the desktop shows), and its folder says what left it; the fresh file has none.
+    let sid = scan["scan_id"].as_str().unwrap();
+    let (code, page) = cli(&["entries", "list", "--scan", sid, "--sort", "name_asc"], &store, &local);
+    assert_eq!(code, 0, "{page}");
+    let items = page["items"].as_array().unwrap();
+    let named = |n: &str| items.iter().find(|i| i["path"]["display"].as_str().unwrap().ends_with(n)).unwrap_or_else(|| panic!("no {n}: {page}"));
+    let removed = &named("\\old.tmp")["removed"];
+    assert_eq!((removed["mode"].as_str(), removed["recoverable"].as_bool(), removed["inherited"].as_bool()), (Some("quarantine"), Some(true), Some(false)), "{page}");
+    assert_eq!(removed["operation_id"], report["operation_id"]);
+    assert!(named("\\fresh.tmp").get("removed").is_none(), "{page}");
+    let folder = items.iter().find(|i| i["parent_entry_id"].is_null()).unwrap();
+    assert_eq!((folder["removed_count"].as_u64(), folder["removed_bytes"].as_str()), (Some(1), Some("8192")), "{folder}");
+
     // Re-applying replays the recorded operation instead of acting again.
     let (code, again) = cli(&["plan", "apply", &plan_id], &store, &local);
     assert_eq!((code, &again["operation_id"]), (0, &report["operation_id"]), "{again}");

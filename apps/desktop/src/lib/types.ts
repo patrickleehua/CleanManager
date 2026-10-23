@@ -133,6 +133,8 @@ export interface ScanStatus {
   elevated_read: string[];
   issues: Issue[];
   issues_total: number;
+  /** Finished, published scans: what operations applied after the scan removed from it (count 0 when nothing). */
+  removed_since_scan?: RemovedTotal | null;
 }
 
 export interface Entry {
@@ -152,6 +154,41 @@ export interface Entry {
   cleanable_hint?: CleanableHint | null;
   /** R3-03: where this link leads when that is a protected system location (host-checked, link entries only). */
   protected_link?: string | null;
+  /** An operation applied after the scan removed this entry (or a folder above it: `inherited`); from the audit
+   *  store, the disk is not read again. Never offered for a selection. */
+  removed?: RemovedFact | null;
+  /** Directories: the top-most removed entries beneath (0 = none), the known part of their stored sizes (null when
+   *  none of it is known — never 0 for unknown) and how many of them have an unknown or partly known size. */
+  removed_count?: number;
+  removed_bytes?: string | null;
+  removed_unknown_count?: number;
+}
+
+export type RemovedMode = 'trash' | 'quarantine' | 'permanent';
+
+export interface RemovedFact {
+  mode: RemovedMode;
+  operation_id: string;
+  at: string;
+  recoverable: boolean;
+  inherited: boolean;
+}
+
+/** What later operations removed from a scan (top-most removed entries), kept apart from the scanned total. */
+export interface RemovedTotal {
+  count: number;
+  known_bytes: string | null;
+  unknown_count: number;
+  latest_at: string | null;
+  /** Changes exactly when the marks change. */
+  signature: string;
+}
+
+/** `removed_entries`: the asked entries of one scan that later operations touched. */
+export interface ScanRemoved {
+  scan_id: string;
+  total: RemovedTotal;
+  entries: { entry_id: string; removed: RemovedFact | null; removed_count: number }[];
 }
 
 /** The verified evidence behind a cleanable hint and the review flow it leads to (never a selection). */
@@ -195,6 +232,8 @@ export interface TreemapLayer {
   parent_summary: Summary;
   items: Entry[];
   rest: { count: number; known_logical_bytes: string; unknown_count: number; complete: boolean };
+  /** What later operations removed beneath this folder (null: nothing); the tiles keep the snapshot's layout. */
+  parent_removed?: RemovedTotal | null;
 }
 
 export interface StartScan {
@@ -267,6 +306,8 @@ export interface CandidateSetInfo {
   scan_completeness: string | null;
   scan_root_display: string | null;
   groups: Record<Group, GroupCount>;
+  /** Candidates a later operation already removed (or emptied): in no group, never selectable. */
+  handled?: GroupCount;
   issues: Issue[];
 }
 

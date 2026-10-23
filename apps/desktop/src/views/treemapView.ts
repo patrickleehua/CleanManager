@@ -12,6 +12,7 @@ import { h, live, replace } from '../lib/dom';
 import { layoutTreemap, MERGED_ID, type TreemapLayout } from '../lib/treemap';
 import type { Entry, TreemapLayer } from '../lib/types';
 import { canOpen } from './grid';
+import { removedBadge, REMOVED_TEXT } from '../lib/removedModel';
 import { t } from '../i18n';
 
 export const REST_ID = '__rest__';
@@ -39,6 +40,7 @@ export const TREEMAP_TEXT = {
   zero: (n: number) => t('treemapView.zero', { n }),
   get restPartial() { return t('treemapView.restPartial'); },
   more: (n: number) => t('treemapView.more', { n }),
+  get removedLegend() { return t('treemapView.removedLegend'); },
 } as const;
 
 export interface TreemapCallbacks {
@@ -203,6 +205,7 @@ export class TreemapView {
     );
     const total = layout.areaTotal;
     const cats = new Set<Category>();
+    let anyRemoved = false;
     this.tiles = layout.tiles.map((t) => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h, members: t.members }));
     const tiles = layout.tiles.map((tile, i) => {
       const entry = this.byId.get(tile.id);
@@ -215,6 +218,9 @@ export class TreemapView {
       const share = formatShare(tile.bytes, total);
       const folder = !!entry && canOpen(entry);
       const big = tile.w > 74 && tile.h > 36;
+      // Removed after the scan: the tile keeps its place (the snapshot's layout), drawn as a grey hatch.
+      const removed = entry?.removed ? removedBadge(entry.removed) : null;
+      if (removed) anyRemoved = true;
       const el = h(
         'div',
         {
@@ -222,12 +228,13 @@ export class TreemapView {
           id: this.tileDomId(tile.id),
           role: 'option',
           'aria-selected': 'false',
-          'aria-label': t('treemapView.nameSizeShareP', { name, size, share: T.share(share), p: folder ? t('treemapView.folderSuffix', { folder: T.folder }) : '', p2: isRest ? t('treemapView.restnote', { restNote: T.restNote }) : '' }),
+          'aria-label': `${t('treemapView.nameSizeShareP', { name, size, share: T.share(share), p: folder ? t('treemapView.folderSuffix', { folder: T.folder }) : '', p2: isRest ? t('treemapView.restnote', { restNote: T.restNote }) : '' })}${removed ? `${REMOVED_TEXT.tileSuffix}${t('common.labelColon', { p: removed.text })}` : ''}`,
           'data-id': tile.id,
           'data-cat': cat,
           'data-shade': String(i % 3),
           'data-members': tile.members ? tile.members.join(',') : null,
-          title: `${name}\n${size} · ${T.share(share)}${isRest ? t('treemapView.restNoteLine', { restNote: T.restNote }) : ''}`,
+          'data-removed': entry?.removed ? entry.removed.mode : null,
+          title: `${name}\n${size} · ${T.share(share)}${isRest ? t('treemapView.restNoteLine', { restNote: T.restNote }) : ''}${removed ? `\n${removed.text}` : ''}`,
         },
         big ? h('span', { class: 'tile-name', 'aria-hidden': 'true' }, name) : null,
         big && tile.h > 52 ? h('span', { class: 'tile-size', 'aria-hidden': 'true' }, size, tile.h > 70 && tile.w > 110 ? h('span', { class: 'tile-share' }, share) : null) : null,
@@ -253,7 +260,11 @@ export class TreemapView {
       this.canvas.setAttribute('tabindex', '0');
     }
     this.canvas.setAttribute('aria-label', T.aria(tiles.length, formatBytes(total)));
-    replace(this.legend, ...[...cats].map((c) => h('li', {}, h('span', { class: 'swatch', 'data-cat': c, 'aria-hidden': 'true' }), CATEGORY_LABEL[c])));
+    replace(
+      this.legend,
+      ...[...cats].map((c) => h('li', {}, h('span', { class: 'swatch', 'data-cat': c, 'aria-hidden': 'true' }), CATEGORY_LABEL[c])),
+      anyRemoved ? h('li', {}, h('span', { class: 'swatch swatch-removed', 'aria-hidden': 'true' }), T.removedLegend) : null,
+    );
     this.renderGaps(layer, layout);
     if (!this.currentTile || !this.tiles.some((t) => t.id === this.currentTile)) this.currentTile = tileForEntry(this.tiles, this.activeEntry);
     this.paint();

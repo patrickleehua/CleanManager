@@ -77,6 +77,7 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
         })
         .unwrap();
     let cache = &page.items[0];
+    let cache_id: u64 = cache.entry_id.parse().unwrap();
     let set = candidate_set("s_flow", cache.entry_id.parse().unwrap(), &cache.path, 4000, &digest);
     stores.index.save_candidates(&set).unwrap();
 
@@ -132,6 +133,30 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
         assert!(!root.join("cache").join("a.bin").exists());
         assert!(root.join("keep.txt").exists(), "only planned files were touched");
 
+        // Back on the disk page without a new scan: the snapshot still lists the files, marked with the operation; the
+        // folder says what left it; the status keeps the scanned total and counts the removal apart.
+        let removed = removed_view(&s, cache_id);
+        assert_eq!(removed.files, vec![("a.bin".to_string(), Some(("quarantine", true, false))), ("b.bin".to_string(), Some(("quarantine", true, false)))]);
+        assert!(removed.files_ops.iter().all(|o| o == &report.operation_id));
+        assert_eq!(removed.cache_dir, (2, Some("4000".to_string()), 0), "the folder: 2 objects, their stored sizes");
+        assert_eq!(removed.keep, None, "untouched entries carry nothing");
+        assert_eq!(removed.since_scan, Some((2, Some("4000".to_string()))));
+        assert_eq!(removed.layer_parent, Some(2), "the treemap layer of the root counts them too; its tiles keep their layout");
+        assert_eq!(removed.search_marked, 2, "search results (the whole revision by name) carry the same marks");
+        // The analysis of that scan no longer offers the cache folder: its contents are gone. Plan creation refuses it.
+        s.with_stores(|st| {
+            let set = cleanup::latest(&s, st, "s_flow")?.expect("stored set");
+            assert_eq!((set.groups.low.count, set.groups.blocked.count, set.handled.count), (0, 0, 2), "handled candidates are counted apart");
+            assert_eq!(cleanup::create(&s, st, "cs_flow", &["c_flow".into()], Mode::Quarantine).unwrap_err().reason, "already_removed");
+            let page = cleanup::page(&cleanup::Loaded { set: serde_json::from_value(st.index.candidate_set("cs_flow")?).unwrap(), catalog: None }, cleanup::Group::Low, 10, None, None,
+                Some(crate::removed::overlay(&s, st, "s_flow")?.as_ref()))?;
+            assert_eq!(page.total, 0);
+            let touched = crate::removed::removed_of(&s, st, "s_flow", &[cache_id, 1])?;
+            assert_eq!(touched.entries.iter().map(|e| (e.entry_id.as_str(), e.removed.is_some(), e.removed_count)).collect::<Vec<_>>(), [(cache_id.to_string().as_str(), false, 2), ("1", false, 2)]);
+            Ok(())
+        })
+        .unwrap();
+
         s.with_stores(|st| {
             let op = ops::operation(&s, st, &report.operation_id)?;
             assert_eq!((op.state.as_str(), op.counts.succeeded, op.total, op.needs_reconcile), ("completed", 2, 2, false));
@@ -157,6 +182,16 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
         let report = ops::run_for_tests(&worker, &rp, &digest, &AtomicBool::new(false)).expect("restored");
         assert_eq!((report.status.as_str(), report.succeeded), ("completed", 2));
         assert_eq!(std::fs::read(root.join("cache").join("b.bin")).unwrap(), vec![2u8; 1000], "restored in place");
+        // The restore clears the marks: nothing is shown as removed any more and the candidates are offered again.
+        let removed = removed_view(&s, cache_id);
+        assert_eq!(removed.files, vec![("a.bin".to_string(), None), ("b.bin".to_string(), None)]);
+        assert_eq!((removed.cache_dir, removed.since_scan, removed.layer_parent), ((0, None, 0), Some((0, None)), None));
+        s.with_stores(|st| {
+            let set = cleanup::latest(&s, st, "s_flow")?.expect("stored set");
+            assert_eq!((set.groups.low.count, set.groups.blocked.count, set.handled.count), (1, 1, 0));
+            Ok(())
+        })
+        .unwrap();
         s.with_stores(|st| {
             let h = ops::history(st, 10, None)?;
             assert_eq!(h.items.iter().map(|i| i.action.as_deref()).collect::<Vec<_>>(), [Some("restore"), Some("quarantine")]);
@@ -171,6 +206,47 @@ fn reviewed_plan_applies_reports_quarantine_truthfully_and_restores() {
     drop(stores);
     drop(s);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// What the disk page reads about removals of the flow scan (`s_flow`): the files in `cache`, the folder, an untouched
+/// file, the status, the root's treemap layer and a whole-revision search.
+/// A listed entry's removal as the test compares it: mode, recoverable, inherited.
+type Fact = Option<(&'static str, bool, bool)>;
+
+struct RemovedView {
+    files: Vec<(String, Fact)>,
+    files_ops: Vec<String>,
+    cache_dir: (u64, Option<String>, u64),
+    keep: Fact,
+    since_scan: Option<(u64, Option<String>)>,
+    layer_parent: Option<u64>,
+    search_marked: usize,
+}
+
+fn removed_view(s: &AppState, cache_id: u64) -> RemovedView {
+    let q = |parent: Option<u64>, name: Option<&str>| EntryQuery {
+        scan_id: "s_flow".into(),
+        sort: Sort::NameAsc,
+        filter: Filter { kind: KindFilter::Any, name_contains: name.map(str::to_owned), parent_entry_id: parent },
+        page_size: 50,
+        cursor: None,
+    };
+    let fact = |e: &crate::dto::EntryDto| e.removed.as_ref().map(|r| (r.mode, r.recoverable, r.inherited));
+    let inside = crate::commands::entries_page(s, &q(Some(cache_id), None)).unwrap();
+    let root = crate::commands::entries_page(s, &q(Some(1), None)).unwrap();
+    let dir = root.items.iter().find(|e| e.name == "cache").unwrap();
+    let search = crate::commands::entries_page(s, &q(None, Some(".bin"))).unwrap();
+    let status = crate::commands::status_with_removed(s, "s_flow").unwrap();
+    let layer = crate::commands::layer_with_removed(s, "s_flow", 1, 10).unwrap();
+    RemovedView {
+        files: inside.items.iter().map(|e| (e.name.clone(), fact(e))).collect(),
+        files_ops: inside.items.iter().filter_map(|e| e.removed.as_ref().map(|r| r.operation_id.clone())).collect(),
+        cache_dir: (dir.removed_count, dir.removed_bytes.clone(), dir.removed_unknown_count),
+        keep: root.items.iter().find(|e| e.name == "keep.txt").and_then(fact),
+        since_scan: status.removed_since_scan.map(|t| (t.count, t.known_bytes)),
+        layer_parent: layer.parent_removed.map(|t| t.count),
+        search_marked: search.items.iter().filter(|e| e.removed.is_some()).count(),
+    }
 }
 
 /// R3-01: an operation whose host stopped before its report (`reconciliation_required`, not reconciled yet) shows the

@@ -20,6 +20,7 @@ use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use cm_app::removed::RemovedOverlay;
 use cm_core::analysis::{
     AnalysisInput, AnalysisProtection, Candidate, CandidateSet, CandidateState, CatalogFacts, CatalogSet, IndexView, UserList, analyze_catalog, apply_probes,
     plannable,
@@ -236,9 +237,26 @@ pub struct Groups {
     pub blocked: GroupCount,
 }
 
-fn groups(set: &CandidateSet) -> Groups {
+/// Whether a later operation already removed this candidate's object, a folder above it or anything inside it (the
+/// analysis no longer describes it; a new scan does).
+pub fn handled(c: &Candidate, overlay: Option<&RemovedOverlay>) -> bool {
+    overlay.is_some_and(|o| o.touched(c.entry_id, &c.path).is_some())
+}
+
+/// The candidates a later operation already removed: left out of every group, counted here ("已处理").
+fn handled_count(set: &CandidateSet, overlay: Option<&RemovedOverlay>) -> GroupCount {
+    let (mut count, mut known, mut unknown) = (0u64, 0u128, 0u64);
+    for c in set.candidates.iter().filter(|c| handled(c, overlay)) {
+        count += 1;
+        known += u128::from(c.logical.known.0);
+        unknown += c.logical.unknown_count;
+    }
+    GroupCount { count, known_logical_bytes: known.to_string(), unknown_size_count: unknown }
+}
+
+fn groups(set: &CandidateSet, overlay: Option<&RemovedOverlay>) -> Groups {
     let mut acc: BTreeMap<u8, (u64, u128, u64)> = BTreeMap::new();
-    for c in &set.candidates {
+    for c in set.candidates.iter().filter(|c| !handled(c, overlay)) {
         let slot = acc.entry(group_of(c) as u8).or_default();
         slot.0 += 1;
         slot.1 += u128::from(c.logical.known.0);
@@ -263,6 +281,9 @@ pub struct CandidateSetDto {
     pub scan_completeness: Option<String>,
     pub scan_root_display: Option<String>,
     pub groups: Groups,
+    /// Candidates whose object an operation applied after the scan already removed: in no group, never selectable;
+    /// a new scan and analysis shows the volume as it is now.
+    pub handled: GroupCount,
     pub issues: Vec<IssueDto>,
 }
 
@@ -370,9 +391,10 @@ fn load_set(s: &AppState, stores: &Stores, set_id: &str) -> IpcResult<Arc<Loaded
     Ok(l)
 }
 
-fn set_dto(stores: &Stores, set: &CandidateSet, created_at: Option<String>, issues: Vec<IssueDto>, current_digest: Option<&str>) -> CandidateSetDto {
+fn set_dto(s: &AppState, stores: &Stores, set: &CandidateSet, created_at: Option<String>, issues: Vec<IssueDto>, current_digest: Option<&str>) -> IpcResult<CandidateSetDto> {
     let status = stores.index.scan_status(&set.scan_id).ok();
-    CandidateSetDto {
+    let overlay = crate::removed::overlay(s, stores, &set.scan_id)?;
+    Ok(CandidateSetDto {
         candidate_set_id: set.candidate_set_id.clone(),
         scan_id: set.scan_id.clone(),
         revision: set.revision,
@@ -381,9 +403,10 @@ fn set_dto(stores: &Stores, set: &CandidateSet, created_at: Option<String>, issu
         rules_current: current_digest.map(|d| d == set.rule_set_digest),
         scan_completeness: status.as_ref().and_then(|v| v.completeness.clone()),
         scan_root_display: status.as_ref().map(|v| v.root.display()),
-        groups: groups(set),
+        groups: groups(set, Some(&overlay)),
+        handled: handled_count(set, Some(&overlay)),
         issues,
-    }
+    })
 }
 
 fn issue(code: &str, scope: &str, message: impl Into<String>) -> IssueDto {
@@ -455,7 +478,7 @@ pub fn analyze(s: &AppState, stores: &Stores, scan_id: &str) -> IpcResult<Candid
     if let Some(p) = &problem {
         issues.push(issue("protection_unavailable", cm_platform::protection::PROTECTION_FILE, format!("{p}; every candidate stays unplannable and every write is stopped until the list is repaired")));
     }
-    let dto = set_dto(stores, &loaded.set, Some(now_utc()), issues, Some(&rules.digest));
+    let dto = set_dto(s, stores, &loaded.set, Some(now_utc()), issues, Some(&rules.digest))?;
     *lock(&s.candidates) = Some(Arc::new(loaded));
     Ok(dto)
 }
@@ -465,22 +488,27 @@ pub fn latest(s: &AppState, stores: &Stores, scan_id: &str) -> IpcResult<Option<
     let Some((set_id, created_at)) = stores.index.latest_candidate_set(scan_id)? else { return Ok(None) };
     let l = load_set(s, stores, &set_id)?;
     let digest = crate::rules::load(s.rules_dir.as_deref()).ok().map(|r| r.digest);
-    Ok(Some(set_dto(stores, &l.set, Some(created_at), standing_issues(&l), digest.as_deref())))
+    Ok(Some(set_dto(s, stores, &l.set, Some(created_at), standing_issues(&l), digest.as_deref())?))
 }
 
 /// One page of one group: largest known size first, unknown sizes after known ones (they
 /// never rank as "frees the most"), then candidate id. `rule` limits the group to one rule's
-/// candidates (the catalog page's "show its candidates"); the cursor is bound to it.
-pub fn page(l: &Loaded, group: Group, page_size: u32, cursor: Option<&str>, rule: Option<&str>) -> IpcResult<CandidatePageDto> {
+/// candidates (the catalog page's "show its candidates"); the cursor is bound to it. Candidates a later operation
+/// already removed (`overlay`) are in no group; the cursor is bound to the overlay too, so a page never shifts under it.
+pub fn page(l: &Loaded, group: Group, page_size: u32, cursor: Option<&str>, rule: Option<&str>, overlay: Option<&RemovedOverlay>) -> IpcResult<CandidatePageDto> {
     let set = &l.set;
     let size = args::page_size(Some(page_size))? as usize;
     let key = |c: &&Candidate| (c.logical.unknown_count > 0, std::cmp::Reverse(c.logical.known.0), c.candidate_id.clone());
-    let mut members: Vec<&Candidate> =
-        set.candidates.iter().filter(|c| group_of(c) == group && rule.is_none_or(|r| c.rules.iter().any(|x| x.rule_id == r))).collect();
+    let mut members: Vec<&Candidate> = set
+        .candidates
+        .iter()
+        .filter(|c| group_of(c) == group && rule.is_none_or(|r| c.rules.iter().any(|x| x.rule_id == r)) && !handled(c, overlay))
+        .collect();
     members.sort_by_key(key);
+    let marks = overlay.filter(|o| !o.is_empty()).map(|o| format!(".h{}", o.signature)).unwrap_or_default();
     let bound = match rule {
-        None => format!("{}.{:?}.{size}", set.candidate_set_id, group),
-        Some(r) => format!("{}.{:?}.{size}.{r}", set.candidate_set_id, group),
+        None => format!("{}.{:?}.{size}{marks}", set.candidate_set_id, group),
+        Some(r) => format!("{}.{:?}.{size}.{r}{marks}", set.candidate_set_id, group),
     };
     let start = match cursor {
         None => 0,
@@ -534,6 +562,7 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
     if let Err(e) = cm_platform::protection::load(&stores.dir) {
         return Err(ipc(ErrorCode::ProtectionUnavailable, "protection_unavailable", format!("protection list unavailable: {e}")));
     }
+    let overlay = crate::removed::overlay(s, stores, &set.scan_id)?;
     for id in selected {
         match set.candidates.iter().find(|c| &c.candidate_id == id) {
             None => return Err(ipc(ErrorCode::InvalidArgument, "unknown_candidate", format!("candidate {id} is not in this candidate set"))),
@@ -541,6 +570,7 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
                 if let Some(why) = not_selectable(c, loaded.facts(c)) {
                     return Err(ipc(ErrorCode::PolicyDenied, "not_selectable", format!("candidate {id} cannot be planned ({why})")));
                 }
+                already_removed(&overlay, c.entry_id, &c.path, id)?;
             }
         }
     }
@@ -559,6 +589,18 @@ pub fn create(s: &AppState, stores: &Stores, set_id: &str, selected: &[String], 
     bins_ready(set, selected, mode)?;
     stores.audit.save_plan(&plan)?;
     Ok(CreatedPlanDto::new(plan_id))
+}
+
+/// A selection that names an object a later operation already removed is refused (it would only fail at apply time):
+/// the person sees it as handled and scans again.
+pub(crate) fn already_removed(overlay: &RemovedOverlay, entry_id: u64, path: &cm_core::path::RawPath, id: &str) -> IpcResult<()> {
+    use cm_app::removed::Touched;
+    let why = match overlay.touched(entry_id, path) {
+        None => return Ok(()),
+        Some(Touched::Removed(r)) => format!("was already removed by operation {} ({}, {})", r.mark.operation_id, r.mark.mode.as_str(), r.mark.at),
+        Some(Touched::Inside(t)) => format!("has {} object(s) inside that later operations already removed", t.count),
+    };
+    Err(ipc(ErrorCode::PlanStale, "already_removed", format!("{id} {why}; scan again to see the volume as it is now")))
 }
 
 /// The core's refusal of a selection: WFA-113 `empty_selection` when nothing selected holds anything to act on (an
@@ -1240,7 +1282,11 @@ pub async fn list_candidates(
         let group = Group::parse(&group)?;
         let size = args::page_size(page_size)?;
         let rule = rule_id.as_deref().map(|r| args::record_id("rule", r)).transpose()?;
-        s.with_stores(|st| page(load_set(&s, st, &id)?.as_ref(), group, size, cursor.as_deref(), rule.as_deref()))
+        s.with_stores(|st| {
+            let l = load_set(&s, st, &id)?;
+            let overlay = crate::removed::overlay(&s, st, &l.set.scan_id)?;
+            page(l.as_ref(), group, size, cursor.as_deref(), rule.as_deref(), Some(&overlay))
+        })
     })
     .await
 }
@@ -1386,24 +1432,24 @@ mod tests {
                 cand("c_f", CandidateState::ProtectedReviewable, Tier::ReviewOnly, 7, 0),
                 cand("c_g", CandidateState::Blocked, Tier::Blocked, 7, 0),
         ]);
-        let g = groups(&set);
+        let g = groups(&set, None);
         assert_eq!((g.low.count, g.review.count, g.pending.count, g.blocked.count), (3, 1, 1, 2));
         assert_eq!(g.low.known_logical_bytes, "9510");
         let facts = set.candidates.iter().map(|c| (c.candidate_id.clone(), CatalogFacts::default())).collect();
         let set = Loaded { set, catalog: Some(CatalogSet { facts, undetermined: vec![] }) };
         assert_eq!(g.low.unknown_size_count, 2);
-        let p = page(&set, Group::Low, 2, None, None).unwrap();
+        let p = page(&set, Group::Low, 2, None, None, None).unwrap();
         let ids: Vec<_> = p.items.iter().map(|c| c.candidate_id.as_str()).collect();
         assert_eq!(ids, ["c_b", "c_a"], "known sizes rank first; a partly unknown total never ranks as largest");
-        let p2 = page(&set, Group::Low, 2, p.next_cursor.as_deref(), None).unwrap();
+        let p2 = page(&set, Group::Low, 2, p.next_cursor.as_deref(), None, None).unwrap();
         assert_eq!(p2.items[0].candidate_id, "c_c");
         assert_eq!(p2.items[0].not_selectable, Some("unknown_size"));
         assert_eq!(p2.items[0].logical_exact_bytes, None, "unknown never becomes an exact total");
         assert!(p2.items[0].allowed_modes.is_empty());
-        assert!(page(&set, Group::Review, 2, p.next_cursor.as_deref(), None).is_err(), "cursor bound to its group");
-        let blocked = page(&set, Group::Blocked, 10, None, None).unwrap();
+        assert!(page(&set, Group::Review, 2, p.next_cursor.as_deref(), None, None).is_err(), "cursor bound to its group");
+        let blocked = page(&set, Group::Blocked, 10, None, None, None).unwrap();
         assert!(blocked.items.iter().all(|c| c.not_selectable.is_some() && c.allowed_modes.is_empty()));
-        assert_eq!(page(&set, Group::Pending, 10, None, None).unwrap().items[0].not_selectable, Some("pending_evidence"));
+        assert_eq!(page(&set, Group::Pending, 10, None, None, None).unwrap().items[0].not_selectable, Some("pending_evidence"));
     }
 
     #[test]
@@ -1417,13 +1463,13 @@ mod tests {
             other,
         ]);
         let l = Loaded { set, catalog: None };
-        let p = page(&l, Group::Low, 2, None, Some("r")).unwrap();
+        let p = page(&l, Group::Low, 2, None, Some("r"), None).unwrap();
         assert_eq!((p.total, p.items.iter().map(|c| c.candidate_id.as_str()).collect::<Vec<_>>()), (3, vec!["c_c", "c_b"]));
-        assert_eq!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), Some("r")).unwrap().items[0].candidate_id, "c_a");
-        assert!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), None).is_err(), "cursor bound to its rule");
-        assert_eq!(page(&l, Group::Low, 10, None, Some("other.rule")).unwrap().total, 1);
-        assert_eq!(page(&l, Group::Low, 10, None, Some("missing.rule")).unwrap().total, 0);
-        assert_eq!(page(&l, Group::Low, 10, None, None).unwrap().total, 4);
+        assert_eq!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), Some("r"), None).unwrap().items[0].candidate_id, "c_a");
+        assert!(page(&l, Group::Low, 2, p.next_cursor.as_deref(), None, None).is_err(), "cursor bound to its rule");
+        assert_eq!(page(&l, Group::Low, 10, None, Some("other.rule"), None).unwrap().total, 1);
+        assert_eq!(page(&l, Group::Low, 10, None, Some("missing.rule"), None).unwrap().total, 0);
+        assert_eq!(page(&l, Group::Low, 10, None, None, None).unwrap().total, 4);
     }
 
     #[test]

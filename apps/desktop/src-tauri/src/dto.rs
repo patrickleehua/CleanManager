@@ -83,6 +83,38 @@ pub struct EntryDto {
     /// R3-03 (WFA-63): where this link leads when that is a protected system location (the bin dialog's own check,
     /// `cm_app::trash::protected_link`); probed for the link entries of a listed page only, `None` for anything else.
     pub protected_link: Option<String>,
+    /// An operation applied after the scan removed this entry (or a folder above it); from the audit store, the disk
+    /// is not read again (`cm_app::removed`). Such an entry is never offered for a selection.
+    pub removed: Option<RemovedDto>,
+    /// Directories: the top-most removed entries beneath (0 when none), the known part of their stored sizes (`None`
+    /// when none of it is known) and how many of them have an unknown or partly known size.
+    pub removed_count: u64,
+    pub removed_bytes: Option<String>,
+    pub removed_unknown_count: u64,
+}
+
+/// `removed` of an entry: how it left, by which operation, when, whether it can be put back.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RemovedDto {
+    /// `trash`, `quarantine` or `permanent`.
+    pub mode: &'static str,
+    pub operation_id: String,
+    pub at: String,
+    pub recoverable: bool,
+    /// Removed with a folder above it (that folder carries the operation).
+    pub inherited: bool,
+}
+
+/// What later operations removed from a scan, counted together (top-most removed entries only).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RemovedTotalDto {
+    pub count: u64,
+    /// Known part of their stored sizes; `None` when none of it is known (never "0" for unknown).
+    pub known_bytes: Option<String>,
+    pub unknown_count: u64,
+    pub latest_at: Option<String>,
+    /// Changes exactly when the marks change: the page reloads its rows then (not on every unrelated operation).
+    pub signature: String,
 }
 
 impl EntryDto {
@@ -104,7 +136,35 @@ impl EntryDto {
             link_count: item.link_count,
             cleanable_hint: None,
             protected_link: None,
+            removed: None,
+            removed_count: 0,
+            removed_bytes: None,
+            removed_unknown_count: 0,
         }
+    }
+
+    /// The `removed` facts of `item` from a scan's overlay.
+    pub fn with_removed(mut self, item: &EntryItem, overlay: Option<&cm_app::removed::RemovedOverlay>) -> Self {
+        let Some(o) = overlay.filter(|o| !o.is_empty()) else { return self };
+        self.removed = o.of_entry(item).map(|r| RemovedDto {
+            mode: r.mark.mode.as_str(),
+            operation_id: r.mark.operation_id.clone(),
+            at: r.mark.at.clone(),
+            recoverable: r.mark.recoverable,
+            inherited: r.inherited,
+        });
+        if let Some(b) = item.entry_id.parse::<u64>().ok().and_then(|id| o.beneath(id)) {
+            self.removed_count = b.count;
+            self.removed_bytes = b.known_text();
+            self.removed_unknown_count = b.unknown_count;
+        }
+        self
+    }
+}
+
+impl RemovedTotalDto {
+    pub fn of(o: &cm_app::removed::RemovedOverlay, t: cm_app::removed::RemovedTotal) -> Self {
+        RemovedTotalDto { count: t.count, known_bytes: t.known_text(), unknown_count: t.unknown_count, latest_at: o.latest_at.clone(), signature: o.signature.clone() }
     }
 }
 
@@ -172,6 +232,8 @@ pub struct TreemapLayerDto {
     /// Largest children by known logical size (unknown sizes sort last and carry `null`).
     pub items: Vec<EntryDto>,
     pub rest: RestDto,
+    /// What later operations removed beneath this directory (`None` when nothing); tiles keep the snapshot's layout.
+    pub parent_removed: Option<RemovedTotalDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,6 +292,9 @@ pub struct ScanStatusDto {
     pub elevated_read: Vec<String>,
     pub issues: Vec<IssueDto>,
     pub issues_total: u64,
+    /// What operations applied after this scan removed from it (published, finished scans; a count of 0 when nothing):
+    /// the overview shows it apart from the scanned total.
+    pub removed_since_scan: Option<RemovedTotalDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

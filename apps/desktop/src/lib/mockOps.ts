@@ -28,6 +28,8 @@ import type {
   RuleCatalogCategory,
   RuleCatalogEntry,
   RuleEstimate,
+  RemovedFact,
+  RemovedMode,
 } from './types';
 import { previewPlatform } from './platform';
 
@@ -66,7 +68,34 @@ type OpsBackend = Pick<
   __plan(kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], extra?: Partial<PlanDetail>, script?: Scripted[], onDone?: (operationId: string, items: OperationItem[]) => void): string;
   /** Fixture hook: record a finished operation of a stored plan with these per-item results. */
   __seed(planId: string, results: Scripted[], state: string, minutesAgo: number): string;
+  /** Fixture hook: the operations that removed these entries of the preview disk scan after it finished (seeded once,
+   *  listed in the history, quarantine moves held in the quarantine); their `removed` facts in the same order. */
+  __removals(targets: RemovalTarget[]): RemovedFact[];
 };
+
+/** Browser preview (`?scan=partial|completed|cancelled|…`): entries of the preview disk scan (`s_preview_1`) that
+ *  operations applied after the scan removed, by their names below the scan root. The host derives the same facts from
+ *  the audit store; the scan stays the snapshot it was. A bin move of two videos and a project's `node_modules` (open it:
+ *  everything inside is marked as removed with it), a quarantine move, and a permanent delete of a file whose size is
+ *  unknown (it stays unknown, never 0). Entries not in the preview tree (the completed preview has no unknown sizes)
+ *  are left out. */
+export const PREVIEW_REMOVALS: { below: string[]; mode: RemovedMode; minutesAgo: number }[] = [
+  { below: ['Videos', 'drone_raw_0412.mov'], mode: 'trash', minutesAgo: 14 },
+  { below: ['Videos', 'clip-short.mp4'], mode: 'trash', minutesAgo: 14 },
+  { below: ['Projects', 'storefront', 'node_modules'], mode: 'trash', minutesAgo: 14 },
+  { below: ['Archives', 'photos-2019.7z'], mode: 'quarantine', minutesAgo: 9 },
+  { below: ['sparse.vhdx'], mode: 'permanent', minutesAgo: 4 },
+];
+
+/** One preview entry to remove (path and stored size from the preview tree). */
+export interface RemovalTarget {
+  mode: RemovedMode;
+  minutesAgo: number;
+  name: string;
+  path_display: string;
+  logical_bytes: string | null;
+  directory: boolean;
+}
 
 /** A scripted per-item result for preview runs (uninstall, update, process, maintenance fixtures). */
 export interface Scripted {
@@ -374,15 +403,17 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
   let planCounter = 0;
   let active: { plan_id: string; operation_id: string; total: number; running: boolean; cancel: boolean } | null = null;
 
+  // The history's completed quarantine run (yesterday, after the preview scan) already moved the Edge code cache: the
+  // candidate is handled — in no group, never selectable — as the host derives it from the audit store.
+  const HANDLED = new Set(['c_edge_code']);
+  const stillThere = (c: Candidate) => !HANDLED.has(c.candidate_id);
   const setInfo = (): CandidateSetInfo => {
-    const g = (k: Group) => {
-      const m = CANDIDATES.filter((c) => c.group === k);
-      return {
-        count: m.length,
-        known_logical_bytes: m.reduce((a, c) => a + BigInt(c.logical_known_bytes), 0n).toString(),
-        unknown_size_count: m.reduce((a, c) => a + c.unknown_size_count, 0),
-      };
-    };
+    const count = (m: Candidate[]) => ({
+      count: m.length,
+      known_logical_bytes: m.reduce((a, c) => a + BigInt(c.logical_known_bytes), 0n).toString(),
+      unknown_size_count: m.reduce((a, c) => a + c.unknown_size_count, 0),
+    });
+    const g = (k: Group) => count(CANDIDATES.filter((c) => c.group === k && stillThere(c)));
     return {
       candidate_set_id: 'cs_preview',
       scan_id: 's_preview_1',
@@ -393,6 +424,7 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
       scan_completeness: 'partial_scope',
       scan_root_display: HOME,
       groups: { low: g('low'), review: g('review'), pending: g('pending'), blocked: g('blocked') },
+      handled: count(CANDIDATES.filter((c) => !stillThere(c))),
       issues: [
         { code: 'rule_inapplicable', scope_display: 'google.chrome.code-cache@1.0.0', message: '该规则的根目录不在本次扫描范围内' },
         { code: 'protected_reviewable', scope_display: 'AI sessions and worktrees', message: '默认保护的对象只列出供逐项审阅，不会被选中或匹配策略' },
@@ -500,9 +532,12 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
   // History: a completed quarantine yesterday, a partial trash run, and one interrupted run.
   const seedOp = (kind: 'cleanup' | 'restore', mode: Mode | null, cands: Candidate[], statuses: OperationItem['status'][], state: string, minAgo: number) => {
     const items = cands.flatMap((c, i) => expand(c, i * 10));
+    return seedItems(kind, mode, items, [...new Set(cands.flatMap((c) => c.rules))], statuses, state, minAgo);
+  };
+  const seedItems = (kind: PlanDetail['kind'], mode: Mode | null, items: PlanItem[], ruleRefs: string[], statuses: OperationItem['status'][], state: string, minAgo: number) => {
     const p = makePlan(kind, mode, items, -minAgo);
     p.receipt = true;
-    p.detail.rule_refs = [...new Set(cands.flatMap((c) => c.rules))];
+    p.detail.rule_refs = ruleRefs;
     const opId = `op_${p.detail.digest.slice(0, 16)}`;
     const opItems: OperationItem[] = items.map((it, i) => {
       const st = statuses[i % statuses.length];
@@ -571,6 +606,38 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
   seedOp('cleanup', 'quarantine', [CANDIDATES[0]], ['succeeded'], 'completed', 60 * 26);
   seedOp('cleanup', 'trash', [CANDIDATES[4]], ['succeeded', 'succeeded', 'skipped', 'succeeded', 'skipped', 'succeeded'], 'partial', 60 * 50);
   seedOp('cleanup', 'delete', [CANDIDATES[1]], ['succeeded', 'succeeded', 'unknown', 'not_started', 'not_started', 'not_started'], 'reconciliation_required', 60 * 24 * 4);
+
+  // The preview disk scan's removals (seeded on first use, one operation per way of removing).
+  let removals: RemovedFact[] | null = null;
+  const seedRemovals = (targets: RemovalTarget[]): RemovedFact[] => {
+    if (removals) return removals;
+    const MODE: Record<RemovedMode, Mode> = { trash: 'trash', quarantine: 'quarantine', permanent: 'delete' };
+    const byMode = new Map<RemovedMode, { op: string; at: string }>();
+    for (const mode of ['trash', 'quarantine', 'permanent'] as RemovedMode[]) {
+      const mine = targets.filter((x) => x.mode === mode);
+      if (!mine.length) continue;
+      const items: PlanItem[] = mine.map((x, i) => ({
+        action_id: `a${String(i).padStart(7, '0')}`,
+        name: x.name,
+        path_display: x.path_display,
+        logical_bytes: x.logical_bytes ?? '0',
+        allocated_bytes: x.logical_bytes,
+        candidate_id: null,
+        original_path_display: null,
+        quarantine_id: null,
+        item_kind: x.directory ? 'directory' : 'file',
+        action_type: mode === 'trash' ? 'fs_trash' : mode === 'quarantine' ? 'fs_quarantine' : 'fs_delete',
+      }));
+      const minAgo = mine[0].minutesAgo;
+      const op = seedItems(mode === 'trash' ? 'manual_trash' : 'cleanup', MODE[mode], items, [], ['succeeded'], 'completed', minAgo);
+      byMode.set(mode, { op, at: iso(-minAgo + 2) });
+    }
+    removals = targets.map((x) => {
+      const o = byMode.get(x.mode)!;
+      return { mode: x.mode, operation_id: o.op, at: o.at, recoverable: x.mode !== 'permanent', inherited: false };
+    });
+    return removals;
+  };
 
   const history = (): HistoryItem[] =>
     [...ops.values()]
@@ -641,6 +708,9 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
       p.onDone = onDone;
       return p.detail.plan_id;
     },
+    __removals(targets) {
+      return seedRemovals(targets);
+    },
     __seed(planId, results, state, minutesAgo) {
       const p = plans.get(planId)!;
       p.receipt = true;
@@ -701,7 +771,7 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
     },
     async listCandidates(_set, group, pageSize, cursor, ruleId = null) {
       await delay(100);
-      const m = CANDIDATES.filter((c) => c.group === group && (!ruleId || c.rules.some((r) => r.split('@')[0] === ruleId))).sort((a, b) => {
+      const m = CANDIDATES.filter((c) => c.group === group && stillThere(c) && (!ruleId || c.rules.some((r) => r.split('@')[0] === ruleId))).sort((a, b) => {
         const ua = a.unknown_size_count > 0 ? 1 : 0;
         const ub = b.unknown_size_count > 0 ? 1 : 0;
         if (ua !== ub) return ua - ub;
@@ -717,6 +787,7 @@ export function mockOps(entryPath?: (entryId: string) => string | null): OpsBack
       await delay(300);
       const chosen = ids.map((id) => CANDIDATES.find((c) => c.candidate_id === id));
       if (chosen.some((c) => !c || c.not_selectable)) throw err('policy_denied', 'not_selectable', 'candidate cannot be planned');
+      if (chosen.some((c) => !stillThere(c!))) throw err('plan_stale', 'already_removed', 'candidate was already removed by an operation after the scan');
       let n = 0;
       const items = chosen.flatMap((c) => {
         const out = expand(c!, n);

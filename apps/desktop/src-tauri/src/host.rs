@@ -100,6 +100,8 @@ pub struct AppState {
     pub diag: Option<Arc<cm_app::diag::Service>>,
     /// Review notes of plans created here and the last old-downloads review (see `software`, `system`).
     pub suite: Mutex<crate::software::SuiteCache>,
+    /// "Removed since scan" overlays by scan, each valid for one audit revision (see `removed`).
+    pub removed: Mutex<crate::removed::RemovedCache>,
 }
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -160,6 +162,7 @@ impl AppState {
             diag,
             rules_dir,
             suite: Mutex::new(crate::software::SuiteCache::default()),
+            removed: Mutex::new(crate::removed::RemovedCache::default()),
         }
     }
 
@@ -219,6 +222,7 @@ impl AppState {
         drop(problem);
         lock(&self.summaries).clear();
         *lock(&self.candidates) = None;
+        *lock(&self.removed) = crate::removed::RemovedCache::default();
         Ok(report)
     }
 

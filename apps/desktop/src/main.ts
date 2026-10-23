@@ -42,6 +42,8 @@ export interface App {
   navigate(page: Page): void;
   openScan(scanId: string, page?: Page): Promise<void>;
   startScan(rootToken: string): Promise<void>;
+  /** Scan a root again when it is still offered (the scan's own root display); otherwise open the scope page. */
+  rescan(rootDisplay: string | null): Promise<void>;
   cancelScan(scanId: string): Promise<void>;
   refreshStatus(): Promise<void>;
   openPlan(planId: string, from?: Page): void;
@@ -202,6 +204,12 @@ async function boot(): Promise<void> {
       announce(t('main.readOnlyScanStarted', { root_display: res.root_display }));
       await app.openScan(res.scan_id, 'overview');
     },
+    async rescan(rootDisplay) {
+      const offers = await backend.listScanRoots();
+      const o = offers.find((x) => x.path_display === rootDisplay && !x.problem);
+      if (o) await app.startScan(o.token);
+      else app.navigate('scope');
+    },
     async cancelScan(scanId) {
       const r = await backend.cancelScan(scanId);
       const task = store.state.task;
@@ -277,6 +285,10 @@ async function boot(): Promise<void> {
       store.set({ apply: { ...a, running: false, status: e.status, error: e.error, dismissed: false } });
     }
     announce(e.status ? t('main.runFinishedP', { p: OPERATION_STATE_LABEL[e.status] ?? e.status }) : t('main.runCouldntStartP', { p: e.error ? refusalText(e.error) : '' }));
+    // What the run removed (or a restore put back) is shown on the scan's pages without a new scan: they read the
+    // status again (its `removed_since_scan`), and candidate pages re-read what they hold.
+    store.set({ opsRevision: (store.state.opsRevision ?? 0) + 1 });
+    void app.refreshStatus();
   });
   await backend.onDiagFinished((e) => {
     const word = e.state === 'completed' ? t('main.completed') : e.state === 'cancelled' ? t('main.cancelled') : e.state === 'failed' ? t('main.failed') : e.state;

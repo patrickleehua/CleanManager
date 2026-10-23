@@ -330,6 +330,56 @@ impl AuditStore {
         self.conn.execute("UPDATE quarantine_items SET state=?2 WHERE quarantine_id=?1", params![quarantine_id, state])?;
         Ok(())
     }
+
+    /// Actions that succeeded at or after `since` (RFC 3339 UTC, the fixed `YYYY-MM-DDTHH:MM:SSZ` form every time in
+    /// this store has, so text order is time order), oldest first, with their operation's plan and, for a quarantine
+    /// move, the quarantine row's bookkeeping state (`recoverable`, `restored`, `purged`). Read-only.
+    pub fn succeeded_since(&self, since: &str) -> Result<Vec<SucceededAction>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT j.operation_id, j.action_id, o.plan_id, j.result_json, j.result_at, q.state
+             FROM action_journal j JOIN operations o ON o.operation_id=j.operation_id
+             LEFT JOIN quarantine_items q ON q.operation_id=j.operation_id AND q.action_id=j.action_id
+             WHERE j.result_status='succeeded' AND j.result_at >= ?1
+             ORDER BY j.result_at, j.operation_id, j.action_id",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(SucceededAction {
+                operation_id: r.get(0)?,
+                action_id: r.get(1)?,
+                plan_id: r.get(2)?,
+                result_json: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                result_at: r.get(4)?,
+                quarantine_state: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// A cheap token that changes whenever an action result is recorded or a quarantine row changes state (a restore
+    /// or a purge): the key derived views (the "removed since scan" overlay) are cached under. Read-only, one query.
+    pub fn revision_token(&self) -> Result<String> {
+        let (results, last, recoverable, restored): (i64, Option<String>, i64, i64) = self.conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM action_journal WHERE result_status IS NOT NULL),
+                    (SELECT MAX(result_at) FROM action_journal),
+                    (SELECT COUNT(*) FROM quarantine_items WHERE state='recoverable'),
+                    (SELECT COUNT(*) FROM quarantine_items WHERE state='restored')",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        Ok(format!("{results}.{}.{recoverable}.{restored}", last.unwrap_or_default()))
+    }
+}
+
+/// One succeeded action as [`AuditStore::succeeded_since`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SucceededAction {
+    pub operation_id: String,
+    pub action_id: String,
+    pub plan_id: String,
+    pub result_json: String,
+    pub result_at: String,
+    /// Set for an action that moved its object into the quarantine.
+    pub quarantine_state: Option<String>,
 }
 
 /// One quarantine manifest row. `state` is the durable bookkeeping state (`recoverable`,

@@ -41,6 +41,7 @@ import type {
   RuleCatalog,
   ScanStatus,
   StartScan,
+  ScanRemoved,
   Summary,
   TreemapLayer,
   Catalog,
@@ -85,6 +86,8 @@ export interface Backend extends DiagBackend, ResidentBackend {
   listEntries(query: EntriesQuery): Promise<EntriesPage>;
   treemapLayer(scanId: string, parentEntryId: string | null, limit: number): Promise<TreemapLayer>;
   summarizeSelection(scanId: string, entryIds: string[]): Promise<Summary>;
+  /** Which of these entries of a scan later operations removed (or emptied); read-only, from the audit store. */
+  removedEntries(scanId: string, entryIds: string[]): Promise<ScanRemoved>;
   // P04/P05
   candidateSummary(scanId: string): Promise<CandidateSetInfo | null>;
   analyzeScan(scanId: string): Promise<CandidateSetInfo>;
@@ -215,6 +218,7 @@ async function tauriBackend(): Promise<Backend> {
     listEntries: (query) => call('list_entries', { query }),
     treemapLayer: (scan_id, parent_entry_id, limit) => call('treemap_layer', { scan_id, parent_entry_id, limit }),
     summarizeSelection: (scan_id, entry_ids) => call('summarize_selection', { scan_id, entry_ids }),
+    removedEntries: (scan_id, entry_ids) => call('removed_entries', { scan_id, entry_ids }),
     candidateSummary: (scan_id) => call('candidate_summary', { scan_id }),
     analyzeScan: (scan_id) => call('analyze_scan', { scan_id }),
     listCandidates: (candidate_set_id, group, page_size, cursor, rule_id = null) => call('list_candidates', { candidate_set_id, group, page_size, cursor, rule_id }),

@@ -11,6 +11,7 @@ pub mod maintenance;
 pub mod plans;
 pub mod processes;
 pub mod recovery;
+pub mod removed;
 pub mod scan;
 pub mod selection;
 pub mod trash;

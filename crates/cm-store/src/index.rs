@@ -596,6 +596,17 @@ impl IndexStore {
         self.with(|i| i.folder_total(scan_id, entry_id))
     }
 
+    /// The root entry of the published revision (its id and full path); `None` for a revision without entries.
+    pub fn root_entry(&self, scan_id: &str) -> Result<Option<(u64, RawPath)>> {
+        self.with(|i| i.root_entry(scan_id))
+    }
+
+    /// The direct children of `parent` in the published revision: entry id and raw name (one read through the
+    /// parent index; used to resolve a few paths to entries without walking the revision).
+    pub fn child_names(&self, scan_id: &str, parent: u64) -> Result<Vec<(u64, RawPath)>> {
+        self.with(|i| i.child_names(scan_id, parent))
+    }
+
     /// The direct children of `parent` in `revision` other than `except`, added up plainly (the treemap's
     /// "rest" tile): one unsorted read of their sizes, at most `budget` children.
     pub fn children_rest(&self, scan_id: &str, revision: u32, parent: u64, except: &BTreeSet<u64>, budget: u64) -> Result<ChildrenRest> {
@@ -1446,6 +1457,31 @@ impl Index {
     }
 
     /// One entry of the published revision by id, with its full raw path.
+    fn root_entry(&self, scan_id: &str) -> Result<Option<(u64, RawPath)>> {
+        let (revision, _, platform) = self.published(scan_id)?;
+        let row: Option<(i64, Vec<u8>)> = self
+            .conn
+            .query_row(
+                "SELECT entry_id, name_raw FROM entries WHERE scan_id=?1 AND revision=?2 AND parent_entry_id IS NULL ORDER BY entry_id LIMIT 1",
+                params![scan_id, revision],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(id, raw)| Ok((id as u64, path_from_raw(platform, raw)?))).transpose()
+    }
+
+    fn child_names(&self, scan_id: &str, parent: u64) -> Result<Vec<(u64, RawPath)>> {
+        let (revision, _, platform) = self.published(scan_id)?;
+        let mut stmt = self.conn.prepare_cached("SELECT entry_id, name_raw FROM entries WHERE scan_id=?1 AND revision=?2 AND parent_entry_id=?3")?;
+        let rows = stmt.query_map(params![scan_id, revision, parent as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, raw) = row?;
+            out.push((id as u64, path_from_raw(platform, raw)?));
+        }
+        Ok(out)
+    }
+
     fn get_entry(&self, scan_id: &str, entry_id: u64) -> Result<EntryItem> {
         let (revision, _, platform) = self.published(scan_id)?;
         let row = self

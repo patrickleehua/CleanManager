@@ -10,7 +10,7 @@ import { formatTime } from '../lib/format';
 import { RequestGate } from '../lib/gate';
 import type { Catalog, CatalogItem, CatalogPreview, InstallerLocations, IpcError, Mode, PurgeRoots } from '../lib/types';
 import { LongProgress, TIER_EXPLAIN, atLeast, commonModes, ensureReady, modeOptions, noticeLine, selectionBar, sumSizes, summaryStrip, tierBadge, toIpcError } from './kit';
-import { confirmInline, emptyState, errorLine, exactTitle, pageHead, sizeText } from './parts';
+import { confirmInline, emptyState, errorLine, exactTitle, handledLine, pageHead, sizeText } from './parts';
 import { notOnThisPlatform } from '../lib/platform';
 import { issueList, learnMore, pathText } from './ui';
 import { t } from '../i18n';
@@ -79,6 +79,26 @@ const COPY: Record<Catalog, Copy> = {
   },
 };
 
+/** The host's `selection_preview` summary for the rows still offered (`suite::summarize`: same rules). */
+function summaryOf(items: CatalogItem[]): CatalogPreview['summary'] {
+  const low = items.filter((i) => i.plannable && i.selected_by_default);
+  const known = sumSizes(low.map((i) => ({ bytes: i.logical_bytes, unknown: i.unknown_size_count })));
+  return {
+    default_selected_count: low.length,
+    default_selected_known_bytes: known.known.toString(),
+    default_selected_unknown_count: known.unknown,
+    review_only_count: items.filter((i) => i.tier === 'review_only').length,
+    blocked_count: items.filter((i) => i.tier === 'blocked').length,
+    skipped_count: items.filter((i) => i.skip_reason !== null).length,
+  };
+}
+
+/** Removed rows counted together (count, known size, unknown sizes). */
+function handledCount(items: CatalogItem[]): { count: number; known_logical_bytes: string; unknown_size_count: number } {
+  const sum = sumSizes(items.map((i) => ({ bytes: i.logical_bytes, unknown: i.unknown_size_count })));
+  return { count: items.length, known_logical_bytes: sum.known.toString(), unknown_size_count: sum.unknown };
+}
+
 export class CatalogPage {
   el: HTMLElement;
   private body: HTMLElement;
@@ -100,6 +120,9 @@ export class CatalogPage {
   private gate = new RequestGate();
   private rootsGate = new RequestGate();
   private loaded = false;
+  /** Rows (set + entry) a plan run after the discovery already removed or emptied: left out with a count. */
+  private handled = new Set<string>();
+  private opsSeen = 0;
 
   constructor(
     private app: App,
@@ -115,6 +138,35 @@ export class CatalogPage {
       this.loaded = true;
       void this.loadRoots();
     }
+    // Back after a plan ran: rows it removed are left out (the discovery is a snapshot; nothing is scanned again).
+    const ops = this.app.store.state.opsRevision ?? 0;
+    if (this.preview && ops !== this.opsSeen) void this.refreshHandled();
+  }
+
+  private async refreshHandled(): Promise<void> {
+    const p = this.preview;
+    if (!p) return;
+    this.opsSeen = this.app.store.state.opsRevision ?? 0;
+    const handled = new Set<string>();
+    try {
+      for (const set of p.sets) {
+        const ids = p.items.filter((i) => i.candidate_set_id === set.candidate_set_id).map((i) => i.entry_id);
+        if (!ids.length) continue;
+        const r = await this.app.backend.removedEntries(set.scan_id, ids);
+        for (const e of r.entries) handled.add(`${set.candidate_set_id}/${e.entry_id}`);
+      }
+    } catch {
+      return; // the rows stay as discovered; plan creation still refuses removed objects
+    }
+    if (this.preview !== p) return;
+    this.handled = handled;
+    for (const [id, i] of this.selected) if (this.isHandled(i)) this.selected.delete(id);
+    this.syncMode();
+    this.update();
+  }
+
+  private isHandled(i: CatalogItem): boolean {
+    return this.handled.has(`${i.candidate_set_id}/${i.entry_id}`);
   }
 
   update(): void {
@@ -182,6 +234,8 @@ export class CatalogPage {
       const r = await this.gate.latest(this.catalog === 'purge' ? this.app.backend.purgeScan() : this.app.backend.installerScan());
       if (r.stale) return;
       this.preview = r.value;
+      this.handled = new Set();
+      this.opsSeen = this.app.store.state.opsRevision ?? 0;
       // A new discovery never inherits an old selection (different candidate sets).
       this.selected.clear();
       this.mode = null;
@@ -212,7 +266,7 @@ export class CatalogPage {
   }
 
   private selectLowRisk(): void {
-    const items = this.preview?.items.filter((i) => i.plannable && i.tier === 'default_selected') ?? [];
+    const items = this.preview?.items.filter((i) => i.plannable && i.tier === 'default_selected' && !this.isHandled(i)) ?? [];
     this.selectGroup(items, t('catalog.lowRiskGroup'));
   }
 
@@ -298,16 +352,20 @@ export class CatalogPage {
   }
 
   private results(p: CatalogPreview): HTMLElement {
-    if (!p.items.length) return h('div', { class: 'panel' }, emptyState(t('catalog.nothingFound'), COPY[this.catalog].empty, null), this.issues(p));
+    // Rows a later plan run already removed are not offered again: left out, counted in one quiet line.
+    const items = this.handled.size ? p.items.filter((i) => !this.isHandled(i)) : p.items;
+    const gone = this.handled.size ? p.items.filter((i) => this.isHandled(i)) : [];
+    const goneLine = gone.length ? handledLine(this.app, handledCount(gone), null) : null;
+    if (!items.length) return h('div', { class: 'panel' }, goneLine, emptyState(t('catalog.nothingFound'), COPY[this.catalog].empty, null), this.issues(p));
     const groups = new Map<string, CatalogItem[]>();
-    for (const i of p.items) groups.set(i.group_label, [...(groups.get(i.group_label) ?? []), i]);
-    const s = p.summary;
-    const lowCount = p.items.filter((i) => i.plannable && i.tier === 'default_selected').length;
-    const known = sumSizes(p.items.filter((i) => i.plannable).map((i) => ({ bytes: i.logical_bytes, unknown: i.unknown_size_count })));
+    for (const i of items) groups.set(i.group_label, [...(groups.get(i.group_label) ?? []), i]);
+    const s = gone.length ? summaryOf(items) : p.summary;
+    const lowCount = items.filter((i) => i.plannable && i.tier === 'default_selected').length;
+    const known = sumSizes(items.filter((i) => i.plannable).map((i) => ({ bytes: i.logical_bytes, unknown: i.unknown_size_count })));
     const summary = h(
       'section',
       { class: 'cand-summary catalog-summary', 'aria-labelledby': `${this.catalog}-sum` },
-      h('h2', { id: `${this.catalog}-sum`, class: 'cs-sentence' }, CATALOG_TEXT.found(p.items.length), h('span', { class: 'cs-size num' }, CATALOG_TEXT.plannable(atLeast(known)))),
+      h('h2', { id: `${this.catalog}-sum`, class: 'cs-sentence' }, CATALOG_TEXT.found(items.length), h('span', { class: 'cs-size num' }, CATALOG_TEXT.plannable(atLeast(known)))),
       h('p', { class: 'cs-note' }, CATALOG_TEXT.note),
       summaryStrip(CATALOG_TEXT.summaryLabel, [
         { mark: tierBadge('default_selected'), count: s.default_selected_count, size: s.default_selected_count ? atLeast({ known: BigInt(s.default_selected_known_bytes), unknown: s.default_selected_unknown_count }) : null, note: CATALOG_TEXT.lowNote },
@@ -316,7 +374,7 @@ export class CatalogPage {
       ]),
       lowCount && this.catalog === 'purge' ? h('button', { type: 'button', class: 'quiet', id: 'select-low', onclick: () => this.selectLowRisk() }, t('catalog.selectAllLowRisk', { lowCount })) : null,
     );
-    return h('div', { class: 'catalog-results' }, summary, this.issues(p), ...[...groups.entries()].map(([label, items], gi) => this.group(label, items, gi)));
+    return h('div', { class: 'catalog-results' }, summary, goneLine, this.issues(p), ...[...groups.entries()].map(([label, rows], gi) => this.group(label, rows, gi)));
   }
 
   private issues(p: CatalogPreview): HTMLElement | null {

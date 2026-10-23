@@ -6,7 +6,11 @@ import { h, icon } from '../lib/dom';
 import { refusalKnown, refusalText } from '../lib/codes';
 import { shortcutLabel } from '../lib/nav';
 import { words } from '../lib/platform';
-import type { Counts, Group, IpcError, ItemStatus } from '../lib/types';
+import type { Counts, Group, GroupCount, IpcError, ItemStatus } from '../lib/types';
+import type { App } from '../main';
+import { REMOVED_TEXT } from '../lib/removedModel';
+import { sizeLabel } from '../lib/display';
+import { toIpcError } from '../lib/api';
 import { GROUP_LABEL, ITEM_STATUS_LABEL, progressSegments } from '../lib/words';
 import { t } from '../i18n';
 
@@ -225,4 +229,18 @@ export function tabList<T extends string>(label: string, tabs: { key: T; label: 
 
 export function bytesOrDash(v: string | null): string {
   return v === null ? '—' : formatBytes(v);
+}
+
+/**
+ * Candidates an operation applied after the scan already removed (or emptied) are left out of every group: one quiet
+ * line with their count and stored size, and a new scan for the current state (the scan's root again when offered).
+ */
+export function handledLine(app: App, handled: Pick<GroupCount, 'count' | 'known_logical_bytes' | 'unknown_size_count'>, rootDisplay: string | null): HTMLElement {
+  const rescan = h('button', { type: 'button', class: 'link', id: 'handled-rescan' }, t('common.scanAgain'));
+  rescan.addEventListener('click', () => {
+    rescan.disabled = true;
+    app.rescan(rootDisplay).catch((e) => app.announce(refusalText(toIpcError(e)))).finally(() => (rescan.disabled = false));
+  });
+  const size = sizeLabel(handled.known_logical_bytes, { unknownCount: handled.unknown_size_count });
+  return h('p', { class: 'removed-line', role: 'note', id: 'handled-line' }, h('span', { class: 'removed-mark', 'aria-hidden': 'true' }), h('span', {}, REMOVED_TEXT.handled(handled.count, size)), rescan);
 }

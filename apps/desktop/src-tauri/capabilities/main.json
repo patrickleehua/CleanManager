@@ -21,6 +21,7 @@
     "allow-treemap-layer",
     "allow-summarize-selection",
     "allow-repair-index",
+    "allow-removed-entries",
     "allow-candidate-summary",
     "allow-analyze-scan",
     "allow-list-candidates",

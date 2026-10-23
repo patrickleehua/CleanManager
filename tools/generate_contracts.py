@@ -160,6 +160,14 @@ def main():
     # never a selection, tier or protection decision.
     defs["entry_item"]["properties"]["cleanable_hint"] = obj({"basis": enum("build_artifact", "catalog_rule", "cachedir_tag"),
         "rule_id": nullable(STR), "detail": STR, "flow": enum("purge", "manual_trash")})
+    # Optional "removed since scan" facts (absent = none apply): operations applied after the scan finished removed the
+    # entry (or a folder above it: `inherited`), read from the audit store; for a directory, what was removed beneath it
+    # (top-most removed objects, known part of their stored sizes; `removed_bytes` null when none of it is known).
+    defs["entry_item"]["properties"]["removed"] = obj({"mode": enum("trash", "quarantine", "permanent"), "operation_id": STR, "at": TIME,
+        "recoverable": {"type": "boolean"}, "inherited": {"type": "boolean"}})
+    defs["entry_item"]["properties"]["removed_count"] = {"type": "integer", "minimum": 1}
+    defs["entry_item"]["properties"]["removed_bytes"] = nullable(UINT)
+    defs["entry_item"]["properties"]["removed_unknown_count"] = COUNT
     defs["entries_page"] = record("entries_page", {"scan_id": STR, "scope_id": STR, "revision": COUNT,
         "sort": enum("logical_desc", "allocated_desc", "name_asc"), "filter": obj({"kind": enum("any", "file", "directory"),
             "name_contains": nullable(STR), "parent_entry_id": nullable(STR)}),
@@ -1098,6 +1106,15 @@ def main():
                 {**entry_item("e_tool", "C:\\Users\\Example\\source\\app\\.tool-cache", "directory", "41943040", "subtree_known", "e_app"),
                  "cleanable_hint": {"basis": "cachedir_tag", "rule_id": None, "detail": "CACHEDIR.TAG", "flow": "manual_trash"}},
                 entry_item("e_src", "C:\\Users\\Example\\source\\app\\src", "directory", "2097152", "subtree_known", "e_app")]),
+        "entries-page-removed": rec("entries_page", scan_id="s_demo", scope_id="scope_demo", revision=1, sort="logical_desc",
+            filter={"kind": "any", "name_contains": None, "parent_entry_id": "e_root"}, page_size=3, next_cursor=None,
+            unknown_size_items=0, items=[
+                {**entry_item("e_videos", "C:\\Users\\Example\\Videos", "directory", "73400320", "subtree_known"),
+                 "removed_count": 2, "removed_bytes": "31457280", "removed_unknown_count": 0},
+                {**entry_item("e_iso", "C:\\Users\\Example\\image.iso", "file", "31457280"),
+                 "removed": {"mode": "trash", "operation_id": "op_0123456789abcdef", "at": t1, "recoverable": True, "inherited": False}},
+                {**entry_item("e_old", "C:\\Users\\Example\\old-build", "directory", "1048576", "subtree_known"),
+                 "removed": {"mode": "permanent", "operation_id": "op_fedcba9876543210", "at": t1, "recoverable": False, "inherited": False}}]),
         "candidates-page": rec("candidates_page", candidate_set_id="cs_demo", scan_id="s_demo", revision=1, page_size=50,
             next_cursor=None, items=[cand_item]),
         "analysis-result": rec("analysis_result", candidate_set_id="cs_demo", scan_id="s_demo", scan_revision=1,

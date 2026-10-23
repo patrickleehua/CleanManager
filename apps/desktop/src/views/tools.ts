@@ -405,13 +405,17 @@ export class InsightsPage implements PageLike {
   private creating = false;
   private createError: IpcError | null = null;
 
+  /** Plan runs seen at the last read: the old-downloads review is a live listing, read again after a run. */
+  private opsSeen = 0;
+
   constructor(private app: App) {
     this.body = h('div', {});
     this.el = h('section', { class: 'page page-insights', 'aria-labelledby': 'insights-title' }, this.body);
   }
 
   activate(): void {
-    if (!this.data) void this.load();
+    // Back after a plan ran (e.g. old downloads moved to the bin): a fresh review never offers what it removed.
+    if (!this.data || (this.app.store.state.opsRevision ?? 0) !== this.opsSeen) void this.load();
   }
 
   update(): void {
@@ -419,6 +423,7 @@ export class InsightsPage implements PageLike {
   }
 
   private async load(): Promise<void> {
+    this.opsSeen = this.app.store.state.opsRevision ?? 0;
     this.error = null;
     this.ovError = null;
     const list = this.gate.latest(this.app.backend.insightsList());

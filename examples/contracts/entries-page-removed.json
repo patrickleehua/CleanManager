@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "kind": "entries_page",
+  "request_id": "req_synthetic",
+  "scan_id": "s_demo",
+  "scope_id": "scope_demo",
+  "revision": 1,
+  "sort": "logical_desc",
+  "filter": {
+    "kind": "any",
+    "name_contains": null,
+    "parent_entry_id": "e_root"
+  },
+  "page_size": 3,
+  "next_cursor": null,
+  "unknown_size_items": 0,
+  "items": [
+    {
+      "entry_id": "e_videos",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_videos",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\Videos",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAFYAaQBkAGUAbwBzAA=="
+      },
+      "kind": "directory",
+      "logical_bytes": "73400320",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong",
+      "removed_count": 2,
+      "removed_bytes": "31457280",
+      "removed_unknown_count": 0
+    },
+    {
+      "entry_id": "e_iso",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_iso",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\image.iso",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAGkAbQBhAGcAZQAuAGkAcwBvAA=="
+      },
+      "kind": "file",
+      "logical_bytes": "31457280",
+      "allocated_bytes": null,
+      "size_basis": "entity",
+      "unknown_descendants": null,
+      "link_count": 1,
+      "boundary": null,
+      "identity_quality": "strong",
+      "removed": {
+        "mode": "trash",
+        "operation_id": "op_0123456789abcdef",
+        "at": "2026-10-14T12:00:02Z",
+        "recoverable": true,
+        "inherited": false
+      }
+    },
+    {
+      "entry_id": "e_old",
+      "parent_entry_id": "e_root",
+      "object_id": "o_e_old",
+      "path": {
+        "platform": "windows",
+        "display": "C:\\Users\\Example\\old-build",
+        "raw_encoding": "windows_utf16le_base64",
+        "raw_base64": "QwA6AFwAVQBzAGUAcgBzAFwARQB4AGEAbQBwAGwAZQBcAG8AbABkAC0AYgB1AGkAbABkAA=="
+      },
+      "kind": "directory",
+      "logical_bytes": "1048576",
+      "allocated_bytes": null,
+      "size_basis": "subtree_known",
+      "unknown_descendants": null,
+      "link_count": null,
+      "boundary": null,
+      "identity_quality": "strong",
+      "removed": {
+        "mode": "permanent",
+        "operation_id": "op_fedcba9876543210",
+        "at": "2026-10-14T12:00:02Z",
+        "recoverable": false,
+        "inherited": false
+      }
+    }
+  ]
+}

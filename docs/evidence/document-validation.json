@@ -2,7 +2,7 @@
   "status": "passed",
   "scope": "Document contracts and synthetic examples only; no product or OS behavior tested.",
   "schemas": 5,
-  "protocol_examples": 90,
+  "protocol_examples": 91,
   "rule_examples": 1,
   "rule_v2_examples": 3,
   "registry_examples": 1,
@@ -129,7 +129,7 @@
     "link-ignored-folder",
     "link-missing-target"
   ],
-  "local_links_checked": 506,
+  "local_links_checked": 507,
   "markdown_files_checked": 42,
   "rea_evidence_records_linked": 6,
   "rea_unknowns_linked": 2,

@@ -89,6 +89,8 @@ export interface AppState {
   cleanupRule?: string | null;
   /** NEW-04: when the scan index was rebuilt from this window (the startup store problem no longer applies). */
   indexRepairedAt?: number | null;
+  /** Counts plan runs that finished in this window: pages holding candidates from a stored scan re-read them. */
+  opsRevision?: number;
 }
 
 type Listener = (s: AppState, prev: AppState) => void;

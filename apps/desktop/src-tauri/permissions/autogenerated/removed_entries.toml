@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-removed-entries"
+description = "Enables the removed_entries command without any pre-configured scope."
+commands.allow = ["removed_entries"]
+
+[[permission]]
+identifier = "deny-removed-entries"
+description = "Denies the removed_entries command without any pre-configured scope."
+commands.deny = ["removed_entries"]

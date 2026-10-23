@@ -17,6 +17,7 @@ mod gate;
 mod host;
 mod ops;
 mod plat;
+mod removed;
 mod resident;
 mod roots;
 mod rules;
@@ -178,6 +179,7 @@ fn main() {
             commands::treemap_layer,
             commands::summarize_selection,
             commands::repair_index,
+            removed::removed_entries,
             cleanup::candidate_summary,
             cleanup::analyze_scan,
             cleanup::list_candidates,
